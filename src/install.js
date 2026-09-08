@@ -9,7 +9,7 @@ import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HOSTS } from './hosts.js';
+import { HOSTS, hostByKey } from './hosts.js';
 
 const ABS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HOOK_TEMPLATE = join(ABS_DIR, 'hooks', 'event.sh');
@@ -17,6 +17,18 @@ const SKILL_SOURCE = join(ABS_DIR, 'skill', 'SKILL.md');
 
 const MARK = '// abs-managed (agent-brain-sync)'; // TS plugin 标记
 const JSON_MARK_KEY = 'abs-managed';             // JSON 内我们的命名空间
+
+// ============================ 宿主 config 根 / skill 落点（统一走 env 或 homedir，测试可注入） ============================
+/** 某宿主的配置根目录（settings.json 所在目录；env 覆盖优先，默认 ~/.<host> 或 ~/.config/<host>）。 */
+export function hostConfigRoot(key) {
+  return hostByKey(key).configRoot();
+}
+
+/** 该宿主 skill 落点：<configRoot>/<skillSub>/abs-agent-brain-sync/。skillSub 与 hooks/MCP 同根，避免 env 隔离时分裂。
+ * 多数宿主 = <configRoot>/skills；pi 的用户级 skill 在 ~/.pi/agent/skills (configRoot=~/.pi)。 */
+export function hostSkillDir(key) {
+  return join(hostConfigRoot(key), hostByKey(key).skillSub, 'abs-agent-brain-sync');
+}
 
 // ============================ 工具函数 ============================
 async function atomicWrite(p, text) {
@@ -36,6 +48,13 @@ async function backup(p) {
 
 async function readJson(p) {
   try { return JSON.parse(await fs.readFile(p, 'utf8')); } catch { return {}; }
+}
+
+const ABS_HOOK_MARK = '/.abs/hooks/';
+/** 判断一个 hook 数组元素是不是 abs 装的(command 指向 ~/.abs/hooks/)。卸载/幂等去重用。 */
+function entryHasAbs(entry) {
+  const hs = entry && entry.hooks ? (Array.isArray(entry.hooks) ? entry.hooks : [entry.hooks]) : [];
+  return hs.some((h) => typeof h?.command === 'string' && h.command.includes(ABS_HOOK_MARK));
 }
 
 // ============================ Hook 脚本落盘 ============================
@@ -65,17 +84,19 @@ function claudeSettingsPath() {
 
 async function installClaudeCode({ withMcp, withSkill, log }) {
   const steps = [];
-  // 1) hooks → settings.json
+  // 1) hooks → settings.json (分区合并: 同事件可挂多个 hook 框架, 追加 abs 而非覆盖, 保留 moshi-hook 等)
   const scriptMap = await stageHookScripts('claude-code', HOSTS[0].events);
   const settingsP = claudeSettingsPath();
   await backup(settingsP);
   const settings = await readJson(settingsP);
   settings.hooks = settings.hooks || {};
   for (const [ev, script] of Object.entries(scriptMap)) {
-    settings.hooks[ev] = [{ hooks: [{ type: 'command', command: script }] }];
+    const existing = Array.isArray(settings.hooks[ev]) ? settings.hooks[ev] : [];
+    const kept = existing.filter((e) => !entryHasAbs(e)); // 去掉旧 abs 条目, 幂等; 保留 moshi 等其它 hook
+    settings.hooks[ev] = [...kept, { hooks: [{ type: 'command', command: script }] }];
   }
   await atomicWrite(settingsP, JSON.stringify(settings, null, 2));
-  steps.push(`✓ hooks  → ${settingsP} (${Object.keys(scriptMap).length} 事件)`);
+  steps.push(`✓ hooks  → ${settingsP} (${Object.keys(scriptMap).length} 事件, 与既有 hook 共存)`);
 
   // 2) MCP → settings.json mcpServers (stdio)
   if (withMcp) {
@@ -88,16 +109,16 @@ async function installClaudeCode({ withMcp, withSkill, log }) {
     steps.push(`✓ MCP    → settings.json mcpServers.abs (stdio)`);
   }
 
-  // 3) skill → ~/.claude/skills/abs-agent-brain-sync/SKILL.md
+  // 3) skill → <configRoot>/skills/abs-agent-brain-sync/SKILL.md (config 根 = CLAUDE_CONFIG_DIR)
   if (withSkill) {
-    const target = join(homedir(), '.claude', 'skills', 'abs-agent-brain-sync', 'SKILL.md');
+    const target = join(hostSkillDir('claude-code'), 'SKILL.md');
     await atomicWrite(target, await fs.readFile(SKILL_SOURCE, 'utf8'));
     steps.push(`✓ skill  → ${target}`);
   }
   return steps;
 }
 
-async function uninstallClaudeCode({ log }) {
+async function uninstallClaudeCode() {
   const steps = [];
   const settingsP = claudeSettingsPath();
   const settings = await readJson(settingsP);
@@ -105,7 +126,13 @@ async function uninstallClaudeCode({ log }) {
   if (settings.hooks) {
     const events = HOSTS[0].events;
     for (const ev of events) {
-      if (settings.hooks[ev]) { delete settings.hooks[ev]; touched = true; }
+      if (!Array.isArray(settings.hooks[ev])) continue;
+      const kept = settings.hooks[ev].filter((e) => !entryHasAbs(e)); // 只删 abs, 保留 moshi 等共存 hook
+      if (kept.length !== settings.hooks[ev].length) {
+        if (kept.length) settings.hooks[ev] = kept;
+        else delete settings.hooks[ev]; // 无共存 hook 时整删该事件
+        touched = true;
+      }
     }
   }
   if (settings.mcpServers && settings.mcpServers.abs) {
@@ -113,11 +140,11 @@ async function uninstallClaudeCode({ log }) {
   }
   if (touched) await atomicWrite(settingsP, JSON.stringify(settings, null, 2));
   steps.push(`✓ hooks/MCP 已从 ${settingsP} 移除`);
-  // staged hook 脚本目录
-  await fs.rm(join(homedir(), '.abs'), { recursive: true, force: true });
-  steps.push(`✓ ~/.abs/ (hook 脚本) 已删除`);
+  // staged hook 脚本目录 —— 只删本 agent 的，绝不整删 ~/.abs/（其它 agent 的 hook / mcp.log 共存）
+  await fs.rm(join(homedir(), '.abs', 'hooks', 'claude-code'), { recursive: true, force: true });
+  steps.push(`✓ ~/.abs/hooks/claude-code/ (本 agent hook 脚本) 已删除`);
   // skill
-  const skillDir = join(homedir(), '.claude', 'skills', 'abs-agent-brain-sync');
+  const skillDir = hostSkillDir('claude-code');
   await fs.rm(skillDir, { recursive: true, force: true });
   steps.push(`✓ skill 已删除`);
   return steps;
@@ -153,7 +180,7 @@ async function installCodex({ withMcp, withSkill, log }) {
     }
   }
   if (withSkill) {
-    const target = join(homedir(), '.codex', 'skills', 'abs-agent-brain-sync', 'SKILL.md');
+    const target = join(hostSkillDir('codex'), 'SKILL.md');
     await atomicWrite(target, await fs.readFile(SKILL_SOURCE, 'utf8'));
     steps.push(`✓ skill  → ${target}`);
   }
@@ -177,16 +204,12 @@ async function uninstallCodex() {
   try {
     const text = await fs.readFile(mcpP, 'utf8');
     if (text.includes('[mcp_servers.abs]')) {
-      const cleaned = text.split('\n').filter((l, i, arr) => {
-        // 简易移除 [mcp_servers.abs] 区块(到下一个 [ 头)
-        return true;
-      }).join('\n');
       const re = /\n?\[mcp_servers\.abs\][^\[]*/s;
       await atomicWrite(mcpP, text.replace(re, '\n'));
       steps.push(`✓ MCP 已从 ${mcpP} 移除`);
     }
   } catch {}
-  await fs.rm(join(homedir(), '.codex', 'skills', 'abs-agent-brain-sync'), { recursive: true, force: true });
+  await fs.rm(hostSkillDir('codex'), { recursive: true, force: true });
   steps.push(`✓ skill 已删除`);
   return steps;
 }
@@ -217,14 +240,45 @@ ${MARK}
 `;
 }
 
+// ============================ Pi (TS extension) ============================
+// Pi 与 OpenCode 插件语法不同构：Pi 需要 default 工厂函数接收 ExtensionAPI、用 pi.on(event) 注册。
+// 不能复用 opencodePluginSource 的 OpenCode 写法（那是 export const ... = ({ project }) => ...）。
+function piPluginSource() {
+  return `/**
+ * abs (agent-brain-sync) — Pi extension。
+ * 纯触发: 会话生命周期事件 → 机械落盘一行 log (经 abs CLI)。fire-and-forget。
+ * Pi 事件: session_start / session_shutdown (对应 host hook 的 SessionStart/SessionEnd)。
+ */
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { spawn } from "node:child_process"
+
+const ABS_BIN = "${join(ABS_DIR, 'bin', 'abs.js')}"
+
+function logHook(evt: string) {
+  try {
+    const child = spawn(process.execPath, [ABS_BIN, "log", \`[pi:\${evt}]\`], {
+      stdio: "ignore", detached: true,
+    })
+    child.unref()
+  } catch {} // fire-and-forget: 永不阻塞宿主
+}
+
+export default function absPiHook(pi: ExtensionAPI): void {
+  pi.on("session_start", () => logHook("session_start"))
+  pi.on("session_shutdown", () => logHook("session_shutdown"))
+}
+${MARK}
+`;
+}
+
 async function installOpenCode({ withMcp, withSkill, log }) {
   const steps = [];
-  const dir = join(homedir(), '.config', 'opencode', 'plugins');
+  const dir = join(hostConfigRoot('opencode'), 'plugins');
   const p = join(dir, 'abs.ts');
   await atomicWrite(p, opencodePluginSource());
   steps.push(`✓ hook(ts plugin) → ${p}`);
   if (withMcp) {
-    const mcpP = join(homedir(), '.config', 'opencode', 'opencode.json');
+    const mcpP = join(hostConfigRoot('opencode'), 'opencode.json');
     const cfg = await readJson(mcpP);
     cfg.mcp = cfg.mcp || {};
     cfg.mcp['abs'] = {
@@ -236,7 +290,7 @@ async function installOpenCode({ withMcp, withSkill, log }) {
     steps.push(`✓ MCP → ${mcpP} (mcp.abs local)`);
   }
   if (withSkill) {
-    const target = join(homedir(), '.config', 'opencode', 'skills', 'abs-agent-brain-sync', 'SKILL.md');
+    const target = join(hostSkillDir('opencode'), 'SKILL.md');
     await atomicWrite(target, await fs.readFile(SKILL_SOURCE, 'utf8'));
     steps.push(`✓ skill → ${target}`);
   }
@@ -245,32 +299,32 @@ async function installOpenCode({ withMcp, withSkill, log }) {
 
 async function uninstallOpenCode() {
   const steps = [];
-  const plugin = join(homedir(), '.config', 'opencode', 'plugins', 'abs.ts');
+  const plugin = join(hostConfigRoot('opencode'), 'plugins', 'abs.ts');
   await fs.rm(plugin, { force: true });
   steps.push(`✓ plugin 已删除`);
-  const mcpP = join(homedir(), '.config', 'opencode', 'opencode.json');
+  const mcpP = join(hostConfigRoot('opencode'), 'opencode.json');
   const cfg = await readJson(mcpP);
   if (cfg.mcp && cfg.mcp.abs) {
     delete cfg.mcp.abs;
     await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
     steps.push(`✓ MCP 已从 ${mcpP} 移除`);
   }
-  await fs.rm(join(homedir(), '.config', 'opencode', 'skills', 'abs-agent-brain-sync'), { recursive: true, force: true });
+  await fs.rm(hostSkillDir('opencode'), { recursive: true, force: true });
   steps.push(`✓ skill 已删除`);
   return steps;
 }
 
 async function installPi({ withMcp, withSkill, log }) {
   const steps = [];
-  const dir = join(homedir(), '.pi', 'agent', 'extensions');
+  const dir = join(hostConfigRoot('pi'), 'agent', 'extensions');
   const p = join(dir, 'abs.ts');
-  await atomicWrite(p, opencodePluginSource()); // Pi extension 语法同构, 初版复用
+  await atomicWrite(p, piPluginSource()); // Pi 用专用模板, 语法与 OpenCode 不同构
   steps.push(`✓ hook(ts extension) → ${p}`);
   if (withMcp) {
     steps.push(`• MCP → Pi 走 extension 内桥接(见 ${p}), 未单独注册`);
   }
   if (withSkill) {
-    const target = join(homedir(), '.pi', 'agent', 'skills', 'abs-agent-brain-sync', 'SKILL.md');
+    const target = join(hostSkillDir('pi'), 'SKILL.md');
     await atomicWrite(target, await fs.readFile(SKILL_SOURCE, 'utf8'));
     steps.push(`✓ skill → ${target}`);
   }
@@ -279,9 +333,9 @@ async function installPi({ withMcp, withSkill, log }) {
 
 async function uninstallPi() {
   const steps = [];
-  await fs.rm(join(homedir(), '.pi', 'agent', 'extensions', 'abs.ts'), { force: true });
+  await fs.rm(join(hostConfigRoot('pi'), 'agent', 'extensions', 'abs.ts'), { force: true });
   steps.push(`✓ extension 已删除`);
-  await fs.rm(join(homedir(), '.pi', 'agent', 'skills', 'abs-agent-brain-sync'), { recursive: true, force: true });
+  await fs.rm(hostSkillDir('pi'), { recursive: true, force: true });
   steps.push(`✓ skill 已删除`);
   return steps;
 }
