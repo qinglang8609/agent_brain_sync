@@ -1,4 +1,5 @@
 # 🗒 操作日志
+## [2026-09-09 00:20] dev | 收尾: TASK-DEEP-TEST + MD-STANDARD-RW 归位 Done. TASK-DEEP-TEST=四层(CLI/install/MCP/hook)测试110绿+真实冒烟+lock
 ## [2026-09-08 23:57] note | lock.js并发丢根因: 非锁失效(临界区重叠=0完美互斥), 而是 LOCK_MAX_WAIT_MS=3s太短, 高
 ## [2026-09-08 23:46] dev | [pi:session_shutdown]
 ## [2026-09-08 23:33] note | 并发写安全审计心法: 别对'所有写入'一律加锁, 先按风险分类——①读改写(读旧覆盖别人新行)才需锁; ②append日
