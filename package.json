@@ -16,6 +16,6 @@
   "scripts": {
     "abs": "node bin/abs.js",
     "mcp": "node bin/mcp.js",
-    "test": "node --test test/store.test.js"
+    "test": "node --test 'test/*.test.js'"
   }
 }

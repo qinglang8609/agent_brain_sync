@@ -87,11 +87,6 @@ async function main() {
       case 'install':  await runInstall({ agent: opts.agent, mcp: opts.mcp !== false, skill: opts.skill !== false, yes: opts.yes }); break;
       case 'uninstall': await runUninstall({ agent: opts.agent, yes: opts.yes }); break;
       case 'agents':   console.log(installSummary()); break;
-      case 'log': {
-        const title = opts._.join(' ') || '(hook)';
-        console.log(await cmdLog({ dir: opts.dir, title }));
-        break;
-      }
       case 'query': {
         console.log(await cmdQuery({ dir: opts.dir, terms: opts._ }));
         break;
