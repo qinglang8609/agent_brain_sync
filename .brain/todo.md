@@ -5,12 +5,12 @@
 - [ ] 更新readme.md (认领 2026-09-08)
 - [ ] TASK-DEEP-TEST — 深度测试四层CLI/install/MCP/hook, 产出可回归单测+真实冒烟 (认领 2026-09-08)
   ↳ 断点: 四层真实冒烟全部完成: CLI/MCP/hook 真机通过; install 层 moshi-hook 共存冲突已解决(INSTALL-COEXIST done, 真实settings 4事件 moshi+abs 共存, 备份~/.claude/settings.json.abs-bak-20260908-232634)。剩收尾: 提炼 concept + 全量测试确认 + 归位
-- [ ] TASK-ABS-PI-TEST — 测试 pi opencode 的 abs 功能是否正常、触发是否稳定（MCP 调用链、触发时机） (认领 2026-09-08)
-  ↳ 断点: 全项目写文件审计完成(不止.brain): 分类=①读改写丢失更新(.brain todo/index/log全锁了; install.js的settings/hooks.json readJson→atomicWrite, atomic保证无半写, 且install是离散单用户动作不加锁) ②append日志(hooks.log/wrapup.log/mcp.log)多宿主并发, 实测短行O_APPEND单write原子不撕裂≤200字符行 ③新文件原子写(tmp+rename源页/install全部atomicWrite) ④init/repair仅建缺失文件由requireBrain门控安全。结论:唯一丢失更新类已全锁; append与原子写天然安全不需锁(锁反而拖慢fire-forget热路径)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 - [x] 本轮反馈处理: log.md只记工作沉淀(去task自动刷+重写) + 时间戳本地化 + codebuddy todo迁移B4 + cmdShow走readTodo触发迁移 (完成 2026-09-08)
 - [x] TASK-01 — 修 .gitignore 缺 node_modules（提交前必须）  (完成 2026-09-08)
+- [x] TASK-ABS-PI-TEST — 测试 pi opencode 的 abs 功能是否正常、触发是否稳定（MCP 调用链、触发时机）  (完成 2026-09-08)
+  ↳ 断点: 全项目写文件审计完成(不止.brain): 分类=①读改写丢失更新(.brain todo/index/log全锁了; install.js的settings/hooks.json readJson→atomicWrite, atomic保证无半写, 且install是离散单用户动作不加锁) ②append日志(hooks.log/wrapup.log/mcp.log)多宿主并发, 实测短行O_APPEND单write原子不撕裂≤200字符行 ③新文件原子写(tmp+rename源页/install全部atomicWrite) ④init/repair仅建缺失文件由requireBrain门控安全。结论:唯一丢失更新类已全锁; append与原子写天然安全不需锁(锁反而拖慢fire-forget热路径)
 - [x] INSTALL-COEXIST — installClaudeCode 覆盖式写 settings.hooks[ev] 会顶掉同事件的 moshi-hook 等其它 hook; 改成分区合并追加(去掉旧abs条目幂等 + push新条目, 保留moshi), 沙盒验证后备份应用真实配置  (完成 2026-09-08)
   ↳ 断点: install.js 共存改造完成+4新测试(12/12绿): installClaudeCode 覆盖式→分区合并追加(entryHasAbs去重幂等,保留moshi), uninstallClaudeCode 整删→只删abs条目。剩: 待claude-code-guide确认多hook条目并存官方支持后, 备份并应用真实~/.claude/settings.json
 - [x] 每轮结束收尾自动化: Stop hook 读todo→判未登记完成→沉淀经验→更新 index/log/todo  (完成 2026-09-08)

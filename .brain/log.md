@@ -1,4 +1,6 @@
 # 🗒 操作日志
+## [2026-09-08 23:57] note | lock.js并发丢根因: 非锁失效(临界区重叠=0完美互斥), 而是 LOCK_MAX_WAIT_MS=3s太短, 高
+## [2026-09-08 23:46] dev | [pi:session_shutdown]
 ## [2026-09-08 23:33] note | 并发写安全审计心法: 别对'所有写入'一律加锁, 先按风险分类——①读改写(读旧覆盖别人新行)才需锁; ②append日
 ## [2026-09-08 23:31] note | hook测试脆弱点: event.sh 幂等 mark 硬编码 /tmp/abs-hook-<cksum>-<分钟>.m
 ## [2026-09-08 23:29] note | hooks/event.sh幂等mark文件用date分钟粒度写共享/tmp/abs-hook-*.mark, 跨测试运
