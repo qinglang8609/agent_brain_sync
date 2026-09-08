@@ -5,6 +5,7 @@
 - [ ] 更新readme.md (认领 2026-09-08)
 - [ ] TASK-DEEP-TEST — 深度测试四层CLI/install/MCP/hook, 产出可回归单测+真实冒烟 (认领 2026-09-08)
   ↳ 断点: 四层真实冒烟全部完成: CLI/MCP/hook 真机通过; install 层 moshi-hook 共存冲突已解决(INSTALL-COEXIST done, 真实settings 4事件 moshi+abs 共存, 备份~/.claude/settings.json.abs-bak-20260908-232634)。剩收尾: 提炼 concept + 全量测试确认 + 归位
+- [ ] MD-STANDARD-RW — 统一 .brain 文档读写为单一方法(所有需读写 .brain 文档的地方都走它): 读=readBrain, 写=editBrain 内部自动套 lock 防重复/防并发(继承已做的 lock.js), 调用方不用各自拼 editFile+锁. 各页(todo/log/index/source)统一收口 (认领 2026-09-09)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 - [x] 本轮反馈处理: log.md只记工作沉淀(去task自动刷+重写) + 时间戳本地化 + codebuddy todo迁移B4 + cmdShow走readTodo触发迁移 (完成 2026-09-08)
