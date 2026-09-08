@@ -2,9 +2,14 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { cmdInit, cmdTask, cmdLog } from '../src/store.js';
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
+const CLI = join(REPO, 'bin', 'abs.js');
 
 let sandbox;
 let project;
@@ -73,5 +78,19 @@ describe('并发写保护', () => {
     // 无残留 tmp 文件
     const leftovers = (await fs.readdir(srcDir)).filter((f) => f.includes('.tmp-'));
     assert.equal(leftovers.length, 0);
+  });
+
+  // 回归: 真实多进程 CLI 并发写, 不应因排队等锁 LockTimeout 饿死而丢(见 acquireLock 预算)
+  test('多进程 CLI 并发 task start 不丢(排队等锁不饿死)', async () => {
+    const N = 12; // 独立 CLI 进程并发打同一 todo.md
+    const runs = await Promise.all(Array.from({ length: N }, (_, i) => new Promise((resolve) => {
+      const c = spawn(process.execPath, [CLI, 'task', 'start', `MPCLI-${i}`, '--note', `x${i}`, '--dir', project]);
+      c.on('close', (code) => resolve(code));
+    })));
+    for (const code of runs) assert.equal(code, 0, `某进程退出码非 0 (LockTimeout 饿死): ${runs.filter((x) => x !== 0).join(',')}`);
+    const todo = await fs.readFile(join(project, '.brain', 'todo.md'), 'utf8');
+    for (let i = 0; i < N; i++) assert.ok(todo.includes(`MPCLI-${i}`), `丢失了 MPCLI-${i}(排队等锁被饿死)`);
+    const locks = (await fs.readdir(join(project, '.brain'))).filter((f) => f.endsWith('.lock'));
+    assert.equal(locks.length, 0, `残留 .lock: ${locks.join(',')}`);
   });
 });

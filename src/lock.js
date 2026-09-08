@@ -8,33 +8,43 @@ import { join, dirname, basename } from 'node:path';
 export const SKIP = Symbol('editFile.skip');
 
 export class LockTimeout extends Error {}
-const LOCK_WAIT_MS = 300; // 重试间隔
-const LOCK_MAX_WAIT_MS = 3000; // 抢锁总预算
-const STALE_MS = 10 * 1000; // 超过此年龄视为残留锁(崩溃进程没释放)，允许摘除
+const LOCK_WAIT_BASE_MS = 15;  // 指数退避起始重试间隔
+const LOCK_WAIT_MAX_MS = 150;  // 指数退避上限
+// 抢锁总预算：排队等锁的进程须依次排完。多进程高并发(CLI/MCP/hook 同刻抢一文件)下,
+// 3s 会让后到进程在排队中途 LockTimeout 崩溃丢写入。设 30s 容纳大批排队者正常排完。
+const LOCK_MAX_WAIT_MS = 30 * 1000;
+// 超过此年龄视为残留锁(持锁进程崩溃没释放)，允许摘除。须 > LOCK_MAX_WAIT_MS，
+// 否则持锁进程在排队预算内会被误当残留摘除导致临界区重叠。
+const STALE_MS = 60 * 1000;
 
 async function acquireLock(lockPath) {
   const start = Date.now();
+  let backoff = LOCK_WAIT_BASE_MS;
   for (;;) {
     let handle = null;
     try {
-      handle = await fs.open(lockPath, 'wx'); // 原子创建；已存在则抛 EEXIST
+      handle = await fs.open(lockPath, 'wx'); // 原子创建(O_EXCL)；已存在则抛 EEXIST → 排队等
       await handle.close(); // 锁的存在即持有信号；无需保持 fd
       return;
     } catch (e) {
       if (handle) await handle.close().catch(() => {});
       if (e.code !== 'EEXIST') throw e;
-      // 残留锁检测：文件太老则摘除重试（真实竞争者持有时间远小于阈值）
+      // 残留锁检测：锁太老(持锁进程崩溃没释放)则摘除重试；正常排队者持锁时间远小于阈值
       try {
         const st = await fs.stat(lockPath);
         if (Date.now() - st.mtimeMs > STALE_MS) {
           await fs.rm(lockPath, { force: true });
+          backoff = LOCK_WAIT_BASE_MS; // 摘除残留后重置退避
           continue;
         }
-      } catch { /* stat 失败(被释放) → 下一轮重试 */ }
+      } catch { /* stat 失败(锁刚被释放) → 下一轮重试 */ }
       if (Date.now() - start > LOCK_MAX_WAIT_MS) {
-        throw new LockTimeout(`写锁超时(>${LOCK_MAX_WAIT_MS}ms): ${lockPath} 仍被占用`);
+        throw new LockTimeout(`写锁排队超时(等 ${Date.now() - start}ms > 预算 ${LOCK_MAX_WAIT_MS}ms): ${lockPath} 仍被占用`);
       }
-      await new Promise((r) => setTimeout(r, LOCK_WAIT_MS + Math.floor(Math.random() * 50)));
+      // 指数退避等待：让排队者按先后逐步拿到锁(依次排队)。固定 300ms 粗间隔会让
+      // 高并发下后到进程累积等待过久、在预算内排不完而饿死。
+      await new Promise((r) => setTimeout(r, backoff + Math.floor(Math.random() * backoff)));
+      backoff = Math.min(backoff * 2, LOCK_WAIT_MAX_MS);
     }
   }
 }
