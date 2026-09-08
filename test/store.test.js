@@ -188,6 +188,19 @@ describe('cmdTask', () => {
     assert.ok(t.includes(`完成 ${today()}`));
   });
 
+  test('done 归位时断点附属行随任务走，不残留原区 (trimStart bug)', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-BP', note: '带断点任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'T-BP', note: '改到 store.js L40' });
+    const r = await cmdTask({ dir: projectA, action: 'done', id: 'T-BP' });
+    assert.ok(r.includes('✓'), r);
+    const t = await readTodo(projectA);
+    const todaySec = t.split('## Today')[1]?.split('## ')[0] || '';
+    const doneSec = t.split('## Done')[1] || '';
+    // 断点应随任务进 Done 区（Done 区内 T-BP 行下方）
+    assert.ok(!todaySec.includes('改到 store.js L40'), `断点不应残留在 Today 区:\n${todaySec}`);
+    assert.ok(doneSec.includes('改到 store.js L40'), `断点应随任务归位 Done:\n${doneSec}`);
+  });
+
   test('done 幂等: 重复 done 不再追加行', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'T-4' });
     await cmdTask({ dir: projectA, action: 'done', id: 'T-4' });
@@ -460,5 +473,25 @@ describe('cmdLint', () => {
     }
     const out = await cmdLint({ dir: projectA });
     assert.ok(out.includes('SOURCES-PILED-UP'), out);
+  });
+
+  test('source 暂存页孤立不报 ORPHAN (豁免)', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'sources', '2026-09-08-孤立线索.md'),
+      '---\ntags: [source]\nupdated: 2026-09-08\nstatus: draft\n---\n待提炼的孤立线索',
+      'utf8'
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!out.includes('ORPHAN-PAGE'), out);
+  });
+
+  test('concept 页孤立仍报 ORPHAN (不豁免)', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', '真孤立.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n无任何链接的概念',
+      'utf8'
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('ORPHAN-PAGE'), out);
   });
 });

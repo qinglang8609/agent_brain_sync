@@ -3,7 +3,8 @@
 import { promises as fs } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { requireBrain, findBrainRoot, brainPath } from './index.js';
-import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, setBreakpoint, moveBlocked } from './todo.js';
+import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked } from './todo.js';
+import { editFile, SKIP } from './lock.js';
 
 // ---------- init: 建 .brain/ 骨架 ----------
 const BRAIN_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];
@@ -177,31 +178,27 @@ function tailLines(text, n) {
   return lines.slice(-n).join('\n');
 }
 
-// ---------- log: 追加一行活动流水（默认 hook 前缀；也可 task/note 调用方指定 kind） ----------
-export async function cmdLog({ dir, title, kind = 'hook' }) {
+// ---------- log: 追加工作成果沉淀摘要（用户/AI 主动 abs log "..." 记, 不收工具动作流水） ----------
+export async function cmdLog({ dir, title, kind = 'dev' }) {
   const root = await requireBrain(dir || process.cwd());
   const p = brainPath(root, 'log.md');
-  let text = '';
-  try { text = await fs.readFile(p, 'utf8'); } catch { text = '# 🗒 操作日志\n'; }
-  const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
+  const stamp = localStamp();
   const clean = String(title || '').replace(/\n/g, ' ').slice(0, 100); // 整行含前缀 ≤120
   const line = `## [${stamp}] ${kind} | ${clean}`;
-  // 倒序：新行插在标题后（若已是模板占位行则替换它）
-  const lines = text.split('\n');
-  const headerIdx = lines.findIndex((l) => l.startsWith('#'));
-  lines.splice(headerIdx + 1, 0, line);
-  await fs.writeFile(p, lines.join('\n'), 'utf8');
+  await editFile(p, (cur) => {
+    const text = cur ?? '# 🗒 操作日志\n';
+    // 倒序：新行插在标题后（若已是模板占位行则替换它）
+    const lines = text.split('\n');
+    const headerIdx = lines.findIndex((l) => l.startsWith('#'));
+    lines.splice(headerIdx + 1, 0, line);
+    return { text: lines.join('\n') };
+  });
   return `✓ log → ${p}\n  ${line}`;
 }
 
 // ---------- task: 登记/推进（幂等键 = 行首 id；hook 也调这个） ----------
-// 每次成功的 task 操作都在 log.md 留一行活动（倒序流水），格式: [time] task | <action> <id> [note摘要]
-async function taskLog(root, action, id, note) {
-  try {
-    await cmdLog({ dir: root, title: `${action} ${id}${note ? ' — ' + note.slice(0, 50) : ''}`, kind: 'task' });
-  } catch { /* 日志失败不影响 task 主操作 */ }
-}
-
+// 纪律: task 过程动作(start/done/note/blocked)只改 todo.md, 不写 log.md。
+// log.md 是「工作成果沉淀摘要」(用户/AI 主动 abs log "..." 记), 不收工具动作流水。
 export async function cmdTask({ dir, action, id, section, note }) {
   const root = await requireBrain(dir || process.cwd());
   if (action === 'start') {
@@ -210,55 +207,53 @@ export async function cmdTask({ dir, action, id, section, note }) {
       section: section || 'Today / In Progress',
       text: `${text} (认领 ${today()})`,
     });
-    await taskLog(root, action, id, note);
     return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  ${id}${note ? ' — ' + note : ''}`;
   }
   if (action === 'blocked') {
     const r = await moveBlocked(root, { id, reason: note });
-    if (r.ok) await taskLog(root, action, id, note);
     return r.msg;
   }
   if (action === 'note') {
     if (!note) return '用法: abs task note <id> --note "断点/进度"（实时落 ↳ 断点 行）';
     const r = await setBreakpoint(root, { id, text: note });
-    if (r.ok) await taskLog(root, action, id, note);
     return r.msg;
   }
   if (action === 'done') {
     // 找到匹配 id 的行，勾选并归位 Done（简化：若行在某 section 则标记完成）
     const res = await markDone(brainPath(root, 'todo.md'), id);
-    // markDone 成功时才记 log（避免把"未找到"当完成）
-    if (res.startsWith('✓')) await taskLog(root, action, id, note);
     return res;
   }
   throw new Error(`unknown task action: ${action}`);
 }
 
 async function markDone(file, id) {
-  const text = await fs.readFile(file, 'utf8');
-  const lines = text.split('\n');
-  const doneIdx = lines.findIndex((l) => l.startsWith('## Done'));
-  let changed = false;
-  const kept = [];
-  const moved = [];
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    if (l.startsWith('- [ ]') && l.includes(id)) {
-      changed = true;
-      moved.push(l.replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + ` (完成 ${today()})`);
-      // 附属断点行随任务行一起归位
-      while (i + 1 < lines.length && lines[i + 1].startsWith('↳')) moved.push(lines[++i]);
-      continue;
+  const res = await editFile(file, (text) => {
+    const lines = text.split('\n');
+    const doneIdx = lines.findIndex((l) => l.startsWith('## Done'));
+    let changed = false;
+    const kept = [];
+    const moved = [];
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (l.startsWith('- [ ]') && l.includes(id)) {
+        changed = true;
+        moved.push(l.replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + ` (完成 ${today()})`);
+        // 附属断点行随任务行一起归位（断点行是 "  ↳ ..."，须 trimStart 匹配）
+        while (i + 1 < lines.length && lines[i + 1].trimStart().startsWith('↳')) moved.push(lines[++i]);
+        continue;
+      }
+      kept.push(l);
     }
-    kept.push(l);
-  }
-  if (!changed) return `(未找到含 "${id}" 的未完成任务行)`;
-  // 归位: 移入 Done 区标题后（无 Done 区则追加文件尾）
-  const out = doneIdx === -1
-    ? [...kept, ...moved]
-    : [...kept.slice(0, doneIdx + 1), ...moved, ...kept.slice(doneIdx + 1)];
-  await fs.writeFile(file, out.join('\n'), 'utf8');
-  return `✓ 已完成并归位 Done: ${id}`;
+    if (!changed) return SKIP;
+    // 归位: 移入 Done 区标题后（无 Done 区则追加文件尾）
+    const out = doneIdx === -1
+      ? [...kept, ...moved]
+      : [...kept.slice(0, doneIdx + 1), ...moved, ...kept.slice(doneIdx + 1)];
+    return { text: out.join('\n') };
+  });
+  return res === SKIP
+    ? `(未找到含 "${id}" 的未完成任务行)`
+    : `✓ 已完成并归位 Done: ${id}`;
 }
 
 // ---------- show: 查看 index/todo/log（只读面） ----------
@@ -269,9 +264,12 @@ export async function cmdShow({ dir, view }) {
   }
   const root = await requireBrain(dir || process.cwd());
   const p = brainPath(root, `${v === 'todo' ? 'todo' : v}.md`);
+  // todo 走 readTodo（含老格式惰性迁移写回）；index/log 直接读
   let text;
   try {
-    text = (await fs.readFile(p, 'utf8')).trim();
+    text = v === 'todo'
+      ? await readTodo(root)          // 迁移老格式 In Progress/Todo → B4
+      : (await fs.readFile(p, 'utf8')).trim();
   } catch {
     return `${v}.md 不存在于 ${brainPath(root)}。初始化/补齐: abs init --repair`;
   }
@@ -370,22 +368,26 @@ export async function cmdNote({ dir, text, tags }) {
     '（提炼成 concepts 规律页后，在此挂双链到该页）',
     '',
   ].join('\n');
-  await fs.writeFile(join(srcDir, file), body, 'utf8');
-  // index Sources 区登记 + log 一行（与 Teardown 步骤 7 一致）
+  // 源文件是新写唯一文件：tmp+rename 原子落盘（避免并发读读到半写文件）
+  const srcFile = join(srcDir, file);
+  const tmp = join(srcDir, `.${file}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
+  await fs.writeFile(tmp, body, 'utf8');
+  await fs.rename(tmp, srcFile);
+  // index Sources 区登记（锁内幂等：别页已登记则跳过，防并发重复） + log 一行
   const iP = brainPath(root, 'index.md');
-  let index = await fs.readFile(iP, 'utf8').catch(() => '');
-  if (index && !index.includes(`[[${file.replace(/\.md$/, '')}]]`)) {
+  const slug = file.replace(/\.md$/, '');
+  const line = `- [[${slug}]] — ${clean.slice(0, 40)}`;
+  await editFile(iP, (index) => {
+    if (!index || index.includes(`[[${slug}]]`)) return SKIP;
     const sIdx = index.indexOf('## Sources');
-    if (sIdx !== -1) {
-      const line = `- [[${file.replace(/\.md$/, '')}]] — ${clean.slice(0, 40)}`;
-      const after = index.indexOf('\n## ', sIdx + 1);
-      index = after === -1
-        ? index.replace(/$/, `\n${line}`)
-        : index.slice(0, after) + `\n${line}` + index.slice(after);
-      await fs.writeFile(iP, index, 'utf8');
-    }
-  }
-  await cmdLog({ dir: root, title: `note | ${clean.slice(0, 60)}` });
+    if (sIdx === -1) return SKIP;
+    const after = index.indexOf('\n## ', sIdx + 1);
+    const next = after === -1
+      ? `${index.replace(/\s*$/, '')}\n${line}\n`
+      : index.slice(0, after) + `\n${line}` + index.slice(after);
+    return { text: next };
+  });
+  await cmdLog({ dir: root, title: clean.slice(0, 60), kind: 'note' });
   return `✓ 经验暂存 → sources/${file}\n  ${clean.slice(0, 60)}`;
 }
 // ---------- lint: 体检（与 scripts/lint.sh 同规则的 Node 版，供 CLI/MCP 直调） ----------
@@ -408,7 +410,8 @@ export async function cmdLint({ dir }) {
       if (/slug|Name|name|Date|页面名$/.test(ln)) issues.push(`TEMPLATE-LINK: ${pg.rel} -> [[${ln}]]`);
       if (!names.has(ln)) issues.push(`DEAD-LINK: ${pg.rel} -> [[${ln}]]`);
     }
-    if (!pg.links.length && !linkedNames.has(pg.slug)) {
+    // ORPHAN: sources/ 暂存页豁免（暂存线索天然孤立，提炼成 concept 前不强制挂链）
+    if (pg.dir !== 'sources' && !pg.links.length && !linkedNames.has(pg.slug)) {
       issues.push(`ORPHAN-PAGE: ${pg.rel} (no links out, no links in)`);
     }
     if (/知识冲突/.test(pg.body) && /status: draft/.test(pg.frontmatter)) {

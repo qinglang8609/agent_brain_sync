@@ -2,10 +2,21 @@
 // 格式沿用 SKILL.md 契约：Backlog → Today / In Progress → Blocked → Done，半成品 `↳ 断点:`。
 import { promises as fs } from 'node:fs';
 import { brainPath } from './index.js';
+import { editFile, SKIP } from './lock.js';
 
-// ---------- 今天日期 ----------
+// ---------- 本地日期 ----------
 export function today() {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  // 用本地时区取 YYYY-MM-DD（toISOString 是 UTC, 会跨天错一天）
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// 本地日期时间 YYYY-MM-DD HH:MM（log 流水用）
+export function localStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 // ---------- 读取 todo.md ----------
@@ -19,7 +30,8 @@ export async function readTodo(brainRoot) {
   }
   const norm = normalizeTodo(text);
   if (norm !== text) {
-    await fs.writeFile(p, norm, 'utf8'); // 惰性迁移：读到老格式顺带归一
+    // 惰性迁移也是写：走锁，避免与并发写互相覆盖（锁内 re-read 已是权威最新内容）
+    await editFile(p, (cur) => (cur === text ? { text: norm } : SKIP));
     return norm;
   }
   return text;
@@ -27,11 +39,8 @@ export async function readTodo(brainRoot) {
 
 export async function ensureTodo(brainRoot) {
   const p = brainPath(brainRoot, 'todo.md');
-  try {
-    await fs.access(p);
-  } catch {
-    await fs.writeFile(p, todoTemplate(), 'utf8');
-  }
+  // 缺失才建模板；经锁写盘保证原子性（避免与并发 editFile 读到半写内容）
+  await editFile(p, (cur) => (cur === null ? { text: todoTemplate() } : SKIP));
   return p;
 }
 
@@ -62,7 +71,7 @@ export function normalizeTodo(text) {
     let inSec = false;
     for (const l of lines) {
       if (l.startsWith('## ')) { inSec = l.trim() === `## ${name}`; continue; }
-      if (inSec && l.trim()) items.push(l);
+      if (inSec && l.trim() && !isPlaceholder(l)) items.push(l);
     }
     return items;
   };
@@ -70,23 +79,31 @@ export function normalizeTodo(text) {
   const blocked = grab('Blocked');
   const inprog = grab('In Progress');
   const todo = grab('Todo');
-  out.push('## Backlog', ...todo.length ? todo : ['- [ ] 待办任务（从老格式迁移）']);
+  out.push('## Backlog', ...todo.length ? todo : []);
   out.push('## Today / In Progress', ...inprog.length ? inprog : []);
   out.push('## Blocked', ...blocked.length ? blocked : []);
-  out.push('## Done（只留近期，旧的迁 log.md/快照）', ...done.length ? done : ['- [x] （无）— 迁移自老格式']);
+  out.push('## Done（只留近期，旧的迁 log.md/快照）', ...done.length ? done : []);
   return out.join('\n');
+}
+
+// 占位/空任务行（老模板的 "（无）"/"无"/纯 - [ ]）不迁移
+function isPlaceholder(line) {
+  const t = line.trim();
+  if (!/^- \[[ x]\]/.test(t)) return false; // 只判任务行
+  const body = t.replace(/^- \[[ x]\]\s*/, '').replace(/\(认领[^)]*\)/g, '').trim();
+  return !body || /^(无|（无）|None|null)$/.test(body);
 }
 /** 在指定分区段落后插入一行任务；找不到分区则在文件末尾追加回退。写前惰性迁移老格式。 */
 export async function addTask(brainRoot, { section, text }) {
-  await ensureTodo(brainRoot);
-  const p = brainPath(brainRoot, 'todo.md');
-  let orig = await fs.readFile(p, 'utf8');
-  const norm = normalizeTodo(orig);
-  if (norm !== orig) {
-    await fs.writeFile(p, norm, 'utf8');
-    orig = norm;
-  }
-  const lines = orig.split('\n');
+  const p = await ensureTodo(brainRoot);
+  await editFile(p, (orig) => ({ text: insertTask(orig, section, text) }));
+  return { file: p, text };
+}
+
+/** 纯函数：把任务行插到分区标题后。供 editFile mutator 复用（upsert 也用它）。 */
+function insertTask(orig, section, text) {
+  const base = normalizeTodo(orig);
+  const lines = base.split('\n');
   const header = `## ${section}`;
   let idx = lines.findIndex((l) => l.startsWith(header));
   if (idx === -1) {
@@ -97,8 +114,7 @@ export async function addTask(brainRoot, { section, text }) {
     while (insertAt < lines.length && !lines[insertAt].startsWith('## ')) insertAt++;
     lines.splice(insertAt, 0, `- [ ] ${text}`);
   }
-  await fs.writeFile(p, lines.join('\n'), 'utf8');
-  return { file: p, text };
+  return lines.join('\n');
 }
 
 /** 任务行解析：`- [ ] <id> — note (认领 date)` / 附属断点行 `↳ 断点:`。 */
@@ -109,24 +125,27 @@ export function parseTaskLine(line) {
 
 /** 幂等登记：同 id 已有未完成任务行则原位更新（新 note/新认领日期），否则插入。 */
 export async function upsertTask(brainRoot, { section, text }) {
-  await ensureTodo(brainRoot);
-  const p = brainPath(brainRoot, 'todo.md');
-  const orig = await fs.readFile(p, 'utf8');
-  const lines = orig.split('\n');
+  const p = await ensureTodo(brainRoot);
   const id = extractId(text);
-  // 在所有分区中找含该 id 的未完成任务行（Done 的已完成行不重复动）
-  const idx = lines.findIndex((l) => l.startsWith('- [ ]') && id && l.includes(id));
-  if (idx !== -1) {
-    // 原位更新：保留断点附属行，只换任务行本体
-    const note = extractNote(text);
-    const oldNote = extractNote(lines[idx].replace(/^- \[ \] /, ''));
-    const merged = note && oldNote && oldNote.startsWith(note) ? `${note}${oldNote.slice(note.length)}` : note || oldNote;
-    lines[idx] = `- [ ] ${id}${merged ? ' — ' + merged : ''} (认领 ${today()})`;
-    await fs.writeFile(p, lines.join('\n'), 'utf8');
-    return { file: p, text: lines[idx], updated: true };
-  }
-  const r = await addTask(brainRoot, { section, text });
-  return { ...r, updated: false };
+  const note = extractNote(text);
+  const out = await editFile(p, (orig) => {
+    const base = normalizeTodo(orig);
+    const lines = base.split('\n');
+    // 在所有分区中找含该 id 的未完成任务行（Done 的已完成行不重复动）
+    const idx = lines.findIndex((l) => l.startsWith('- [ ]') && id && l.includes(id));
+    if (idx !== -1) {
+      // 原位更新：保留断点附属行，只换任务行本体
+      const oldNote = extractNote(lines[idx].replace(/^- \[ \] /, ''));
+      const merged = note && oldNote && oldNote.startsWith(note) ? `${note}${oldNote.slice(note.length)}` : note || oldNote;
+      const newLine = `- [ ] ${id}${merged ? ' — ' + merged : ''} (认领 ${today()})`;
+      lines[idx] = newLine;
+      return { text: lines.join('\n'), updated: true };
+    }
+    return { text: insertTask(base, section, text), updated: false };
+  });
+  return out.updated
+    ? { file: p, text, updated: true }
+    : { file: p, text, updated: false };
 }
 
 /** 从任务文本提取幂等键（行首 id，如 TASK-1 / T-2 / fix-hook）。 */
@@ -149,45 +168,51 @@ export function findTaskLine(lines, id) {
 
 /** 实时断点: 在 id 任务行下原位补/换 `↳ 断点:` 附属行（不挪任务位置）。 */
 export async function setBreakpoint(brainRoot, { id, text }) {
-  await ensureTodo(brainRoot);
-  const p = brainPath(brainRoot, 'todo.md');
-  const lines = (await fs.readFile(p, 'utf8')).split('\n');
-  const idx = findTaskLine(lines, id);
-  if (idx === -1) return { ok: false, msg: `(未找到含 "${id}" 的未完成任务行)` };
+  const p = await ensureTodo(brainRoot);
   const bp = `  ↳ 断点: ${text}`;
-  if (lines[idx + 1] && lines[idx + 1].trimStart().startsWith('↳ 断点:')) {
-    lines[idx + 1] = bp; // 幂等: 更新原附属行
-  } else {
-    lines.splice(idx + 1, 0, bp);
-  }
-  await fs.writeFile(p, lines.join('\n'), 'utf8');
-  return { ok: true, msg: `✓ 断点已落 → ${id}\n  ${bp.trim()}` };
+  const res = await editFile(p, (orig) => {
+    const lines = orig.split('\n');
+    const idx = findTaskLine(lines, id);
+    if (idx === -1) return SKIP;
+    if (lines[idx + 1] && lines[idx + 1].trimStart().startsWith('↳ 断点:')) {
+      lines[idx + 1] = bp; // 幂等: 更新原附属行
+    } else {
+      lines.splice(idx + 1, 0, bp);
+    }
+    return { text: lines.join('\n'), ok: true };
+  });
+  return res === SKIP
+    ? { ok: false, msg: `(未找到含 "${id}" 的未完成任务行)` }
+    : { ok: true, msg: `✓ 断点已落 → ${id}\n  ${bp.trim()}` };
 }
 
 /** 实时碰壁: 任务行原位勾成 blocked 语义（移入 Blocked 区 + 附原因）。 */
 export async function moveBlocked(brainRoot, { id, reason }) {
-  await ensureTodo(brainRoot);
-  const p = brainPath(brainRoot, 'todo.md');
-  const lines = (await fs.readFile(p, 'utf8')).split('\n');
-  const idx = findTaskLine(lines, id);
-  if (idx === -1) return { ok: false, msg: `(未找到含 "${id}" 的未完成任务行)` };
-  const taskLine = lines[idx];
-  const kept = [];
-  const moved = [taskLine];
-  for (let i = 0; i < lines.length; i++) {
-    if (i === idx) {
-      while (i + 1 < lines.length && lines[i + 1].trimStart().startsWith('↳')) moved.push(lines[++i]);
-      continue;
+  const p = await ensureTodo(brainRoot);
+  const res = await editFile(p, (orig) => {
+    const lines = orig.split('\n');
+    const idx = findTaskLine(lines, id);
+    if (idx === -1) return SKIP;
+    const taskLine = lines[idx];
+    const kept = [];
+    const moved = [taskLine];
+    for (let i = 0; i < lines.length; i++) {
+      if (i === idx) {
+        while (i + 1 < lines.length && lines[i + 1].trimStart().startsWith('↳')) moved.push(lines[++i]);
+        continue;
+      }
+      kept.push(lines[i]);
     }
-    kept.push(lines[i]);
-  }
-  const bIdx = kept.findIndex((l) => l.startsWith('## Blocked'));
-  if (reason) moved.push(`  ↳ 卡点: ${reason}`);
-  const out = bIdx === -1
-    ? [...kept, '## Blocked', ...moved]
-    : [...kept.slice(0, bIdx + 1), ...moved, ...kept.slice(bIdx + 1)];
-  await fs.writeFile(p, out.join('\n'), 'utf8');
-  return { ok: true, msg: `✓ 已标阻塞 → Blocked 区: ${id}${reason ? `\n  卡点: ${reason}` : ''}` };
+    const bIdx = kept.findIndex((l) => l.startsWith('## Blocked'));
+    if (reason) moved.push(`  ↳ 卡点: ${reason}`);
+    const out = bIdx === -1
+      ? [...kept, '## Blocked', ...moved]
+      : [...kept.slice(0, bIdx + 1), ...moved, ...kept.slice(bIdx + 1)];
+    return { text: out.join('\n'), ok: true };
+  });
+  return res === SKIP
+    ? { ok: false, msg: `(未找到含 "${id}" 的未完成任务行)` }
+    : { ok: true, msg: `✓ 已标阻塞 → Blocked 区: ${id}${reason ? `\n  卡点: ${reason}` : ''}` };
 }
 
 // ---------- 看板输出 ----------
