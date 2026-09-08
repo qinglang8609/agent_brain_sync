@@ -1,0 +1,21 @@
+{
+  "name": "abs",
+  "version": "0.1.0",
+  "description": "agent-brain-sync: MCP + hook + skill 安装器,跨会话记忆的机械落盘。hook 纯触发 → CLI 读写 → markdown 图谱(.brain)。",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "abs": "bin/abs.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "scripts": {
+    "abs": "node bin/abs.js",
+    "mcp": "node bin/mcp.js",
+    "test": "node --test test/store.test.js"
+  }
+}
