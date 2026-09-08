@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow } from '../src/store.js';
-import { readTodo, todoTemplate, today, addTask } from '../src/todo.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 
 // ---------- 测试沙盒: 每个用例一个临时目录 ----------
@@ -108,6 +108,54 @@ describe('todo 层', () => {
     const t = await readTodo(projectA);
     const backlog = t.split('## Today')[0];
     assert.ok(backlog.includes('X — 优先级:P1'));
+  });
+});
+
+// ---------- 老格式迁移 (用户报告: bootstrap 老模板 In Progress/Todo 与 B4 定稿冲突) ----------
+describe('normalizeTodo 老格式迁移', () => {
+  const OLD = [
+    '# 📋 Todo 看板',
+    '## In Progress',
+    '- [ ] 正在做的事 (认领 2026-09-08)',
+    '## Todo',
+    '- [ ] 老待办A',
+    '- [ ] 老待办B',
+    '## Blocked',
+    '- [ ] 卡住的事 — 原因',
+    '## Done',
+    '- [x] 老完成 — 完成日期',
+    '',
+  ].join('\n');
+
+  test('老格式 → B4 定稿: In Progress→Today, Todo→Backlog, 内容不丢', () => {
+    const out = normalizeTodo(OLD);
+    assert.ok(out.includes('## Backlog'), out);
+    assert.ok(out.includes('## Today / In Progress'), out);
+    assert.ok(out.includes('- [ ] 正在做的事 (认领 2026-09-08)'), 'In Progress 内容应进 Today 区');
+    assert.ok(out.includes('- [ ] 老待办A') && out.includes('- [ ] 老待办B'), 'Todo 内容应进 Backlog');
+    const backlog = out.split('## Today')[0];
+    assert.ok(backlog.includes('老待办A'), '老 Todo 应在 Backlog 区');
+    assert.ok(out.includes('## Blocked') && out.includes('卡住的事'));
+    assert.ok(out.includes('老完成'));
+  });
+
+  test('新格式幂等: 已有 Backlog/Today 区原样返回', () => {
+    const t = todoTemplate();
+    assert.equal(normalizeTodo(t), t);
+  });
+
+  test('迁移后 task done 能正确归位 (端到端)', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'), OLD, 'utf8');
+    const r = await cmdTask({ dir: projectA, action: 'start', id: 'MIG-1', note: '迁移后登记' });
+    assert.ok(r.includes('登记'), r);
+    const t = await readTodo(projectA);
+    assert.ok(!t.includes('## In Progress\n') || t.includes('## Today / In Progress'), `应已归一:\n${t}`);
+    assert.ok(t.includes('MIG-1'));
+    const r2 = await cmdTask({ dir: projectA, action: 'done', id: 'MIG-1' });
+    assert.ok(r2.includes('✓'), r2);
+    const t2 = await readTodo(projectA);
+    const doneSec = t2.split('## Done')[1] || '';
+    assert.ok(doneSec.includes('MIG-1'), `迁移后 done 应归位 Done:\n${t2}`);
   });
 });
 

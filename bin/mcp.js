@@ -7,8 +7,42 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { appendFile, mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { findBrainRoot } from '../src/index.js';
 import { cmdBoard, cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote } from '../src/store.js';
+
+// ---------- 技术日志: MCP 请求跟踪（调试用, 与图谱 log.md 完全分开） ----------
+// 落 ~/.abs/log/mcp.log: 每次工具调用一行 [时间] tool cwd 参数摘要 → 耗时/结果摘要。
+// 关闭: ABS_LOG=0。stderr 不用（stdio transport 会污染协议）。
+const MCP_LOG = process.env.ABS_LOG !== '0';
+const LOG_DIR = process.env.ABS_LOG_DIR || join(homedir(), '.abs', 'log');
+async function tlog(line) {
+  if (!MCP_LOG) return;
+  try {
+    await mkdir(LOG_DIR, { recursive: true });
+    await appendFile(join(LOG_DIR, 'mcp.log'), `[${new Date().toISOString()}] ${line}\n`);
+  } catch { /* 日志失败不影响服务 */ }
+}
+
+// 包一层: 记录每个工具调用的入参摘要与耗时
+function withTrace(name, handler) {
+  return async (args) => {
+    const t0 = Date.now();
+    const argBrief = JSON.stringify(args || {}).slice(0, 200);
+    try {
+      const r = await handler(args);
+      const text = r?.content?.[0]?.text || '';
+      const brief = text.replace(/\n/g, '⏎').slice(0, 120);
+      await tlog(`tool=${name} cwd=${args?.cwd || '-'} args=${argBrief} → ${r?.isError ? 'ERR' : 'OK'} ${Date.now() - t0}ms | ${brief}`);
+      return r;
+    } catch (e) {
+      await tlog(`tool=${name} cwd=${args?.cwd || '-'} args=${argBrief} → THROW ${Date.now() - t0}ms | ${String(e?.message || e).slice(0, 200)}`);
+      throw e;
+    }
+  };
+}
 
 const server = new McpServer({
   name: 'abs',

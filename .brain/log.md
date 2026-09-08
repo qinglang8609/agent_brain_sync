@@ -1,28 +1,8 @@
 # 🗒 操作日志
-## [2026-09-08 12:24] hook | [dev] 整批变更已提交 5 commits
-## [2026-09-08 12:24] hook | [dev] 整批变更已提交 5 commits (chore gitignore / docs PLAN / feat abs核心 / docs SKILL / feat brain+test)
-## [2026-09-08 12:18] hook | [UserPromptSubmit] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fa
-## [2026-09-08 12:08] hook | [UserPromptSubmit] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fa
-## [2026-09-08 12:08] hook | [SessionStart] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fancha
-## [2026-09-08 12:08] hook | [SessionEnd] {"session_id":"e3304957-681e-4a58-b268-75f9da2b895f","transcript_path":"/Users/fanchao/
-## [2026-09-08 12:08] hook | [SessionStart] {"session_id":"e3304957-681e-4a58-b268-75f9da2b895f","transcript_path":"/Users/fancha
-## [2026-09-08 12:08] hook | [SessionEnd] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fanchao/
-## [2026-09-08 12:07] hook | [Stop] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fanchao/.claud
-## [2026-09-08 12:06] hook | [UserPromptSubmit] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fa
-## [2026-09-08 12:06] hook | [Stop] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fanchao/.claud
-## [2026-09-08 11:41] hook | [UserPromptSubmit] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fa
-## [2026-09-08 11:36] hook | [UserPromptSubmit] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fa
-## [2026-09-08 11:29] hook | [UserPromptSubmit] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fa
-## [2026-09-08 11:24] hook | [UserPromptSubmit] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fa
-## [2026-09-08 11:24] hook | [Stop] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fanchao/.claud
-## [2026-09-08 11:22] hook | [UserPromptSubmit] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fa
-## [2026-09-08 11:15] hook | [Stop] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fanchao/.claud
-## [2026-09-08 11:15] hook | [dev] 分工节落两份SKILL.md+README, cmdNote占位链修复, 37测试绿
-## [2026-09-08 11:01] hook | [UserPromptSubmit] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fa
-## [2026-09-08 10:59] hook | [Stop] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fanchao/.claud
-## [2026-09-08 10:57] hook | note | hook 调 .js 文件必须经 node 调起(bin 无 exec 位), 且 fire-and-forget 的静
-## [2026-09-08 10:46] hook | [UserPromptSubmit] {"cwd":"/Users/fanchao/Code/skills/agent_brain_sync/abs/src"}
-## [2026-09-08 10:45] hook | [SessionStart] {"cwd":"/tmp"}
-## [2026-09-08 10:33] hook | [hook-test] direct
-## [2026-09-08 10:00] hook | [dev] D1补全: query/lint CLI+MCP, task幂等, done归位Done, hook sh兼容, 29测试全绿
-YYYY-MM-DD | ingest | 沉淀 <concept-slug>
+## [2026-09-08 12:55] hook | [UserPromptSubmit] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fa
+## [2026-09-08 12:52] hook | [UserPromptSubmit] {"session_id":"d3dfc3e8-d0a5-4bac-86e8-12447d350267","transcript_path":"/Users/fa
+## [2026-09-08 12:37] ingest | 修正: hook 事件流水迁出 log.md → ~/.abs/log/hooks.log (本文件只记活动: 任务/沉淀/里程碑); todo 老格式归一 B4
+## [2026-09-08 12:24] dev | 整批变更已提交 5 commits
+## [2026-09-08 11:15] dev | 分工节落两份SKILL.md+README, cmdNote占位链修复, 37测试绿
+## [2026-09-08 10:45] dev | 全局安装 npm link + hook 经 node 调起修复, hook→log 端到端验证过
+## [2026-09-08 10:00] dev | D1补全: query/lint CLI+MCP, task幂等, done归位Done, hook sh兼容, 29测试全绿

@@ -15,7 +15,12 @@ export async function readTodo(brainRoot) {
   try {
     text = await fs.readFile(p, 'utf8');
   } catch {
-    text = ''; // 尚未创建，按空处理
+    return ''; // 尚未创建，按空处理（不在此创建，避免读操作写文件）
+  }
+  const norm = normalizeTodo(text);
+  if (norm !== text) {
+    await fs.writeFile(p, norm, 'utf8'); // 惰性迁移：读到老格式顺带归一
+    return norm;
   }
   return text;
 }
@@ -42,11 +47,45 @@ export function todoTemplate() {
   ].join('\n');
 }
 
-/** 在指定分区段落后插入一行任务；找不到分区则在文件末尾追加回退。 */
+/** 归一化 todo.md 分区：老格式（In Progress/Todo）迁移为 B4 定稿格式（Backlog→Today / In Progress→Blocked→Done）。
+ * 幂等：已是新格式则原样返回。迁移原则——老 "In Progress" 内容进 "Today / In Progress"，老 "Todo" 内容进 "Backlog"。 */
+export const TODO_SECTIONS = ['Backlog', 'Today / In Progress', 'Blocked', 'Done'];
+
+export function normalizeTodo(text) {
+  const lines = text.split('\n');
+  const has = (name) => lines.some((l) => l.trim() === `## ${name}`);
+  if (has('Backlog') || has('Today / In Progress')) return text; // 已是新格式
+  if (!has('In Progress') && !has('Todo')) return text;          // 不是老格式，不动
+  const out = ['# 📋 Todo 看板'];
+  const grab = (name) => {
+    const items = [];
+    let inSec = false;
+    for (const l of lines) {
+      if (l.startsWith('## ')) { inSec = l.trim() === `## ${name}`; continue; }
+      if (inSec && l.trim()) items.push(l);
+    }
+    return items;
+  };
+  const done = grab('Done');
+  const blocked = grab('Blocked');
+  const inprog = grab('In Progress');
+  const todo = grab('Todo');
+  out.push('## Backlog', ...todo.length ? todo : ['- [ ] 待办任务（从老格式迁移）']);
+  out.push('## Today / In Progress', ...inprog.length ? inprog : []);
+  out.push('## Blocked', ...blocked.length ? blocked : []);
+  out.push('## Done（只留近期，旧的迁 log.md/快照）', ...done.length ? done : ['- [x] （无）— 迁移自老格式']);
+  return out.join('\n');
+}
+/** 在指定分区段落后插入一行任务；找不到分区则在文件末尾追加回退。写前惰性迁移老格式。 */
 export async function addTask(brainRoot, { section, text }) {
   await ensureTodo(brainRoot);
   const p = brainPath(brainRoot, 'todo.md');
-  const orig = await fs.readFile(p, 'utf8');
+  let orig = await fs.readFile(p, 'utf8');
+  const norm = normalizeTodo(orig);
+  if (norm !== orig) {
+    await fs.writeFile(p, norm, 'utf8');
+    orig = norm;
+  }
   const lines = orig.split('\n');
   const header = `## ${section}`;
   let idx = lines.findIndex((l) => l.startsWith(header));

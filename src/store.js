@@ -177,15 +177,15 @@ function tailLines(text, n) {
   return lines.slice(-n).join('\n');
 }
 
-// ---------- log: 追加一行流水（hook 落盘点，不碰 todo） ----------
-export async function cmdLog({ dir, title }) {
+// ---------- log: 追加一行活动流水（默认 hook 前缀；也可 task/note 调用方指定 kind） ----------
+export async function cmdLog({ dir, title, kind = 'hook' }) {
   const root = await requireBrain(dir || process.cwd());
   const p = brainPath(root, 'log.md');
   let text = '';
   try { text = await fs.readFile(p, 'utf8'); } catch { text = '# 🗒 操作日志\n'; }
   const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
   const clean = String(title || '').replace(/\n/g, ' ').slice(0, 100); // 整行含前缀 ≤120
-  const line = `## [${stamp}] hook | ${clean}`;
+  const line = `## [${stamp}] ${kind} | ${clean}`;
   // 倒序：新行插在标题后（若已是模板占位行则替换它）
   const lines = text.split('\n');
   const headerIdx = lines.findIndex((l) => l.startsWith('#'));
@@ -195,6 +195,13 @@ export async function cmdLog({ dir, title }) {
 }
 
 // ---------- task: 登记/推进（幂等键 = 行首 id；hook 也调这个） ----------
+// 每次成功的 task 操作都在 log.md 留一行活动（倒序流水），格式: [time] task | <action> <id> [note摘要]
+async function taskLog(root, action, id, note) {
+  try {
+    await cmdLog({ dir: root, title: `${action} ${id}${note ? ' — ' + note.slice(0, 50) : ''}`, kind: 'task' });
+  } catch { /* 日志失败不影响 task 主操作 */ }
+}
+
 export async function cmdTask({ dir, action, id, section, note }) {
   const root = await requireBrain(dir || process.cwd());
   if (action === 'start') {
@@ -203,20 +210,25 @@ export async function cmdTask({ dir, action, id, section, note }) {
       section: section || 'Today / In Progress',
       text: `${text} (认领 ${today()})`,
     });
+    await taskLog(root, action, id, note);
     return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  ${id}${note ? ' — ' + note : ''}`;
   }
   if (action === 'blocked') {
     const r = await moveBlocked(root, { id, reason: note });
+    if (r.ok) await taskLog(root, action, id, note);
     return r.msg;
   }
   if (action === 'note') {
     if (!note) return '用法: abs task note <id> --note "断点/进度"（实时落 ↳ 断点 行）';
     const r = await setBreakpoint(root, { id, text: note });
+    if (r.ok) await taskLog(root, action, id, note);
     return r.msg;
   }
   if (action === 'done') {
     // 找到匹配 id 的行，勾选并归位 Done（简化：若行在某 section 则标记完成）
     const res = await markDone(brainPath(root, 'todo.md'), id);
+    // markDone 成功时才记 log（避免把"未找到"当完成）
+    if (res.startsWith('✓')) await taskLog(root, action, id, note);
     return res;
   }
   throw new Error(`unknown task action: ${action}`);
