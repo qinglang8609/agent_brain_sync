@@ -2,10 +2,11 @@
 ## Backlog
 ## Today / In Progress
 - [ ] 制作为产品模式，打包成可执行文件安装到系统内，给我一个安装步骤 类似 npm install xxx -g (认领 2026-09-08)
-- [ ] 更新readme.md (认领 2026-09-08)
+  ↳ 断点: npm包产品化完成(fc172ba/220a99a): 发布名abs→agent_brain_sync(abs被占用), files白名单13文件30.7kB, prepack chmod, 代理192.168.0.114:7890连通registry. README已写npm install -g agent_brain_sync安装步骤(6ab355a). 剩: 真publish需npm login(当前未登录ENEEDAUTH)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 - [x] 本轮反馈处理: log.md只记工作沉淀(去task自动刷+重写) + 时间戳本地化 + codebuddy todo迁移B4 + cmdShow走readTodo触发迁移 (完成 2026-09-08)
+- [x] 更新readme.md  (完成 2026-09-09)
 - [x] MD-STANDARD-RW — 统一 .brain 文档读写为单一方法(所有需读写 .brain 文档的地方都走它): 读=readBrain, 写=editBrain 内部自动套 lock 防重复/防并发(继承已做的 lock.js), 调用方不用各自拼 editFile+锁. 各页(todo/log/index/source)统一收口  (完成 2026-09-09)
 - [x] TASK-01 — 修 .gitignore 缺 node_modules（提交前必须）  (完成 2026-09-08)
 - [x] TASK-DEEP-TEST — 深度测试四层CLI/install/MCP/hook, 产出可回归单测+真实冒烟  (完成 2026-09-09)

@@ -1,4 +1,5 @@
 # 🗒 操作日志
+## [2026-09-09 00:35] dev | README 更新 + readme 任务归位: README 重写(112行)反映产品模式npm安装(agent_brain_sync)/lock并发写保护/brainio统一读写/moshi共存/
 ## [2026-09-09 00:20] dev | 收尾: TASK-DEEP-TEST + MD-STANDARD-RW 归位 Done. TASK-DEEP-TEST=四层(CLI/install/MCP/hook)测试110绿+真实冒烟+lock
 ## [2026-09-08 23:57] note | lock.js并发丢根因: 非锁失效(临界区重叠=0完美互斥), 而是 LOCK_MAX_WAIT_MS=3s太短, 高
 ## [2026-09-08 23:46] dev | [pi:session_shutdown]
