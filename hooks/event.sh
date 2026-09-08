@@ -18,9 +18,12 @@ PAYLOAD=$(cat 2>/dev/null | head -c 500)
 # 后台执行，hook 立即返回——宿主热路径零阻塞。
 (
   # 幂等: 同一 payload 指纹在 60s 内只落一行 (防重复触发)。
+  # mark 目录可经 ABS_MARK_DIR 覆盖(默认 /tmp)——测试注入沙盒目录隔离, 避免与真实/并发残留互扰。
   FINGER=$(printf '%s' "$PAYLOAD" | cksum | cut -d' ' -f1)
   STAMP=$(date +%Y%m%d%H%M)
-  MARK="/tmp/abs-hook-${FINGER}-${STAMP}.mark"
+  MARK_DIR="${ABS_MARK_DIR:-/tmp}"
+  mkdir -p "$MARK_DIR" 2>/dev/null
+  MARK="$MARK_DIR/abs-hook-${FINGER}-${STAMP}.mark"
   [ -e "$MARK" ] && exit 0
   : > "$MARK" 2>/dev/null
 

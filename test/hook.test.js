@@ -15,11 +15,14 @@ const EVENT_TEMPLATE = join(REPO, 'hooks', 'event.sh');
 
 let sandbox;
 let HOME;
+let MARK_DIR; // 沙盒内幂等 mark 目录, 注入 ABS_MARK_DIR 隔离(不碰真实 /tmp, 防残留互扰)
 
 beforeEach(async () => {
   sandbox = await fs.mkdtemp(join(tmpdir(), 'abs-hook-'));
   HOME = join(sandbox, 'home');
+  MARK_DIR = join(sandbox, 'marks');
   await fs.mkdir(HOME, { recursive: true });
+  await fs.mkdir(MARK_DIR, { recursive: true });
 });
 
 afterEach(async () => {
@@ -43,7 +46,7 @@ async function renderHook(event, payloadHookOpts = {}) {
 function runHook(script, payload) {
   return new Promise((resolve) => {
     const child = spawn('/bin/sh', [script], {
-      env: { ...process.env, HOME },
+      env: { ...process.env, HOME, ABS_MARK_DIR: MARK_DIR },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let out = '';
