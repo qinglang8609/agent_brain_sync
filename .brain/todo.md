@@ -6,6 +6,7 @@
 ## Blocked
 - [ ] 任务 — 原因 + 最近失败输出
 ## Done
+- [x] TASK-COMMIT — 整批变更提交 git (分 conventional commits)  (完成 2026-09-08)
 - [x] TASK-CLI — board→todo改名 + index/log 查看命令 (log无参看带参写)  (完成 2026-09-08)
 - [x] TASK-GLOBAL — npm link 全局命令 + 安装形态概念页  (完成 2026-09-08)
 - [x] TASK-LOG — 写详细操作日志到 .brain/sessions/ 供用户测试追溯  (完成 2026-09-08)
@@ -25,4 +26,3 @@
   ↳ 断点: 实时化已实现: task note/blocked + abs note, 37 测试全绿
   ↳ 断点: 追加: init 需校验 .brain 目录结构完整性(骨架缺失=初始化失败→询问是否重建)
 - [ ] 审查项目 (认领 2026-09-08)
-- [ ] TASK-COMMIT — 整批变更提交 git (分 conventional commits) (认领 2026-09-08)
