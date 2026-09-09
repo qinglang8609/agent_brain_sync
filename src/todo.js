@@ -29,10 +29,11 @@ export async function readTodo(brainRoot) {
     return ''; // 尚未创建，按空处理（不在此创建，避免读操作写文件）
   }
   const norm = normalizeTodo(text);
-  if (norm !== text) {
+  const grouped = groupDoneSection(norm); // 平铺旧 Done → 按日期分组（幂等）
+  if (grouped !== text) {
     // 惰性迁移也是写：走锁，避免与并发写互相覆盖（锁内 re-read 已是权威最新内容）
-    await editFile(p, (cur) => (cur === text ? { text: norm } : SKIP));
-    return norm;
+    await editFile(p, (cur) => (cur === text ? { text: grouped } : SKIP));
+    return grouped;
   }
   return text;
 }
@@ -84,6 +85,89 @@ export function normalizeTodo(text) {
   out.push('## Blocked', ...blocked.length ? blocked : []);
   out.push('## Done（只留近期，旧的迁 log.md/快照）', ...done.length ? done : []);
   return out.join('\n');
+}
+
+/** 从已完成任务行提取 `(完成 YYYY-MM-DD)` 日期；无则返回 ''。兼容中英文括号。 */
+export function doneDateOf(line) {
+  const m = String(line).match(/\(完成\s*(\d{4}-\d{2}-\d{2})[^)]*\)/);
+  return m ? m[1] : '';
+}
+
+/** 判断一行是否为任务行（- [x] / - [ ]，允许缩进）。 */
+function isTaskLine(l) {
+  return /^\s*- \[[ x]\]/.test(l);
+}
+/** 判断一行是否为任务附属行（↳ 开头）。 */
+function isChildLine(l) {
+  return /^\s*↳/.test(l);
+}
+
+/** 把 Done 区文本（bodyLines，不含 `## Done` 标题）解析成任务单元 [{ date, lines:[main,...children] }]。
+ * 剥 `### 日期` 分组标题与空行；任务行下紧跟的 ↳ 行并入该单元。 */
+function parseDoneUnits(bodyLines) {
+  const units = [];
+  let cur = null;
+  for (const l of bodyLines) {
+    if (/^### /.test(l.trim()) || l.trim() === '') { cur = null; continue; } // 分组标题/空行断开会话
+    if (isTaskLine(l)) {
+      cur = { date: doneDateOf(l), lines: [l] };
+      units.push(cur);
+    } else if (isChildLine(l) && cur) {
+      cur.lines.push(l); // 附属行挂到上一个任务
+    }
+  }
+  return units;
+}
+
+/** 按 (完成 date) 分组 Done 任务单元并重建文本行：新日期在前，未标日期归尾组。
+ * 同组内保持输入顺序（幂等）。返回不含 `## Done` 标题的主体行。 */
+function renderDoneGroups(units) {
+  const byDate = new Map();
+  const undated = [];
+  for (const u of units) {
+    if (!u.date) undated.push(u);
+    else {
+      if (!byDate.has(u.date)) byDate.set(u.date, []);
+      byDate.get(u.date).push(u);
+    }
+  }
+  const dates = [...byDate.keys()].sort().reverse(); // 新日期在前
+  const out = [];
+  for (const d of dates) out.push(`### ${d}`, '', ...byDate.get(d).flatMap((u) => u.lines), '');
+  if (undated.length) out.push('### （未标日期）', '', ...undated.flatMap((u) => u.lines), '');
+  return out;
+}
+
+/** 幂等：把 todo 全文里平铺的旧 Done 区按日期分组（新日期在前，未标日期归尾）。
+ * 已是分组态(### date)则原样返回——惰性迁移用，避免每次读都动文件。 */
+export function groupDoneSection(text) {
+  const lines = String(text || '').split('\n');
+  const di = lines.findIndex((l) => l.startsWith('## Done'));
+  if (di === -1) return text;
+  const body = lines.slice(di + 1);
+  const first = body.find((l) => l.trim());
+  if (first && /^### /.test(first.trim())) return text; // 已分组，幂等不动
+  const units = parseDoneUnits(body);
+  if (!units.length) return text;
+  return [...lines.slice(0, di + 1), ...renderDoneGroups(units)].join('\n').replace(/\n+$/, '\n');
+}
+
+/** 把 moved 单元（已完成任务行+附属行）放入 Done 区并整体按日期分组重建。
+ * 供 markDone 用，锁内一次完成「归位 + 分组」。无 Done 区则文件尾补建。 */
+export function insertDoneGrouped(text, movedLines) {
+  const date = doneDateOf(movedLines[0]) || today();
+  const lines = String(text || '').split('\n');
+  const di = lines.findIndex((l) => l.startsWith('## Done'));
+  const newUnit = { date, lines: movedLines };
+  if (di === -1) {
+    const header = '## Done（只留近期，旧的迁 log.md/快照）';
+    return [...lines, '', header, '', ...renderDoneGroups([newUnit])].join('\n').replace(/\n+$/, '\n');
+  }
+  const head = lines.slice(0, di + 1);
+  const body = lines.slice(di + 1);
+  // 新完成单元置前：同日期组内新在最上（renderDoneGroups 按 encounter 顺序保持，日期再倒序排）
+  const units = [newUnit, ...parseDoneUnits(body)];
+  return [...head, ...renderDoneGroups(units)].join('\n').replace(/\n+$/, '\n');
 }
 
 // 占位/空任务行（老模板的 "（无）"/"无"/纯 - [ ]）不迁移

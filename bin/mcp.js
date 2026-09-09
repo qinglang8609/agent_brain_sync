@@ -11,7 +11,7 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { findBrainRoot } from '../src/index.js';
-import { cmdBoard, cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote } from '../src/store.js';
+import { cmdBoard, cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdWrapup } from '../src/store.js';
 
 // ---------- 技术日志: MCP 请求跟踪（调试用, 与图谱 log.md 完全分开） ----------
 // 落 ~/.abs/log/mcp.log: 每次工具调用一行 [时间] tool cwd 参数摘要 → 耗时/结果摘要。
@@ -146,6 +146,17 @@ server.tool(
     const root = await findBrainRoot(cwd || process.cwd());
     if (!root) return err('未找到 .brain/，先 abs init');
     return { content: [{ type: 'text', text: await cmdNote({ dir: root, text, tags }) }] };
+  }
+);
+
+server.tool(
+  'abs_wrapup',
+  '收尾保险：把当前 todo 未完成任务快照到 ~/.abs/log/wrapup.log（下会话 load 时展示滞留对账）。',
+  { cwd: z.string().describe('项目内任意目录') },
+  async ({ cwd }) => {
+    const root = await findBrainRoot(cwd || process.cwd());
+    if (!root) return err('未找到 .brain/，先 abs init');
+    return { content: [{ type: 'text', text: await cmdWrapup({ dir: root }) }] };
   }
 );
 

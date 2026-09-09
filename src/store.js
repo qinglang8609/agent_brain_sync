@@ -3,8 +3,9 @@
 import { promises as fs } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { requireBrain, findBrainRoot, brainPath } from './index.js';
-import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked } from './todo.js';
+import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped } from './todo.js';
 import { editFile, SKIP } from './lock.js';
+import { appendWrapup, strandedFor, wrapupLogPath } from './wrapup.js';
 
 // ---------- init: 建 .brain/ 骨架 ----------
 const BRAIN_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];
@@ -156,7 +157,8 @@ export async function cmdLoad({ dir }) {
   const todo = await readTodo(root);
   const index = await readIfExists(brainPath(root, 'index.md'));
   const log = await readIfExists(brainPath(root, 'log.md'));
-  return [
+  const stranded = await strandedFor(root);
+  const sections = [
     `📂 abs → 项目: ${root}`,
     '--- 当前路线 (index.md) ---',
     index || '(index.md 为空)',
@@ -166,7 +168,28 @@ export async function cmdLoad({ dir }) {
     '',
     '--- 最近动作 (log.md, 末尾 5 条) ---',
     tailLines(log, 5) || '(log.md 为空)',
-  ].join('\n');
+  ];
+  if (stranded.length) {
+    const rows = stranded.map((t) => {
+      const bp = t.bp.length ? `\n    ${t.bp.map((b) => `↳ 断点: ${b}`).join('\n    ')}` : '';
+      return `  - ${t.body}${bp}`;
+    });
+    sections.splice(
+      0, 1,
+      `📂 abs → 项目: ${root}`,
+      '⏳ 上会话滞留（未 done，先对账）',
+      rows.join('\n'),
+      '→ 完成: abs task done <id>；未完: abs task note <id> --note 断点',
+      ''
+    );
+  }
+  return sections.join('\n');
+}
+
+// ---------- wrapup: 滞留快照（B）/ load 内展示由 cmdLoad 完成（A） ----------
+export async function cmdWrapup({ dir }) {
+  const root = await requireBrain(dir || process.cwd());
+  return appendWrapup(root);
 }
 
 async function readIfExists(p) {
@@ -229,27 +252,24 @@ export async function cmdTask({ dir, action, id, section, note }) {
 async function markDone(file, id) {
   const res = await editFile(file, (text) => {
     const lines = text.split('\n');
-    const doneIdx = lines.findIndex((l) => l.startsWith('## Done'));
     let changed = false;
+    let moved = null;
     const kept = [];
-    const moved = [];
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
-      if (l.startsWith('- [ ]') && l.includes(id)) {
+      if (!moved && l.startsWith('- [ ]') && l.includes(id)) {
         changed = true;
-        moved.push(l.replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + ` (完成 ${today()})`);
-        // 附属断点行随任务行一起归位（断点行是 "  ↳ ..."，须 trimStart 匹配）
-        while (i + 1 < lines.length && lines[i + 1].trimStart().startsWith('↳')) moved.push(lines[++i]);
+        const head = l.replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + ` (完成 ${today()})`;
+        const bp = [];
+        while (i + 1 < lines.length && lines[i + 1].trimStart().startsWith('↳')) bp.push(lines[++i]);
+        moved = [head, ...bp];
         continue;
       }
       kept.push(l);
     }
-    if (!changed) return SKIP;
-    // 归位: 移入 Done 区标题后（无 Done 区则追加文件尾）
-    const out = doneIdx === -1
-      ? [...kept, ...moved]
-      : [...kept.slice(0, doneIdx + 1), ...moved, ...kept.slice(doneIdx + 1)];
-    return { text: out.join('\n') };
+    if (!changed || !moved) return SKIP;
+    // 归位 + 按日期分组：insertDoneGrouped 一次重建 Done 区（新日期在前，未标日期归尾）
+    return { text: insertDoneGrouped(kept.join('\n'), moved) };
   });
   return res === SKIP
     ? `(未找到含 "${id}" 的未完成任务行)`

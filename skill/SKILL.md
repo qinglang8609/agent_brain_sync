@@ -89,9 +89,13 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`；横向�
 图谱已存在；收到第一个核心开发指令**之前**走这条链载入上下文：
 
 1. **读状态**：`abs load`（或 MCP `abs_load`）读 index 路线 + todo 看板 + 最近 log。
-2. **读命中页**：按关键词在 index 定位 → 读对应 concepts/entities 全文。
-3. **续 todo**：默认续 todo 分支 → 把顶部未完成项当当前任务开做。
-4. **登记新任务**：有明确新任务而 todo 没有 → `abs task start <id> --note 做什么` 登记
+2. **对账滞留（强制，别跳过）**：若 `abs load` 顶部出现 `⏳ 上会话滞留`，说明上会话有任务做完/做到一半就断了。**先收尾再开工**：
+   - 快照里的任务现在真做完了 → `abs task done <id>`（done 后下次 load 滞留自动消失）；
+   - 还没做完 → `abs task note <id> --note "接到哪/改到哪个文件"` 补断点（别空手续接）。
+   滞留没清完就不算接上了状态——这是「任务做完没进 Done」的根治动作。
+3. **读命中页**：按关键词在 index 定位 → 读对应 concepts/entities 全文。
+4. **续 todo**：默认续 todo 分支 → 把顶部未完成项当当前任务开做。
+5. **登记新任务**：有明确新任务而 todo 没有 → `abs task start <id> --note 做什么` 登记
    再动工。不登记，会话一切断就丢。
 
 ## 进行中：todo 是活看板 + 经验实时落（最重要的纪律）
@@ -102,9 +106,15 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`；横向�
 | 时机 | 动作 |
 |---|---|
 | 认领新任务 | `abs task start <id> --note "做什么"` |
-| 子任务做完 | `abs task done <id>`（自动归位 Done，断点随迁） |
+| 子任务做完 | `abs task done <id>`（自动归位 Done 对应 `### YYYY-MM-DD` 分组顶部，新完成在前；断点随迁） |
 | 碰壁/阻塞 | `abs task blocked <id> --note "卡点原因"`（移 Blocked） |
 | 被打断/改向/干到一半停 | `abs task note <id> --note "改到哪个文件/到哪步"`（补 ↳ 断点 行） |
+
+> **跨会话任务只用 abs task，别用宿主原生 todo。** Cl​aude TodoWrite/Task、co​dex todo-list、
+> Op​enCode todowrite、pi `/list`/goal 各有各的原生任务——但**多是会话内临时**，不会写进
+> `.brain/todo.md`。若用原生 todo 建了跨会话任务，它就会「只在界面 0/N 里、abs 看不到」，
+> 下会话接不上、收尾没影。**分工**：跨会话/会被打断的任务 → `abs task start`（唯一真源）；
+> 原生 todo 顶多记「本会话内不跨断点的临时拆解草稿」。
 
 **经验/坑刚冒出来就落**：`abs note "一句话经验" --tags 坑,docker`（MCP `abs_note`）——
 暂存进 sources/（幂等去重、自动进 index/log），防 context 爆/截断流失。宁少勿滥。
@@ -114,9 +124,10 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`；横向�
 **每个任务边界、每轮被 Stop/打断、告一段落时，别停半空——走收尾循环。**
 这是"开场接上状态、结束落回状态"的闭环，否则下会话接不上、经验流失。
 
-> 触发信号：Stop 时 hook 会在 `~/.abs/log/wrapup.log` 留一行 `wrapup-remind`（只进技术日志、
-> 不碰图谱、不替你做判断）。开场想确认上会话是否收尾，先 `tail ~/.abs/log/wrapup.log`；有
-> remind 说明有会话结束未对账。要不要跑收尾循环、跑多深，由你自觉决定——hook 只给信号。
+> 触发信号：Stop/会话结束 时 hook 会把「当前项目仍未完成任务 + 断点」快照进 `~/.abs/log/wrapup.log`
+> （经 `abs wrapup`，机械、幂等去重，不替你做判断）。**下会话 `abs load` 会自动把滞留顶到顶部**
+> （`⏳ 上会话滞留`），所以收尾不是靠自觉记日志，而是开场被强制接上。要不要把某个任务标 done，
+> 仍由你判断（快照只记录「哪些还开着」，不猜完成）。
 
 收到 Stop / "结束/先这样/切别的事" / 长任务告一段落，立即执行（快、准、不啰嗦）：
 

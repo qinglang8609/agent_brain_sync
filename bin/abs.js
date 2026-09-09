@@ -2,7 +2,7 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup } from '../src/store.js';
 import { runInstall, runUninstall, installSummary } from '../src/install.js';
 
 const [,, cmd, ...rest] = process.argv;
@@ -33,7 +33,7 @@ const usage = `abs — agent-brain-sync 记忆工具
   abs load                   开机读状态 (index/todo/log)
   abs todo                   查看任务看板 (board 的正名)
   abs index                  查看图谱索引 index.md
-  abs log                    无参查看流水 log.md；带参追加一行 (hook 用): abs log "标题"
+  abs log                    无参查看流水 log.md；带参追加一行: abs log "标题" (仅用户/AI 主动记, hook 事件走 ~/.abs/log/hooks.log)
   abs status                 显示当前项目 + 图谱概要
   abs task start   <id> [--note ..] [--section Today / In Progress]  登记任务
   abs task note    <id> --note "断点/进度"   实时落 ↳ 断点 行
@@ -42,6 +42,7 @@ const usage = `abs — agent-brain-sync 记忆工具
   abs note "经验一句话" [--tags 坑,docker]    经验实时暂存 → sources/
   abs query <词1> [词2 …]    检索 .brain/ 知识页 (多词 OR)
   abs lint                   图谱体检 (死链/孤岛/超尺寸/堆积)
+  abs wrapup                 快照当前未完成任务到 ~/.abs/log/wrapup.log (收尾保险)
   abs install [--agent <claude-code|opencode|codex|pi>]  安装 MCP+hook+skill
   abs uninstall [--agent <...>]                            卸载
   abs help                   本帮助
@@ -63,7 +64,7 @@ async function main() {
       case 'todo':     console.log(await cmdShow({ dir: opts.dir, view: 'todo' })); break;
       case 'index':    console.log(await cmdShow({ dir: opts.dir, view: 'index' })); break;
       case 'log': {
-        // 无参=查看 log.md；带参=追加一行流水（hook 落盘点）
+        // 无参=查看 log.md；带参=追加一行 (用户/AI 主动记; hook 生命周期事件走技术日志 hooks.log, 不经这里)
         if (opts._.length) {
           console.log(await cmdLog({ dir: opts.dir, title: opts._.join(' ') }));
         } else {
@@ -93,6 +94,10 @@ async function main() {
       }
       case 'lint': {
         console.log(await cmdLint({ dir: opts.dir }));
+        break;
+      }
+      case 'wrapup': {
+        console.log(await cmdWrapup({ dir: opts.dir }));
         break;
       }
       case 'help': case undefined: case '--help': console.log(usage); break;

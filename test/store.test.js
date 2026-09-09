@@ -6,8 +6,8 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow } from '../src/store.js';
-import { readTodo, todoTemplate, today, addTask, normalizeTodo } from '../src/todo.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup } from '../src/store.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 
 // ---------- 测试沙盒: 每个用例一个临时目录 ----------
@@ -493,5 +493,198 @@ describe('cmdLint', () => {
     );
     const out = await cmdLint({ dir: projectA });
     assert.ok(out.includes('ORPHAN-PAGE'), out);
+  });
+});
+
+// ---------- 收尾保险: wrapup 快照 + load 滞留展示 (WRAPUP) ----------
+describe('cmdWrapup + load 滞留 (A+B)', () => {
+  let logDir;
+  const savedEnv = process.env.ABS_LOG_DIR;
+
+  beforeEach(async () => {
+    logDir = join(sandbox, 'abs-log');
+    process.env.ABS_LOG_DIR = logDir;
+  });
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.ABS_LOG_DIR;
+    else process.env.ABS_LOG_DIR = savedEnv;
+  });
+
+  async function wrapupLogText() {
+    try { return await fs.readFile(join(logDir, 'wrapup.log'), 'utf8'); } catch { return ''; }
+  }
+
+  test('B: 快照把 Today 未完成任务+断点写入 wrapup.log (带 proj 归属)', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'W-1', note: '做 A' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'W-1', note: '改到 store.js L40' });
+    const r = await cmdWrapup({ dir: projectA });
+    assert.ok(r.includes('✓'), r);
+    const text = await wrapupLogText();
+    assert.ok(text.includes(`wrapup proj=${projectA}`), text);
+    assert.ok(text.includes('做 A'), text);
+    assert.ok(text.includes('改到 store.js L40'), text);
+  });
+
+  test('B: Done 区已完成的旧任务不进快照', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'W-2' });
+    await cmdTask({ dir: projectA, action: 'done', id: 'W-2' });
+    await cmdWrapup({ dir: projectA });
+    const text = await wrapupLogText();
+    // W-2 已完成, 快照里不应有它
+    assert.ok(!text.includes('W-2'), text);
+  });
+
+  test('B: 同内容短间隔内重复 wrapup 幂等不重复写', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'W-3' });
+    await cmdWrapup({ dir: projectA });
+    const first = await wrapupLogText();
+    const r2 = await cmdWrapup({ dir: projectA });
+    assert.ok(r2.includes('跳过') || r2.includes('同内容'), r2);
+    assert.equal(await wrapupLogText(), first, '同内容幂等不应再写');
+  });
+
+  test('B: 多项目隔离 — 各项目独立 proj 快照互不串', async () => {
+    const projC = join(sandbox, 'proj-c');
+    await fs.mkdir(projC, { recursive: true });
+    await cmdInit({ dir: projC });
+    await cmdTask({ dir: projectA, action: 'start', id: 'WA-1' });
+    await cmdTask({ dir: projC, action: 'start', id: 'WC-1' });
+    await cmdWrapup({ dir: projectA });
+    await cmdWrapup({ dir: projC });
+    const text = await wrapupLogText();
+    assert.ok(text.includes(`proj=${projectA}`) && text.includes('WA-1'), text);
+    assert.ok(text.includes(`proj=${projC}`) && text.includes('WC-1'), text);
+  });
+
+  test('A: load 展示上会话滞留；任务 done 后滞留自动消失 (交叉核对自清理)', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LA-1', note: '滞留任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LA-1', note: '断点X' });
+    await cmdWrapup({ dir: projectA }); // 模拟上会话结束快照
+    // 下会话 load → 应顶出滞留
+    const load1 = await cmdLoad({ dir: projectA });
+    assert.ok(load1.includes('上会话滞留'), load1);
+    assert.ok(load1.includes('滞留任务'), load1);
+    assert.ok(load1.includes('断点X'), load1);
+    // 把任务 done 了 → 再 load 滞留应消失（不再误报）
+    await cmdTask({ dir: projectA, action: 'done', id: 'LA-1' });
+    const load2 = await cmdLoad({ dir: projectA });
+    assert.ok(!load2.includes('上会话滞留'), `done 后不应再报滞留:\n${load2}`);
+  });
+
+  test('A: 无 wrapup.log 时 load 正常不报滞留', async () => {
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(!out.includes('上会话滞留'), out);
+    assert.ok(out.includes('Todo 看板'), out);
+  });
+});
+
+// ---------- Done 按日期分组 (DONE-GROUP) ----------
+describe('Done 按日期分组 + 老格式兼容', () => {
+  test('平铺旧 Done → 按日期分组, 新日期在前', () => {
+    const flat = [
+      '# 📋 Todo 看板',
+      '## Backlog',
+      '## Today / In Progress',
+      '## Blocked',
+      '## Done（只留近期，旧的迁 log.md/快照）',
+      '- [x] 前天的事 (完成 2026-09-07)',
+      '- [x] 昨天的事 (完成 2026-09-08)',
+      '',
+    ].join('\n');
+    const out = groupDoneSection(flat);
+    // 分组标题存在
+    assert.ok(out.includes('### 2026-09-08'), out);
+    assert.ok(out.includes('### 2026-09-07'), out);
+    // 新日期组在前
+    assert.ok(out.indexOf('### 2026-09-08') < out.indexOf('### 2026-09-07'), out);
+    assert.ok(out.includes('昨天的事') && out.includes('前天的事'));
+  });
+
+  test('幂等: 已分组文件再 group 原样返回', () => {
+    const grouped = [
+      '# 📋 Todo 看板',
+      '## Done（只留近期，旧的迁 log.md/快照）',
+      '### 2026-09-09',
+      '',
+      '- [x] 今 (完成 2026-09-09)',
+      '### 2026-09-08',
+      '',
+      '- [x] 昨 (完成 2026-09-08)',
+      '',
+    ].join('\n');
+    assert.equal(groupDoneSection(grouped), grouped, '已分组应幂等');
+  });
+
+  test('未标日期旧行归入 (未标日期) 尾组, 不丢', () => {
+    const flat = [
+      '# 📋 Todo 看板',
+      '## Done（只留近期，旧的迁 log.md/快照）',
+      '- [x] 有日期的 (完成 2026-09-09)',
+      '- [x] 没日期的老任务',
+      '',
+    ].join('\n');
+    const out = groupDoneSection(flat);
+    assert.ok(out.includes('### （未标日期）'), out);
+    assert.ok(out.includes('没日期的老任务'), '未标日期任务不应丢');
+    // 未标日期组在末尾（有日期组之后）
+    assert.ok(out.indexOf('### 2026-09-09') < out.indexOf('### （未标日期）'), out);
+  });
+
+  test('断点附属行随任务行留在其日期组内', () => {
+    const flat = [
+      '# 📋 Todo 看板',
+      '## Done（只留近期，旧的迁 log.md/快照）',
+      '- [x] 带断点的 (完成 2026-09-09)',
+      '  ↳ 断点: 做到一半的记录',
+      '- [x] 昨天 (完成 2026-09-08)',
+      '',
+    ].join('\n');
+    const out = groupDoneSection(flat);
+    const todaySeg = out.split('### 2026-09-08')[0];
+    assert.ok(todaySeg.includes('带断点的') && todaySeg.includes('做到一半的记录'), '断点应留在 09-09 组');
+    // 断点行不脱离任务
+    assert.ok(todaySeg.indexOf('带断点的') < todaySeg.indexOf('做到一半的记录'), '断点在任务行之后');
+  });
+
+  test('readTodo 惰性迁移: 平铺 Done 文件读一次即落盘分组', async () => {
+    const flat = [
+      '# 📋 Todo 看板',
+      '## Backlog',
+      '## Today / In Progress',
+      '- [ ] W-任务 (认领 2026-09-09)',
+      '## Blocked',
+      '## Done（只留近期，旧的迁 log.md/快照）',
+      '- [x] 老完成 (完成 2026-09-07)',
+      '',
+    ].join('\n');
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'), flat, 'utf8');
+    const txt = await readTodo(projectA);
+    assert.ok(txt.includes('### 2026-09-07'), '读后应已分组');
+    // 未完成任务仍留在 Today
+    assert.ok(txt.includes('- [ ] W-任务'), '未完成任务不受影响');
+  });
+
+  test('markDone 归位到对应日期组且新完成项在该组顶部', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'DG-1', note: '分组验证' });
+    await cmdTask({ dir: projectA, action: 'done', id: 'DG-1' });
+    const t = await readTodo(projectA);
+    const todaySeg = t.split(`## Done`)[1] || '';
+    assert.ok(todaySeg.includes(`### ${today()}`), `应有当天分组:\\n${todaySeg}`);
+    // 新完成项出现在当天组开头（分组标题后紧跟）
+    const groupStart = todaySeg.indexOf(`### ${today()}`);
+    const afterGroup = todaySeg.slice(groupStart);
+    assert.ok(afterGroup.includes('DG-1'), 'DG-1 应在 Done');
+    const firstLines = afterGroup.split('\n').filter(Boolean).slice(0, 2).join(' ');
+    assert.ok(firstLines.includes('DG-1'), `当天组头部应为 DG-1, got: ${firstLines}`);
+  });
+
+  test('多次 markDone 不同日期仍各自归组', async () => {
+    // DG-2 (今天) DG-3 无法造昨天; 这里验证 done 后再 start/done 同 id 幂等不重复
+    await cmdTask({ dir: projectA, action: 'start', id: 'DGX' });
+    await cmdTask({ dir: projectA, action: 'done', id: 'DGX' });
+    await cmdTask({ dir: projectA, action: 'done', id: 'DGX' }); // 二次 done 幂等
+    const t = await readTodo(projectA);
+    const hits = t.split('\n').filter((l) => l.includes('DGX') && l.startsWith('- [x]'));
+    assert.equal(hits.length, 1, `二次 done 不重复: ${hits}`);
   });
 });

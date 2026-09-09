@@ -47,6 +47,9 @@ PAYLOAD=$(cat 2>/dev/null | head -c 500)
       printf '[%s] wrapup-remind 会话已结束(%s): 若 Today 有滞留任务或经验未沉淀, 下会话开头走收尾循环\n' \
         "$(date '+%Y-%m-%d %H:%M:%S')" "$SESSION_ID"
     } >> "$LOG_DIR/wrapup.log" 2>/dev/null || true
+    # 机械快照滞留清单: abs wrapup 把当前项目未完成任务+断点追加到 wrapup.log (跨会话收尾保险)。
+    # abs wrapup 已自行写 wrapup.log (honor ABS_LOG_DIR); 这里 stdout 只进 hooks.log 作痕迹, 避免污染 wrapup.log。
+    "$NODE_BIN" "$ABS_BIN" wrapup >>"$LOG_DIR/hooks.log" 2>/dev/null || true
   fi
 ) &
 

@@ -178,6 +178,31 @@ describe('cli: log 带参=写 / 无参=看', () => {
 });
 
 // ---------- 未知命令 ----------
+describe('cli: wrapup (收尾保险快照)', () => {
+  beforeEach(async () => {
+    await run(['init', '--dir', proj]);
+  });
+  test('wrapup 快照未完成任务; load 展示滞留', async () => {
+    const logDir = join(sandbox, 'abs-log');
+    await run(['task', 'start', 'CW-1', '--note', '做X'], { env: { ABS_LOG_DIR: logDir } });
+    const w = await run(['wrapup'], { env: { ABS_LOG_DIR: logDir } });
+    assert.equal(w.code, 0, w.stderr);
+    assert.ok(w.stdout.includes('✓'), w.stdout);
+    const l = await run(['load'], { env: { ABS_LOG_DIR: logDir } });
+    assert.ok(l.stdout.includes('上会话滞留'), l.stdout);
+    assert.ok(l.stdout.includes('做X'), l.stdout);
+  });
+  test('任务 done 后 load 不再报滞留 (自清理)', async () => {
+    const logDir = join(sandbox, 'abs-log2');
+    await run(['task', 'start', 'CW-2', '--note', '做Y'], { env: { ABS_LOG_DIR: logDir } });
+    await run(['wrapup'], { env: { ABS_LOG_DIR: logDir } });
+    await run(['task', 'done', 'CW-2'], { env: { ABS_LOG_DIR: logDir } });
+    const l = await run(['load'], { env: { ABS_LOG_DIR: logDir } });
+    assert.ok(!l.stdout.includes('上会话滞留'), l.stdout);
+  });
+});
+
+// ---------- 未知命令 ----------
 describe('cli: 未知命令/help', () => {
   test('未知命令非零退出', async () => {
     const r = await run(['nonsense']);
