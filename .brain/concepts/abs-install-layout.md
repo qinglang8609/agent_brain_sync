@@ -1,7 +1,7 @@
 ---
 tags: [concept, install]
-updated: 2026-09-08
-status: draft
+updated: 2026-09-09
+status: reviewed
 ---
 
 # 概念：abs 全局安装形态 = npm link 单一真源
@@ -19,5 +19,9 @@ status: draft
 全局命令、hook、MCP 三者经 realpath 汇聚到**同一份开发目录代码**——改代码即时全局生效，无需重装（重装只刷 hook 模板与 skill 快照）。
 nvm 切 node 大版本时 NODE_BIN 失效 → 重跑 `abs install` 刷新。
 
+## 知识冲突（演进）
+本文的「npm link 单一真源」是**开发期**形态。**产品模式**已改为发布到 npm registry、`npm install -g @fanchao8609/agent_brain_sync` 正式全局装——hook/MCP 烧的绝对路径指向发布包而非开发目录。两者差异见 [[npm-publish-flow]]（坑 5：link 与发布包抢 bin）。hook 烧绝对路径、nvm 切换重装这两个机制在两种形态下**不变**。
+
 ## 关联连接
 - [[AgentBrainSync]] — 安装器实现（src/install.js）
+- [[npm-publish-flow]] — 产品模式发布全流程（scoped 改名/2FA/link 清理）

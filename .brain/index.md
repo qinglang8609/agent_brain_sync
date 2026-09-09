@@ -11,6 +11,7 @@
 - [[hook-sh-not-bash]] — hook 脚本 shebang 与语法必须同方言（POSIX sh 无子串扩展）
 - [[skill-rewrite-residual-old-methods]] — skill 以旧文档为基底重写时, 旧方法(bootstrap/.sh)残留成悬空引用; 须对照实际工具清单逐条核对
 - [[file-write-locking]] — 并发写保护: 读改写才需 editFile 锁; append/原子写/单用户动作天然安全不妄加锁
+- [[npm-publish-flow]] — npm 发布全流程: 2FA发布限制/scoped改名绕相似名/发布后registry读延迟/全局link清理/宿主install零宽字符坑
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 ## Sources
@@ -24,6 +25,7 @@
 - [[2026-09-08-hook测试脆弱点-event-sh-幂等-m]] — hook测试脆弱点: event.sh 幂等 mark 硬编码 /tmp/abs
 - [[2026-09-08-并发写安全审计心法-别对-所有写入-一律加锁]] — 并发写安全审计心法: 别对'所有写入'一律加锁, 先按风险分类——①读改写(读旧
 - [[2026-09-08-lock-js并发丢根因-非锁失效-临界区重叠]] — lock.js并发丢根因: 非锁失效(临界区重叠=0完美互斥), 而是 LOCK
+- [[2026-09-09-方案-落定-跨会话任务只用-abs-task]] — 方案②落定: 跨会话任务只用 abs task(.brain/todo.md唯一
 ## Syntheses
 ## Sessions
 - [[log-2026-09-08]] — 本轮开发全记录+测试清单（D1收尾→D2→D3→实时化→全局安装）
