@@ -121,6 +121,21 @@ describe('install opencode / pi', () => {
     await fs.access(join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'));
     await fs.access(join(sandbox, 'pi', 'agent', 'skills', 'abs-agent-brain-sync', 'SKILL.md'));
   });
+
+  // 回归: 插件生命周期事件只进技术日志 hooks.log, 不得 spawn `abs log` 灌图谱 log.md。
+  // (曾有 [pi:session_start]/[opencode:session.start] 垃圾行刷进 .brain/log.md)
+  test('pi/opencode 插件不写图谱 log.md — 无 abs log 调用, 有 hooks.log 直写', async () => {
+    await run(['install', '--agent', 'pi', '--yes']);
+    await run(['install', '--agent', 'opencode', '--yes']);
+    const pi = await fs.readFile(join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'), 'utf8');
+    const oc = await fs.readFile(join(sandbox, 'opencode', 'plugins', 'abs.ts'), 'utf8');
+    // 精确匹配旧模板的 spawn 形态: [ABS_BIN, "log", ...] (勿匹配 join(..., "log") 合法路径段)
+    for (const [name, src] of [['pi', pi], ['opencode', oc]]) {
+      assert.ok(!/\[ABS_BIN,\s*"log"/.test(src), `${name} 插件不得 spawn abs log`);
+      assert.ok(src.includes('hooks.log'), `${name} 插件应直写技术日志 hooks.log`);
+      assert.ok(src.includes('appendFile'), `${name} 插件应用 appendFile 落技术日志`);
+    }
+  });
 });
 
 // ---------- 未知 agent ----------

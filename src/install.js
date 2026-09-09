@@ -214,25 +214,30 @@ async function uninstallCodex() {
   return steps;
 }
 
-// ============================ OpenCode / Pi (TS 插件) ============================
+// ============================ Opencode / Pi (TS 插件) ============================
 function opencodePluginSource() {
-  // OpenCode 官方插件 API: export const MyPlugin: Plugin = async ({ project }) => ({ event: async ({ name }) => {...} })
+  // Opencode 官方插件 API: export const MyPlugin: Plugin = async ({ project }) => ({ event: async ({ name }) => {...} })
   return `/**
- * abs (agent-brain-sync) — OpenCode plugin。
- * 纯触发: 生命周期事件 → 机械落盘一行 log (经 abs CLI)。fire-and-forget。
+ * abs (agent-brain-sync) — Opencode plugin。
+ * 纯触发: 生命周期事件 → 技术日志一行 (~/.abs/log/hooks.log, ABS_LOG_DIR 可覆盖)。fire-and-forget。
+ * 纪律: hook 事件只进技术日志, 不进图谱 log.md (log.md 只收工作成果沉淀, 与 event.sh 同纪律)。
+ * Opencode 事件: session.start / session.end (对应 host hook 的 SessionStart/SessionEnd)。
  */
-import { spawn } from "child_process"
+import { appendFile, mkdir } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
 
-const ABS_BIN = "${join(ABS_DIR, 'bin', 'abs.js')}"
-
-export const AbsPlugin = async ({ project }) => ({
+export const AbsPlugin = async () => ({
   event: async ({ name }) => {
+    if (!["session.start", "session.end"].includes(name)) return
     try {
-      if (!["session.start", "session.end"].includes(name)) return
-      const child = spawn(process.execPath, [ABS_BIN, "log", \`[opencode:\${name}]\`], {
-        stdio: "ignore", detached: true,
-      })
-      child.unref()
+      const dir = process.env.ABS_LOG_DIR || join(homedir(), ".abs", "log")
+      const d = new Date()
+      const pad = (n: number) => String(n).padStart(2, "0")
+      const stamp = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds())
+      const line = "[" + stamp + "] opencode:" + name + "\\n"
+      await mkdir(dir, { recursive: true })
+      await appendFile(join(dir, "hooks.log"), line)
     } catch {} // fire-and-forget: 永不阻塞宿主
   },
 })
@@ -241,31 +246,52 @@ ${MARK}
 }
 
 // ============================ Pi (TS extension) ============================
-// Pi 与 OpenCode 插件语法不同构：Pi 需要 default 工厂函数接收 ExtensionAPI、用 pi.on(event) 注册。
-// 不能复用 opencodePluginSource 的 OpenCode 写法（那是 export const ... = ({ project }) => ...）。
+// Pi 与 Opencode 插件语法不同构：Pi 需要 default 工厂函数接收 ExtensionAPI、用 pi.on(event) 注册。
+// 不能复用 opencodePluginSource 的写法（那是 export const ... = ({ project }) => ...）。
+// 两者同纪律: 生命周期事件只进技术日志 hooks.log, 不进图谱 log.md。
 function piPluginSource() {
   return `/**
  * abs (agent-brain-sync) — Pi extension。
- * 纯触发: 会话生命周期事件 → 机械落盘一行 log (经 abs CLI)。fire-and-forget。
+ * 纯触发: 会话生命周期事件 → 技术日志一行 (~/.abs/log/hooks.log, ABS_LOG_DIR 可覆盖)。fire-and-forget。
+ * 纪律: hook 事件只进技术日志, 不进图谱 log.md (log.md 只收工作成果沉淀, 与 event.sh 同纪律)。
  * Pi 事件: session_start / session_shutdown (对应 host hook 的 SessionStart/SessionEnd)。
+ * session_shutdown 额外触发 abs wrapup: 把当前项目未完成任务快照到 wrapup.log (跨会话收尾保险)。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { appendFile, mkdir } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { spawn } from "node:child_process"
 
 const ABS_BIN = "${join(ABS_DIR, 'bin', 'abs.js')}"
 
-function logHook(evt: string) {
+async function logHook(evt: string): Promise<void> {
+  const dir = process.env.ABS_LOG_DIR || join(homedir(), ".abs", "log")
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, "0")
+  const stamp = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds())
+  const line = "[" + stamp + "] pi:" + evt + "\\n"
+  await mkdir(dir, { recursive: true })
+  await appendFile(join(dir, "hooks.log"), line)
+}
+
+// 会话结束时快照当前项目滞留任务到 wrapup.log（detached fire-and-forget，wrapup 自身幂等去重不刷屏）。
+// cwd 用事件 ctx.cwd（当前项目），让 abs 从该目录向上定位 .brain/。
+function snapshotWrapup(cwd: string): void {
   try {
-    const child = spawn(process.execPath, [ABS_BIN, "log", \`[pi:\${evt}]\`], {
-      stdio: "ignore", detached: true,
+    const child = spawn(process.execPath, [ABS_BIN, "wrapup"], {
+      cwd: cwd || process.cwd(), stdio: "ignore", detached: true,
     })
     child.unref()
-  } catch {} // fire-and-forget: 永不阻塞宿主
+  } catch {} // fire-and-forget
 }
 
 export default function absPiHook(pi: ExtensionAPI): void {
-  pi.on("session_start", () => logHook("session_start"))
-  pi.on("session_shutdown", () => logHook("session_shutdown"))
+  pi.on("session_start", () => logHook("session_start").catch(() => {}))
+  pi.on("session_shutdown", (_e, ctx) => {
+    snapshotWrapup((ctx && ctx.cwd) || process.cwd())
+    logHook("session_shutdown").catch(() => {})
+  })
 }
 ${MARK}
 `;
