@@ -4,7 +4,7 @@
 让每个会话不再无状态——经验/进度/踩坑有统一落点，重开不"失忆"。
 参考 [ai-memory](https://github.com/akitaonrails/ai-memory) 的接入机制，砍掉全部重引擎。
 
-> npm 发布名 `agent_brain_sync`；全局命令 `abs`（包名与命令名独立）。
+> npm 发布名 `@fanchao8609/agent_brain_sync`（因 `agent-brain-sync` 已存在、相似名被 npm 拦截）；全局命令 `abs`（包名与命令名独立）。
 
 ## 架构
 
@@ -27,14 +27,14 @@ agent (会话中)          ──▶ MCP (abs_load/abs_board/abs_task/…) ─�
 ### 方式一：npm 全局安装（产品模式，推荐）
 
 ```bash
-npm install -g agent_brain_sync
+npm install -g @fanchao8609/agent_brain_sync
 abs install                    # 交互式选智能体（或 --agent 指定）
 ```
 
 ### 方式二：从源码（开发）
 
 ```bash
-git clone <repo> && cd <repo>/agent_brain_sync && npm install
+git clone <repo> && cd <repo> && npm install
 node bin/abs.js install        # 或先 npm link 使 `abs` 全局可用
 ```
 
