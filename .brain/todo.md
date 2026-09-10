@@ -1,11 +1,11 @@
 # 📋 Todo 看板
 ## Backlog
 ## Today / In Progress
-- [ ] LINT-PATH-PREFIX — lint 提示里的路径省略了 .brain/ 前缀，用户按报的路径去项目里找找不到（codebuddy 的 concepts/fnos-native-release-deploy.md 实际在 .brain/concepts/ 下，项目根没有 concepts/ 目录）。根因: listPages 里 rel=`${d}/${f}` 是 vault 相对；7 处提示(NO-FRONTMATTER/TEMPLATE-LINK/DEAD-LINK/ORPHAN-PAGE/UNRESOLVED-CONFLICT/OVER-SIZE/INDEX-MISSING)全用它。改法: rel 改 `.brain/${d}/${f}`。影响面: 只 lint 文本，无程序消费；但 test/store.test.js 两处正则（ORPHAN-PAGE/INDEX-MISSING 带 sessions\/ 的）需同步 (认领 2026-09-10)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10
 
+- [x] LINT-PATH-PREFIX — lint 提示里的路径省略了 .brain/ 前缀，用户按报的路径去项目里找找不到（codebuddy 的 concepts/fnos-native-release-deploy.md 实际在 .brain/concepts/ 下，项目根没有 concepts/ 目录）。根因: listPages 里 rel=`${d}/${f}` 是 vault 相对；7 处提示(NO-FRONTMATTER/TEMPLATE-LINK/DEAD-LINK/ORPHAN-PAGE/UNRESOLVED-CONFLICT/OVER-SIZE/INDEX-MISSING)全用它。改法: rel 改 `.brain/${d}/${f}`。影响面: 只 lint 文本，无程序消费；但 test/store.test.js 两处正则（ORPHAN-PAGE/INDEX-MISSING 带 sessions\/ 的）需同步  (完成 2026-09-10)
 - [x] LINT-TOPLEVEL-PAGE — lint 误报 [[todo]] 死链：names 集合只含子目录页(concepts/entities/sources/syntheses/sessions)，.brain 顶层文件 index.md/log.md/todo.md 不被当作可链接页 → [[todo]] 被判 DEAD-LINK + INDEX-DEAD-LINK。实测 codebuddy 报 5 条、faxuehui 报 7 条，均属误报（todo.md 真实存在）。已修：names 补充 .brain 顶层 *.md 的 slug（仅用于链接目标存在性判定，不影响 ORPHAN/INDEX-MISSING）。验证：codebuddy 5 条消失、[[log]]/[[index]] 同样放行、真不存在的页仍报；新增回归测试，187 测试绿。待办：commit + 发版  (完成 2026-09-10)
 - [x] SKILL-TRIAGE-PROTOCOL — 在 skill 加「新需求受理协议」：用户报 bug 或要求加功能时，agent 不得直接动手 —— ①先总结方案(问题复述/根因或做法/改哪些文件/怎么验证) ②abs todo add 登记 ③明确问用户是否开工，等确认再改代码。例外：用户已说"开工/直接做"、一行级修字/纯查询/纯沉淀、同一需求已登记且确认过。落点: skill/SKILL.md 新增节（紧随「触发总入口」）；需重装四宿主 skill 才生效  (完成 2026-09-10)
 - [x] TODO-ARCHIVE-CMD — Done 区归档做成真流程: ①只保留近3天(可配) ②任一天内有未完成(- [ ])则整天不归档 ③归档为单个文件+在 todo 的 ### 归档 段留 [[<slug>]] 完成任务 N 条。含定时/触发规划 + lint 兜底  (完成 2026-09-10)
