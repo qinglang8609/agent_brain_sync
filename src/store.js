@@ -167,8 +167,8 @@ export async function cmdLoad({ dir }) {
     '--- Todo 看板 (todo.md) ---',
     todo.trim() || '(todo.md 为空)',
     '',
-    '--- 最近动作 (log.md, 末尾 5 条) ---',
-    tailLines(log, 5) || '(log.md 为空)',
+    '--- 最近动作 (log.md, 最新 5 条) ---',
+    recentLogLines(log, 5) || '(log.md 为空)',
   ];
   if (stranded.length) {
     const rows = stranded.map((t) => {
@@ -336,9 +336,15 @@ async function readIfExists(p) {
   try { return (await fs.readFile(p, 'utf8')).trim(); } catch { return ''; }
 }
 
-function tailLines(text, n) {
-  const lines = text.split('\n').filter((l) => l.trim());
-  return lines.slice(-n).join('\n');
+/** log.md 是"新在上"（cmdLog 把新行插在标题后）——取**最新** n 条，只认 `## [` 条目行。
+ * 坑: 曾用 tailLines 取末尾 → 拿到的永远是最旧几条，而标签写着"最近动作"，
+ * 于是"开机读状态"最该看的一节长期显示两天前的旧记录（今天的新条目从未显示）。 */
+function recentLogLines(text, n) {
+  return String(text || '')
+    .split('\n')
+    .filter((l) => /^##\s*\[/.test(l))
+    .slice(0, n)
+    .join('\n');
 }
 
 // ---------- log: 追加工作成果沉淀摘要（用户/AI 主动 abs log "..." 记, 不收工具动作流水） ----------

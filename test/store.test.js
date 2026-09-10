@@ -251,6 +251,21 @@ describe('board/load/status', () => {
     assert.ok(out.includes('📂'));
   });
 
+  // 回归: log.md 是新在上，而 load 曾用 tailLines(取末尾) → 「最近动作」永远显示最旧几条。
+  // 症状是"开机读状态最该看的一节长期是两天前的东西"，且不报错，很容易一直没发现。
+  test('load 的「最近动作」取最新几条（不是最旧）', async () => {
+    const logP = join(projectA, '.brain', 'log.md');
+    // 需 >5 条，否则"最新 5 条"会把最旧的一条也包含进来，测不出差别
+    const entries = Array.from({ length: 7 }, (_, i) => `## [2026-09-${String(10 - i).padStart(2, '0')} 10:00] dev | 第${i + 1}条`);
+    entries[0] = '## [2026-09-10 10:00] dev | 最新一条 NEWEST-MARK';
+    entries[6] = '## [2026-09-04 10:00] dev | 最旧一条 OLDEST-MARK';
+    await fs.writeFile(logP, ['# 🗒 操作日志', ...entries, ''].join('\n'), 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(out.includes('NEWEST-MARK'), `应显示最新条目: ${out}`);
+    assert.ok(!out.includes('OLDEST-MARK'), `不该显示最旧条目: ${out}`);
+    assert.ok(/最新 5 条/.test(out), `标签应写"最新": ${out}`);
+  });
+
   test('load 输出 index + todo + log 三段', async () => {
     const out = await cmdLoad({ dir: projectA });
     assert.ok(out.includes('index.md'));
