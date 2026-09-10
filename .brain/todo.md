@@ -2,7 +2,6 @@
 ## Backlog
 ## Today / In Progress
 - [ ] CC-CODEX-PUSH — CC/Codex 补主动推: Stop hook 回 decision:block 注入收尾指令(守卫抄 pi 插件四条件)，替代只写 wrapup.log (认领 2026-09-10)
-- [ ] GIT-WRAPUP — git 收尾: 25 文件未提交(今天整个 session log、teardown-automation + host-plugin-silent-failure 概念页、7 个 source 删除) (认领 2026-09-10)
 - [ ] SMALL-FIXES — 小件: loggedToday 守卫收紧、日志轮转、测试计数 146→实测 144 对平 (认领 2026-09-10)
 ## Blocked
 - [ ] OC-REAL-VERIFY — opencode 真机验证: 通道修完后真会话要看到 teardown-nudge 痕(当前 session.idle:seen 有痕但零 nudge) (认领 2026-09-10)
@@ -12,6 +11,8 @@
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10
 
+- [x] GIT-WRAPUP — git 收尾: 25 文件未提交(今天整个 session log、teardown-automation + host-plugin-silent-failure 概念页、7 个 source 删除)  (完成 2026-09-10)
+  ↳ 断点: 已提交 2 个 commit: 1f45bf0(代码: abs update/--version + seen 痕 + plugin-behavior.test.js + .gitignore 忽略 .omo/) 和 60bebde(.brain: 2 个新概念页 + 归档 7 源页 + todo 登记)。工作树干净, 测试 148 全绿, lint 0 problem
 - [x] VERSION-ALIGN — 版本对齐: 本地 package.json 0.3.0 vs npm 已发布 1.1.0  (完成 2026-09-10)
   ↳ 断点: 误判澄清: 本地 package.json 已是 1.1.0 且与 package-lock 一致; npm view @fanchao8609/agent_brain_sync version = 1.1.0 已发布对齐。0.3.0 是旧会话残留读数。npm 直连失败仅因代理 192.168.0.114:7890 未启动, 非版本问题
 - [x] ABS-UPDATE-CMD — 补 abs update + abs --version: 用户报'abs update 看不到新版本'实为命令不存在  (完成 2026-09-10)

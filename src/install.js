@@ -286,12 +286,16 @@ const server = async ({ client, directory }) => {
     }
   }
 
+  // 判定"今天是否收尾过": 必须匹配 log.md 的条目头 '## [YYYY-MM-DD HH:MM]'。
+  // 坑: 曾用裸日期 substring(includes('2026-09-10')), 结果正文/任务行里任何一处
+  //     提到今天就能把 nudge 永久压掉(误判为已收尾), 守卫形同虚设。
   async function loggedToday(brain) {
     try {
       const txt = await readFile(join(brain, "log.md"), "utf8")
       const d = new Date()
       const pad = (n) => String(n).padStart(2, "0")
-      return txt.includes(d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()))
+      const today = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
+      return new RegExp("^## \\\\[" + today + " \\\\d{2}:\\\\d{2}\\\\]", "m").test(txt)
     } catch { return false }
   }
 
@@ -428,14 +432,19 @@ async function findBrain(cwd: string): Promise<string | null> {
   }
 }
 
-/** .brain/log.md 今天有记录吗? 有=已收尾, 不再打扰。 */
+/**
+ * .brain/log.md 今天有记录吗? 有=已收尾, 不再打扰。
+ * 必须匹配条目头 '## [YYYY-MM-DD HH:MM]' —— 裸日期 substring 会被正文里任意一处
+ * 今天的日期误命中, 导致"已收尾"误判、nudge 永不触发。
+ */
 async function loggedToday(brain: string): Promise<boolean> {
   try {
     const txt = await readFile(join(brain, "log.md"), "utf8")
     const d = new Date()
     const pad = (n: number) => String(n).padStart(2, "0")
     const today = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
-    return txt.includes(today)
+    // 注意: 这里是真实 TS, 不是生成代码的模板字符串。用拼接形式避免反斜杠逃逸歧义。
+    return new RegExp("^## \\\\[" + today + " \\\\d{2}:\\\\d{2}\\\\]", "m").test(txt)
   } catch { return false }
 }
 

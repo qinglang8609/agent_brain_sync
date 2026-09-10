@@ -148,6 +148,26 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     assert.equal(injected.length, 0, 'log.md 有今日记录则不再打扰');
   });
 
+  // 守卫收紧: 曾用裸日期 substring(includes(today)) 判"今天收尾过",
+  // 于是正文里任何一处提到今天的日期(任务行/引文/本提醒文本)都会把 nudge 永久压掉。
+  // 必须只认 log.md 的条目头 '## [YYYY-MM-DD HH:MM]'。
+  test('正文提到今天日期 ≠ 已收尾 (旧 substring 守卫的误判回归)', async () => {
+    const mod = await loadPi(join(sandbox, 'log'));
+    const { handlers, injected } = harness(mod.default);
+    const proj = join(sandbox, 'pi-false-positive');
+    await fs.mkdir(join(proj, '.brain'), { recursive: true });
+    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
+    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    // 无任何 '## [today HH:MM]' 条目头, 但正文里出现了今天的日期
+    await fs.writeFile(
+      join(proj, '.brain', 'log.md'),
+      `# 操作日志\n\n> 目标: ${today} 前完成迁移\n## [2020-01-01 00:00] dev | 旧\n`,
+      'utf8',
+    );
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
+    assert.equal(injected.length, 1, '正文提到今天日期不应被当作已收尾');
+  });
+
   // 可观测性: 无 seen 痕就无法区分「事件没触发」与「触发了但被守卫拦下」——
   // 本次排查时正因为只有 nudge 痕, 分不清 agent_end 到底有没有跑。
   test('首次 agent_end 无条件留 seen 痕 (可观测性: 区分未触发/被拦下)', async () => {
