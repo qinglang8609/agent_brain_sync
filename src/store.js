@@ -422,6 +422,12 @@ export async function cmdLint({ dir }) {
   const pages = await listPages(vault);
   const names = new Set(pages.map((p) => p.slug));
   const linkedNames = new Set(pages.flatMap((p) => p.links));
+  // index.md 里列的 [[x]] —— 用于反向查死引用（列了但页不存在）
+  let indexLinks = [];
+  try {
+    const idx = await fs.readFile(join(vault, 'index.md'), 'utf8');
+    indexLinks = [...idx.matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim());
+  } catch { /* 无 index 则不查 */ }
   const issues = [];
 
   for (const pg of pages) {
@@ -445,6 +451,13 @@ export async function cmdLint({ dir }) {
     if (pg.dir !== 'sources' && !pg.indexed) {
       issues.push(`INDEX-MISSING: ${pg.rel} not listed as [[${pg.slug}]] in index.md`);
     }
+  }
+
+  // index.md 反向检查: 列了 [[x]] 但 x 页不存在 —— 删页/归档 source 后忘了清 index 的残留。
+  // (page→index 的 INDEX-MISSING 已有, 这里补 index→page, 否则死引用静默留在入口文件里)
+  for (const ln of indexLinks) {
+    if (/slug|Name|name|Date|页面名$/.test(ln)) continue; // 模板占位行
+    if (!names.has(ln)) issues.push(`INDEX-DEAD-LINK: index.md -> [[${ln}]] (该页不存在, 删页后忘清 index?)`);
   }
 
   const nsrc = pages.filter((p) => p.dir === 'sources').length;

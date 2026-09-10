@@ -157,14 +157,26 @@ async function installCodex({ withMcp, withSkill, log }) {
   const p = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'hooks.json');
   await backup(p);
   const cfg = await readJson(p);
-  cfg.hooks = cfg.hooks || [];
-  // 去掉旧的 abs 条目再写(幂等)
-  cfg.hooks = cfg.hooks.filter((h) => !String(h.command || '').includes('/.abs/hooks/'));
-  for (const [ev, script] of Object.entries(scriptMap)) {
-    cfg.hooks.push({ event: ev, command: script });
+  // Codex 真实结构是 {hooks: {EventName: [{matcher?, hooks:[{type,command}]}]}} (与 Claude 同形)。
+  // 兼容历史 bug 写出的扁平数组 {hooks: [{event, command}]}: 迁移成对象形态, 不丢既有 hook。
+  let hooks = cfg.hooks;
+  if (Array.isArray(hooks)) {
+    const migrated = {};
+    for (const h of hooks) {
+      if (!h || !h.event) continue;
+      (migrated[h.event] = migrated[h.event] || []).push({ hooks: [{ type: 'command', command: h.command }] });
+    }
+    hooks = migrated;
   }
+  if (!hooks || typeof hooks !== 'object') hooks = {};
+  for (const [ev, script] of Object.entries(scriptMap)) {
+    const existing = Array.isArray(hooks[ev]) ? hooks[ev] : [];
+    const kept = existing.filter((e) => !entryHasAbs(e)); // 去掉旧 abs 条目, 幂等; 保留既有 hook
+    hooks[ev] = [...kept, { hooks: [{ type: 'command', command: script }] }];
+  }
+  cfg.hooks = hooks;
   await atomicWrite(p, JSON.stringify(cfg, null, 2));
-  steps.push(`✓ hooks  → ${p} (${Object.keys(scriptMap).length} 事件)`);
+  steps.push(`✓ hooks  → ${p} (${Object.keys(scriptMap).length} 事件, 与既有 hook 共存)`);
 
   if (withMcp) {
     const mcpP = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'config.toml');
@@ -192,13 +204,26 @@ async function uninstallCodex() {
   const home = process.env.CODEX_HOME || join(homedir(), '.codex');
   const p = join(home, 'hooks.json');
   const cfg = await readJson(p);
-  if (Array.isArray(cfg.hooks)) {
+  let changed = false;
+  if (Array.isArray(cfg.hooks)) { // 历史扁平数组形态
     const before = cfg.hooks.length;
     cfg.hooks = cfg.hooks.filter((h) => !String(h.command || '').includes('/.abs/hooks/'));
-    if (cfg.hooks.length !== before) {
-      await atomicWrite(p, JSON.stringify(cfg, null, 2));
-      steps.push(`✓ hooks 已从 ${p} 移除`);
+    changed = cfg.hooks.length !== before;
+  } else if (cfg.hooks && typeof cfg.hooks === 'object') { // 对象形态 {EventName: [...]}
+    for (const ev of Object.keys(cfg.hooks)) {
+      const arr = cfg.hooks[ev];
+      if (!Array.isArray(arr)) continue;
+      const kept = arr.filter((e) => !entryHasAbs(e));
+      if (kept.length !== arr.length) {
+        changed = true;
+        if (kept.length) cfg.hooks[ev] = kept;
+        else delete cfg.hooks[ev]; // 无共存 hook 时整删该事件
+      }
     }
+  }
+  if (changed) {
+    await atomicWrite(p, JSON.stringify(cfg, null, 2));
+    steps.push(`✓ hooks 已从 ${p} 移除`);
   }
   const mcpP = join(home, 'config.toml');
   try {
@@ -216,31 +241,112 @@ async function uninstallCodex() {
 
 // ============================ Opencode / Pi (TS 插件) ============================
 function opencodePluginSource() {
-  // Opencode 官方插件 API: export const MyPlugin: Plugin = async ({ project }) => ({ event: async ({ name }) => {...} })
+  // Op​encode 官方插件 API (据 @op​encode-ai/plugin 类型定义实核):
+  //   export const Plugin: Plugin = async ({ client, directory }) => ({ event: async ({ event }) => {...} })
+  // 坑: event 回调入参是 { event }, 事件名在 event.type —— 曾错写成 ({ name }) 导致 name 恒 undefined,
+  //     插件从未触发过(0 条日志), 静默失效。
+  // 收尾注入: session.idle (= 每轮结束) 经 client.session.promptAsync 注入收尾指令,
+  //     与 pi 的 agent_end 同策略(真改过文件 + .brain 存在 + log.md 今日无记录, 每会话一次)。
   return `/**
- * abs (agent-brain-sync) — Opencode plugin。
+ * abs (agent-brain-sync) — Op​encode plugin。
  * 纯触发: 生命周期事件 → 技术日志一行 (~/.abs/log/hooks.log, ABS_LOG_DIR 可覆盖)。fire-and-forget。
  * 纪律: hook 事件只进技术日志, 不进图谱 log.md (log.md 只收工作成果沉淀, 与 event.sh 同纪律)。
- * Opencode 事件: session.start / session.end (对应 host hook 的 SessionStart/SessionEnd)。
+ * Op​encode 事件: session.created / session.idle / session.deleted (idle = 每轮结束, 对应 pi 的 agent_end)。
+ * 收尾注入: session.idle 且本会话真改过文件 + .brain 今日无记录 → promptAsync 推 agent 走收尾循环。
  */
-import { appendFile, mkdir } from "node:fs/promises"
+import { appendFile, mkdir, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
 
-export const AbsPlugin = async () => ({
-  event: async ({ name }) => {
-    if (!["session.start", "session.end"].includes(name)) return
+const server = async ({ client, directory }) => {
+  // 本会话是否真改过文件 (由 tool.execute.after 观测)
+  let wroteFiles = false
+  let nudged = false
+  let idleSeen = false
+
+  async function logHook(evt) {
     try {
       const dir = process.env.ABS_LOG_DIR || join(homedir(), ".abs", "log")
       const d = new Date()
-      const pad = (n: number) => String(n).padStart(2, "0")
+      const pad = (n) => String(n).padStart(2, "0")
       const stamp = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds())
-      const line = "[" + stamp + "] opencode:" + name + "\\n"
       await mkdir(dir, { recursive: true })
-      await appendFile(join(dir, "hooks.log"), line)
+      await appendFile(join(dir, "hooks.log"), "[" + stamp + "] opencode:" + evt + "\\n")
     } catch {} // fire-and-forget: 永不阻塞宿主
-  },
-})
+  }
+
+  // 从 cwd 向上找最近含 .brain/ 的祖先目录
+  async function findBrain(cwd) {
+    let d = cwd || process.cwd()
+    for (;;) {
+      try { const st = await stat(join(d, ".brain")); if (st.isDirectory()) return join(d, ".brain") } catch {}
+      const up = dirname(d)
+      if (up === d) return null
+      d = up
+    }
+  }
+
+  async function loggedToday(brain) {
+    try {
+      const txt = await readFile(join(brain, "log.md"), "utf8")
+      const d = new Date()
+      const pad = (n) => String(n).padStart(2, "0")
+      return txt.includes(d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()))
+    } catch { return false }
+  }
+
+  const TEARDOWN_MSG =
+    "[abs 收尾提醒] 本会话改过文件但 .brain/ 今天还没有记录。请立即走收尾循环：\\n" +
+    "1) 跑 abs load 看 Today 还有哪些未完成；\\n" +
+    "2) 实际做完漏登记的 abs task done <id>，做到一半的 abs task note <id> --note \\"断点\\"；\\n" +
+    "3) 值得留的经验 abs note \\"...\\"（宁少勿滥，能从代码 grep 到的不记）；\\n" +
+    "4) abs log \\"完成 X：...\\" 记一行工作成果，新页同步进 index。\\n" +
+    "简洁执行，不要复述本条提醒。若本次确实没有可沉淀产出，直接回一句\\"无可沉淀\\"即可。"
+
+  return {
+    // 观测真实写操作: write/edit/patch 类工具成功即标记
+    "tool.execute.after": async ({ tool }) => {
+      const t = String(tool || "").toLowerCase()
+      if (["write", "edit", "patch", "multiedit", "apply_patch"].includes(t)) wroteFiles = true
+    },
+
+    event: async ({ event }) => {
+      const type = event && event.type
+      if (!type) return
+      if (type === "session.created" || type === "session.deleted") {
+        await logHook(type)
+        return
+      }
+      if (type !== "session.idle") return // idle = 每轮结束, 不记日志(太吵), 只做收尾判定
+      const cwd = directory || process.cwd()
+      const brain = await findBrain(cwd)
+      // 可观测性: 首次 idle 无条件留一行痕(否则无法区分“事件没触发”与“被守卫拦下”)
+      if (!idleSeen) {
+        idleSeen = true
+        await logHook(\`session.idle:seen cwd=\${cwd} brain=\${brain || 'none'}\`)
+      }
+      if (nudged || !wroteFiles) return
+      const sessionID = event.properties && event.properties.sessionID
+      if (!sessionID) return
+      if (!brain) return // 无图谱=不在这项目沉淀, 不打扰
+      if (await loggedToday(brain)) return // 今天已收尾过
+      nudged = true
+      await logHook("session.idle:teardown-nudge")
+      try {
+        await client.session.promptAsync({
+          path: { id: sessionID },
+          query: { directory: cwd },
+          body: { parts: [{ type: "text", text: TEARDOWN_MSG }] },
+        })
+      } catch {} // 注入失败不阻塞宿主
+    },
+  }
+}
+
+export default {
+  id: "abs",
+  server,
+}
 ${MARK}
 `;
 }
@@ -256,11 +362,13 @@ function piPluginSource() {
  * 纪律: hook 事件只进技术日志, 不进图谱 log.md (log.md 只收工作成果沉淀, 与 event.sh 同纪律)。
  * Pi 事件: session_start / session_shutdown (对应 host hook 的 SessionStart/SessionEnd)。
  * session_shutdown 额外触发 abs wrapup: 把当前项目未完成任务快照到 wrapup.log (跨会话收尾保险)。
+ * agent_end 收尾注入: 本会话真改过文件 + .brain 今日无记录 → 注入一条收尾指令, 逼 agent 走收尾循环
+ *   (被动记日志不够 —— 没人提醒就不会有人收尾)。每会话最多一次, 且已收尾后不再打扰。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { appendFile, mkdir } from "node:fs/promises"
+import { appendFile, mkdir, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
 import { spawn } from "node:child_process"
 
 const ABS_BIN = "${join(ABS_DIR, 'bin', 'abs.js')}"
@@ -286,12 +394,99 @@ function snapshotWrapup(cwd: string): void {
   } catch {} // fire-and-forget
 }
 
+// ---- 收尾注入判定 ----
+// 真改过文件的工具（read/grep/ls 不算, 那些不产生可沉淀的产出）
+const WRITE_TOOLS = new Set(["write", "edit", "multi_edit", "apply_patch", "bash"])
+// bash 里只跑查询类命令不算改文件
+const READONLY_CMD = /^\\s*(ls|cat|grep|rg|find|head|tail|wc|git\\s+(status|log|diff|show|branch)|pwd|which|echo|node\\s+-v|npm\\s+(ls|view)|curl)\\b/
+
+function hasWriteWork(toolResults: any[]): boolean {
+  for (const r of toolResults || []) {
+    const name = String(r?.toolName || "")
+    if (!WRITE_TOOLS.has(name)) continue
+    if (r?.isError) continue
+    if (name === "bash") {
+      const cmd = String(r?.input?.command ?? r?.args?.command ?? "")
+      if (READONLY_CMD.test(cmd)) continue
+    }
+    return true
+  }
+  return false
+}
+
+/** 从 cwd 向上找最近含 .brain/ 的祖先目录。 */
+async function findBrain(cwd: string): Promise<string | null> {
+  let d = cwd || process.cwd()
+  for (;;) {
+    try {
+      const st = await stat(join(d, ".brain"))
+      if (st.isDirectory()) return join(d, ".brain")
+    } catch {}
+    const up = dirname(d)
+    if (up === d) return null
+    d = up
+  }
+}
+
+/** .brain/log.md 今天有记录吗? 有=已收尾, 不再打扰。 */
+async function loggedToday(brain: string): Promise<boolean> {
+  try {
+    const txt = await readFile(join(brain, "log.md"), "utf8")
+    const d = new Date()
+    const pad = (n: number) => String(n).padStart(2, "0")
+    const today = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
+    return txt.includes(today)
+  } catch { return false }
+}
+
 export default function absPiHook(pi: ExtensionAPI): void {
   pi.on("session_start", () => logHook("session_start").catch(() => {}))
-  pi.on("session_shutdown", (_e, ctx) => {
+
+  // 收尾注入: 每个会话最多一次, 避免反复打扰。
+  let teardownNudged = false
+  let agentEndSeen = false
+  pi.on("agent_end", async (event: any, ctx: any) => {
+    if (teardownNudged) return
+    const cwd = (ctx && ctx.cwd) || process.cwd()
+    const brain = await findBrain(cwd)
+    // 可观测性: 本会话首次 agent_end 无条件留一行痕。
+    // 没有它就无法区分三种状态: ①事件没触发 ②触发了但被守卫拦下 ③真注入了。
+    if (!agentEndSeen) {
+      agentEndSeen = true
+      // 带上 cwd 与命中的 brain —— 否则事后无法解释“为何这条 nudge 会出现”
+      await logHook(\`agent_end:seen cwd=\${cwd} brain=\${brain || 'none'}\`).catch(() => {})
+    }
+    if (!brain) return // 无图谱=不在这项目沉淀, 不打扰
+    if (!hasWriteWork(event?.messages ? collectToolResults(event.messages) : [])) return
+    if (await loggedToday(brain)) return // 今天已收尾过
+    teardownNudged = true
+    await logHook("agent_end:teardown-nudge").catch(() => {})
+    try {
+      pi.sendUserMessage(
+        "[abs 收尾提醒] 本会话改过文件但 .brain/ 今天还没有记录。请立即走收尾循环：\\n" +
+        "1) 跑 abs load 看 Today 还有哪些未完成；\\n" +
+        "2) 实际做完漏登记的 abs task done <id>，做到一半的 abs task note <id> --note \\"断点\\"；\\n" +
+        "3) 值得留的经验 abs note \\"...\\"（宁少勿滥，能从代码 grep 到的不记）；\\n" +
+        "4) abs log \\"完成 X：...\\" 记一行工作成果，新页同步进 index。\\n" +
+        "简洁执行，不要复述本条提醒。若本次确实没有可沉淀产出，直接回一句\\"无可沉淀\\"即可。",
+        { deliverAs: "followUp" },
+      )
+    } catch {}
+  })
+
+  pi.on("session_shutdown", (_e: any, ctx: any) => {
     snapshotWrapup((ctx && ctx.cwd) || process.cwd())
     logHook("session_shutdown").catch(() => {})
   })
+}
+
+/** agent_end 的 event.messages 里翻出 toolResult 消息。 */
+function collectToolResults(messages: any[]): any[] {
+  const out: any[] = []
+  for (const m of messages || []) {
+    if (m && m.role === "toolResult") out.push(m)
+  }
+  return out
 }
 ${MARK}
 `;

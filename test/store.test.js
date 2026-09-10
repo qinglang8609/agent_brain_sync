@@ -463,6 +463,16 @@ describe('cmdLint', () => {
     assert.ok(out.includes('INDEX-MISSING'), out);
   });
 
+  // 回归: 删页/归档 source 后忘清 index 的残留引用。lint 原来只查 page→index (INDEX-MISSING),
+  // 不查 index→page, 导致死引用静默留在入口文件里(实际踩过: 归档 7 个 source 后 index 仍列着)。
+  test('index 列了不存在的页被检出 (INDEX-DEAD-LINK)', async () => {
+    const idxP = join(projectA, '.brain', 'index.md');
+    await fs.appendFile(idxP, '\n- [[ghost-page-xyz]] — 不存在的页\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('INDEX-DEAD-LINK'), out);
+    assert.ok(out.includes('ghost-page-xyz'), out);
+  });
+
   test('sources 堆积被检出', async () => {
     for (let i = 0; i < 11; i++) {
       await fs.writeFile(

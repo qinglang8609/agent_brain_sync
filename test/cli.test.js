@@ -214,4 +214,22 @@ describe('cli: 未知命令/help', () => {
     assert.equal(r.code, 0);
     assert.ok(r.stdout.includes('abs init'), r.stdout);
   });
+
+  // 回归: 用户报"abs update 看不到新版本" —— 因为当时根本没有 update/--version 命令。
+  // 升级是 install/uninstall 之外的第三个自我管理动作, 必须有入口。
+  test('--version / -v / version 输出包版本且零退出', async () => {
+    const pkg = JSON.parse(await fs.readFile(join(REPO, 'package.json'), 'utf8'));
+    for (const a of ['--version', '-v', 'version']) {
+      const r = await run([a]);
+      assert.equal(r.code, 0, `${a} 应零退出: ${r.stderr}`);
+      assert.equal(r.stdout.trim(), pkg.version, `${a} 应输出 ${pkg.version}`);
+    }
+  });
+
+  test('help 列出 update 与 --version (自我管理命令可发现)', async () => {
+    const r = await run(['help']);
+    assert.equal(r.code, 0);
+    assert.ok(r.stdout.includes('abs update'), 'help 应列出 abs update');
+    assert.ok(r.stdout.includes('--version'), 'help 应列出 --version');
+  });
 });

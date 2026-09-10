@@ -32,6 +32,13 @@ function sbEnv(extra = {}) {
   };
 }
 
+const ABS_HOOK_MARK = '/.abs/hooks/';
+/** 测试侧判定: 条目是否 abs 装的(兼容 {hooks:[{command}]} 与扁平 {command})。 */
+function entryHasAbsLocal(e) {
+  const hs = e && e.hooks ? (Array.isArray(e.hooks) ? e.hooks : [e.hooks]) : [];
+  return hs.some((h) => String(h?.command || '').includes(ABS_HOOK_MARK));
+}
+
 function run(args, opts = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], {
@@ -97,10 +104,47 @@ describe('install codex', () => {
     const r = await run(['install', '--agent', 'codex', '--yes']);
     assert.equal(r.code, 0, r.stderr);
     const hooks = JSON.parse(await fs.readFile(join(CODEX_CFG, 'hooks.json'), 'utf8'));
-    assert.ok(Array.isArray(hooks.hooks) && hooks.hooks.length > 0);
+    // Codex 真实形态: 对象 {EventName: [{hooks:[{command}]}]}
+    assert.ok(hooks.hooks && !Array.isArray(hooks.hooks), 'hooks 应为对象映射');
+    const evs = Object.keys(hooks.hooks);
+    assert.ok(evs.length > 0);
+    for (const ev of evs) {
+      const arr = hooks.hooks[ev];
+      assert.ok(Array.isArray(arr) && arr.length === 1, `${ev} 应 1 条`);
+      assert.ok(arr[0].hooks[0].command.includes('/.abs/hooks/'), `${ev} command 指向 ~/.abs/hooks/`);
+    }
     const toml = await fs.readFile(join(CODEX_CFG, 'config.toml'), 'utf8');
     assert.ok(toml.includes('[mcp_servers.abs]'), toml);
     await fs.access(join(CODEX_CFG, 'skills', 'abs-agent-brain-sync', 'SKILL.md'));
+  });
+
+  test('对象形态 hooks.json 幂等重装 + 保留既有 hook; 卸载只删 abs', async () => {
+    const p = join(CODEX_CFG, 'hooks.json');
+    await fs.mkdir(CODEX_CFG, { recursive: true });
+    await fs.writeFile(p, JSON.stringify({ hooks: { Stop: [{ matcher: '*', hooks: [{ type: 'command', command: 'moshi-hook' }] }] } }));
+    for (let i = 0; i < 2; i++) {
+      const r = await run(['install', '--agent', 'codex', '--yes']);
+      assert.equal(r.code, 0, r.stderr);
+    }
+    const cfg = JSON.parse(await fs.readFile(p, 'utf8'));
+    assert.equal(cfg.hooks.Stop.length, 2, '重装后 Stop 应 1 既有 + 1 abs');
+    assert.equal(cfg.hooks.Stop.filter(entryHasAbsLocal).length, 1, 'abs 只 1 条');
+    const u = await run(['uninstall', '--agent', 'codex', '--yes']);
+    assert.equal(u.code, 0, u.stderr);
+    const after = JSON.parse(await fs.readFile(p, 'utf8'));
+    assert.equal((after.hooks.Stop || []).filter(entryHasAbsLocal).length, 0, 'abs 已删');
+    assert.equal((after.hooks.Stop || []).length, 1, 'moshi 保留');
+  });
+
+  test('扁平数组形态 hooks.json 不报错且迁移为对象', async () => {
+    const p = join(CODEX_CFG, 'hooks.json');
+    await fs.mkdir(CODEX_CFG, { recursive: true });
+    await fs.writeFile(p, JSON.stringify({ hooks: [{ event: 'Stop', command: 'legacy-cmd' }] }));
+    const r = await run(['install', '--agent', 'codex', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = JSON.parse(await fs.readFile(p, 'utf8'));
+    assert.ok(!Array.isArray(cfg.hooks), '应迁移为对象');
+    assert.equal(cfg.hooks.Stop.length, 2, 'legacy 保留 + abs 追加');
   });
 });
 
@@ -122,6 +166,21 @@ describe('install opencode / pi', () => {
     await fs.access(join(sandbox, 'pi', 'agent', 'skills', 'abs-agent-brain-sync', 'SKILL.md'));
   });
 
+  // 回归: 收尾注入必须在 agent_end 上(只挂 session_shutdown 时, 干活到一半永远不触发收尾)。
+  test('pi 扩展挂 agent_end 收尾注入: 真改过文件 + 今日未收尾才注入, 每会话一次', async () => {
+    await run(['install', '--agent', 'pi', '--yes']);
+    const src = await fs.readFile(join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'), 'utf8');
+    assert.ok(/pi\.on\("agent_end"/.test(src), '必须在 agent_end 挂收尾注入(不只 session_shutdown)');
+    assert.ok(src.includes('sendUserMessage'), '应用 sendUserMessage 注入收尾指令(而非只记日志)');
+    assert.ok(src.includes('followUp'), '流式中注入应用 deliverAs: followUp');
+    assert.ok(src.includes('teardownNudged'), '应有每会话一次的节流标志');
+    assert.ok(src.includes('hasWriteWork'), '应只在本会话真改过文件时触发');
+    assert.ok(src.includes('loggedToday'), '今日已收尾则不再打扰');
+    assert.ok(src.includes('findBrain'), '无 .brain 的项目不打扰');
+    // 只读命令不得触发(bash 里跑 ls/grep 不算改文件)
+    assert.ok(src.includes('READONLY_CMD'), '应区分只读 bash 与真改文件');
+  });
+
   // 回归: 插件生命周期事件只进技术日志 hooks.log, 不得 spawn `abs log` 灌图谱 log.md。
   // (曾有 [pi:session_start]/[opencode:session.start] 垃圾行刷进 .brain/log.md)
   test('pi/opencode 插件不写图谱 log.md — 无 abs log 调用, 有 hooks.log 直写', async () => {
@@ -135,6 +194,42 @@ describe('install opencode / pi', () => {
       assert.ok(src.includes('hooks.log'), `${name} 插件应直写技术日志 hooks.log`);
       assert.ok(src.includes('appendFile'), `${name} 插件应用 appendFile 落技术日志`);
     }
+  });
+
+  // 回归: op​encode 插件曾把 event 回调入参写成 ({ name }), 但官方 API 是 ({ event }) 且事件名在
+  // event.type —— 导致 name 恒 undefined, 插件从未触发(0 条日志) 静默失效。
+  test('op​encode 插件用正确的 event 回调签名与事件名 (event.type, 非 name)', async () => {
+    await run(['install', '--agent', 'opencode', '--yes']);
+    const src = await fs.readFile(join(sandbox, 'opencode', 'plugins', 'abs.ts'), 'utf8');
+    assert.ok(/event:\s*async\s*\(\{\s*event\s*\}\)/.test(src), 'event 回调应解构 { event }');
+    assert.ok(!/event:\s*async\s*\(\{\s*name\s*\}\)/.test(src), '不得再用错误的 ({ name }) 签名');
+    assert.ok(src.includes('event.type') || src.includes('event && event.type'), '应从 event.type 取事件名');
+    assert.ok(!src.includes('"session.start"') && !src.includes('"session.end"'), 'op​encode 事件名不是 session.start/end');
+    assert.ok(src.includes('session.idle'), '应用 session.idle 作为每轮结束信号');
+  });
+
+  // 回归: op​encode 加载器取 default 导出; 用 export const 命名导出会被静默忽略
+  // (实际踩过: 签名/事件名都修对了, 但导出方式错 → 插件仍不加载, 日志恒 0 条)。
+  test('op​encode 插件用 default 导出 (mod.default.server), 非命名导出', async () => {
+    await run(['install', '--agent', 'opencode', '--yes']);
+    const src = await fs.readFile(join(sandbox, 'opencode', 'plugins', 'abs.ts'), 'utf8');
+    assert.ok(/export default \{/.test(src), '应有 export default { id, server }');
+    assert.ok(/^\s*server,?\s*$/m.test(src), 'default 应挂 server 字段');
+    assert.ok(!/export const AbsPlugin/.test(src), '不得用命名导出(加载器取 default, 命名导出被忽略)');
+    assert.ok(/const server = async \(\{ client, directory \}\)/.test(src), 'server 应接收 { client, directory }');
+  });
+
+  // 回归: op​encode 侧的收尾自动化 (与 pi 的 agent_end 同策略)
+  test('op​encode 插件 session.idle 收尾注入: 真改过文件才推, 每会话一次', async () => {
+    await run(['install', '--agent', 'opencode', '--yes']);
+    const src = await fs.readFile(join(sandbox, 'opencode', 'plugins', 'abs.ts'), 'utf8');
+    assert.ok(src.includes('tool.execute.after'), '应用 tool.execute.after 观测真实写操作');
+    assert.ok(src.includes('wroteFiles'), '应有本会话是否改过文件的标志');
+    assert.ok(src.includes('nudged'), '应有每会话一次的节流标志');
+    assert.ok(src.includes('promptAsync'), '应用 client.session.promptAsync 注入收尾指令');
+    assert.ok(src.includes('findBrain'), '无 .brain 的项目不打扰');
+    assert.ok(src.includes('loggedToday'), '今日已收尾则不再打扰');
+    assert.ok(src.includes('client') && src.includes('directory'), '插件应接收 { client, directory } 入参');
   });
 });
 
