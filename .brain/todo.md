@@ -1,12 +1,12 @@
 # 📋 Todo 看板
 ## Backlog
 ## Today / In Progress
-- [ ] ID-SUBSTRING-MATCH — 任务 id 用 includes() 子串匹配定位 → 前缀相同的 id 互相覆盖, 静默丢任务。复现(零并发): 先 task start T11, 再 task start T1 → T11 被 T1 原地改写并消失, 只剩 1 条。三处同源: src/todo.js:219(upsertTask, 会静默改写已有任务+新任务不出现), src/todo.js:250(findTaskLine), src/store.js:325(markDone, 会误标完成别的任务)。改法: 按行首标识符精确比对(取 '- [ ] <id>' 后的 id token 做 ===), 不用 includes。影响: T-1/T-10、ABS-1/ABS-10、fix-hook/fix-hook-2 等任何前缀相同命名 (认领 2026-09-10)
-  ↳ 断点: 已修(src/todo.js findTaskLine 全等比对 + 新增 idOfTaskLine; store.js markDone 同改)。原复现: 先 T11 再 T1 → 修前只剩1条, 修后两条都在。新增3个回归测试 + revert-check(旧代码3例全失败)。顺带修掉 TASK-SKILL-V2: 的尾部冒号脏 id
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10
 
+- [x] ID-SUBSTRING-MATCH — 任务 id 用 includes() 子串匹配定位 → 前缀相同的 id 互相覆盖, 静默丢任务。复现(零并发): 先 task start T11, 再 task start T1 → T11 被 T1 原地改写并消失, 只剩 1 条。三处同源: src/todo.js:219(upsertTask, 会静默改写已有任务+新任务不出现), src/todo.js:250(findTaskLine), src/store.js:325(markDone, 会误标完成别的任务)。改法: 按行首标识符精确比对(取 '- [ ] <id>' 后的 id token 做 ===), 不用 includes。影响: T-1/T-10、ABS-1/ABS-10、fix-hook/fix-hook-2 等任何前缀相同命名  (完成 2026-09-10)
+  ↳ 断点: 已修(src/todo.js findTaskLine 全等比对 + 新增 idOfTaskLine; store.js markDone 同改)。原复现: 先 T11 再 T1 → 修前只剩1条, 修后两条都在。新增3个回归测试 + revert-check(旧代码3例全失败)。顺带修掉 TASK-SKILL-V2: 的尾部冒号脏 id
 - [x] OC-REAL-VERIFY — opencode 真机验证: 通道修完后真会话要看到 teardown-nudge 痕(当前 session.idle:seen 有痕但零 nudge)  (完成 2026-09-10)
   ↳ 断点: 依赖已解除: OC-INJECT-CHANNEL 判定=通道本就正常(promptAsync 真能唤醒 idle session), 无需改 src/install.js. 真机已直接看到 teardown-nudge 痕(14:58:36)+注入的 [abs 收尾提醒] 作为 user 消息落地+新 assistant turn 回应. 真机验证的失败条件修正为: 需满足 abs 插件 gate(wroteFiles=true 即本会话真调过 write/edit 工具 + brain 存在 + log.md 今日无记录), 纯文本 turn 不会触发 nudge(设计如此). 可解除 Blocked, 转 Today.
 - [x] CC-CODEX-PUSH — CC/Codex 补主动推: Stop hook 回 decision:block 注入收尾指令(守卫抄 pi 插件四条件)，替代只写 wrapup.log  (完成 2026-09-10)

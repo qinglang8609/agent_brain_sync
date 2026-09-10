@@ -1,4 +1,5 @@
 # 🗒 操作日志
+## [2026-09-10 16:02] dev | 修 id 子串匹配丢任务 bug: includes(id) → 行首 id token 全等比对(三处同源: findTaskLine/upsertTask/markDone); 零并发可复现(T1
 ## [2026-09-10 15:30] dev | 完成 6 项待办 + 3 个真 bug 修复 + 经验沉淀: ①版本对齐误判澄清(本地已 1.1.0) ②git 收尾(7 commits) ③loggedToday 裸日期 substring 守卫
 ## [2026-09-10 15:28] note | 类型签名/返回码推不出运行时语义: promptAsync 返回 204 void 被推断为"fire-and-forg
 ## [2026-09-10 15:28] note | 改 hook/插件的部署产物必须同时刷新"仓库 + 全局安装"两份副本, 并删掉已运行进程的旧插件(删文件对已加载进程无
