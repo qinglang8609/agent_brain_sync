@@ -28,6 +28,7 @@
 - [[2026-09-08-hook测试脆弱点-event-sh-幂等-m]] — hook测试脆弱点: event.sh 幂等 mark 硬编码 /tmp/abs
 - [[2026-09-09-方案-落定-跨会话任务只用-abs-task]] — 方案②落定: 跨会话任务只用 abs task(.brain/todo.md唯一
 - [[2026-09-10-opencode-插件-abs-ts-的导出形状]] — opencode 插件 abs.ts 的导出形状确认: @opencode-ai
+- [[2026-09-10-oc-inject-channel-判定实验结论]] — OC-INJECT-CHANNEL 判定实验结论: promptAsync 对 
 ## Syntheses
 ## Sessions
 - [[log-2026-09-10]] — 修 Co​dex 安装崩溃(对象 vs 扁平数组) + 补收尾自动化(pi agent_end 注入) + lint 反向死引用检查; 含自动化形同虚设的根因剖析

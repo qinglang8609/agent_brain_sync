@@ -307,11 +307,24 @@ const server = async ({ client, directory }) => {
     "4) abs log \\"完成 X：...\\" 记一行工作成果，新页同步进 index。\\n" +
     "简洁执行，不要复述本条提醒。若本次确实没有可沉淀产出，直接回一句\\"无可沉淀\\"即可。"
 
+  // bash 里只跑查询类命令不算改文件 (与 pi 侧 READONLY_CMD 同义, 但生成代码里要写进模板串)
+  const READONLY_CMD = /^\\s*(ls|cat|grep|rg|find|head|tail|wc|git\\s+(status|log|diff|show|branch)|pwd|which|echo|node\\s+-v|npm\\s+(ls|view)|curl)\\b/
+
   return {
-    // 观测真实写操作: write/edit/patch 类工具成功即标记
-    "tool.execute.after": async ({ tool }) => {
+    // 观测真实写操作: write/edit/patch 类工具成功即标记。
+    // 坑: 曾漏掉 bash —— op​encode 里很多修改是经 bash(heredoc/sed) 完成的, 纯 bash 会话
+    //     永远不置位 wroteFiles, 于是收尾提醒静默不发。与 pi 侧 WRITE_TOOLS 保持一致。
+    "tool.execute.after": async ({ tool, args }) => {
       const t = String(tool || "").toLowerCase()
-      if (["write", "edit", "patch", "multiedit", "apply_patch"].includes(t)) wroteFiles = true
+      if (["write", "edit", "patch", "multiedit", "apply_patch"].includes(t)) {
+        wroteFiles = true
+        return
+      }
+      // bash 里只有非只读命令算改文件(ls/cat/git status 之类不算)
+      if (t === "bash") {
+        const cmd = String((args && (args.command || args.cmd)) || "")
+        if (cmd && !READONLY_CMD.test(cmd)) wroteFiles = true
+      }
     },
 
     event: async ({ event }) => {

@@ -2,7 +2,7 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdTeardownCheck } from '../src/store.js';
 import { runInstall, runUninstall, installSummary } from '../src/install.js';
 import { readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -69,6 +69,7 @@ function parseArgv(args) {
     else if (a === '--id') { o.id = args[++i]; }
     else if (a === '--section') { o.section = args[++i]; }
     else if (a === '--note') { o.note = args[++i]; }
+    else if (a === '--payload') { o.payload = args[++i]; }
     else if (a === '--yes') { o.yes = true; }
     else if (a === '--repair') { o.repair = true; }
     else if (a === '--no-mcp') { o.mcp = false; }
@@ -153,6 +154,11 @@ async function main() {
       }
       case 'wrapup': {
         console.log(await cmdWrapup({ dir: opts.dir }));
+        break;
+      }
+      // Stop hook 用: 判定是否注入收尾指令。stdout 给 shell (`push:<json>` / `{}`), 无额外输出。
+      case 'teardown-check': {
+        process.stdout.write((await cmdTeardownCheck({ dir: opts.dir, payload: opts.payload })) + '\n');
         break;
       }
       case 'update':  await cmdUpdate({ yes: opts.yes }); break;

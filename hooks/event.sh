@@ -15,6 +15,18 @@ EVENT="__EVENT__"
 
 PAYLOAD=$(cat 2>/dev/null | head -c 500)
 
+# ── Stop 收尾注入 (CC/Co​dex 的"主动推") ─────────────────────────────────
+# 守卫同 pi 插件四条件: ①本会话真改过文件 ②本项目有 .brain ③log.md 今日无条目 ④每会话一次。
+# 判定在 CLI 里做(cmdTeardownCheck)，这里只解析结果。
+# 关键: 回宿主的 decision:block 必须走 stdout 同步输出，所以判定要在前台算完，不能放后台子 shell。
+BAIL='{}'
+if [ "$EVENT" = "Stop" ]; then
+  TEARDOWN=$("$NODE_BIN" "$ABS_BIN" teardown-check --payload "$PAYLOAD" 2>/dev/null)
+  case "$TEARDOWN" in
+    push:*) BAIL=$(printf '%s' "$TEARDOWN" | sed 's/^push://') ;;
+  esac
+fi
+
 # 后台执行，hook 立即返回——宿主热路径零阻塞。
 (
   # 幂等: 同一 payload 指纹在 60s 内只落一行 (防重复触发)。
@@ -40,6 +52,11 @@ PAYLOAD=$(cat 2>/dev/null | head -c 500)
     printf '[%s] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$EVENT" "$SHORT"
   } >> "$LOG_DIR/hooks.log" 2>/dev/null || true
 
+  case "$BAIL" in
+    '{}') ;;
+    *) printf '[%s] %s teardown-nudge 注入收尾指令\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$EVENT" >> "$LOG_DIR/hooks.log" 2>/dev/null || true ;;
+  esac
+
   # Stop 专用: 低噪声 wrap-up 提醒 (独立文件, 不进 per-event hooks.log, 不碰图谱 todo/log.md)。
   # 纯机械信号——"一个会话结束了"; 是否真有滞留任务/经验由 agent 自觉判断, hook 不替做。
   if [ "$EVENT" = "Stop" ]; then
@@ -54,5 +71,5 @@ PAYLOAD=$(cat 2>/dev/null | head -c 500)
 ) &
 
 # Claude Code 等宿主要求 stdout 以 { 开头才不告警。
-printf '{}\n'
+printf '%s\n' "$BAIL"
 exit 0

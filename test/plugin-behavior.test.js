@@ -267,6 +267,30 @@ describe('op​encode 插件 行为级 (session.idle 收尾注入)', () => {
     assert.equal(inj2.length, 0, '无图谱不打扰');
   });
 
+  // 根因回归: "零 nudge" 曾被误解为 promptAsync 通道故障, 实际是 wroteFiles 守卫漏了 bash。
+  // op​encode 里很多修改走 bash(heredoc/sed), 纯 bash 会话永远不置位 → 提醒静默不发。
+  test('bash 写命令算改文件(置位), 只读 bash 不算', async () => {
+    const mod = await loadOc(join(sandbox, 'log'));
+    const cases = [
+      [['bash', { command: 'sed -i s/a/b/ f.js' }], 1, 'bash 写命令应置位'],
+      [['bash', { command: 'git status' }], 0, '只读 bash 不应置位'],
+      [['bash', { command: 'ls -la' }], 0, '只读 bash 不应置位'],
+      [['write', {}], 1, 'write 工具应置位'],
+      [['read', {}], 0, '纯读不应置位'],
+    ];
+    for (const [toolArgs, want, msg] of cases) {
+      const inj = [];
+      const proj = await makeProject(`oc-gate-${toolArgs[0]}-${want}-${Math.random().toString(36).slice(2, 7)}`);
+      const h = await mod.default.server({
+        client: { session: { promptAsync: async (a) => inj.push(a) } },
+        directory: proj,
+      });
+      await h['tool.execute.after']({ tool: toolArgs[0], args: toolArgs[1] });
+      await h.event({ event: { type: 'session.idle', properties: { sessionID: 's' } } });
+      assert.equal(inj.length, want, msg);
+    }
+  });
+
   test('首次 session.idle 无条件留 seen 痕 (可观测性)', async () => {
     const logDir = join(sandbox, 'log');
     const mod = await loadOc(logDir);
@@ -280,6 +304,96 @@ describe('op​encode 插件 行为级 (session.idle 收尾注入)', () => {
     await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
     const log2 = await hooksLog(logDir);
     assert.equal((log2.match(/session\.idle:seen/g) || []).length, 1, 'seen 只记一次');
+  });
+});
+
+// ============================ CC/Co​dex Stop 收尾注入 ============================
+// CC/Co​dex 的"主动推"只能走 Stop hook 的 stdout: 回 {"decision":"block","reason":...}
+// 把 agent 拉回一轮。纯写 wrapup.log 只是记日志, agent 永远不会读到。
+// 本层直接驱动渲染后的真实 shell hook, 断言 stdout 契约与四条件守卫。
+describe('CC/Co​dex Stop hook 收尾注入 (decision:block)', () => {
+  /** 按安装时的真实替换渲染 hook 脚本。 */
+  async function renderHook(event) {
+    const tpl = await fs.readFile(join(REPO, 'hooks', 'event.sh'), 'utf8');
+    const src = tpl
+      .replaceAll('__ABS_BIN__', CLI)
+      .replaceAll('__NODE_BIN__', process.execPath)
+      .replaceAll('__EVENT__', event);
+    const p = join(sandbox, `hook-${event}.sh`);
+    await fs.writeFile(p, src, 'utf8');
+    await fs.chmod(p, 0o755);
+    return p;
+  }
+
+  /** 以给定 payload 调 hook, 返回 stdout。 */
+  function invoke(scriptPath, payload, env = {}) {
+    return new Promise((resolve) => {
+      const c = spawn('bash', [scriptPath], { cwd: sandbox, env: sbEnv(env) });
+      let out = '';
+      c.stdout.on('data', (d) => (out += d));
+      c.stdin.end(payload);
+      c.on('close', () => resolve(out.trim()));
+    });
+  }
+
+  /** 造项目 + 带 Write 足迹的 transcript, 返回 Stop payload。 */
+  async function makeStopCtx(name, { wrote = true, logToday = false, session = 'ses_A' } = {}) {
+    const proj = await makeProject(name, logToday);
+    const trans = join(sandbox, `${name}-trans.jsonl`);
+    await fs.writeFile(trans, JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name: wrote ? 'Write' : 'Read' }] },
+    }) + '\n', 'utf8');
+    return { proj, payload: JSON.stringify({ session_id: session, cwd: proj, transcript_path: trans }) };
+  }
+
+  test('条件全过 → echo decision:block 且 reason 含收尾指令 (合法 JSON)', async () => {
+    const h = await renderHook('Stop');
+    const { payload } = await makeStopCtx('cc-push');
+    const out = await invoke(h, payload, { ABS_MARK_DIR: join(sandbox, 'marks') });
+    const j = JSON.parse(out); // 不合法宿主会告警
+    assert.equal(j.decision, 'block', '必须 block 才能把 agent 拉回一轮');
+    assert.match(j.reason, /abs 收尾提醒/, 'reason 应是收尾指令');
+  });
+
+  test('非 Stop 事件 → 放行 {}', async () => {
+    const h = await renderHook('SessionStart');
+    assert.equal(await invoke(h, '{}'), '{}', '非 Stop 一律放行');
+  });
+
+  test('纯只读会话不注入', async () => {
+    const h = await renderHook('Stop');
+    const { payload } = await makeStopCtx('cc-readonly', { wrote: false });
+    assert.equal(await invoke(h, payload, { ABS_MARK_DIR: join(sandbox, 'm1') }), '{}');
+  });
+
+  test('log.md 今日已有条目 → 不注入', async () => {
+    const h = await renderHook('Stop');
+    const { payload } = await makeStopCtx('cc-done', { logToday: true });
+    assert.equal(await invoke(h, payload, { ABS_MARK_DIR: join(sandbox, 'm2') }), '{}');
+  });
+
+  test('无 .brain 的项目不注入', async () => {
+    const h = await renderHook('Stop');
+    const nb = join(sandbox, 'cc-nobrain');
+    await fs.mkdir(nb, { recursive: true });
+    const payload = JSON.stringify({ session_id: 's', cwd: nb, transcript_path: join(sandbox, 'cc-push-trans.jsonl') });
+    assert.equal(await invoke(h, payload, { ABS_MARK_DIR: join(sandbox, 'm3') }), '{}');
+  });
+
+  test('同 session 第二次 Stop 不重复注入 (每会话一次)', async () => {
+    const h = await renderHook('Stop');
+    const { payload } = await makeStopCtx('cc-once', { session: 'ses_ONCE' });
+    const env = { ABS_MARK_DIR: join(sandbox, 'm4') };
+    const first = await invoke(h, payload, env);
+    assert.equal(JSON.parse(first).decision, 'block', '首次应注入');
+    assert.equal(await invoke(h, payload, env), '{}', '同 session 已推过则不再打扰');
+  });
+
+  test('坏 payload 永不阻塞 (总是合法 JSON)', async () => {
+    const h = await renderHook('Stop');
+    const out = await invoke(h, 'not-json', { ABS_MARK_DIR: join(sandbox, 'm5') });
+    assert.doesNotThrow(() => JSON.parse(out));
   });
 });
 

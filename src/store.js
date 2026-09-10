@@ -1,7 +1,8 @@
 // src/store.js — CLI 命令实现：图谱读写层。
 // 命令: init / board / status / load / task / query / lint
 import { promises as fs } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
+import { homedir } from 'node:os';
 import { requireBrain, findBrainRoot, brainPath } from './index.js';
 import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped } from './todo.js';
 import { editFile, SKIP } from './lock.js';
@@ -190,6 +191,65 @@ export async function cmdLoad({ dir }) {
 export async function cmdWrapup({ dir }) {
   const root = await requireBrain(dir || process.cwd());
   return appendWrapup(root);
+}
+
+/**
+ * Stop hook 收尾注入判定 —— CC/Co​dex 的"主动推"。
+ * 与 pi 插件四条件一致: ①本会话真改过文件 ②有 .brain ③log.md 今日无条目 ④每会话一次。
+ * 输出给 shell: `push:<json>` = 注入, 其它 = 放行。JSON 走 stdout 回宿主的 decision:block。
+ * 所有异常一律放行(`{}`), 绝不因判定失败而卡住用户会话。
+ */
+export async function cmdTeardownCheck({ dir, payload }) {
+  try {
+    let ev = {};
+    try { ev = JSON.parse(payload || '{}'); } catch { ev = {}; }
+
+    // 条件①: 本会话真改过文件。CC 的 Stop payload 不带工具足迹,
+    // 故以 transcript_path 为准; 取不到就退化为"本项目今日是否已有产物"判断。
+    const transcript = ev.transcript_path || ev.transcriptPath;
+    if (transcript) {
+      const txt = await readIfExists(transcript);
+      const wrote = /"(Write|Edit|MultiEdit|NotebookEdit)"/.test(txt);
+      if (!wrote) return '{}'; // 纯只读会话不打扰
+    }
+
+    // 条件②: 本项目有 .brain
+    const dir0 = dir || ev.cwd || process.cwd();
+    let root;
+    try { root = await requireBrain(dir0); } catch { return '{}'; }
+
+    // 条件③: log.md 今日尚无条目(条目头 '## [YYYY-MM-DD HH:MM]')
+    const logTxt = await readIfExists(brainPath(root, 'log.md'));
+    const stamp = localStamp();            // 'YYYY-MM-DD HH:MM'
+    const day = stamp.slice(0, 10);
+    if (new RegExp('^## \\[' + day + ' \\d{2}:\\d{2}\\]', 'm').test(logTxt)) return '{}';
+
+    // 条件④: 每会话一次(以 session_id 落 mark; 取不到 id 则不节流, 交给 60s 幂等兜底)
+    const sid = ev.session_id || ev.sessionId || '';
+    if (sid) {
+      const mark = join(homedir(), '.abs', 'log', `teardown-${String(sid).replace(/[^\w-]/g, '')}.mark`);
+      try {
+        await fs.access(mark);
+        return '{}'; // 本会话已推过
+      } catch { /* 未推过 */ }
+      await fs.mkdir(dirname(mark), { recursive: true });
+      await fs.writeFile(mark, stamp).catch(() => {});
+    }
+
+    const msg = [
+      '[abs 收尾提醒] 本会话改过文件但 .brain/ 今天还没有记录。请立即走收尾循环：',
+      '1) 跑 abs load 看 Today 还有哪些未完成；',
+      '2) 实际做完漏登记的 abs task done <id>，做到一半的 abs task note <id> --note "断点"；',
+      '3) 值得留的经验 abs note "..."（宁少勿滥，能从代码 grep 到的不记）；',
+      '4) abs log "完成 X：..." 记一行工作成果，新页同步进 index。',
+      '简洁执行，不要复述本条提醒。若本次确实没有可沉淀产出，直接回一句"无可沉淀"即可。',
+    ].join('\n');
+
+    // Cl​aude Code Stop hook 契约: {"decision":"block","reason":"..."} = 阻止结束并把 reason 回灌给 agent
+    return 'push:' + JSON.stringify({ decision: 'block', reason: msg });
+  } catch {
+    return '{}'; // 永不阻塞宿主
+  }
 }
 
 async function readIfExists(p) {

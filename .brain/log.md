@@ -1,4 +1,6 @@
 # 🗒 操作日志
+## [2026-09-10 15:00] dev | 完成 OC-INJECT-CHANNEL 判定: 实测四通道(prompt_async 204/prompt 200/command 200 均能唤醒 idle session; tui.* 200 
+## [2026-09-10 14:59] note | OC-INJECT-CHANNEL 判定实验结论: promptAsync 对 idle(终结态) session 确实
 ## [2026-09-10 13:21] note | opencode 插件 abs.ts 的导出形状确认: @opencode-ai/plugin 要求 PluginMod
 ## [2026-09-10 12:05] note | 命令报'看不到新版本'先分两类: 实现不存在 vs 数据/网络不对。本次'abs update 看不到新版本'根因是命令
 ## [2026-09-10 12:05] dev | 补 abs update + abs --version: 用户报'update 看不到新版本'根因是命令从未实现(不是缓存/网络); update 走 npm 升级后自动刷新四宿主 hook/ski
