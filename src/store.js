@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { requireBrain, findBrainRoot, brainPath } from './index.js';
-import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped } from './todo.js';
+import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor, wrapupLogPath } from './wrapup.js';
 
@@ -320,9 +320,10 @@ async function markDone(file, id) {
     let changed = false;
     let moved = null;
     const kept = [];
+    const wantId = String(id).replace(/\u200b/g, '');
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
-      if (!moved && l.startsWith('- [ ]') && l.includes(id)) {
+      if (!moved && idOfTaskLine(l) === wantId) {
         changed = true;
         const head = l.replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + ` (完成 ${today()})`;
         const bp = [];

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup } from '../src/store.js';
-import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped } from '../src/todo.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 
 // ---------- 测试沙盒: 每个用例一个临时目录 ----------
@@ -108,6 +108,31 @@ describe('todo 层', () => {
     const t = await readTodo(projectA);
     const backlog = t.split('## Today')[0];
     assert.ok(backlog.includes('X — 优先级:P1'));
+  });
+
+  // 回归: id 定位曾用 l.includes(id) 子串匹配, 导致前缀相同的 id 互相覆盖 ——
+  // 先建 T11 再建 T1 时, T1 误命中 T11 那一行并原地改写, T11 静默消失。
+  test('前缀相同的 id 不互相覆盖 (T11 vs T1)', async () => {
+    await upsertTask(projectA, { section: 'Today / In Progress', text: 'T11 — 第十一' });
+    await upsertTask(projectA, { section: 'Today / In Progress', text: 'T1 — 第一个' });
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('T11 — 第十一'), 'T11 必须还在(修前被 T1 覆盖而消失)');
+    assert.ok(t.includes('T1 — 第一个'), 'T1 必须新增为独立一行');
+    assert.equal((t.match(/^- \[ \] T\d+/gm) || []).length, 2, '应有 2 条独立任务');
+  });
+
+  test('findTaskLine 全等比对, 不被前缀/子串误命中', () => {
+    const lines = ['- [ ] T11 — a', '- [ ] T1 — b', '- [ ] TASK-10 — c'];
+    assert.equal(findTaskLine(lines, 'T1'), 1, 'T1 应命中第 2 行而非 T11');
+    assert.equal(findTaskLine(lines, 'T11'), 0);
+    assert.equal(findTaskLine(lines, 'TASK-1'), -1, 'TASK-1 不应命中 TASK-10');
+    assert.equal(findTaskLine(lines, 'TASK-10'), 2);
+  });
+
+  test('id 里混入零宽字符也能定位 (历史瑕疵容错)', () => {
+    const lines = ['- [ ] CO\u200bDEX-HOOKS-FIX — a'];
+    assert.equal(findTaskLine(lines, 'CODEX-HOOKS-FIX'), 0, '查干净 id 应命中含 ZWSP 的行');
+    assert.equal(findTaskLine(lines, 'CO\u200bDEX-HOOKS-FIX'), 0, '查含 ZWSP 的 id 也应命中');
   });
 });
 

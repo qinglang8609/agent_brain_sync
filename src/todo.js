@@ -215,8 +215,8 @@ export async function upsertTask(brainRoot, { section, text }) {
   const out = await editFile(p, (orig) => {
     const base = normalizeTodo(orig);
     const lines = base.split('\n');
-    // 在所有分区中找含该 id 的未完成任务行（Done 的已完成行不重复动）
-    const idx = lines.findIndex((l) => l.startsWith('- [ ]') && id && l.includes(id));
+    // 在所有分区中找该 id 对应的未完成任务行（Done 的已完成行不重复动）；全等比对
+    const idx = findTaskLine(lines, id);
     if (idx !== -1) {
       // 原位更新：保留断点附属行，只换任务行本体
       const oldNote = extractNote(lines[idx].replace(/^- \[ \] /, ''));
@@ -244,10 +244,25 @@ export function extractNote(text) {
   return i === -1 ? '' : String(text).slice(i + 3).replace(/\s*\(认领[^)]*\)\s*$/, '');
 }
 
-/** 定位含 id 的未完成任务行下标；附属断点行（↳ 开头）不算任务行。 */
+/**
+ * 从任务行取出行首 id token（`- [ ] <id> …` 里的 <id>）。
+ * 坑: 不能用 l.includes(id) 定位任务 —— 那是子串匹配，`T1` 会命中 `T11`（同理
+ * TASK-1/TASK-10、fix-hook/fix-hook-2），导致 upsert 误判"已存在"而原地改写别的任务、
+ * 新任务静默消失。必须取出 id token 做全等比对。
+ * id 里可能混入零宽字符(历史瑕疵)，比对前先剥掉。
+ */
+export function idOfTaskLine(line) {
+  if (!line || !line.startsWith('- [ ]')) return null;
+  const m = line.match(/^- \[ \] (\S+)/);
+  return m ? m[1].replace(/\u200b/g, '') : null;
+}
+
+/** 定位 id 对应的未完成任务行下标；附属断点行（↳ 开头）不算任务行。
+ *  全等比对，不用 includes（否则 T1 会误命中 T11）。 */
 export function findTaskLine(lines, id) {
   if (!id) return -1;
-  return lines.findIndex((l) => l.startsWith('- [ ]') && l.includes(id));
+  const want = String(id).replace(/\u200b/g, '');
+  return lines.findIndex((l) => idOfTaskLine(l) === want);
 }
 
 /** 实时断点: 在 id 任务行下原位补/换 `↳ 断点:` 附属行（不挪任务位置）。 */

@@ -1,6 +1,8 @@
 # 📋 Todo 看板
 ## Backlog
 ## Today / In Progress
+- [ ] ID-SUBSTRING-MATCH — 任务 id 用 includes() 子串匹配定位 → 前缀相同的 id 互相覆盖, 静默丢任务。复现(零并发): 先 task start T11, 再 task start T1 → T11 被 T1 原地改写并消失, 只剩 1 条。三处同源: src/todo.js:219(upsertTask, 会静默改写已有任务+新任务不出现), src/todo.js:250(findTaskLine), src/store.js:325(markDone, 会误标完成别的任务)。改法: 按行首标识符精确比对(取 '- [ ] <id>' 后的 id token 做 ===), 不用 includes。影响: T-1/T-10、ABS-1/ABS-10、fix-hook/fix-hook-2 等任何前缀相同命名 (认领 2026-09-10)
+  ↳ 断点: 已修(src/todo.js findTaskLine 全等比对 + 新增 idOfTaskLine; store.js markDone 同改)。原复现: 先 T11 再 T1 → 修前只剩1条, 修后两条都在。新增3个回归测试 + revert-check(旧代码3例全失败)。顺带修掉 TASK-SKILL-V2: 的尾部冒号脏 id
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10
@@ -49,7 +51,7 @@
   ↳ 断点: install.js 共存改造完成+4新测试(12/12绿): installClaudeCode 覆盖式→分区合并追加(entryHasAbs去重幂等,保留moshi), uninstallClaudeCode 整删→只删abs条目。剩: 待claude-code-guide确认多hook条目并存官方支持后, 备份并应用真实~/.claude/settings.json
 - [x] 每轮结束收尾自动化: Stop hook 读todo→判未登记完成→沉淀经验→更新 index/log/todo  (完成 2026-09-08)
   ↳ 断点: 本会话测试: Stop hook 机械层触发验证通过(hooks.log落痕/stdout {} 合法/非阻塞/60s幂等); v2 skill(收尾循环节)已同步装到 ~/.claude/skills/abs-agent-brain-sync; 收尾循环走通(对账/落log); 剩 agent 收尾循环的自动化触发 + TASK-DEEP-TEST
-- [x] TASK-SKILL-V2: 以原版完整SKILL为骨架+新增「每轮结束收尾循环」节, 整合abs工具命令, 重写skill/SKILL.md并重装  (完成 2026-09-08)
+- [x] TASK-SKILL-V2 以原版完整SKILL为骨架+新增「每轮结束收尾循环」节, 整合abs工具命令, 重写skill/SKILL.md并重装  (完成 2026-09-08)
   ↳ 断点: skill已重写(174行)含图谱定位节/收尾循环, 清了bootstrap等旧方法, 手工/工具边界说清; 剩装到~/.claude/skills + 删旧agent_brain_sync
 - [x] TASK-BP-BUG — task note 在目标任务不存在/已完成时, 断点错挂到同区第一条任务下; 应找不到即报错不落盘  (完成 2026-09-08)
 - [x] TASK-LINT-SOURCE — abs note 产出的 source 暂存页被判 ORPHAN: lint 应对 sources/ 豁免孤立检查(暂存页天然无链接, 提炼后才挂链)  (完成 2026-09-08)
