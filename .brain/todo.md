@@ -7,7 +7,6 @@
 
 - [x] DAEMON-IPC — 方案A: CLI/MCP 共用常驻 daemon (Unix socket), 消除 22ms node 启动开销 + 统一锁. 要点: ①daemon 自拉起+心跳 ②CLI 连不上时退化本地直读(安全网,必须可测) ③ABS_NO_DAEMON=1 开关 ④MCP server 也走同一 daemon 保证一致. 实测依据: 独立起进程 28.8ms vs 单进程内 0.2ms, 进程启动占99%  (完成 2026-09-10)
   ↳ 断点: 已撤销(方案A被否)。实现并跑通后实测收益仅 27→22ms: node启动20ms逃不掉(CLI必然起进程), daemon只省了读写的5ms。决定不加常驻进程, 改走规则约束(写操作只走MCP, ~2ms)。决策依据已留档概念页 perf-fixed-overhead 避免重提。3个新文件已删, bin/abs.js 已还原, 164测试绿
-  ↳ 卡点: 等用户确认是否投入 100-150 行复杂度。备选: 零改动走 MCP(但靠自觉)。阻塞问题: 29ms 在人工操作时无感, 仅 agent 一轮发多条命令时明显
 - [x] ID-SUBSTRING-MATCH — 任务 id 用 includes() 子串匹配定位 → 前缀相同的 id 互相覆盖, 静默丢任务。复现(零并发): 先 task start T11, 再 task start T1 → T11 被 T1 原地改写并消失, 只剩 1 条。三处同源: src/todo.js:219(upsertTask, 会静默改写已有任务+新任务不出现), src/todo.js:250(findTaskLine), src/store.js:325(markDone, 会误标完成别的任务)。改法: 按行首标识符精确比对(取 '- [ ] <id>' 后的 id token 做 ===), 不用 includes。影响: T-1/T-10、ABS-1/ABS-10、fix-hook/fix-hook-2 等任何前缀相同命名  (完成 2026-09-10)
   ↳ 断点: 已修(src/todo.js findTaskLine 全等比对 + 新增 idOfTaskLine; store.js markDone 同改)。原复现: 先 T11 再 T1 → 修前只剩1条, 修后两条都在。新增3个回归测试 + revert-check(旧代码3例全失败)。顺带修掉 TASK-SKILL-V2: 的尾部冒号脏 id
 - [x] OC-REAL-VERIFY — opencode 真机验证: 通道修完后真会话要看到 teardown-nudge 痕(当前 session.idle:seen 有痕但零 nudge)  (完成 2026-09-10)
