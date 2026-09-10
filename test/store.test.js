@@ -512,9 +512,21 @@ describe('cmdLint', () => {
   });
 
   test('超尺寸页被检出', async () => {
-    await fs.writeFile(join(projectA, '.brain', 'concepts', 'big.md'), PAGE('x'.repeat(6 * 1024)), 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'big.md'), PAGE('x'.repeat(9 * 1024)), 'utf8');
     const out = await cmdLint({ dir: projectA });
     assert.ok(out.includes('OVER-SIZE'), out);
+  });
+
+  // 上限从 5120B 放宽到 8KB（实测偏紧: 68 页里仅 2 页超限且都只超一点）。
+  // 边界钉住：6KB 该放行，9KB 该报。
+  test('容量上限为 8KB：6KB 放行、9KB 报 OVER-SIZE', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'six.md'), PAGE('x'.repeat(6 * 1024)), 'utf8');
+    let out = await cmdLint({ dir: projectA });
+    assert.ok(!/OVER-SIZE[^\n]*six\.md/.test(out), `6KB 不该报超限: ${out}`);
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'six.md'), PAGE('x'.repeat(9 * 1024)), 'utf8');
+    out = await cmdLint({ dir: projectA });
+    assert.ok(/OVER-SIZE[^\n]*six\.md/.test(out), `9KB 应报超限: ${out}`);
+    assert.ok(/150L\/8KB/.test(out), `提示应反映新阈值(150L/8KB): ${out}`);
   });
 
   test('模板残留链接被检出', async () => {

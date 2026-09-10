@@ -593,8 +593,8 @@ export async function cmdLint({ dir }) {
       issues.push(`UNRESOLVED-CONFLICT: ${pg.rel}`);
     }
     if (['concepts', 'entities', 'syntheses'].includes(pg.dir)) {
-      if (pg.lines > 150 || pg.bytes > 5 * 1024) {
-        issues.push(`OVER-SIZE: ${pg.rel} (${pg.lines}L/${pg.bytes}B > 150L/5120B; 拆或外链)`);
+      if (pg.lines > PAGE_MAX_LINES || pg.bytes > PAGE_MAX_BYTES) {
+        issues.push(`OVER-SIZE: ${pg.rel} (${pg.lines}L/${pg.bytes}B > ${PAGE_MAX_LINES}L/${PAGE_MAX_BYTES / 1024}KB; 拆或外链)`);
       }
     }
     if (pg.dir !== 'sources' && !pg.indexed) {
@@ -638,6 +638,14 @@ export async function cmdLint({ dir }) {
 }
 
 const PAGE_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];
+
+// concept/entity/synthesis 页的容量上限，超出提示"拆或外链"。
+// 曾为 150L/5120B —— 实测偏紧：跨 4 项目 68 页里仅 2 页超限，且都只超一点
+// （5463B / 5440B）；为满足它还把一页从 5319B 压到 4972B（内容受损、收益为零）。
+// 放宽到 8KB：当前最大页 5463B，留约 50% 余量，但不至于失去"该拆了"的信号。
+// 提成常量避免检查条件与提示文本各写一份而漂移。
+const PAGE_MAX_LINES = 150;
+const PAGE_MAX_BYTES = 8 * 1024;
 
 async function listPages(vault) {
   let indexText = '';

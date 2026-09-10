@@ -1,6 +1,7 @@
 # 📋 Todo 看板
 ## Backlog
 ## Today / In Progress
+- [ ] OVERSIZE-THRESHOLD-8K — OVER-SIZE 阈值放宽 5120B → 8192B（行数 150 不变），并提成常量 PAGE_MAX_BYTES/PAGE_MAX_LINES（原来检查条件与提示文本各写一份 150/5120，会漂移）。依据：跨 4 项目 68 页仅 2 页超限且都只超一点（codebuddy 5463B / faxuehui 5440B）；早先为满足它还把一页从 5319B 压到 4972B。放宽后两者归零。已加边界测试（6KB 放行 / 9KB 报）+ revert-check (认领 2026-09-10)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10
