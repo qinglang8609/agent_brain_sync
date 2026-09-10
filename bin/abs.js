@@ -210,8 +210,9 @@ async function main() {
         console.log(await cmdLint({ dir: opts.dir }));
         break;
       }
-      // 内部命令（hook 专用；不出现在 help）：Stop 时机械快照未完成任务
+      // 内部命令（hook 专用，不出现在 help）：Stop 时机械快照未完成任务
       case 'wrapup': {
+        rejectExtra(opts._, 'abs wrapup（内部命令, 供 hook 调用）');
         console.log(await cmdWrapup({ dir: opts.dir }));
         break;
       }

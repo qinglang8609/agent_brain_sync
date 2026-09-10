@@ -180,7 +180,7 @@ export async function cmdLoad({ dir }) {
       `📂 abs → 项目: ${root}`,
       '⏳ 上会话滞留（未 done，先对账）',
       rows.join('\n'),
-      '→ 完成: abs task done <id>；未完: abs task note <id> --note 断点',
+      '→ 完成: abs todo done <id>；未完: abs todo note <id> --note 断点',
       ''
     );
   }
@@ -244,7 +244,7 @@ export async function cmdTeardownCheck({ dir, payload }) {
     const msg = [
       '[abs 收尾提醒] 本会话改过文件但 .brain/ 今天还没有记录。请立即走收尾循环：',
       '1) 跑 abs load 看 Today 还有哪些未完成；',
-      '2) 实际做完漏登记的 abs task done <id>，做到一半的 abs task note <id> --note "断点"；',
+      '2) 实际做完漏登记的 abs todo done <id>，做到一半的 abs todo note <id> --note "断点"；',
       '3) 值得留的经验 abs note "..."（宁少勿滥，能从代码 grep 到的不记）；',
       '4) abs log "完成 X：..." 记一行工作成果，新页同步进 index。',
       '简洁执行，不要复述本条提醒。若本次确实没有可沉淀产出，直接回一句"无可沉淀"即可。',
@@ -302,7 +302,7 @@ export async function cmdTask({ dir, action, id, section, note }) {
     return r.msg;
   }
   if (action === 'note') {
-    if (!note) return '用法: abs task note <id> --note "断点/进度"（实时落 ↳ 断点 行）';
+    if (!note) return '用法: abs todo note <id> --note "断点/进度"（实时落 ↳ 断点 行）';
     const r = await setBreakpoint(root, { id, text: note });
     return r.msg;
   }

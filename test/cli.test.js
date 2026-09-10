@@ -113,7 +113,7 @@ describe('cli: todo', () => {
 
   // 回归: 只读命令以前静默吞掉多余参数
   test('只读命令遇多余参数报错 (不再静默)', async () => {
-    for (const c of ['status', 'lint', 'load', 'index']) {
+    for (const c of ['status', 'lint', 'load', 'index', 'wrapup']) {
       const r = await run([c, 'junk']);
       assert.notEqual(r.code, 0, `abs ${c} junk 应报错`);
       assert.ok(/不认识多余参数/.test(r.stderr), `${c}: ${r.stderr}`);

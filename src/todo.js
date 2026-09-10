@@ -318,6 +318,6 @@ export async function moveBlocked(brainRoot, { id, reason }) {
 export async function boardText(brainRoot, textOverride) {
   const text = textOverride !== undefined ? textOverride : await readTodo(brainRoot);
   const head = `📂 abs → 项目: ${brainRoot}`;
-  if (!text.trim()) return `${head}\n\n（todo.md 为空，先 abs task start 登记任务）`;
+  if (!text.trim()) return `${head}\n\n（todo.md 为空，先 abs todo add 登记任务）`;
   return `${head}\n\n${text.trim()}`;
 }
