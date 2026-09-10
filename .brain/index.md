@@ -3,13 +3,18 @@
 本文件唯一入口。每新建/大改一个知识页，同步在此分类下加一行 `[[页面名]] — 一句话`。
 
 ## 当前路线 (Roadmap)
-> **v1.0.0 已发布**（2026-09-10，npm `@fanchao8609/agent_brain_sync`）。
-> 四宿主（cl​aude-code / co​dex / op​encode / pi）安装器 + hook→MCP→CLI 三层 + 收尾自动化均已落地，146 测试绿。
+> **v1.2.2 已发布**（2026-09-10，npm `@fanchao8609/agent_brain_sync`），166 测试绿。
+> 四宿主安装器 + hook→MCP→CLI 三层 + 收尾自动化（含 Stop hook 主动推 decision:block）均已落地。
+>
+> **已完成**（原"下一阶段候选"）：
+> - ✅ 四宿主收尾注入贯通（op​encode / cl​aude-code / co​dex / pi；零 nudge 真因是 wroteFiles gate 非通道）；
+> - ✅ 收尾注入节流加固（stop_hook_active + 缺 session_id 退化节流，防死循环）；
+> - ✅ 日志增长治理（hooks.log / wrapup.log 均超阈值轮转）。
 >
 > **下一阶段候选**：
-> - op​encode / cl​aude-code / co​dex 的收尾注入**真机观察**（pi 已贯通）；
-> - 收尾注入的“只推一次”节流是否会漏掉长会话中的多次阶段性收尾；
-> - 图谱长期维护（sources 归档节奏、concepts 拆分时机）。
+> - 图谱长期维护（sources 归档节奏、concepts 拆分时机、index 路线图随版本更新）；
+> - 收尾注入的“只推一次”是否会漏掉长会话中的多次阶段性收尾；
+> - 若 `.brain` 涨到 MB 级或需要结构化查询，再评估索引层（见 [[perf-fixed-overhead]]；候选不是 SQLite）。
 
 ## Concepts
 - [[abs-install-layout]] — 全局安装形态: npm link 单一真源 + hook/MCP 烧绝对路径

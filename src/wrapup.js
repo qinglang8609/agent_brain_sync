@@ -18,6 +18,25 @@ export function wrapupLogPath() {
 // 同项目两次快照的最小间隔(秒)。agent_end 会逐 turn 触发, 无变化时不刷屏。
 export const WRAPUP_MIN_INTERVAL_MS = 5 * 60 * 1000;
 
+// wrapup.log 轮转阈值。只留 .1 一层: 排查/Rebuild 只靠每个 proj 的最近一块,
+// 旧块是死重量(parseWrapup 用 byProj.set 覆盖, 前面的块永远不会被读到)。
+export const WRAPUP_MAX_BYTES = 1024 * 1024; // 1 MiB
+
+/** 超阈值则轮转为 .1。放在 appendWrapup 里 → CLI/MCP/hook 三条路径都覆盖。 */
+async function rotateIfNeeded(p) {
+  const max = Number(process.env.ABS_WRAPUP_MAX_BYTES || WRAPUP_MAX_BYTES);
+  let st;
+  try { st = await fs.stat(p); } catch { return; }
+  if (!Number.isFinite(max) || st.size <= max) return;
+  // 先把当前内容落成 .1(覆盖旧 .1), 再截断；失败则不动, 不让轮转本身丢数据
+  try {
+    await fs.rename(p, p + '.1');
+  } catch {
+    return;
+  }
+  await fs.writeFile(p, `[${localStamp()}] wrapup 轮转: 原文件 ${st.size} bytes > ${max}, 已移入 wrapup.log.1\n`, 'utf8').catch(() => {});
+}
+
 /** 从 todo 文本/快照块提取任务清单。兼容顶层(todo.md `- [ ]`)与缩进(快照 `  - [ ]`)两种行。
  * body = 去掉 `- [ ]` 前缀、`(认领|完成 date)` 标注后的核心文本。bp 去掉 `↳ 断点|卡点: ` 前缀。
  * Done 区（## Done 下）不采。返回 [{ body, bp }]，bp 为附属断点数组（或空）。 */
@@ -102,6 +121,8 @@ export async function appendWrapup(root) {
   await fs.mkdir(join(p, '..'), { recursive: true });
   const todo = await readTodo(root); // readTodo 幂等迁移，拿到权威内容
   const tasks = extractOpenTasks(todo);
+  // 轮转在写前做：否则文件无上限增长（只追加不清理，旧块永远读不到=死重量）
+  await rotateIfNeeded(p);
   let prev = '';
   try { prev = await fs.readFile(p, 'utf8'); } catch { /* 尚无文件 */ }
   const snap = parseWrapup(prev);

@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
+import { strandedFor } from '../src/wrapup.js';
 
 // ---------- 测试沙盒: 每个用例一个临时目录 ----------
 let sandbox;
@@ -548,6 +549,37 @@ describe('cmdWrapup + load 滞留 (A+B)', () => {
   async function wrapupLogText() {
     try { return await fs.readFile(join(logDir, 'wrapup.log'), 'utf8'); } catch { return ''; }
   }
+
+  // wrapup.log 是只追加的, 与 hooks.log 同类有增长问题。
+  // parseWrapup 用 byProj.set 覆盖, 前面的旧块永远不会被读到 = 死重量。
+  test('超阈值轮转为 .1, 且不丢当前项目状态', async () => {
+    await fs.mkdir(logDir, { recursive: true });
+    // 先造一个真实快照(当前未完成任务), 再灌大文件把它顶过阈值
+    await cmdWrapup({ dir: projectA });
+    const real = await wrapupLogText();
+    await fs.writeFile(join(logDir, 'wrapup.log'), 'x'.repeat(2 * 1024 * 1024) + '\n' + real, 'utf8');
+
+    await cmdWrapup({ dir: projectA });
+
+    const rotated = await fs.readFile(join(logDir, 'wrapup.log.1'), 'utf8');
+    assert.ok(rotated.length > 2 * 1024 * 1024, '旧内容应整体移入 .1');
+    const now = await wrapupLogText();
+    assert.ok(now.length < 2 * 1024 * 1024, '当前文件应已瘦身');
+    // 关键: 轮转后本项目状态仍可被读到(strandedFor 依赖 wrapup.log)
+    const stranded = await strandedFor(projectA);
+    assert.ok(Array.isArray(stranded), 'strandedFor 不应因轮转报错');
+  });
+
+  test('未超阈值不轮转 (常见路径零副作用)', async () => {
+    await cmdWrapup({ dir: projectA });
+    const before = await wrapupLogText();
+    await cmdWrapup({ dir: projectA });
+    const after = await wrapupLogText();
+    assert.ok(after.startsWith(before.slice(0, 20)), '小文件应只追加、不移位');
+    let hasRot = true;
+    try { await fs.access(join(logDir, 'wrapup.log.1')); } catch { hasRot = false; }
+    assert.equal(hasRot, false, '不应产生 wrapup.log.1');
+  });
 
   test('B: 快照把 Today 未完成任务+断点写入 wrapup.log (带 proj 归属)', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'W-1', note: '做 A' });
