@@ -1,12 +1,12 @@
 # 📋 Todo 看板
 ## Backlog
 ## Today / In Progress
-- [ ] LOAD-RECENT-ORDER — abs load 的「最近动作」贴的是最旧 5 条而不是最新：log.md 是新在上（头=今天23:18，尾=2026-09-08），而 cmdLoad 用 tailLines(log,5)=lines.slice(-5) 取尾部=最旧。实测 load 输出里最近动作全是 09-08 的旧条目，今天的最新记录从未显示。修法: 取前 N 条（或抽前 5 个 '## [' 条目），标签改「最新 5 条」。影响: abs load 是开机读状态入口，这一节目前无用。验证: 断言输出含今天最新条目、不含 09-08 最旧条目 (认领 2026-09-10)
-- [ ] ROADMAP-STALE — index.md 的路线图停在「v1.2.2 已发布，166 测试绿」，实际已到 1.5.1 / 189 测试（滞后 3 个版本）。这已在路线图自己的「下一阶段候选」里写着（"index 路线图随版本更新"）却没人做——无机制则必漂移。可选修法: ①发版时在 abs update/release 流程里同步写路线图版本 ②直接删掉路线图里的版本号（只留方向，避免这类失真） ③加 lint 检查 README/index 里的版本号与 package.json 一致 (认领 2026-09-10)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10
 
+- [x] LOAD-RECENT-ORDER — abs load 的「最近动作」贴的是最旧 5 条而不是最新：log.md 是新在上（头=今天23:18，尾=2026-09-08），而 cmdLoad 用 tailLines(log,5)=lines.slice(-5) 取尾部=最旧。实测 load 输出里最近动作全是 09-08 的旧条目，今天的最新记录从未显示。修法: 取前 N 条（或抽前 5 个 '## [' 条目），标签改「最新 5 条」。影响: abs load 是开机读状态入口，这一节目前无用。验证: 断言输出含今天最新条目、不含 09-08 最旧条目  (完成 2026-09-10)
+- [x] ROADMAP-STALE — index.md 的路线图停在「v1.2.2 已发布，166 测试绿」，实际已到 1.5.1 / 189 测试（滞后 3 个版本）。这已在路线图自己的「下一阶段候选」里写着（"index 路线图随版本更新"）却没人做——无机制则必漂移。可选修法: ①发版时在 abs update/release 流程里同步写路线图版本 ②直接删掉路线图里的版本号（只留方向，避免这类失真） ③加 lint 检查 README/index 里的版本号与 package.json 一致  (完成 2026-09-10)
 - [x] OVERSIZE-THRESHOLD-8K — OVER-SIZE 阈值放宽 5120B → 8192B（行数 150 不变），并提成常量 PAGE_MAX_BYTES/PAGE_MAX_LINES（原来检查条件与提示文本各写一份 150/5120，会漂移）。依据：跨 4 项目 68 页仅 2 页超限且都只超一点（codebuddy 5463B / faxuehui 5440B）；早先为满足它还把一页从 5319B 压到 4972B。放宽后两者归零。已加边界测试（6KB 放行 / 9KB 报）+ revert-check  (完成 2026-09-10)
 - [x] LINT-PATH-PREFIX — lint 提示里的路径省略了 .brain/ 前缀，用户按报的路径去项目里找找不到（codebuddy 的 concepts/fnos-native-release-deploy.md 实际在 .brain/concepts/ 下，项目根没有 concepts/ 目录）。根因: listPages 里 rel=`${d}/${f}` 是 vault 相对；7 处提示(NO-FRONTMATTER/TEMPLATE-LINK/DEAD-LINK/ORPHAN-PAGE/UNRESOLVED-CONFLICT/OVER-SIZE/INDEX-MISSING)全用它。改法: rel 改 `.brain/${d}/${f}`。影响面: 只 lint 文本，无程序消费；但 test/store.test.js 两处正则（ORPHAN-PAGE/INDEX-MISSING 带 sessions\/ 的）需同步  (完成 2026-09-10)
 - [x] LINT-TOPLEVEL-PAGE — lint 误报 [[todo]] 死链：names 集合只含子目录页(concepts/entities/sources/syntheses/sessions)，.brain 顶层文件 index.md/log.md/todo.md 不被当作可链接页 → [[todo]] 被判 DEAD-LINK + INDEX-DEAD-LINK。实测 codebuddy 报 5 条、faxuehui 报 7 条，均属误报（todo.md 真实存在）。已修：names 补充 .brain 顶层 *.md 的 slug（仅用于链接目标存在性判定，不影响 ORPHAN/INDEX-MISSING）。验证：codebuddy 5 条消失、[[log]]/[[index]] 同样放行、真不存在的页仍报；新增回归测试，187 测试绿。待办：commit + 发版  (完成 2026-09-10)
