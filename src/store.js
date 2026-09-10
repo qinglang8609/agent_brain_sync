@@ -224,17 +224,22 @@ export async function cmdTeardownCheck({ dir, payload }) {
     const day = stamp.slice(0, 10);
     if (new RegExp('^## \\[' + day + ' \\d{2}:\\d{2}\\]', 'm').test(logTxt)) return '{}';
 
-    // 条件④: 每会话一次(以 session_id 落 mark; 取不到 id 则不节流, 交给 60s 幂等兜底)
-    const sid = ev.session_id || ev.sessionId || '';
-    if (sid) {
-      const mark = join(homedir(), '.abs', 'log', `teardown-${String(sid).replace(/[^\w-]/g, '')}.mark`);
-      try {
-        await fs.access(mark);
-        return '{}'; // 本会话已推过
-      } catch { /* 未推过 */ }
-      await fs.mkdir(dirname(mark), { recursive: true });
-      await fs.writeFile(mark, stamp).catch(() => {});
-    }
+    // 条件④: 每会话一次。
+    // 双保险, 因为官方 stop_hook_active 有已知
+    // 不传播 bug(claude-code#54360): 同一 turn 内重复 fire 时它仍是 false。
+    // ① 官方契约: stop_hook_active=true = 本次 Stop 已是注入后的产物, 绝不再推(否则死循环)
+    if (ev.stop_hook_active === true) return '{}';
+    // ② 己方节流: 以 session_id 落 mark。缺 id 时退化为按项目+日期节流,
+    //    绝不"无节流"——否则一旦宿主张不到 id, decision:block 就会无限自激。
+    const sid = String(ev.session_id || ev.sessionId || '').replace(/[^\w-]/g, '');
+    const key = sid || 'nosession-' + day + '-' + root.replace(/[^\w]/g, '_');
+    const mark = join(homedir(), '.abs', 'log', `teardown-${key}.mark`);
+    try {
+      await fs.access(mark);
+      return '{}'; // 本会话(或本项目今日)已推过
+    } catch { /* 未推过 */ }
+    await fs.mkdir(dirname(mark), { recursive: true });
+    await fs.writeFile(mark, stamp).catch(() => {});
 
     const msg = [
       '[abs 收尾提醒] 本会话改过文件但 .brain/ 今天还没有记录。请立即走收尾循环：',

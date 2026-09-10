@@ -48,6 +48,20 @@ fi
   SESSION_ID=$(printf '%s' "$PAYLOAD" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p' | head -1)
   LOG_DIR="${ABS_LOG_DIR:-$HOME/.abs/log}"
   mkdir -p "$LOG_DIR" 2>/dev/null
+
+  # 日志轮转: hooks.log 是 append-only 热路径, 无上限会无限长。
+  # 用 wc -c 判大小(/bin/sh 无 GNU stat -c); 超限就轮转一份 .1 并截断。
+  # 阈值可经 ABS_LOG_MAX_BYTES 覆盖; 只要一份历史(.1), 不做多层——排查靠近期痕迹, 旧的不值当留。
+  ABS_LOG_MAX="${ABS_LOG_MAX_BYTES:-1048576}"   # 1 MiB
+  LOGF="$LOG_DIR/hooks.log"
+  if [ -f "$LOGF" ]; then
+    SZ=$(wc -c < "$LOGF" 2>/dev/null | tr -d ' ')
+    case "$SZ" in ''|*[!0-9]*) SZ=0 ;; esac
+    if [ "$SZ" -gt "$ABS_LOG_MAX" ] 2>/dev/null; then
+      mv -f "$LOGF" "$LOGF.1" 2>/dev/null || : > "$LOGF"
+      printf '[%s] logrotate hooks.log (%s bytes -> .1)\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$SZ" >> "$LOGF" 2>/dev/null || true
+    fi
+  fi
   {
     printf '[%s] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$EVENT" "$SHORT"
   } >> "$LOG_DIR/hooks.log" 2>/dev/null || true

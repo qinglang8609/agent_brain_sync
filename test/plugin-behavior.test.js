@@ -395,6 +395,56 @@ describe('CC/Co​dex Stop hook 收尾注入 (decision:block)', () => {
     const out = await invoke(h, 'not-json', { ABS_MARK_DIR: join(sandbox, 'm5') });
     assert.doesNotThrow(() => JSON.parse(out));
   });
+
+  // 死循环防护 —— 本 hook 会回 decision:block 把 agent 拉回一轮, 而那一轮结束后
+  // Stop 会再 fire。若守卫失效就是无限自激(官方 #55754 曾烧掉整个会话配额)。
+  test('stop_hook_active=true → 绝不再推 (官方防重入字段)', async () => {
+    const h = await renderHook('Stop');
+    const { proj } = await makeStopCtx('cc-reentry');
+    // 先确认确实是"条件全过"的上下文
+    const on = JSON.stringify({ session_id: 'ses_R1', cwd: proj, transcript_path: join(sandbox, 'cc-reentry-trans.jsonl') });
+    assert.equal(JSON.parse(await invoke(h, on, { ABS_MARK_DIR: join(sandbox, 'm6') })).decision, 'block', '前置: 应注入');
+    const re = JSON.stringify({ session_id: 'ses_R2', cwd: proj, transcript_path: join(sandbox, 'cc-reentry-trans.jsonl'), stop_hook_active: true });
+    assert.equal(await invoke(h, re, { ABS_MARK_DIR: join(sandbox, 'm7') }), '{}', 'stop_hook_active=true 必须放行');
+  });
+
+  // session_id 缺失时旧实现会"无节流"(if (sid) 整段跳过) → 每次 Stop 都注入 → 死循环。
+  // 现退化为按 项目+日期 节流, 保证任何情况下都能自刹。
+  test('缺 session_id 也不无节流 (退化为项目+日期节流)', async () => {
+    const h = await renderHook('Stop');
+    const { proj } = await makeStopCtx('cc-nosid');
+    const payload = JSON.stringify({ cwd: proj, transcript_path: join(sandbox, 'cc-nosid-trans.jsonl') });
+    const env = { ABS_MARK_DIR: join(sandbox, 'm8') };
+    const first = await invoke(h, payload, env);
+    assert.equal(JSON.parse(first).decision, 'block', '首次(无 id)仍应注入一次');
+    assert.equal(await invoke(h, payload, env), '{}', '无 id 时第二次必须被项目级节流拦下(否则死循环)');
+  });
+
+  // 日志轮转: hooks.log 是 append-only 热路径, 无上限会无限增长。
+  test('hooks.log 超阈值 → 轮转成 .1 并截断', async () => {
+    const logDir = join(sandbox, 'rot');
+    await fs.mkdir(logDir, { recursive: true });
+    await fs.writeFile(join(logDir, 'hooks.log'), 'x'.repeat(5000));
+    const h = await renderHook('UserPromptSubmit');
+    await invoke(h, '{}', { ABS_MARK_DIR: join(sandbox, 'm9'), ABS_LOG_DIR: logDir, ABS_LOG_MAX_BYTES: '1000' });
+    const rotated = await fs.readFile(join(logDir, 'hooks.log.1'), 'utf8').catch(() => '');
+    const now = await fs.readFile(join(logDir, 'hooks.log'), 'utf8');
+    assert.equal(rotated.length, 5000, '旧内容应移到 .1');
+    assert.ok(now.length < 5000, '当前 hooks.log 应已截断');
+    assert.match(now, /logrotate/, '应留一行轮转痕迹便于事后解释');
+  });
+
+  test('未超阈值不动文件 (常见路径零副作用)', async () => {
+    const logDir = join(sandbox, 'rot-small');
+    await fs.mkdir(logDir, { recursive: true });
+    const marker = 'KEEP-' + 'a'.repeat(50);
+    await fs.writeFile(join(logDir, 'hooks.log'), marker);
+    const h = await renderHook('UserPromptSubmit');
+    await invoke(h, '{}', { ABS_MARK_DIR: join(sandbox, 'm10'), ABS_LOG_DIR: logDir, ABS_LOG_MAX_BYTES: '1000000' });
+    const now = await fs.readFile(join(logDir, 'hooks.log'), 'utf8');
+    assert.ok(now.startsWith(marker), '小文件应只追加、不移位/截断');
+    assert.equal(await fs.readFile(join(logDir, 'hooks.log.1'), 'utf8').catch(() => null), null, '不应产生 .1');
+  });
 });
 
 // ============================ 零宽字符守卫 ============================
