@@ -8,8 +8,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { appendFile, mkdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { findBrainRoot } from '../src/index.js';
 import { cmdBoard, cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdWrapup } from '../src/store.js';
 
@@ -44,9 +46,17 @@ function withTrace(name, handler) {
   };
 }
 
+// 版本号从本包 package.json 读（曾硬编码 '0.1.0'，与包版本脱节，宿主里看着困惑）
+function pkgVersion() {
+  try {
+    const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+    return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version || 'unknown';
+  } catch { return 'unknown'; }
+}
+
 const server = new McpServer({
   name: 'abs',
-  version: '0.1.0',
+  version: pkgVersion(),
 });
 
 // 工具面（narrow on purpose — 只暴露读/查/记状态，不做深提炼）
