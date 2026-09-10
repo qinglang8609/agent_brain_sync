@@ -857,6 +857,20 @@ describe('Done 归档', () => {
     assert.ok(idx.includes(`[[${today()}-todo归档]]`), 'index 应登记归档页');
   });
 
+  // 回归: 归档页是新生成页，若无双链会被 lint 判 ORPHAN（曾如此）。
+  // 归档页是历史数据倾倒 + 已登记 index，属"终端页"，应与 sources/ 一样豁免。
+  test('归档后 lint 干净（归档页不被判 ORPHAN）', async () => {
+    const todoP = join(projectA, '.brain', 'todo.md');
+    await fs.writeFile(todoP, mk([
+      '### 2026-09-10', '', '- [x] KEEP  (完成 2026-09-10)', '',
+      '### 2026-09-04', '', '- [x] OLD  (完成 2026-09-04)', '',
+    ]), 'utf8');
+    await cmdTodoArchive({ dir: projectA, keepDays: 3 });
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/ORPHAN-PAGE: sessions\/.*todo归档/.test(out), `归档页不该是孤儿: ${out}`);
+    assert.ok(!/INDEX-MISSING: sessions\/.*todo归档/.test(out), `归档页应已登记 index: ${out}`);
+  });
+
   test('dry-run 不动文件', async () => {
     const todoP = join(projectA, '.brain', 'todo.md');
     const before = mk(['### 2026-09-04', '', '- [x] OLD  (完成 2026-09-04)', '']);

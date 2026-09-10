@@ -570,8 +570,10 @@ export async function cmdLint({ dir }) {
       if (/slug|Name|name|Date|页面名$/.test(ln)) issues.push(`TEMPLATE-LINK: ${pg.rel} -> [[${ln}]]`);
       if (!names.has(ln)) issues.push(`DEAD-LINK: ${pg.rel} -> [[${ln}]]`);
     }
-    // ORPHAN: sources/ 暂存页豁免（暂存线索天然孤立，提炼成 concept 前不强制挂链）
-    if (pg.dir !== 'sources' && !pg.links.length && !linkedNames.has(pg.slug)) {
+    // ORPHAN: sources/ 暂存页与 todo 归档页豁免。前者是暂存线索（提炼成 concept 前天然孤立），
+    // 后者是历史数据倾倒（已登记在 index.md，就是图谱入口，无需再制造双链）。
+    const isTerminal = pg.dir === 'sources' || /todo归档$/.test(pg.slug);
+    if (!isTerminal && !pg.links.length && !linkedNames.has(pg.slug)) {
       issues.push(`ORPHAN-PAGE: ${pg.rel} (no links out, no links in)`);
     }
     if (/知识冲突/.test(pg.body) && /status: draft/.test(pg.frontmatter)) {

@@ -38,3 +38,6 @@
 - [x] OPENCODE-HOOK-DEAD — op​encode 插件 event 回调签名错({name}→{event})+事件名错(session.start→session.created/idle): 插件从未触发过  (完成 2026-09-10)
 - [x] TEARDOWN-AUTO — 收尾自动化: pi 扩展 agent_end 注入收尾指令(被动记日志→主动推)  (完成 2026-09-10)
 - [x] CO​DEX-HOOKS-FIX — 修 Co​dex hooks.json 形态错写导致安装崩溃(对象 vs 扁平数组)  (完成 2026-09-10)
+
+### 归档
+- [[2026-09-10-todo归档]] 完成任务 28 条
