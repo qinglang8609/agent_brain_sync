@@ -5,6 +5,7 @@
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10
 
+- [x] MCP-LIVE-VERIFY — 重启后 MCP 写通道 + mcp.log 双验证  (完成 2026-09-10)
 - [x] MCP-TRACE-DEAD — withTrace 定义了但 9 处工具都没包它 → mcp.log 从不生成(可观测性静默缺失,无任何症状)。已修: 统一经 tool() 注册,内部总是包 withTrace,遗漏不再可能; 新增 2 测试 + revert-check  (完成 2026-09-10)
 - [x] MCP-SMOKE-TEST — 验证 MCP 写通道（走 abs_abs_task 的 add action）  (完成 2026-09-10)
 - [x] FIX-SILENT-NOOP — 已修: abs todo 统一读写(add/start/note/blocked/done), 旧 task/board 报错提示, 只读命令拒绝多余参数, wrapup/teardown-check 移出 help。同步改 skill/README/MCP + 9 处代码内旧命令名  (完成 2026-09-10)
