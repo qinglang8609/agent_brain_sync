@@ -213,52 +213,59 @@ export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {})
   let root;
   try { root = await requireBrain(dir || process.cwd()); } catch { return '未找到 .brain/ 图谱。先在项目根运行: abs init'; }
   const days = Math.max(1, Number(keepDays) || 3);
-  const slug = `${today()}-todo归档`;
   const todoP = brainPath(root, 'todo.md');
   const raw = await fs.readFile(todoP, 'utf8').catch(() => '');
   if (!raw.trim()) return '（todo.md 为空）';
 
-  const plan = archiveDoneInText(raw, { keepDays: days, from: today(), slug });
+  const plan = archiveDoneInText(raw, { keepDays: days, from: today() });
   const why = plan.skipped.length
     ? `\n  跳过: ${plan.skipped.map((s) => `${s.date}（${s.reason}）`).join('；')}`
     : '';
   if (!plan.archived.length) return `（无可归档：保留近 ${days} 天）${why}`;
-  const brief = plan.archived.map((g) => `${g.date}(${g.lines.filter((l) => /^\s*- \[x\]/.test(l)).length})`).join(' ');
-  if (dryRun) return `[dry-run] 将归档 ${plan.archived.length} 天 / ${plan.count} 条 → sessions/${slug}.md\n  ${brief}${why}`;
+  const brief = plan.archived.map((g) => `${g.date}(${g.count})`).join(' ');
+  if (dryRun) {
+    return `[dry-run] 将归档 ${plan.archived.length} 天 / ${plan.count} 条（每天一个文件）\n  ${brief}${why}`;
+  }
 
-  // 1) 归档页：首次建（带 frontmatter），同日再跑则追写正文
+  // 1) 归档页：**每天一个文件**，文件名用被归档那天的日期（便于按天回溯）。
+  //    同一天再次归档（罕见：该日组已被移走，除非有人重新补当天任务）则追写正文。
   const sessDir = brainPath(root, 'sessions');
-  const pageP = join(sessDir, `${slug}.md`);
-  let page = null;
-  try { page = await fs.readFile(pageP, 'utf8'); } catch { /* 首次 */ }
-  const nextPage = page == null
-    ? renderArchivePage({ archivedOn: today(), groups: plan.archived })
-    : page.replace(/\s*$/, '') + '\n\n' + renderArchiveBody(plan.archived) + '\n';
-  const tmp = join(sessDir, `.${slug}.tmp-${Date.now()}`);
-  await fs.writeFile(tmp, nextPage, 'utf8');
-  await fs.rename(tmp, pageP);
+  for (const g of plan.archived) {
+    const pageP = join(sessDir, `${g.slug}.md`);
+    let page = null;
+    try { page = await fs.readFile(pageP, 'utf8'); } catch { /* 首次 */ }
+    const nextPage = page == null
+      ? renderArchivePage({ group: g })
+      : page.replace(/\s*$/, '') + '\n\n' + renderArchiveBody([g]) + '\n';
+    const tmp = join(sessDir, `.${g.slug}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
+    await fs.writeFile(tmp, nextPage, 'utf8');
+    await fs.rename(tmp, pageP);
+  }
 
   // 2) todo.md：锁内重算（拿最新内容，避免与并发 done 互相覆盖）
   await editFile(todoP, (cur) => {
-    const p2 = archiveDoneInText(cur ?? '', { keepDays: days, from: today(), slug });
+    const p2 = archiveDoneInText(cur ?? '', { keepDays: days, from: today() });
     return p2.archived.length ? { text: p2.text } : SKIP;
   });
 
-  // 3) index 登记（幂等）
+  // 3) index 登记（每个日期页一行，幂等）
   const iP = brainPath(root, 'index.md');
-  const line = `- [[${slug}]] — Todo 归档：${plan.archived.map((g) => g.date).join(' / ')}，共 ${plan.count} 条已完成任务`;
   await editFile(iP, (index) => {
-    if (!index || index.includes(`[[${slug}]]`)) return SKIP;
+    if (!index) return SKIP;
+    const missing = plan.archived.filter((g) => !index.includes(`[[${g.slug}]]`));
+    if (!missing.length) return SKIP;
     const sIdx = index.indexOf('## Sources');
     if (sIdx === -1) return SKIP;
     const after = index.indexOf('\n## ', sIdx + 1);
+    const add = missing.map((g) => `- [[${g.slug}]] — Todo 归档：${g.date}，共 ${g.count} 条已完成任务`).join('\n');
     const next = after === -1
-      ? `${index.replace(/\s*$/, '')}\n${line}\n`
-      : index.slice(0, after) + `\n${line}` + index.slice(after);
+      ? `${index.replace(/\s*$/, '')}\n${add}\n`
+      : index.slice(0, after) + `\n${add}` + index.slice(after);
     return { text: next };
   });
 
-  return `✓ 已归档 ${plan.archived.length} 天 / ${plan.count} 条 → sessions/${slug}.md\n  ${brief}${why}`;
+  const files = plan.archived.map((g) => `sessions/${g.slug}.md`).join('\n  ');
+  return `✓ 已归档 ${plan.archived.length} 天 / ${plan.count} 条\n  ${brief}\n  → ${files}${why}`;
 }
 
 /**

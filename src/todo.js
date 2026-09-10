@@ -159,17 +159,19 @@ function splitDoneBody(bodyLines) {
   };
 }
 
-/** 合并归档标记行。计数是**累计**的：同一归档页反复追写时，把本次条数加到已有计数上
- * （否则标记行永远只显示最后一次的条数，与归档页实际内容不符）。同 slug 就地更新，不重复追加。
- * 返回含标题的行数组。 */
-function mergeArchiveLines(existing, slug, addCount) {
+/** 合并归档标记行：**每天一行** `- [[<日期>-todo归档]] 完成任务 N 条`。
+ * 计数按 slug **累计**（同一天分两批归档时叠加，否则标记行与归档页实际内容不符）；
+ * 已存在的其他天的标记行原样保留。返回含标题的行数组。 */
+function mergeArchiveLines(existing, entries) {
   const out = existing.length ? [...existing] : [ARCHIVE_HEADING];
   while (out.length && !out[out.length - 1].trim()) out.pop();
-  const i = out.findIndex((l) => l.includes(`[[${slug}]]`));
-  const prev = i !== -1 ? Number((out[i].match(/完成任务 (\d+) 条/) || [])[1] || 0) : 0;
-  const line = `- [[${slug}]] 完成任务 ${prev + addCount} 条`;
-  if (i !== -1) out[i] = line;
-  else out.push(line);
+  for (const { slug, count } of entries) {
+    const i = out.findIndex((l) => l.includes(`[[${slug}]]`));
+    const prev = i !== -1 ? Number((out[i].match(/完成任务 (\d+) 条/) || [])[1] || 0) : 0;
+    const line = `- [[${slug}]] 完成任务 ${prev + count} 条`;
+    if (i !== -1) out[i] = line;
+    else out.push(line);
+  }
   out.push('');
   return out;
 }
@@ -193,12 +195,13 @@ function isUndoneLine(l) {
  * 规则（用户定）：
  *   ① 只保留近 keepDays 天（含今天）；更早的才归档。
  *   ② 某一天只要还有未完成（- [ ]）任务，**整天都不归档**（不拆半天）。
- *   ③ 归档内容归到一个文件（slug 由调用方给），本函数只负责从 todo 文本里移除
- *      + 在 Done 区尾部的 `### 归档` 区记一行 `- [[slug]] 完成任务 N 条`。
+ *   ③ 每**天**归一个文件，slug 为 `<日期>-todo归档`（由 slugFor 给），本函数只负责
+ *      从 todo 文本里移除 + 在 Done 区尾部的 `### 归档` 区**每天记一行**
+ *      `- [[<日期>-todo归档]] 完成任务 N 条`。
  * 无日期组（### （未标日期））无法判天数，**保守不归档**。
- * @returns {{text:string, archived:{date:string,lines:string[]}[], skipped:{date:string,reason:string}[], count:number}}
+ * @returns {{text:string, archived:{date:string,lines:string[],slug:string,count:number}[], skipped:{date:string,reason:string}[], count:number}}
  */
-export function archiveDoneInText(text, { keepDays = 3, from = today(), slug } = {}) {
+export function archiveDoneInText(text, { keepDays = 3, from = today(), slugFor = (d) => `${d}-todo归档` } = {}) {
   const lines = String(text || '').split('\n');
   const di = lines.findIndex((l) => l.startsWith('## Done'));
   if (di === -1) return { text, archived: [], skipped: [], count: 0 };
@@ -233,13 +236,20 @@ export function archiveDoneInText(text, { keepDays = 3, from = today(), slug } =
       keepUnits.push(...us);
       continue;
     }
-    archived.push({ date, lines: us.flatMap((u) => u.lines) });       // ③ 可归档
+    const gLines = us.flatMap((u) => u.lines);                       // ③ 可归档
+    archived.push({
+      date,
+      lines: gLines,
+      slug: slugFor(date),
+      count: gLines.filter((l) => /^\s*- \[x\]/.test(l)).length,
+    });
   }
 
   if (!archived.length) return { text, archived: [], skipped, count: 0 };
 
-  const count = archived.reduce((n, g) => n + g.lines.filter((l) => /^\s*- \[x\]/.test(l)).length, 0);
-  const rebuilt = [...head, ...renderDoneGroups(keepUnits), ...mergeArchiveLines(archiveLines, slug, count)];
+  const count = archived.reduce((n, g) => n + g.count, 0);
+  const entries = archived.map((g) => ({ slug: g.slug, count: g.count }));
+  const rebuilt = [...head, ...renderDoneGroups(keepUnits), ...mergeArchiveLines(archiveLines, entries)];
   return { text: rebuilt.join('\n').replace(/\n+$/, '\n'), archived, skipped, count };
 }
 
@@ -250,24 +260,24 @@ export function renderArchiveBody(groups) {
   return out.join('\n').replace(/\n+$/, '\n');
 }
 
-/** 归档页全文（带 frontmatter）。 */
-export function renderArchivePage({ archivedOn, groups }) {
-  const total = groups.reduce((n, g) => n + g.lines.filter((l) => /^\s*- \[x\]/.test(l)).length, 0);
-  const days = groups.map((g) => g.date).join(' / ');
+/** 归档页全文（带 frontmatter）。**每天一个文件**，故只收一组。 */
+export function renderArchivePage({ group }) {
+  const { date, lines } = group;
+  const n = lines.filter((l) => /^\s*- \[x\]/.test(l)).length;
   const head = [
     '---',
     'tags: [todo-archive, 历史]',
-    `updated: ${archivedOn}`,
+    `updated: ${date}`,
     'status: reviewed',
     '---',
     '',
-    `# Todo 归档 — ${days}`,
+    `# Todo 归档 — ${date}`,
     '',
-    `> 从 \`.brain/todo.md\` 的 Done 区迁出（该区只保留近期）。本次归档 ${groups.length} 天、共 ${total} 条已完成任务。`,
+    `> 从 \`.brain/todo.md\` 的 Done 区迁出（该区只保留近期）。本页含 ${date} 的 ${n} 条已完成任务。`,
     '> 原文完整保留（含 `↳ 断点/卡点`），查"某任务当时做到哪"看这里。',
     '',
   ];
-  return head.join('\n') + '\n' + renderArchiveBody(groups) + '\n';
+  return head.join('\n') + '\n' + renderArchiveBody([group]) + '\n';
 }
 
 /** 幂等：把 todo 全文里平铺的旧 Done 区按日期分组（新日期在前，未标日期归尾）。

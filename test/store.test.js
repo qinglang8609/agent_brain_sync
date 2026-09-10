@@ -810,9 +810,9 @@ describe('Done 归档', () => {
 
   test('归档后 Done 尾部有 ### 归档 标记行（完成任务 N 条）', () => {
     const t = mk(['### 2026-09-06', '', '- [x] X  (完成 2026-09-06)', '- [x] Y  (完成 2026-09-06)', '']);
-    const r = archiveDoneInText(t, { keepDays: 3, from: '2026-09-10', slug: '2026-09-10-todo归档' });
+    const r = archiveDoneInText(t, { keepDays: 3, from: '2026-09-10' });
     assert.ok(r.text.includes('### 归档'), '应有 ### 归档 区');
-    assert.ok(r.text.includes('- [[2026-09-10-todo归档]] 完成任务 2 条'), r.text);
+    assert.ok(r.text.includes('- [[2026-09-06-todo归档]] 完成任务 2 条'), r.text);
   });
 
   test('未标日期组保守不归档', () => {
@@ -832,12 +832,16 @@ describe('Done 归档', () => {
     assert.ok(groupDoneSection(flat).includes('[[S]]'), '平铺迁移不能丢归档区');
   });
 
-  test('同日重复归档幂等（标记行不重复、条目就地更新）', () => {
+  // 每天一个文件 → ### 归档 区每天一行；各天计数独立，互不覆盖
+  test('多天归档: 每天一行标记（计数各自独立、不重复）', () => {
     const t = mk(['### 2026-09-06', '', '- [x] X  (完成 2026-09-06)', '']);
-    const once = archiveDoneInText(t, { keepDays: 1, from: '2026-09-10', slug: 'S' });
-    const twice = archiveDoneInText(once.text + '### 2026-09-05\n\n- [x] Y  (完成 2026-09-05)\n', { keepDays: 1, from: '2026-09-10', slug: 'S' });
-    assert.equal((twice.text.match(/\[\[S\]\]/g) || []).length, 1, '同 slug 只留一行');
-    assert.ok(twice.text.includes('完成任务 2 条'), `标记行应更新计数: ${twice.text}`);
+    const once = archiveDoneInText(t, { keepDays: 1, from: '2026-09-10' });
+    assert.ok(once.text.includes('- [[2026-09-06-todo归档]] 完成任务 1 条'), once.text);
+    const withSecond = once.text + '### 2026-09-05\n\n- [x] Y  (完成 2026-09-05)\n- [x] Z  (完成 2026-09-05)\n';
+    const twice = archiveDoneInText(withSecond, { keepDays: 1, from: '2026-09-10' });
+    assert.ok(twice.text.includes('- [[2026-09-06-todo归档]] 完成任务 1 条'), '旧天标记应保留');
+    assert.ok(twice.text.includes('- [[2026-09-05-todo归档]] 完成任务 2 条'), twice.text);
+    assert.equal((twice.text.match(/\[\[2026-09-06-todo归档\]\]/g) || []).length, 1, '同 slug 只一行');
   });
 
   test('cmdTodoArchive 端到端: 建归档页 + 改 todo + 登记 index', async () => {
@@ -851,10 +855,10 @@ describe('Done 归档', () => {
     const todo = await fs.readFile(todoP, 'utf8');
     assert.ok(!todo.includes('OLD-A'), '旧任务应已迁出 todo');
     assert.ok(todo.includes('### 归档') && todo.includes('完成任务 1 条'), todo);
-    const page = await fs.readFile(join(projectA, '.brain', 'sessions', `${today()}-todo归档.md`), 'utf8');
+    const page = await fs.readFile(join(projectA, '.brain', 'sessions', '2026-09-04-todo归档.md'), 'utf8');
     assert.ok(page.includes('OLD-A') && page.includes('当时的细节'), '归档页应保留原文含断点');
     const idx = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
-    assert.ok(idx.includes(`[[${today()}-todo归档]]`), 'index 应登记归档页');
+    assert.ok(idx.includes('[[2026-09-04-todo归档]]'), 'index 应登记归档页');
   });
 
   // 回归: 归档页是新生成页，若无双链会被 lint 判 ORPHAN（曾如此）。
