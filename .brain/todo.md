@@ -1,17 +1,16 @@
 # 📋 Todo 看板
 ## Backlog
 ## Today / In Progress
-- [ ] CC-CODEX-PUSH — CC/Codex 补主动推: Stop hook 回 decision:block 注入收尾指令(守卫抄 pi 插件四条件)，替代只写 wrapup.log (认领 2026-09-10)
 ## Blocked
-- [ ] OC-REAL-VERIFY — opencode 真机验证: 通道修完后真会话要看到 teardown-nudge 痕(当前 session.idle:seen 有痕但零 nudge) (认领 2026-09-10)
-  ↳ 断点: 依赖已解除: OC-INJECT-CHANNEL 判定=通道本就正常(promptAsync 真能唤醒 idle session), 无需改 src/install.js. 真机已直接看到 teardown-nudge 痕(14:58:36)+注入的 [abs 收尾提醒] 作为 user 消息落地+新 assistant turn 回应. 真机验证的失败条件修正为: 需满足 abs 插件 gate(wroteFiles=true 即本会话真调过 write/edit 工具 + brain 存在 + log.md 今日无记录), 纯文本 turn 不会触发 nudge(设计如此). 可解除 Blocked, 转 Today.
-  ↳ 卡点: 依赖 OC-INJECT-CHANNEL 修复落地
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10
 
+- [x] OC-REAL-VERIFY — opencode 真机验证: 通道修完后真会话要看到 teardown-nudge 痕(当前 session.idle:seen 有痕但零 nudge)  (完成 2026-09-10)
+  ↳ 断点: 依赖已解除: OC-INJECT-CHANNEL 判定=通道本就正常(promptAsync 真能唤醒 idle session), 无需改 src/install.js. 真机已直接看到 teardown-nudge 痕(14:58:36)+注入的 [abs 收尾提醒] 作为 user 消息落地+新 assistant turn 回应. 真机验证的失败条件修正为: 需满足 abs 插件 gate(wroteFiles=true 即本会话真调过 write/edit 工具 + brain 存在 + log.md 今日无记录), 纯文本 turn 不会触发 nudge(设计如此). 可解除 Blocked, 转 Today.
+- [x] CC-CODEX-PUSH — CC/Codex 补主动推: Stop hook 回 decision:block 注入收尾指令(守卫抄 pi 插件四条件)，替代只写 wrapup.log  (完成 2026-09-10)
+  ↳ 断点: 已实现(6b3466f): Stop hook 回 stdout {"decision":"block","reason":<收尾指令>} 把 agent 拉回一轮; 判定收进新命令 abs teardown-check(守卫同 pi 四条件, 异常一律放行 {}); 坏 payload 不阻塞。真机冒烟: Stop 输出合法 JSON + 四守卫逐个拦截验证通过。注意: 全局安装的 abs 是独立副本(1.1.0), 仓库新命令需重新安装才在真会话生效
 - [x] OC-INJECT-CHANNEL — opencode 注入通道修复: promptAsync 是 fire-and-forget(204 void)，对终结态 idle session 只入队不重启 turn → 改 src/install.js opencodePluginSource() 用 session.command(同步200) 或把注入点提前到 turn 内(tool.execute.after/message.updated)  (完成 2026-09-10)
   ↳ 断点: 判定完成: 结论表=prompt_async/HTTP204/唤醒✓ (2s内新assistant, 真机插件注入 [abs收尾提醒] 作为user消息落地后新turn回应) ; session.prompt/HTTP200/唤醒✓ (同步返回assistant body finish=stop) ; session.command/HTTP200/唤醒✓ ; tui.append-prompt & tui.execute-command/HTTP200 body=true/唤醒✗(无TUI挂载,只入buffer). 真因澄清: 旧测零nudge不是通道故障, 是 wroteFiles gate(纯文本turn不触发write工具); gate满足后真机落痕 teardown-nudge 14:58:36 且注入生效. 建议: 保持 idle 注入点即可, promptAsync 无需改; 若要去掉 fire-and-forget 的不确定性可换 session.prompt(同步可拿到结果/错误). 第四候选(挪到 turn 内 tool.execute.after) 实测也可唤醒(注入while busy会排队为下一turn), 但非必要.
-  ↳ 卡点: 等 OpenCode(w12:pV) 判定性实验结论：herdr pane read w12:pV --source recent --lines 100 --format text
 - [x] SMALL-FIXES — 小件: loggedToday 守卫收紧、日志轮转、测试计数 146→实测 144 对平  (完成 2026-09-10)
   ↳ 断点: loggedToday 守卫已收紧(10b64de): 裸日期 substring includes() → 正则匹配 log.md 条目头 '## [YYYY-MM-DD HH:MM]'。发现 install.js 双层转义坑(生成代码外层模板 vs 真实 TS), 两处分别验证生成产物正则 source 正确。新回归测试 + revert-check(旧守卫注入0次/新守卫1次), 149 测试全绿。剩: 日志轮转未做(低优先, hooks.log 增长无上限)
 - [x] GIT-WRAPUP — git 收尾: 25 文件未提交(今天整个 session log、teardown-automation + host-plugin-silent-failure 概念页、7 个 source 删除)  (完成 2026-09-10)

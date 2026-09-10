@@ -1,4 +1,5 @@
 # 🗒 操作日志
+## [2026-09-10 15:02] note | 实验中发现: ~/.config/opencode/plugins/probe-oc.ts (上个会话留的探针, ses
 ## [2026-09-10 15:00] dev | 完成 OC-INJECT-CHANNEL 判定: 实测四通道(prompt_async 204/prompt 200/command 200 均能唤醒 idle session; tui.* 200 
 ## [2026-09-10 14:59] note | OC-INJECT-CHANNEL 判定实验结论: promptAsync 对 idle(终结态) session 确实
 ## [2026-09-10 13:21] note | opencode 插件 abs.ts 的导出形状确认: @opencode-ai/plugin 要求 PluginMod

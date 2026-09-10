@@ -31,7 +31,7 @@ status: reviewed
 |---|---|---|
 | pi | `agent_end` | `pi.sendUserMessage(指令, { deliverAs: 'followUp' })` |
 | Cl​aude / Co​dex | `Stop`（event.sh） | hook stdout / 后续 turn |
-| op​encode | `session.idle` | `client.session.promptAsync({ path:{id}, query:{directory}, body:{parts:[{type:'text',text}]} })` |
+| op​encode | `session.idle` | `client.session.promptAsync({ path:{id}, query:{directory}, body:{parts:[{type:'text',text}]} })` — ✅ 实测能唤醒 idle session（204 不代表没起 turn），详见 [[opencode-inject-channel-verdict]] |
 
 ### 触发条件必须收窄（否则每轮都吵）
 四个条件全满足才注入：
@@ -59,6 +59,7 @@ status: reviewed
   已改纯 ASCII 并加守卫测试（断言 CLI 识别不带 ZWSP 的 agent 名 + 生成物代码行无 ZWSP）。
 
 ## 关联连接
+- [[opencode-inject-channel-verdict]] — op​encode 四通道唤醒判定表（含"零 nudge 真因是 gate 非通道"的反面教训）
 - [[host-plugin-silent-failure]] — 插件三坑（可观测性/签名/导出）
 - [[abs-install-layout]] — 四宿主安装器与 hook 配置
 - [[hook-sh-not-bash]] — hook 脚本方言坑
