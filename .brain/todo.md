@@ -1,6 +1,8 @@
 # 📋 Todo 看板
 ## Backlog
 ## Today / In Progress
+- [ ] LINT-TOPLEVEL-PAGE — lint 误报 [[todo]] 死链：names 集合只含子目录页(concepts/entities/sources/syntheses/sessions)，.brain 顶层文件 index.md/log.md/todo.md 不被当作可链接页 → [[todo]] 被判 DEAD-LINK + INDEX-DEAD-LINK。实测 codebuddy 报 5 条、faxuehui 报 7 条，均属误报（todo.md 真实存在）。已修：names 补充 .brain 顶层 *.md 的 slug（仅用于链接目标存在性判定，不影响 ORPHAN/INDEX-MISSING）。验证：codebuddy 5 条消失、[[log]]/[[index]] 同样放行、真不存在的页仍报；新增回归测试，187 测试绿。待办：commit + 发版 (认领 2026-09-10)
+- [ ] SKILL-TRIAGE-PROTOCOL — 在 skill 加「新需求受理协议」：用户报 bug 或要求加功能时，agent 不得直接动手 —— ①先总结方案(问题复述/根因或做法/改哪些文件/怎么验证) ②abs todo add 登记 ③明确问用户是否开工，等确认再改代码。例外：用户已说"开工/直接做"、一行级修字/纯查询/纯沉淀、同一需求已登记且确认过。落点: skill/SKILL.md 新增节（紧随「触发总入口」）；需重装四宿主 skill 才生效 (认领 2026-09-10)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10

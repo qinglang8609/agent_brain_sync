@@ -562,6 +562,12 @@ export async function cmdLint({ dir }) {
   const vault = brainPath(root);
   const pages = await listPages(vault);
   const names = new Set(pages.map((p) => p.slug));
+  // `.brain` 顶层文件（index / log / todo）也是真实页：从图谱看 [[todo]] 就是 todo.md。
+  // 坑: 以前只把子目录当页 → [[todo]] 被当成死链（误报），反而逼用户去删掉正确引用。
+  // 只用于「链接目标是否存在」判定；不参与 ORPHAN / INDEX-MISSING（它们只针对子目录页）。
+  for (const f of await fs.readdir(vault).catch(() => [])) {
+    if (f.endsWith('.md')) names.add(f.replace(/\.md$/, ''));
+  }
   const linkedNames = new Set(pages.flatMap((p) => p.links));
   // index.md 里列的 [[x]] —— 用于反向查死引用（列了但页不存在）
   let indexLinks = [];

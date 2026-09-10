@@ -430,6 +430,21 @@ describe('cmdShow (todo/index/log 查看)', () => {
 describe('cmdLint', () => {
   const PAGE = (body) => `---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n${body}`;
 
+  // 回归: .brain 顶层文件（index/log/todo）也是真实页。
+  // 以前只把子目录当页 → [[todo]] 被判死链（误报），反过来逼用户删掉正确引用。
+  test('链到顶层文件 [[todo]] 不算死链；真不存在的仍报', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'link-top.md'),
+      PAGE('# 概念：链到顶层\n[[todo]] [[log]] [[index]] [[查无此页]]'), 'utf8');
+    const idxP = join(projectA, '.brain', 'index.md');
+    const idx = await fs.readFile(idxP, 'utf8');
+    await fs.writeFile(idxP, idx.replace('## Sources', '## Sources\n- [[link-top]] — 链到顶层\n- [[todo]] — 看板'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/\[\[todo\]\]/.test(out), `[[todo]] 不该报死链: ${out}`);
+    assert.ok(!/\[\[log\]\]/.test(out), `[[log]] 不该报死链: ${out}`);
+    assert.ok(!/\[\[index\]\]/.test(out), `[[index]] 不该报死链: ${out}`);
+    assert.ok(/\[\[查无此页\]\]/.test(out), `真死链仍要报: ${out}`);
+  });
+
   // 回归: 这个检查曾经"永不触发" —— 路径写成 brainPath(vault,'todo.md')（多一层 .brain），
   // ENOENT 又被外层 try/catch 吞掉 → lint 永远 0 problem，静默失效。
   // 故这里既测"会报"，也测"报了之后归档能消掉"。
