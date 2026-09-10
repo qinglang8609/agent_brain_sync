@@ -1,4 +1,10 @@
 # 🗒 操作日志
+## [2026-09-10 15:30] dev | 完成 6 项待办 + 3 个真 bug 修复 + 经验沉淀: ①版本对齐误判澄清(本地已 1.1.0) ②git 收尾(7 commits) ③loggedToday 裸日期 substring 守卫
+## [2026-09-10 15:28] note | 类型签名/返回码推不出运行时语义: promptAsync 返回 204 void 被推断为"fire-and-forg
+## [2026-09-10 15:28] note | 改 hook/插件的部署产物必须同时刷新"仓库 + 全局安装"两份副本, 并删掉已运行进程的旧插件(删文件对已加载进程无
+## [2026-09-10 15:28] note | 排查"某行为没发生"先证明上游 gate 满足, 再怀疑下游通道。顺序错了会白花一轮: 本次零 nudge 先怀疑注入通
+## [2026-09-10 15:28] note | 守卫(guard)的工具白名单必须按宿主实际用法穷举, 漏一个就把功能静默关掉。opencode 侧 wroteFile
+## [2026-09-10 15:28] note | 主动推类 hook(回 decision:block/注入新 turn)必须自带死循环防护: 注入会触发新一轮, 新一轮
 ## [2026-09-10 15:02] note | 实验中发现: ~/.config/opencode/plugins/probe-oc.ts (上个会话留的探针, ses
 ## [2026-09-10 15:00] dev | 完成 OC-INJECT-CHANNEL 判定: 实测四通道(prompt_async 204/prompt 200/command 200 均能唤醒 idle session; tui.* 200 
 ## [2026-09-10 14:59] note | OC-INJECT-CHANNEL 判定实验结论: promptAsync 对 idle(终结态) session 确实

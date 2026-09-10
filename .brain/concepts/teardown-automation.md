@@ -35,12 +35,24 @@ status: reviewed
 
 ### 触发条件必须收窄（否则每轮都吵）
 四个条件全满足才注入：
-1. **本会话真改过文件** —— pi 用 `turn_end` 的 `toolResults` 判 `write`/`edit`/非只读 `bash`
+1. **本会话真改过文件** —— pi 用 `toolResults` 判 `write`/`edit`/非只读 `bash`
    （只读命令用 `READONLY_CMD` 正则排除 `ls/cat/grep/git status/curl...`）；
    op​encode 用 `tool.execute.after` 观测工具名；
 2. **`.brain` 存在**（`findBrain` 从 cwd 向上找）—— 无图谱=不在这项目沉淀，不打扰；
 3. **`log.md` 今日无记录**（`loggedToday`）—— 已收尾就不再念；
-4. **每会话最多一次**（`nudged` 标志）。
+4. **防重入 + 每会话最多一次**（见下节）。
+
+### 两个致命坑（都是"守卫写错把功能关掉或开爆"）
+
+**坑 A：主动推必须自带死循环防护** —— 详见 [[self-triggering-hook-loop]]。
+`decision:block` / 注入新 turn 会触发新一轮，而新一轮结束会**再 fire 同一个 hook**。
+必须双保险：宿主防重入字段（CC 的 `stop_hook_active`）+ 己方节流，
+且**缺 session_id 时要退化为可用节流，绝不能"无节流"**。
+
+**坑 B：守卫的工具白名单要按宿主实际用法穷举** —— 漏一个就静默关掉功能。
+op​encode 侧抄 pi 时漏了 `bash`，而该宿主大量改走 `bash`（heredoc/`sed -i`），
+纯 bash 会话永不置位 → 提醒静默不发，还被误诊成"注入通道坏了"整整一轮。
+**跨宿主搬运守卫时，必须逐项核对"这个宿主的写操作都长什么样"。**
 
 ## 坑：插件"装上了" ≠ "加载了" ≠ "触发了"
 
@@ -60,6 +72,7 @@ status: reviewed
 
 ## 关联连接
 - [[opencode-inject-channel-verdict]] — op​encode 四通道唤醒判定表（含"零 nudge 真因是 gate 非通道"的反面教训）
+- [[self-triggering-hook-loop]] — 主动推类 hook 的死循环防护（stop_hook_active + 节流退化）
 - [[host-plugin-silent-failure]] — 插件三坑（可观测性/签名/导出）
 - [[abs-install-layout]] — 四宿主安装器与 hook 配置
 - [[hook-sh-not-bash]] — hook 脚本方言坑
