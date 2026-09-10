@@ -19,6 +19,7 @@
 - [[npm-publish-flow]] — npm 发布全流程: 2FA发布限制/scoped改名绕相似名/发布后registry读延迟/全局link清理/宿主install零宽字符坑
 - [[teardown-automation]] — 收尾自动化: hook 必须主动推(注入指令)而非被动记日志; 各宿主 idle/Stop 事件 + 触发条件收窄
 - [[host-plugin-silent-failure]] — 宿主插件"静默失效"三坑: 可观测性(缺无条件 seen 痕)/回调签名错/导出方式错; 装上了≠加载了≠触发了
+- [[deploy-artifact-copies]] — hook/插件产物有三份(仓库/宿主落点/进程内存)+全局 npm 副本; 改一份不算改, 删文件对已加载进程无效必须重启宿主
 - [[silent-data-loss-diagnosis]] — 静默丢数据排查顺序: 串行能否复现→组件级压测→临界区 trace 看 orig→write 序列; 证据到手前不给结论(先猜机制会连续翻车)
 - [[self-triggering-hook-loop]] — 自触发 hook 死循环: 主动推会触发下一轮→ 必须双保险(宿主防重入字段 + 己方节流), 且节流器不允许有"跳过"分支
 - [[opencode-inject-channel-verdict]] — op​encode 注入通道判定: promptAsync(204)/prompt(200)/command(200) 均能唤醒 idle session; tui.* 假成功不唤醒; "零 nudge"真因是 gate 非通道
@@ -27,11 +28,9 @@
 ## Sources
 - [[2026-09-10-opencode-插件-abs-ts-的导出形状]] — opencode 插件 abs.ts 的导出形状确认: @opencode-ai
 - [[2026-09-10-oc-inject-channel-判定实验结论]] — OC-INJECT-CHANNEL 判定实验结论: promptAsync 对 
-- [[2026-09-10-实验中发现-config-opencod]] — 实验中发现: ~/.config/opencode/plugins/probe-
 - [[2026-09-10-主动推类-hook-回-decision-blo]] — 主动推类 hook(回 decision:block/注入新 turn)必须自带
 - [[2026-09-10-守卫-guard-的工具白名单必须按宿主实际用法]] — 守卫(guard)的工具白名单必须按宿主实际用法穷举, 漏一个就把功能静默关掉。
 - [[2026-09-10-排查-某行为没发生-先证明上游-gate-满足]] — 排查"某行为没发生"先证明上游 gate 满足, 再怀疑下游通道。顺序错了会白花
-- [[2026-09-10-改-hook-插件的部署产物必须同时刷新-仓库]] — 改 hook/插件的部署产物必须同时刷新"仓库 + 全局安装"两份副本, 并删掉
 - [[2026-09-10-类型签名-返回码推不出运行时语义-prompt]] — 类型签名/返回码推不出运行时语义: promptAsync 返回 204 voi
 ## Syntheses
 ## Sessions

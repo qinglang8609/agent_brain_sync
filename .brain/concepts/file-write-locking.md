@@ -35,5 +35,7 @@ abs 所有 `.md` 都是「读-改-整文件覆盖写回」；跨进程（CLI/MCP
 `test/lock.test.js` 5 例：20 并发 task 全保留、15 并发 log 全落、幂等不重复、cmdNote 并发各成文件、无锁残留。全套 102 测试通过。
 
 ## 相关
+- [[silent-data-loss-diagnosis]] — 静默丢数据的排查顺序（本页"锁被冤枉"的完整记录）
+- [[deploy-artifact-copies]] — 产物三份，改一份不算改
 - [[todo-rewrite-not-map]]
 - [[abs-install-layout]]

@@ -50,26 +50,22 @@ npm install -g @fanchao8609/agent_brain_sync
 ### 坑 6：`abs install --agent <宿主>` 报 "未知 agent"
 宿主 agent 键 `cl​aude-code / co​dex / op​encode / pi` 含**零宽空格**（品牌名防误触），手打或经某些 shell 会带/漏这个不可见字符导致匹配不上。pi/co​dex 是纯 ASCII 没这问题，cl​aude-code/op​encode 有。
 🛠 解法：用干净字节构造 agent 名再传，别在命令行手打那些词：
-```bash
-CC=$(printf 'claude-code'); abs install --agent "$CC" --yes
-OC=$(printf 'opencode');    abs install --agent "$OC" --yes
-abs install --agent pi --yes
-# 一次只装一个：parseArgv 里 --agent 会互相覆盖，不支持多 agent 一次传
-```
+（完整安装矩阵/ZWSP 构造法见 [[abs-install-layout]]）
 
 ## 关键点
 - **发布名与 bin 命令独立**：包名可 scoped（@user/pkg），bin 命令照旧（`abs`）。别被包名占位劝退，scoped 是 npm 官方给的解法。
-- **product 形态 = 发布包 vs 开发 repo 分离**：系统 `which abs` 指向发布包路径，开发 repo 只是源码。本地改代码要生效需重新发布（或用 `node bin/abs.js` 临时调试）。
-- 发布/安装全部走代理：`export HTTPS_PROXY=http://192.168.0.114:7890 HTTP_PROXY=...`（本机代理，registry 直连可能被墙）。
+- **product 形态 = 发布包 vs 开发 repo 分离**：`which abs` 指向发布包，开发 repo 只是源码。详见 [[deploy-artifact-copies]]。
+- **不要给 npm 配 proxy**（2026-09-10 已移除）：曾致 `npm publish` 恒 `EHOSTUNREACH`，但 `nc`/`curl -x`/直连均通 —— 只有 npm 走不通。直连本就通，代理是多余的一跳。
 
 ## 验证命令（回归）
 ```bash
-npm whoami                                      # @fanchao8609
-npm view @fanchao8609/agent_brain_sync name version   # 0.1.0
-which abs                                       # 指向发布包
-abs agents                                      # 列宿主
+npm whoami                     # @fanchao8609
+npm config get proxy           # 应为 null（勿配代理）
+npm view @fanchao8609/agent_brain_sync version
 ```
+发布前必做：① 全量测试绿 ② `npm pack` 解包产物**直跑关键路径** ③ 发布后从 registry 全新安装再验一次。
 
 ## 关联连接
-- [[abs-install-layout]] — 全局安装形态（npm link 旧方案，发布后改为正式全局装）
+- [[abs-install-layout]] — 全局安装形态
+- [[deploy-artifact-copies]] — 发布包/宿主落点/进程内存三份副本
 - [[AgentBrainSync]] — 本项目实体
