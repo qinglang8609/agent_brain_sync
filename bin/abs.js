@@ -82,43 +82,83 @@ function parseArgv(args) {
 
 const usage = `abs — agent-brain-sync 记忆工具
 
-用法:
-  abs init [--repair]        建 .brain/ 图谱；结构不完整时报明细，--repair 只补缺不覆盖
+读:
   abs load                   开机读状态 (index/todo/log)
-  abs todo                   查看任务看板 (board 的正名)
-  abs index                  查看图谱索引 index.md
-  abs log                    无参查看流水 log.md；带参追加一行: abs log "标题" (仅用户/AI 主动记, hook 事件走 ~/.abs/log/hooks.log)
-  abs status                 显示当前项目 + 图谱概要
-  abs task start   <id> [--note ..] [--section Today / In Progress]  登记任务
-  abs task note    <id> --note "断点/进度"   实时落 ↳ 断点 行
-  abs task blocked <id> --note "卡点原因"    移入 Blocked 区
-  abs task done    <id>                      完成并归位 Done
+  abs todo                   任务看板 Today / In Progress / Blocked / Done
+  abs index                  图谱索引 index.md
+  abs log                    流水 log.md
+  abs status                 当前项目 + 图谱概要
+
+写:
+  abs todo add     <id> [--note ..] [--section ..]  登记任务 (start 同义)
+  abs todo note    <id> --note "断点/进度"   实时落 ↳ 断点 行
+  abs todo blocked <id> --note "卡点原因"    移入 Blocked 区
+  abs todo done    <id>                      完成并归位 Done
+  abs log "完成 X：…"         记一行工作成果 (无参=查看)
   abs note "经验一句话" [--tags 坑,docker]    经验实时暂存 → sources/
+
+维护:
   abs query <词1> [词2 …]    检索 .brain/ 知识页 (多词 OR)
   abs lint                   图谱体检 (死链/孤岛/超尺寸/堆积)
-  abs wrapup                 快照当前未完成任务到 ~/.abs/log/wrapup.log (收尾保险)
-  abs install [--agent <claude-code|opencode|codex|pi>]  安装 MCP+hook+skill
-  abs uninstall [--agent <...>]                            卸载
+  abs init [--repair]        建 .brain/ 图谱; 结构不完整时报明细, --repair 只补缺不覆盖
+  abs install [--agent <宿主>]   安装 MCP+hook+skill (宿主: claude-code/codex/opencode/pi)
+  abs uninstall [--agent <...>]  卸载
   abs update                 升级到最新版并刷新四宿主 hook/skill
   abs --version              显示当前版本
   abs help                   本帮助
+
+注: abs wrapup / abs teardown-check 是 hook 内部命令, 不需手动调用。
 `;
+
+/**
+ * 拒绝多余的未知位置参数。
+ * 坑: 以前只读命令(如 abs todo)会静默忽略多余词 —— `abs todo add x` 照样打印看板、
+ * exit 0、不报错, 用户以为登记成功实际什么都没写。现在一律报错并给正确用法。
+ * @param {string[]} extra 收到的位置参数
+ * @param {string} fix 正确用法的提示行
+ */
+function rejectExtra(extra, fix) {
+  if (!extra.length) return;
+  const q = extra.map((s) => `"${s}"`).join('、');
+  throw new Error(`✗ 不认识多余参数 ${q}\n  正确用法: ${fix}`);
+}
+
+// 已改名/已废弃命令 → 新写法（报错而非静默，避免用户白跑一趟）
+const RENAMED = {
+  task: () => '命令已改名: abs task → abs todo\n  例: abs todo add <id> --note "…"  /  abs todo done <id>',
+  board: () => '命令已改名: abs board → abs todo',
+};
+
+// task/todo 共用的子命令 → 归一化后的 action
+const TODO_ACTIONS = {
+  add: 'start',
+  start: 'start', // add 的别名(老习惯保留)
+  note: 'note',
+  blocked: 'blocked',
+  done: 'done',
+};
 
 async function main() {
   const opts = parseArgv(rest);
   try {
+    if (RENAMED[cmd]) throw new Error(RENAMED[cmd]());
     switch (cmd) {
       case 'init': {
+        rejectExtra(opts._, 'abs init [--repair]');
         const msg = opts.repair
           ? await cmdRepair({ dir: opts.dir })
           : await cmdInit({ dir: opts.dir });
         console.log(msg);
         break;
       }
-      case 'load':     console.log(await cmdLoad({ dir: opts.dir })); break;
-      case 'board':    console.log(await cmdShow({ dir: opts.dir, view: 'todo' })); break;
-      case 'todo':     console.log(await cmdShow({ dir: opts.dir, view: 'todo' })); break;
-      case 'index':    console.log(await cmdShow({ dir: opts.dir, view: 'index' })); break;
+      case 'load':
+        rejectExtra(opts._, 'abs load');
+        console.log(await cmdLoad({ dir: opts.dir }));
+        break;
+      case 'index':
+        rejectExtra(opts._, 'abs index');
+        console.log(await cmdShow({ dir: opts.dir, view: 'index' }));
+        break;
       case 'log': {
         // 无参=查看 log.md；带参=追加一行 (用户/AI 主动记; hook 生命周期事件走技术日志 hooks.log, 不经这里)
         if (opts._.length) {
@@ -128,12 +168,29 @@ async function main() {
         }
         break;
       }
-      case 'status':   console.log(await cmdStatus({ dir: opts.dir })); break;
-      case 'task': {
-        const [action, id] = opts._;
-        if (!action || !['start', 'done', 'blocked', 'note'].includes(action)) {
-          throw new Error('abs task <start|done|blocked|note> <id>');
+      case 'status':
+        rejectExtra(opts._, 'abs status');
+        console.log(await cmdStatus({ dir: opts.dir }));
+        break;
+      // abs todo —— 无子命令=看板；带子命令=任务写操作
+      case 'todo': {
+        const [sub, id, ...rest2] = opts._;
+        if (!sub) {
+          rejectExtra([id, ...rest2].filter(Boolean), 'abs todo');
+          console.log(await cmdShow({ dir: opts.dir, view: 'todo' }));
+          break;
         }
+        const action = TODO_ACTIONS[sub];
+        if (!action) {
+          throw new Error(
+            `✗ 未知子命令 "${sub}"\n` +
+            `  可用: add / start / note / blocked / done\n` +
+            `  看板: abs todo（不带参数）\n` +
+            `  登记任务: abs todo add <id> --note "做什么"`,
+          );
+        }
+        rejectExtra(rest2, `abs todo ${sub} <id>${action === 'done' ? '' : ' --note "…"'}`);
+        if (!id) throw new Error(`✗ 缺 <id>\n  用法: abs todo ${sub} <id>${action === 'done' ? '' : ' --note "…"'}`);
         console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note: opts.note }));
         break;
       }
@@ -149,9 +206,11 @@ async function main() {
         break;
       }
       case 'lint': {
+        rejectExtra(opts._, 'abs lint');
         console.log(await cmdLint({ dir: opts.dir }));
         break;
       }
+      // 内部命令（hook 专用；不出现在 help）：Stop 时机械快照未完成任务
       case 'wrapup': {
         console.log(await cmdWrapup({ dir: opts.dir }));
         break;

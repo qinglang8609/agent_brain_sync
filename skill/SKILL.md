@@ -90,18 +90,18 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`；横向�
 
 1. **读状态**：`abs load`（或 MCP `abs_load`）读 index 路线 + todo 看板 + 最近 log。
 2. **对账滞留（强制，别跳过）**：若 `abs load` 顶部出现 `⏳ 上会话滞留`，说明上会话有任务做完/做到一半就断了。**先收尾再开工**：
-   - 快照里的任务现在真做完了 → `abs task done <id>`（done 后下次 load 滞留自动消失）；
-   - 还没做完 → `abs task note <id> --note "接到哪/改到哪个文件"` 补断点（别空手续接）。
+   - 快照里的任务现在真做完了 → `abs todo done <id>`（done 后下次 load 滞留自动消失）；
+   - 还没做完 → `abs todo note <id> --note "接到哪/改到哪个文件"` 补断点（别空手续接）。
    滞留没清完就不算接上了状态——这是「任务做完没进 Done」的根治动作。
 3. **读命中页**：按关键词在 index 定位 → 读对应 concepts/entities 全文。
 4. **续 todo**：默认续 todo 分支 → 把顶部未完成项当当前任务开做。
-5. **登记新任务**：有明确新任务而 todo 没有 → `abs task start <id> --note 做什么` 登记
+5. **登记新任务**：有明确新任务而 todo 没有 → `abs todo add <id> --note 做什么` 登记
    再动工。不登记，会话一切断就丢。
 
 ## 进行中：todo 是活看板 + 经验实时落（最重要的纪律）
 
 **todo 不是收尾仪式，是干活中随改随写的活看板。** 每个任务边界立即更新，和 git commit
-同一个反射，别等收尾。用工具（MCP `abs_task` / CLI `abs task`）：
+同一个反射，别等收尾。用工具（MCP `abs_task` / CLI `abs todo`）：
 
 > **写操作优先 MCP，不要用 `bash` 跑 `abs`。** 实测：MCP 单次 ~2ms（server 常驻），
 > CLI 单次 27ms（其中 20ms 是每次起 node 进程的固定开销，读写本身仅 3ms）。
@@ -110,15 +110,19 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`；横向�
 
 | 时机 | 动作 |
 |---|---|
-| 认领新任务 | `abs task start <id> --note "做什么"` |
-| 子任务做完 | `abs task done <id>`（自动归位 Done 对应 `### YYYY-MM-DD` 分组顶部，新完成在前；断点随迁） |
-| 碰壁/阻塞 | `abs task blocked <id> --note "卡点原因"`（移 Blocked） |
-| 被打断/改向/干到一半停 | `abs task note <id> --note "改到哪个文件/到哪步"`（补 ↳ 断点 行） |
+| 认领新任务 | `abs todo add <id> --note "做什么"` |
+| 子任务做完 | `abs todo done <id>`（自动归位 Done 对应 `### YYYY-MM-DD` 分组顶部，新完成在前；断点随迁） |
+| 碰壁/阻塞 | `abs todo blocked <id> --note "卡点原因"`（移 Blocked） |
+| 被打断/改向/干到一半停 | `abs todo note <id> --note "改到哪个文件/到哪步"`（补 ↳ 断点 行） |
 
-> **跨会话任务只用 abs task，别用宿主原生 todo。** Cl​aude TodoWrite/Task、co​dex todo-list、
+> `abs todo start` 与 `abs todo add` 等价（老写法仍可用）。
+> 旧版 `abs task ...` / `abs board` 已改名，会报错并提示新写法。
+> 只读命令（`todo`/`status`/`lint`/`load`/`index`）遇多余参数会报错 —— 不再静默吞掉。
+
+> **跨会话任务只用 abs todo，别用宿主原生 todo。** Cl​aude TodoWrite/Task、co​dex todo-list、
 > Op​enCode todowrite、pi `/list`/goal 各有各的原生任务——但**多是会话内临时**，不会写进
 > `.brain/todo.md`。若用原生 todo 建了跨会话任务，它就会「只在界面 0/N 里、abs 看不到」，
-> 下会话接不上、收尾没影。**分工**：跨会话/会被打断的任务 → `abs task start`（唯一真源）；
+> 下会话接不上、收尾没影。**分工**：跨会话/会被打断的任务 → `abs todo add`（唯一真源）；
 > 原生 todo 顶多记「本会话内不跨断点的临时拆解草稿」。
 
 **经验/坑刚冒出来就落**：`abs note "一句话经验" --tags 坑,docker`（MCP `abs_note`）——
@@ -142,8 +146,8 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`；横向�
 收到 Stop / "结束/先这样/切别的事" / 长任务告一段落，立即执行（快、准、不啰嗦）：
 
 1. **读 todo** → `abs load`，看 Today 还有哪些没完成。
-2. **判有没有做完没登记** → 实际完成了漏登记的 `abs task done <id>`；做到一半补
-   `abs task note <id> --note 断点`；碰壁 `abs task blocked`。别让干完的事还停 Today。
+2. **判有没有做完没登记** → 实际完成了漏登记的 `abs todo done <id>`；做到一半补
+   `abs todo note <id> --note 断点`；碰壁 `abs todo blocked`。别让干完的事还停 Today。
 3. **沉淀经验（该沉淀才沉淀）** → 踩了值得记的坑/有可复用技巧/跨会话判断 → `abs note`
    暂存；值得深提炼的（规律/坑/决策）按 Teardown 走完整流程。
 4. **更新 index/log/todo** → 新页同步进 index；`log.md` 倒序记一行**工作成果**摘要
@@ -196,7 +200,7 @@ status: draft           # 或 reviewed（仅指知识冲突裁决结案）
 | 层 | 干什么 | 靠什么 |
 |---|---|---|
 | **hook（机械）** | SessionStart/UserPromptSubmit/Stop/SessionEnd 自动记**技术日志**（~/.abs/log/） | 宿主 hook 配置。你不写技术日志。 |
-| **CLI/MCP（实时）** | 任务/经验**实时落盘**：`abs task start/note/blocked/done`、`abs note` | 每个任务边界立即调；经验随时 abs note。 |
+| **CLI/MCP（实时）** | 任务/经验**实时落盘**：`abs todo add/note/blocked/done`、`abs note` | 每个任务边界立即调；经验随时 abs note。 |
 | **skill（自觉）** | **深提炼**（sources→concepts）+ 收尾循环 + 修 index | 判断什么值得沉淀，工具不替你判断。 |
 
 实时层解决"断了就丢"；自觉层解决"噪音污染"。分工明确：骨架/任务/暂存/检索/体检走 abs 工具

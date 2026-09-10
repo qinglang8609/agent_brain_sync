@@ -62,10 +62,10 @@ abs init          # 建 .brain/ 图谱，只需一次
 abs load                       # 开机读状态（路线 + 看板 + 最近流水）
 abs todo                       # 看板 Today / In Progress / Blocked / Done
 
-abs task start   TASK-1 --note "要做什么"
-abs task note    TASK-1 --note "改到 X 文件 L40"   # 实时断点
-abs task blocked TASK-1 --note "卡在哪"
-abs task done    TASK-1
+abs todo add     TASK-1 --note "要做什么"
+abs todo note    TASK-1 --note "改到 X 文件 L40"   # 实时断点
+abs todo blocked TASK-1 --note "卡在哪"
+abs todo done    TASK-1
 
 abs note "一句话经验" --tags 坑,docker    # 经验暂存 → sources/
 abs log "完成 X"                          # 记一行流水；abs log 无参 = 查看
@@ -74,10 +74,13 @@ abs status                                # 当前项目 + 图谱概要
 abs lint                                  # 体检：死链/孤岛/超尺寸/堆积
 ```
 
+> `abs todo start` 与 `abs todo add` 等价（都登记任务）。
+> 旧版 `abs task ...` / `abs board` 已改名，会报错并提示新写法。
+
 ### 工作流
 
 - **hook 自动**：宿主生命周期事件写技术流水到 `~/.abs/log/`
-- **实时层（你/AI 手动）**：任务和经验在边界处立刻用 `abs task` / `abs note` 落盘
+- **实时层（你/AI 手动）**：任务和经验在边界处立刻用 `abs todo` / `abs note` 落盘
 - **收尾层**：`abs wrapup` 在 Stop 时快照未完成任务；下个会话开头对账 todo、沉淀经验、修 index
 
 ---

@@ -87,17 +87,19 @@ server.tool(
 
 server.tool(
   'abs_task',
-  '任务实时落盘（幂等键 = id）。start 登记 / note 补断点(改到哪个文件哪行) / blocked 碰壁 / done 完成归位。',
+  '任务实时落盘（幂等键 = id）。add/start 登记 / note 补断点(改到哪个文件哪行) / blocked 碰壁 / done 完成归位。',
   {
-    action: z.enum(['start', 'done', 'note', 'blocked']),
+    action: z.enum(['add', 'start', 'done', 'note', 'blocked']),
     id: z.string().describe('任务幂等键，如 TASK-xxx 或子任务名'),
     cwd: z.string().describe('项目内任意目录'),
-    note: z.string().optional().describe('start=做什么; note=断点(文件/到哪步); blocked=卡点原因'),
+    note: z.string().optional().describe('add/start=做什么; note=断点(文件/到哪步); blocked=卡点原因'),
   },
   async ({ action, id, cwd, note }) => {
     const root = await findBrainRoot(cwd || process.cwd());
     if (!root) return err('未找到 .brain/，先 abs init');
-    return { content: [{ type: 'text', text: await cmdTask({ dir: root, action, id, note }) }] };
+    // add 是 start 的别名（与 CLI `abs todo add` 对齐）
+    const act = action === 'add' ? 'start' : action;
+    return { content: [{ type: 'text', text: await cmdTask({ dir: root, action: act, id, note }) }] };
   }
 );
 
