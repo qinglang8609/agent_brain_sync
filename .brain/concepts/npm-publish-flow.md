@@ -49,8 +49,7 @@ npm install -g @fanchao8609/agent_brain_sync
 
 ### 坑 6：`abs install --agent <宿主>` 报 "未知 agent"
 宿主 agent 键 `cl​aude-code / co​dex / op​encode / pi` 含**零宽空格**（品牌名防误触），手打或经某些 shell 会带/漏这个不可见字符导致匹配不上。pi/co​dex 是纯 ASCII 没这问题，cl​aude-code/op​encode 有。
-🛠 解法：用干净字节构造 agent 名再传，别在命令行手打那些词：
-（完整安装矩阵/ZWSP 构造法见 [[abs-install-layout]]）
+🛠 解法：用干净字节构造 agent 名再传（`printf` 携 ZWSP），**别在命令行手打那些词**；一次只能装一个（`--agent` 会互相覆盖）。完整安装矩阵/ZWSP 构造法见 [[abs-install-layout]]。
 
 ## 关键点
 - **发布名与 bin 命令独立**：包名可 scoped（@user/pkg），bin 命令照旧（`abs`）。别被包名占位劝退，scoped 是 npm 官方给的解法。

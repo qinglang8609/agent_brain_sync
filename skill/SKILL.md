@@ -103,6 +103,11 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`；横向�
 **todo 不是收尾仪式，是干活中随改随写的活看板。** 每个任务边界立即更新，和 git commit
 同一个反射，别等收尾。用工具（MCP `abs_task` / CLI `abs task`）：
 
+> **写操作优先 MCP，不要用 `bash` 跑 `abs`。** 实测：MCP 单次 ~2ms（server 常驻），
+> CLI 单次 27ms（其中 20ms 是每次起 node 进程的固定开销，读写本身仅 3ms）。
+> 一轮发多条命令时差距明显。CLI 留给「人手动查看看板」，agent 读写走 MCP。
+> 详见 [[perf-fixed-overhead]]。
+
 | 时机 | 动作 |
 |---|---|
 | 认领新任务 | `abs task start <id> --note "做什么"` |
