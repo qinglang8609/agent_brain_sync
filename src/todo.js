@@ -138,6 +138,138 @@ function renderDoneGroups(units) {
   return out;
 }
 
+/** 归档标记区标题。它在 Done 区内部、日期分组之后，形如：
+ *   ### 归档
+ *   - [[2026-09-10-todo归档]] 完成任务 10 条
+ * 这区不是任务行，不能被 parseDoneUnits 吃挂，否则 markDone 重建 Done 时会把它丢掉。
+ * 故先切出去当"不透明区域"原样保留。 */
+const ARCHIVE_HEADING = '### 归档';
+
+/** 把 Done 主体行切成 { groupLines, archiveLines }：把 `### 归档` 区当"不透明块"原样保留。
+ * 注意不能简单"从标题切到文件尾" —— 否则一旦有日期组落在归档区之后（手改/旧数据），
+ * 它会被当不透明内容除在分组之外，永远不参与归档。故只取到下一个 ###/## 标题为止。 */
+function splitDoneBody(bodyLines) {
+  const ai = bodyLines.findIndex((l) => l.trim() === ARCHIVE_HEADING);
+  if (ai === -1) return { groupLines: bodyLines, archiveLines: [] };
+  let end = ai + 1;
+  while (end < bodyLines.length && !/^#{2,3} \S/.test(bodyLines[end].trim())) end++;
+  return {
+    groupLines: [...bodyLines.slice(0, ai), ...bodyLines.slice(end)],
+    archiveLines: bodyLines.slice(ai, end),
+  };
+}
+
+/** 合并归档标记行。计数是**累计**的：同一归档页反复追写时，把本次条数加到已有计数上
+ * （否则标记行永远只显示最后一次的条数，与归档页实际内容不符）。同 slug 就地更新，不重复追加。
+ * 返回含标题的行数组。 */
+function mergeArchiveLines(existing, slug, addCount) {
+  const out = existing.length ? [...existing] : [ARCHIVE_HEADING];
+  while (out.length && !out[out.length - 1].trim()) out.pop();
+  const i = out.findIndex((l) => l.includes(`[[${slug}]]`));
+  const prev = i !== -1 ? Number((out[i].match(/完成任务 (\d+) 条/) || [])[1] || 0) : 0;
+  const line = `- [[${slug}]] 完成任务 ${prev + addCount} 条`;
+  if (i !== -1) out[i] = line;
+  else out.push(line);
+  out.push('');
+  return out;
+}
+
+/** 本地日期减 n 天（YYYY-MM-DD）。纯字符串入出，避免时区漂移。 */
+function daysAgo(n, from) {
+  const [y, m, d] = String(from).split('-').map(Number);
+  const t = new Date(y, m - 1, d);
+  t.setDate(t.getDate() - n);
+  const pad = (x) => String(x).padStart(2, '0');
+  return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+}
+
+/** 一行是否为未完成任务行（- [ ]）。 */
+function isUndoneLine(l) {
+  return /^\s*- \[ \]/.test(l);
+}
+
+/**
+ * 把 Done 区里"可归档"的日期组摘出来，并追回归档标记行。**纯函数**（不碰磁盘）。
+ * 规则（用户定）：
+ *   ① 只保留近 keepDays 天（含今天）；更早的才归档。
+ *   ② 某一天只要还有未完成（- [ ]）任务，**整天都不归档**（不拆半天）。
+ *   ③ 归档内容归到一个文件（slug 由调用方给），本函数只负责从 todo 文本里移除
+ *      + 在 Done 区尾部的 `### 归档` 区记一行 `- [[slug]] 完成任务 N 条`。
+ * 无日期组（### （未标日期））无法判天数，**保守不归档**。
+ * @returns {{text:string, archived:{date:string,lines:string[]}[], skipped:{date:string,reason:string}[], count:number}}
+ */
+export function archiveDoneInText(text, { keepDays = 3, from = today(), slug } = {}) {
+  const lines = String(text || '').split('\n');
+  const di = lines.findIndex((l) => l.startsWith('## Done'));
+  if (di === -1) return { text, archived: [], skipped: [], count: 0 };
+  const head = lines.slice(0, di + 1);
+  const { groupLines, archiveLines } = splitDoneBody(lines.slice(di + 1));
+  const units = parseDoneUnits(groupLines);
+  if (!units.length) return { text, archived: [], skipped: [], count: 0 };
+
+  const keep = Math.max(1, Number(keepDays) || 3);
+  // 保留 cutoff..from 这 keep 天；比 cutoff 更早的才归档
+  const cutoff = daysAgo(keep - 1, from);
+
+  const byDate = new Map();
+  const undated = [];
+  for (const u of units) {
+    if (!u.date) { undated.push(u); continue; }
+    if (!byDate.has(u.date)) byDate.set(u.date, []);
+    byDate.get(u.date).push(u);
+  }
+
+  const archived = [];
+  const skipped = [];
+  const keepUnits = [...undated];
+  if (undated.length) skipped.push({ date: '(未标日期)', reason: '无完成日期，无法判断天数（保守不归档）' });
+
+  for (const date of [...byDate.keys()].sort()) {
+    const us = byDate.get(date);
+    if (date >= cutoff) { keepUnits.push(...us); continue; }        // ① 近 N 天：保留
+    const undone = us.filter((u) => isUndoneLine(u.lines[0]));
+    if (undone.length) {                                            // ② 有未完成：整天不归档
+      skipped.push({ date, reason: `有 ${undone.length} 条未完成，整天不归档` });
+      keepUnits.push(...us);
+      continue;
+    }
+    archived.push({ date, lines: us.flatMap((u) => u.lines) });       // ③ 可归档
+  }
+
+  if (!archived.length) return { text, archived: [], skipped, count: 0 };
+
+  const count = archived.reduce((n, g) => n + g.lines.filter((l) => /^\s*- \[x\]/.test(l)).length, 0);
+  const rebuilt = [...head, ...renderDoneGroups(keepUnits), ...mergeArchiveLines(archiveLines, slug, count)];
+  return { text: rebuilt.join('\n').replace(/\n+$/, '\n'), archived, skipped, count };
+}
+
+/** 归档页正文（按日期分组，原文保留）。供首次建页与同日追写复用。 */
+export function renderArchiveBody(groups) {
+  const out = [];
+  for (const g of groups) out.push(`### ${g.date}`, '', ...g.lines, '');
+  return out.join('\n').replace(/\n+$/, '\n');
+}
+
+/** 归档页全文（带 frontmatter）。 */
+export function renderArchivePage({ archivedOn, groups }) {
+  const total = groups.reduce((n, g) => n + g.lines.filter((l) => /^\s*- \[x\]/.test(l)).length, 0);
+  const days = groups.map((g) => g.date).join(' / ');
+  const head = [
+    '---',
+    'tags: [todo-archive, 历史]',
+    `updated: ${archivedOn}`,
+    'status: reviewed',
+    '---',
+    '',
+    `# Todo 归档 — ${days}`,
+    '',
+    `> 从 \`.brain/todo.md\` 的 Done 区迁出（该区只保留近期）。本次归档 ${groups.length} 天、共 ${total} 条已完成任务。`,
+    '> 原文完整保留（含 `↳ 断点/卡点`），查"某任务当时做到哪"看这里。',
+    '',
+  ];
+  return head.join('\n') + '\n' + renderArchiveBody(groups) + '\n';
+}
+
 /** 幂等：把 todo 全文里平铺的旧 Done 区按日期分组（新日期在前，未标日期归尾）。
  * 已是分组态(### date)则原样返回——惰性迁移用，避免每次读都动文件。 */
 export function groupDoneSection(text) {
@@ -147,9 +279,11 @@ export function groupDoneSection(text) {
   const body = lines.slice(di + 1);
   const first = body.find((l) => l.trim());
   if (first && /^### /.test(first.trim())) return text; // 已分组，幂等不动
-  const units = parseDoneUnits(body);
+  const { groupLines, archiveLines } = splitDoneBody(body); // 归档标记区原样保留
+  const units = parseDoneUnits(groupLines);
   if (!units.length) return text;
-  return [...lines.slice(0, di + 1), ...renderDoneGroups(units)].join('\n').replace(/\n+$/, '\n');
+  return [...lines.slice(0, di + 1), ...renderDoneGroups(units), ...archiveLines]
+    .join('\n').replace(/\n+$/, '\n');
 }
 
 /** 把 moved 单元（已完成任务行+附属行）放入 Done 区并整体按日期分组重建。
@@ -165,9 +299,10 @@ export function insertDoneGrouped(text, movedLines) {
   }
   const head = lines.slice(0, di + 1);
   const body = lines.slice(di + 1);
+  const { groupLines, archiveLines } = splitDoneBody(body); // 归档标记区原样保留
   // 新完成单元置前：同日期组内新在最上（renderDoneGroups 按 encounter 顺序保持，日期再倒序排）
-  const units = [newUnit, ...parseDoneUnits(body)];
-  return [...head, ...renderDoneGroups(units)].join('\n').replace(/\n+$/, '\n');
+  const units = [newUnit, ...parseDoneUnits(groupLines)];
+  return [...head, ...renderDoneGroups(units), ...archiveLines].join('\n').replace(/\n+$/, '\n');
 }
 
 // 占位/空任务行（老模板的 "（无）"/"无"/纯 - [ ]）不迁移

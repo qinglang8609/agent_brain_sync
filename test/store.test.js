@@ -6,8 +6,8 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup } from '../src/store.js';
-import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine } from '../src/todo.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive } from '../src/store.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
 
@@ -430,6 +430,25 @@ describe('cmdShow (todo/index/log 查看)', () => {
 describe('cmdLint', () => {
   const PAGE = (body) => `---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n${body}`;
 
+  // 回归: 这个检查曾经"永不触发" —— 路径写成 brainPath(vault,'todo.md')（多一层 .brain），
+  // ENOENT 又被外层 try/catch 吞掉 → lint 永远 0 problem，静默失效。
+  // 故这里既测"会报"，也测"报了之后归档能消掉"。
+  test('Done 区堆积 → DONE-PILED-UP（且不是静默通过）', async () => {
+    const rows = Array.from({ length: 70 }, (_, i) => `- [x] PILE-${i}  (完成 2026-09-10)`);
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo 看板', '## Backlog', '## Today / In Progress', '## Blocked', '## Done', '### 2026-09-10', '', ...rows, ''].join('\n'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/DONE-PILED-UP/.test(out), `应报 Done 堆积: ${out}`);
+  });
+
+  test('Done 区精简时不报 DONE-PILED-UP', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo 看板', '## Backlog', '## Today / In Progress', '## Blocked', '## Done',
+        '### 2026-09-10', '', '- [x] ONE  (完成 2026-09-10)', ''].join('\n'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/DONE-PILED-UP/.test(out), `不该报: ${out}`);
+  });
+
   test('健康图谱: 0 问题', async () => {
     // 挂到 index 且互相链接的规范页
     await fs.writeFile(
@@ -753,5 +772,104 @@ describe('Done 按日期分组 + 老格式兼容', () => {
     const t = await readTodo(projectA);
     const hits = t.split('\n').filter((l) => l.includes('DGX') && l.startsWith('- [x]'));
     assert.equal(hits.length, 1, `二次 done 不重复: ${hits}`);
+  });
+});
+
+// ---------- Done 归档（abs todo archive） ----------
+// 规则（用户定）: ①只保留近 N 天 ②任一天有未完成则整天不归档 ③归档成一个文件 + Done 尾部留标记行
+describe('Done 归档', () => {
+  const mk = (lines) => ['# 📋 Todo 看板', '## Backlog', '## Today / In Progress', '## Blocked', '## Done', ...lines, ''].join('\n');
+
+  test('只归档超过保留天数的日期组（近 3 天保留）', () => {
+    const t = mk([
+      '### 2026-09-10', '', '- [x] A  (完成 2026-09-10)', '',
+      '### 2026-09-09', '', '- [x] B  (完成 2026-09-09)', '',
+      '### 2026-09-08', '', '- [x] C  (完成 2026-09-08)', '',
+      '### 2026-09-07', '', '- [x] D  (完成 2026-09-07)', '',
+    ]);
+    const r = archiveDoneInText(t, { keepDays: 3, from: '2026-09-10', slug: 'S' });
+    assert.deepEqual(r.archived.map((g) => g.date), ['2026-09-07'], '只 09-07 该归档');
+    assert.equal(r.count, 1);
+    for (const d of ['2026-09-10', '2026-09-09', '2026-09-08']) {
+      assert.ok(r.text.includes(d), `${d} 应保留`);
+    }
+    assert.ok(!r.text.includes('### 2026-09-07'), '09-07 组应已迁出');
+  });
+
+  test('某天有未完成任务 → 整天不归档（不拆半天）', () => {
+    const t = mk([
+      '### 2026-09-07', '', '- [x] DONE-ONE  (完成 2026-09-07)', '- [ ] STILL-OPEN  (完成 2026-09-07)', '',
+      '### 2026-09-06', '', '- [x] OK-ONE  (完成 2026-09-06)', '',
+    ]);
+    const r = archiveDoneInText(t, { keepDays: 3, from: '2026-09-10', slug: 'S' });
+    assert.deepEqual(r.archived.map((g) => g.date), ['2026-09-06'], '只 09-06 归档');
+    assert.ok(r.text.includes('STILL-OPEN'), '含未完成任务的整天必须留着');
+    assert.ok(r.text.includes('DONE-ONE'), '同一天的已完成任务也不能被单独迁走');
+    assert.ok(r.skipped.some((s) => s.date === '2026-09-07' && /未完成/.test(s.reason)), JSON.stringify(r.skipped));
+  });
+
+  test('归档后 Done 尾部有 ### 归档 标记行（完成任务 N 条）', () => {
+    const t = mk(['### 2026-09-06', '', '- [x] X  (完成 2026-09-06)', '- [x] Y  (完成 2026-09-06)', '']);
+    const r = archiveDoneInText(t, { keepDays: 3, from: '2026-09-10', slug: '2026-09-10-todo归档' });
+    assert.ok(r.text.includes('### 归档'), '应有 ### 归档 区');
+    assert.ok(r.text.includes('- [[2026-09-10-todo归档]] 完成任务 2 条'), r.text);
+  });
+
+  test('未标日期组保守不归档', () => {
+    const t = mk(['### （未标日期）', '', '- [x] NODATE  ', '']);
+    const r = archiveDoneInText(t, { keepDays: 3, from: '2026-09-10', slug: 'S' });
+    assert.equal(r.archived.length, 0);
+    assert.ok(r.text.includes('NODATE'));
+    assert.ok(r.skipped.some((s) => /未标日期/.test(s.date)));
+  });
+
+  // 回归: ### 归档 区在 Done 内部，若被 parseDoneUnits 吃掉，markDone 重建 Done 时会丢
+  test('### 归档 区在 markDone / 惰性分组重建后不丢', () => {
+    const withArchive = mk(['### 2026-09-10', '', '- [x] A  (完成 2026-09-10)', '', '### 归档', '- [[S]] 完成任务 3 条', '']);
+    const afterDone = insertDoneGrouped(withArchive, ['- [x] NEW  (完成 2026-09-10)']);
+    assert.ok(afterDone.includes('[[S]]'), 'insertDoneGrouped(markDone 路径) 不能丢归档区');
+    const flat = mk(['- [x] OLD  (完成 2026-09-10)', '', '### 归档', '- [[S]] 完成任务 3 条', '']);
+    assert.ok(groupDoneSection(flat).includes('[[S]]'), '平铺迁移不能丢归档区');
+  });
+
+  test('同日重复归档幂等（标记行不重复、条目就地更新）', () => {
+    const t = mk(['### 2026-09-06', '', '- [x] X  (完成 2026-09-06)', '']);
+    const once = archiveDoneInText(t, { keepDays: 1, from: '2026-09-10', slug: 'S' });
+    const twice = archiveDoneInText(once.text + '### 2026-09-05\n\n- [x] Y  (完成 2026-09-05)\n', { keepDays: 1, from: '2026-09-10', slug: 'S' });
+    assert.equal((twice.text.match(/\[\[S\]\]/g) || []).length, 1, '同 slug 只留一行');
+    assert.ok(twice.text.includes('完成任务 2 条'), `标记行应更新计数: ${twice.text}`);
+  });
+
+  test('cmdTodoArchive 端到端: 建归档页 + 改 todo + 登记 index', async () => {
+    const todoP = join(projectA, '.brain', 'todo.md');
+    await fs.writeFile(todoP, mk([
+      '### 2026-09-10', '', '- [x] KEEP  (完成 2026-09-10)', '',
+      '### 2026-09-04', '', '- [x] OLD-A  (完成 2026-09-04)', '  ↳ 断点: 当时的细节', '',
+    ]), 'utf8');
+    const out = await cmdTodoArchive({ dir: projectA, keepDays: 3 });
+    assert.ok(out.startsWith('✓'), out);
+    const todo = await fs.readFile(todoP, 'utf8');
+    assert.ok(!todo.includes('OLD-A'), '旧任务应已迁出 todo');
+    assert.ok(todo.includes('### 归档') && todo.includes('完成任务 1 条'), todo);
+    const page = await fs.readFile(join(projectA, '.brain', 'sessions', `${today()}-todo归档.md`), 'utf8');
+    assert.ok(page.includes('OLD-A') && page.includes('当时的细节'), '归档页应保留原文含断点');
+    const idx = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(idx.includes(`[[${today()}-todo归档]]`), 'index 应登记归档页');
+  });
+
+  test('dry-run 不动文件', async () => {
+    const todoP = join(projectA, '.brain', 'todo.md');
+    const before = mk(['### 2026-09-04', '', '- [x] OLD  (完成 2026-09-04)', '']);
+    await fs.writeFile(todoP, before, 'utf8');
+    const out = await cmdTodoArchive({ dir: projectA, keepDays: 3, dryRun: true });
+    assert.ok(out.includes('dry-run'), out);
+    assert.equal(await fs.readFile(todoP, 'utf8'), before, 'dry-run 不应改动 todo.md');
+  });
+
+  test('无可归档时明确说明（不静默）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      mk(['### 2026-09-10', '', '- [x] NEW  (完成 2026-09-10)', '']), 'utf8');
+    const out = await cmdTodoArchive({ dir: projectA, keepDays: 3 });
+    assert.ok(out.includes('无可归档'), out);
   });
 });

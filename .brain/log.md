@@ -1,4 +1,5 @@
 # 🗒 操作日志
+## [2026-09-10 20:58] note | try/catch 吞异常会把「写错的代码」变成「永远不触发的检查」——本次 lint 的 DONE-PILED-UP 
 ## [2026-09-10 20:44] dev | 收拾待办看板: Done 区 74→34 行(迁出 09-08/09-09 共 28 条至 sessions/done-archive-2026-09.md, 保留今天)。迁而非删: 51 条 Don
 ## [2026-09-10 17:59] dev | 修宿主 MCP 注册路径不稳定: ABS_DIR(install.js自己住哪) → mcpEntryPath()(优先全局安装位置); codex 由'已存在即跳过'改为校对校正。四宿主路径已统一。
 ## [2026-09-10 17:59] note | 宿主 MCP 注册路径必须写"包的稳定安装位置", 不能写 ABS_DIR: ABS_DIR = install.js 

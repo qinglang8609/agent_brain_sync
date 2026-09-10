@@ -5,6 +5,7 @@
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10
 
+- [x] TODO-ARCHIVE-CMD — Done 区归档做成真流程: ①只保留近3天(可配) ②任一天内有未完成(- [ ])则整天不归档 ③归档为单个文件+在 todo 的 ### 归档 段留 [[<slug>]] 完成任务 N 条。含定时/触发规划 + lint 兜底  (完成 2026-09-10)
 - [x] MCP-PATH-UNSTABLE — 四宿主 abs MCP 注册路径不一致: codex 指向仓库(/Users/fanchao/Code/skills/.../bin/mcp.js), CC/opencode/pi 指向全局(lib/node_modules/...)。根因两处: ①install.js 三处都用 join(ABS_DIR,'bin','mcp.js'), 而 ABS_DIR 取决于'install.js 自己住哪' —— 从仓库跑 abs install 就写仓库路径 ②codex 分支 if(!text.includes('[mcp_servers.abs]')) 才写, 已存在即跳过 → 一旦写错永不修正。危害: 改了仓库但没装全局时, 真机跑的可能是另一份; 卸载全局后路径直接失效。修法: 路径应固定为该包的稳定安装位置(优先全局), 且已存在时也应更新为当前正确路径  (完成 2026-09-10)
   ↳ 断点: 已修: install.js 新增 mcpEntryPath() 优先解析全局 node_modules 位置, 取不到才回退 ABS_DIR; codex 分支由"已存在即跳过"改为"校对并校正路径"。真实配置已校正(四宿主现一致指向全局)。新增 2 测试 + revert-check(首版测试太弱抓不到, 改为断言"存在全局包时必须写全局路径"后通过)
 - [x] MCP-LIVE-VERIFY — 重启后 MCP 写通道 + mcp.log 双验证  (完成 2026-09-10)

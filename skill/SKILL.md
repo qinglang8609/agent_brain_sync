@@ -115,6 +115,12 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`；横向�
 | 碰壁/阻塞 | `abs todo blocked <id> --note "卡点原因"`（移 Blocked） |
 | 被打断/改向/干到一半停 | `abs todo note <id> --note "改到哪个文件/到哪步"`（补 ↳ 断点 行） |
 
+**Done 区会自动收口**：会话结束时 hook 调 `abs wrapup`，顺手把「超过 3 天 且 整天都已完成」
+的日期组迁到 `.brain/sessions/<日期>-todo归档.md`，并在 Done 区尾部留一行
+`### 归档` → `- [[<日期>-todo归档]] 完成任务 N 条`。
+**任一天只要还有未完成任务（`- [ ]`），整天都不归档** —— 不会把半成品扫走。
+手动跑：`abs todo archive [--keep-days N] [--dry-run]`。
+
 > `abs todo start` 与 `abs todo add` 等价（老写法仍可用）。
 > 旧版 `abs task ...` / `abs board` 已改名，会报错并提示新写法。
 > 只读命令（`todo`/`status`/`lint`/`load`/`index`）遇多余参数会报错 —— 不再静默吞掉。

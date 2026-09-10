@@ -72,6 +72,7 @@ abs log "完成 X"                          # 记一行流水；abs log 无参 =
 abs query <词>                            # 检索图谱（多词 OR）
 abs status                                # 当前项目 + 图谱概要
 abs lint                                  # 体检：死链/孤岛/超尺寸/堆积
+abs todo archive                          # 归档 Done 区旧日期组（默认留近 3 天）
 ```
 
 > `abs todo start` 与 `abs todo add` 等价（都登记任务）。

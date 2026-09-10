@@ -2,7 +2,7 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdTeardownCheck } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdTeardownCheck, cmdTodoArchive } from '../src/store.js';
 import { runInstall, runUninstall, installSummary } from '../src/install.js';
 import { readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -70,6 +70,8 @@ function parseArgv(args) {
     else if (a === '--section') { o.section = args[++i]; }
     else if (a === '--note') { o.note = args[++i]; }
     else if (a === '--payload') { o.payload = args[++i]; }
+    else if (a === '--keep-days') { o.keepDays = args[++i]; }
+    else if (a === '--dry-run') { o.dryRun = true; }
     else if (a === '--yes') { o.yes = true; }
     else if (a === '--repair') { o.repair = true; }
     else if (a === '--no-mcp') { o.mcp = false; }
@@ -99,6 +101,9 @@ const usage = `abs — agent-brain-sync 记忆工具
 
 维护:
   abs query <词1> [词2 …]    检索 .brain/ 知识页 (多词 OR)
+  abs todo archive [--keep-days N] [--dry-run]
+                            归档 Done 区旧日期组 → sessions/<日期>-todo归档.md
+                            (默认保留近 3 天; 任一天有未完成则整天不归档)
   abs lint                   图谱体检 (死链/孤岛/超尺寸/堆积)
   abs init [--repair]        建 .brain/ 图谱; 结构不完整时报明细, --repair 只补缺不覆盖
   abs install [--agent <宿主>]   安装 MCP+hook+skill (宿主: claude-code/codex/opencode/pi)
@@ -181,10 +186,17 @@ async function main() {
           break;
         }
         const action = TODO_ACTIONS[sub];
+        // 归档：Done 区迁出旧日期组（非任务子命令，单独处理）
+        if (sub === 'archive') {
+          rejectExtra(rest2, 'abs todo archive [--keep-days N] [--dry-run]');
+          const a = { dir: opts.dir, keepDays: opts.keepDays, dryRun: opts.dryRun };
+          console.log(await cmdTodoArchive(a));
+          break;
+        }
         if (!action) {
           throw new Error(
             `✗ 未知子命令 "${sub}"\n` +
-            `  可用: add / start / note / blocked / done\n` +
+            `  可用: add / start / note / blocked / done / archive\n` +
             `  看板: abs todo（不带参数）\n` +
             `  登记任务: abs todo add <id> --note "做什么"`,
           );

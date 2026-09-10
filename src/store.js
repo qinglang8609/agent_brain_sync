@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { requireBrain, findBrainRoot, brainPath } from './index.js';
-import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine } from './todo.js';
+import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor, wrapupLogPath } from './wrapup.js';
 
@@ -190,7 +190,75 @@ export async function cmdLoad({ dir }) {
 // ---------- wrapup: 滞留快照（B）/ load 内展示由 cmdLoad 完成（A） ----------
 export async function cmdWrapup({ dir }) {
   const root = await requireBrain(dir || process.cwd());
-  return appendWrapup(root);
+  const snap = await appendWrapup(root);
+  // 顺手做 Done 归档。**不引入 cron/定时器**：Stop hook 已经会在会话结束时调
+  // `abs wrapup`，直接复用这个触发点（零新基础设施、零新失败面）。
+  // 只对「超过保留天数 且 整天都已完成」的日期组动手，平时无动作。
+  // 本函数 stdout 会被 hook 追写到 ~/.abs/log/hooks.log → 归档动作自动留痕。
+  let arch = '';
+  try {
+    const a = await cmdTodoArchive({ dir: root, keepDays: 3 });
+    if (a.startsWith('✓')) arch = '\n' + a;
+  } catch { /* 归档失败不影响快照本身 */ }
+  return snap + arch;
+}
+
+/**
+ * `abs todo archive` —— 把 Done 区里「超过保留天数 且 整天都已完成」的日期组迁到归档页。
+ * 规则见 `archiveDoneInText`（① 只留近 N 天 ② 任一天有未完成则整天不归档 ③ 归档成一个文件
+ * 并在 Done 区尾部 `### 归档` 记 `- [[slug]] 完成任务 N 条`）。
+ * 幂等：同日重跑 = 追写到同一归档页 + 就地更新标记行。
+ */
+export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {}) {
+  let root;
+  try { root = await requireBrain(dir || process.cwd()); } catch { return '未找到 .brain/ 图谱。先在项目根运行: abs init'; }
+  const days = Math.max(1, Number(keepDays) || 3);
+  const slug = `${today()}-todo归档`;
+  const todoP = brainPath(root, 'todo.md');
+  const raw = await fs.readFile(todoP, 'utf8').catch(() => '');
+  if (!raw.trim()) return '（todo.md 为空）';
+
+  const plan = archiveDoneInText(raw, { keepDays: days, from: today(), slug });
+  const why = plan.skipped.length
+    ? `\n  跳过: ${plan.skipped.map((s) => `${s.date}（${s.reason}）`).join('；')}`
+    : '';
+  if (!plan.archived.length) return `（无可归档：保留近 ${days} 天）${why}`;
+  const brief = plan.archived.map((g) => `${g.date}(${g.lines.filter((l) => /^\s*- \[x\]/.test(l)).length})`).join(' ');
+  if (dryRun) return `[dry-run] 将归档 ${plan.archived.length} 天 / ${plan.count} 条 → sessions/${slug}.md\n  ${brief}${why}`;
+
+  // 1) 归档页：首次建（带 frontmatter），同日再跑则追写正文
+  const sessDir = brainPath(root, 'sessions');
+  const pageP = join(sessDir, `${slug}.md`);
+  let page = null;
+  try { page = await fs.readFile(pageP, 'utf8'); } catch { /* 首次 */ }
+  const nextPage = page == null
+    ? renderArchivePage({ archivedOn: today(), groups: plan.archived })
+    : page.replace(/\s*$/, '') + '\n\n' + renderArchiveBody(plan.archived) + '\n';
+  const tmp = join(sessDir, `.${slug}.tmp-${Date.now()}`);
+  await fs.writeFile(tmp, nextPage, 'utf8');
+  await fs.rename(tmp, pageP);
+
+  // 2) todo.md：锁内重算（拿最新内容，避免与并发 done 互相覆盖）
+  await editFile(todoP, (cur) => {
+    const p2 = archiveDoneInText(cur ?? '', { keepDays: days, from: today(), slug });
+    return p2.archived.length ? { text: p2.text } : SKIP;
+  });
+
+  // 3) index 登记（幂等）
+  const iP = brainPath(root, 'index.md');
+  const line = `- [[${slug}]] — Todo 归档：${plan.archived.map((g) => g.date).join(' / ')}，共 ${plan.count} 条已完成任务`;
+  await editFile(iP, (index) => {
+    if (!index || index.includes(`[[${slug}]]`)) return SKIP;
+    const sIdx = index.indexOf('## Sources');
+    if (sIdx === -1) return SKIP;
+    const after = index.indexOf('\n## ', sIdx + 1);
+    const next = after === -1
+      ? `${index.replace(/\s*$/, '')}\n${line}\n`
+      : index.slice(0, after) + `\n${line}` + index.slice(after);
+    return { text: next };
+  });
+
+  return `✓ 已归档 ${plan.archived.length} 天 / ${plan.count} 条 → sessions/${slug}.md\n  ${brief}${why}`;
 }
 
 /**
@@ -528,6 +596,22 @@ export async function cmdLint({ dir }) {
 
   const nsrc = pages.filter((p) => p.dir === 'sources').length;
   if (nsrc > 10) issues.push(`SOURCES-PILED-UP: sources/ has ${nsrc} files > 10; 提炼归档旧 source`);
+
+  // Done 区堆积：它无上限增长，且 `abs todo`/`abs load` 每次全量打印 → 越积越难用。
+  // （与 hooks.log/wrapup.log 同类问题；那两处有轮转，这里靠 `abs todo archive`。）
+  // 坑: 曾经写成 brainPath(vault, 'todo.md')，而 vault 已经是 .brain 目录
+  // → 拼出 .brain/.brain/todo.md（ENOENT），又被外层 try/catch 吞掉
+  // → 检查静默失效（lint 永远 0 problem）。故这里不用 try/catch 吞错，
+  // 只对 ENOENT 做缺省，写错路径这类编程错会直接暴露。
+  const todoTxt = await fs.readFile(join(vault, 'todo.md'), 'utf8').catch(() => '');
+  const di = todoTxt.split('\n').findIndex((l) => l.startsWith('## Done'));
+  if (di !== -1) {
+    const doneLines = todoTxt.split('\n').slice(di + 1).filter((l) => l.trim()).length;
+    const DONE_MAX = 60;
+    if (doneLines > DONE_MAX) {
+      issues.push(`DONE-PILED-UP: Done 区 ${doneLines} 行 > ${DONE_MAX}; 跑 \`abs todo archive\` 迁出旧日期组`);
+    }
+  }
 
   const n = issues.length;
   return [
