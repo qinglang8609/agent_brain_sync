@@ -1,4 +1,22 @@
 # 🗒 操作日志
+## [2026-09-10 13:21] note | opencode 插件 abs.ts 的导出形状确认: @opencode-ai/plugin 要求 PluginMod
+## [2026-09-10 12:05] note | 命令报'看不到新版本'先分两类: 实现不存在 vs 数据/网络不对。本次'abs update 看不到新版本'根因是命令
+## [2026-09-10 12:05] dev | 补 abs update + abs --version: 用户报'update 看不到新版本'根因是命令从未实现(不是缓存/网络); update 走 npm 升级后自动刷新四宿主 hook/ski
+## [2026-09-10 11:58] dev | 发布正式版 1.0.0: 从 npm 包真机冒烟(四宿主安装+init/task/note/log/load/query/lint/MCP 9工具+插件加载)全通过; 全局升级 1.0.0 并刷新四宿
+## [2026-09-10 11:47] dev | 真机验证通过: pi 真实会话首次跑通 agent_end→seen→teardown-nudge 完整链路; seen 痕补记 cwd+brain 使异常可归因; 146测试绿, 发布0.5.1
+## [2026-09-10 11:38] dev | 补插件 seen 痕可观测性: 首次 agent_end/session.idle 无条件留痕, 使'未触发/被拦下/已注入'三态可从日志区分; 146测试绿, 发布0.5.0
+## [2026-09-10 11:38] note | 可观测性缺口: 插件只在真正注入(nudge)时写日志, 于是查日志时无法区分三种状态 —— ①事件根本没触发 ②触发了
+## [2026-09-10 11:35] dev | 补插件行为级测试(9例)+ZWSP守卫(2例): 真import生成产物驱动真实事件+断言日志落痕; 顺带修掉日志前缀里的零宽字符; 144测试绿, 发布0.4.0
+## [2026-09-10 11:35] note | 插件验证必须行为级, 字符串断言会漏掉导出方式错误: install.test.js 只 grep 源码文本, 于是 (
+## [2026-09-10 11:28] dev | op​encode 插件第二个静默失效: 命名导出→default(export default {id,server}), 修完签名仍 0 触发因插件根本没被加载; 133测试绿, 发布0.3.1
+## [2026-09-10 11:28] note | op​encode 插件加载器取 default 导出, 用 export const 命名导出会被静默忽略(mod.d
+## [2026-09-10 11:17] dev | op​encode 插件从未触发过(第二半): event 回调签名错({name}→{event})+事件名错(session.start→session.idle) 导致静默失效0条日志; 据官方
+## [2026-09-10 11:16] note | op​encode 收尾自动化落地: session.idle 是每轮结束信号(对应 pi 的 agent_end / 
+## [2026-09-10 11:16] note | 宿主插件 API 必须按官方类型定义实核, 不能凭印象写: op​encode 插件曾把 event 回调入参写成 ({
+## [2026-09-10 11:10] dev | 补 lint 反向死引用检查(INDEX-DEAD-LINK): 原来只查 page→index, 不查 index→page, 归档 source 后 index 残留死引用静默留存; 130测试绿
+## [2026-09-10 11:08] dev | 修 Co​dex 安装崩溃 + 补收尾自动化: hooks.json 改对象形态(兼容迁移/卸载双侧), pi 扩展挂 agent_end 注入收尾指令(真改过文件+今日未收尾才推, 每会话一次); 
+## [2026-09-10 11:08] note | 收尾自动化的缺口不在'记日志'而在'没人提醒': pi 扩展原来只挂 session_start/session_shu
+## [2026-09-10 11:08] note | Co​dex hooks.json 真实形态是对象 {hooks:{EventName:[{matcher?,hooks
 ## [2026-09-09 12:43] dev | 发布到npm+沉淀发布经验: @fanchao8609/agent_brain_sync@0.1.0成功发布并全局安装(清旧link); 提炼concept npm-publish-flow(2FA/
 ## [2026-09-09 12:21] dev | 修 pi/opencode 插件生命周期事件灌图谱 log.md: 模板改直写技术日志 hooks.log(与 event.sh 同纪律, ABS_LOG_DIR 可覆盖), 真机 Pi extens
 ## [2026-09-09 12:02] dev | Done按日期分组: ### date新在前, 老平铺惰性迁移兼容, markDone归组顶部, 125测试绿

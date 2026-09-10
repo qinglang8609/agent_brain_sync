@@ -22,6 +22,32 @@ nvm 切 node 大版本时 NODE_BIN 失效 → 重跑 `abs install` 刷新。
 ## 知识冲突（演进）
 本文的「npm link 单一真源」是**开发期**形态。**产品模式**已改为发布到 npm registry、`npm install -g @fanchao8609/agent_brain_sync` 正式全局装——hook/MCP 烧的绝对路径指向发布包而非开发目录。两者差异见 [[npm-publish-flow]]（坑 5：link 与发布包抢 bin）。hook 烧绝对路径、nvm 切换重装这两个机制在两种形态下**不变**。
 
+## 共存：不覆盖宿主既有 hook（四宿主通病）
+装 abs 前宿主可能已有别的 hook 框架（如 moshi-hook）。install **绝不能** `hooks[ev] = [abs]` 覆盖——那会顶掉别人。正确做法（Cl​aude/Co​dex 已实现）：
+1. 读既有配置 → 按事件 `filter(entryHasAbs)` 去掉旧 abs 条目（幂等，重装不叠加）
+2. `[...kept, { hooks: [{ type: 'command', command: script }] }]` 追加
+3. uninstall 只删 abs 条目，**无共存才整删该事件**
+
+### Co​dex hooks.json 形态坑（曾导致安装崩溃）
+Co​dex 的 `~/.co​dex/hooks.json` 真实形态是**对象**：`{hooks: {EventName: [{matcher?, hooks:[{type,command}]}]}}`，与 Cl​aude `settings.json` 同形——**不是**扁平数组 `[{event, command}]`。按扁平数组写会在已存在的文件上 `cfg.hooks.filter is not a function` 崩溃。要点：
+- 写前先读并**合并**（该文件可能已存在）；
+- 碰到历史扁平数组形态要**迁移**成对象，不能丢弃（丢用户 hook）；
+- **卸载侧必须同样处理两种形态**，否则对象形态的 hook 永远删不掉。
+
+## 自我管理命令必须齐全（install / uninstall / update / --version）
+
+只做 `install`/`uninstall` 而漏了 `update`/`--version` 会直接坑用户：
+用户的心智模型是“abs 自己管自己”，升级路径断了就只能自己知道去跑 `npm i -g`。
+实际反馈：“在另一台机器上 update，没发现新版本” —— 根因是 **`abs update` 命令根本不存在**
+（跑它输出 `未知命令: update`），**不是缓存/代理问题**。
+
+`abs update` 正确行为：`npm view` 查最新 → 对比当前 → 有新版则 `npm i -g @latest`
+→ **自动重跑 install 刷新四宿主 hook/skill**（hook 烧的是绝对路径+模板快照，不刷新就用不上新代码）；
+网络/代理失败时给明确的手动命令，不要默默失败。
+
+**诊断教训**：“命令看不到新版本”先分两类：**实现不存在** vs **数据/网络不对**。
+先跑一遍那条命令看真实输出，再去查代理/缓存。
+
 ## 关联连接
 - [[AgentBrainSync]] — 安装器实现（src/install.js）
 - [[npm-publish-flow]] — 产品模式发布全流程（scoped 改名/2FA/link 清理）

@@ -3,7 +3,13 @@
 本文件唯一入口。每新建/大改一个知识页，同步在此分类下加一行 `[[页面名]] — 一句话`。
 
 ## 当前路线 (Roadmap)
-> D0-D4 已落地（hook→MCP→CLI + 四宿主安装器）。当前: D1 收尾（query/lint/幂等/归位）→ 多项目隔离实测（D2 验收）→ 端到端 hook（D3）。
+> **v1.0.0 已发布**（2026-09-10，npm `@fanchao8609/agent_brain_sync`）。
+> 四宿主（cl​aude-code / co​dex / op​encode / pi）安装器 + hook→MCP→CLI 三层 + 收尾自动化均已落地，146 测试绿。
+>
+> **下一阶段候选**：
+> - op​encode / cl​aude-code / co​dex 的收尾注入**真机观察**（pi 已贯通）；
+> - 收尾注入的“只推一次”节流是否会漏掉长会话中的多次阶段性收尾；
+> - 图谱长期维护（sources 归档节奏、concepts 拆分时机）。
 
 ## Concepts
 - [[abs-install-layout]] — 全局安装形态: npm link 单一真源 + hook/MCP 烧绝对路径
@@ -12,20 +18,17 @@
 - [[skill-rewrite-residual-old-methods]] — skill 以旧文档为基底重写时, 旧方法(bootstrap/.sh)残留成悬空引用; 须对照实际工具清单逐条核对
 - [[file-write-locking]] — 并发写保护: 读改写才需 editFile 锁; append/原子写/单用户动作天然安全不妄加锁
 - [[npm-publish-flow]] — npm 发布全流程: 2FA发布限制/scoped改名绕相似名/发布后registry读延迟/全局link清理/宿主install零宽字符坑
+- [[teardown-automation]] — 收尾自动化: hook 必须主动推(注入指令)而非被动记日志; 各宿主 idle/Stop 事件 + 触发条件收窄
+- [[host-plugin-silent-failure]] — 宿主插件"静默失效"三坑: 可观测性(缺无条件 seen 痕)/回调签名错/导出方式错; 装上了≠加载了≠触发了
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 ## Sources
 - [[2026-09-08-hook-调-js-文件必须经-node-调起]] — hook 调 .js 文件必须经 node 调起(bin 无 exec 位), 
-- [[2026-09-08-测试重启后经验暂存是否正常-test-重启]] — 测试重启后经验暂存是否正常 test,重启
-- [[2026-09-08-测试-stop-hook-机械层触发通过-模拟]] — 测试 Stop hook 机械层触发通过: 模拟宿主事件 stdin → 落 ~
-- [[2026-09-08-真实冒烟-cli-mcp-hook-三层全通过]] — 真实冒烟: CLI/MCP/hook 三层全通过(CLI沙盒项目全链路、MCP独
-- [[2026-09-08-解决-abs-与-moshi-hook-共存]] — 解决 abs 与 moshi-hook 共存: installClaudeCod
-- [[2026-09-08-abs-markdown并发写冲突-所有读-改]] — abs markdown并发写冲突: 所有读-改-全写回文件操作都应经共享edi
 - [[2026-09-08-hooks-event-sh幂等mark文件用d]] — hooks/event.sh幂等mark文件用date分钟粒度写共享/tmp/a
 - [[2026-09-08-hook测试脆弱点-event-sh-幂等-m]] — hook测试脆弱点: event.sh 幂等 mark 硬编码 /tmp/abs
-- [[2026-09-08-并发写安全审计心法-别对-所有写入-一律加锁]] — 并发写安全审计心法: 别对'所有写入'一律加锁, 先按风险分类——①读改写(读旧
-- [[2026-09-08-lock-js并发丢根因-非锁失效-临界区重叠]] — lock.js并发丢根因: 非锁失效(临界区重叠=0完美互斥), 而是 LOCK
 - [[2026-09-09-方案-落定-跨会话任务只用-abs-task]] — 方案②落定: 跨会话任务只用 abs task(.brain/todo.md唯一
+- [[2026-09-10-opencode-插件-abs-ts-的导出形状]] — opencode 插件 abs.ts 的导出形状确认: @opencode-ai
 ## Syntheses
 ## Sessions
+- [[log-2026-09-10]] — 修 Co​dex 安装崩溃(对象 vs 扁平数组) + 补收尾自动化(pi agent_end 注入) + lint 反向死引用检查; 含自动化形同虚设的根因剖析
 - [[log-2026-09-08]] — 本轮开发全记录+测试清单（D1收尾→D2→D3→实时化→全局安装）

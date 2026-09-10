@@ -1,8 +1,30 @@
 # 📋 Todo 看板
 ## Backlog
 ## Today / In Progress
+- [ ] CC-CODEX-PUSH — CC/Codex 补主动推: Stop hook 回 decision:block 注入收尾指令(守卫抄 pi 插件四条件)，替代只写 wrapup.log (认领 2026-09-10)
+- [ ] GIT-WRAPUP — git 收尾: 25 文件未提交(今天整个 session log、teardown-automation + host-plugin-silent-failure 概念页、7 个 source 删除) (认领 2026-09-10)
+- [ ] SMALL-FIXES — 小件: loggedToday 守卫收紧、日志轮转、测试计数 146→实测 144 对平 (认领 2026-09-10)
 ## Blocked
+- [ ] OC-REAL-VERIFY — opencode 真机验证: 通道修完后真会话要看到 teardown-nudge 痕(当前 session.idle:seen 有痕但零 nudge) (认领 2026-09-10)
+  ↳ 卡点: 依赖 OC-INJECT-CHANNEL 修复落地
+- [ ] OC-INJECT-CHANNEL — opencode 注入通道修复: promptAsync 是 fire-and-forget(204 void)，对终结态 idle session 只入队不重启 turn → 改 src/install.js opencodePluginSource() 用 session.command(同步200) 或把注入点提前到 turn 内(tool.execute.after/message.updated) (认领 2026-09-10)
+  ↳ 卡点: 等 OpenCode(w12:pV) 判定性实验结论：herdr pane read w12:pV --source recent --lines 100 --format text
 ## Done（只留近期，旧的迁 log.md/快照）
+### 2026-09-10
+
+- [x] VERSION-ALIGN — 版本对齐: 本地 package.json 0.3.0 vs npm 已发布 1.1.0  (完成 2026-09-10)
+  ↳ 断点: 误判澄清: 本地 package.json 已是 1.1.0 且与 package-lock 一致; npm view @fanchao8609/agent_brain_sync version = 1.1.0 已发布对齐。0.3.0 是旧会话残留读数。npm 直连失败仅因代理 192.168.0.114:7890 未启动, 非版本问题
+- [x] ABS-UPDATE-CMD — 补 abs update + abs --version: 用户报'abs update 看不到新版本'实为命令不存在  (完成 2026-09-10)
+- [x] REALTIME-HOST-VERIFY — 真机验证: pi 会话首次触发 agent_end→seen→nudge 完整链路(11:43:23)  (完成 2026-09-10)
+- [x] SEEN-TRACE-CWD — seen 痕补记 cwd+brain, 使 nudge 异常可事后解释(曾出现 nudge 但 log.md 有今天, 无法归因)  (完成 2026-09-10)
+- [x] PLUGIN-SEEN-TRACE — 补 seen 痕可观测性: 首次 agent_end/session.idle 无条件留痕, 否则分不清'事件没触发'与'被守卫拦下'  (完成 2026-09-10)
+- [x] PLUGIN-BEHAVIOR-TEST — 补插件行为级测试(非字符串断言): 真 import 生成产物 + 驱动真实事件 + 断言日志落痕; 含 ZWSP 守卫  (完成 2026-09-10)
+- [x] OPENCODE-EXPORT-FIX — op​encode 插件用命名导出(export const)但加载器取 default → 插件被忽略, 改 export default {id, server}  (完成 2026-09-10)
+- [x] OPENCODE-TEARDOWN — op​encode 补收尾自动化: session.idle + promptAsync 注入(与 pi agent_end 同策略)  (完成 2026-09-10)
+- [x] OPENCODE-HOOK-DEAD — op​encode 插件 event 回调签名错({name}→{event})+事件名错(session.start→session.created/idle): 插件从未触发过  (完成 2026-09-10)
+- [x] TEARDOWN-AUTO — 收尾自动化: pi 扩展 agent_end 注入收尾指令(被动记日志→主动推)  (完成 2026-09-10)
+- [x] CO​DEX-HOOKS-FIX — 修 Co​dex hooks.json 形态错写导致安装崩溃(对象 vs 扁平数组)  (完成 2026-09-10)
+
 ### 2026-09-09
 
 - [x] 制作为产品模式，打包成可执行文件安装到系统内，给我一个安装步骤 类似 npm install xxx -g  (完成 2026-09-09)

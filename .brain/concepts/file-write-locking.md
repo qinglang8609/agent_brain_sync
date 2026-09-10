@@ -35,6 +35,5 @@ abs 所有 `.md` 都是「读-改-整文件覆盖写回」；跨进程（CLI/MCP
 `test/lock.test.js` 5 例：20 并发 task 全保留、15 并发 log 全落、幂等不重复、cmdNote 并发各成文件、无锁残留。全套 102 测试通过。
 
 ## 相关
-- [[2026-09-08-abs-markdown并发写冲突-所有读-改]]
-- [[2026-09-08-并发写安全审计心法-别对-所有写入-一律加锁]]
 - [[todo-rewrite-not-map]]
+- [[abs-install-layout]]
