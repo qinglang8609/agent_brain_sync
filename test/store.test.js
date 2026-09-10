@@ -430,6 +430,16 @@ describe('cmdShow (todo/index/log 查看)', () => {
 describe('cmdLint', () => {
   const PAGE = (body) => `---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n${body}`;
 
+  // 回归: lint 提示里的路径带 .brain/ 前缀。
+  // 曾经只给 vault 相对路径（concepts/x.md）→ 用户到项目根找 concepts/ 找不到（真实踩过）。
+  test('lint 提示的路径带 .brain/ 前缀（可直接去项目里找）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'over.md'),
+      PAGE('# 概念：超长\n' + Array.from({ length: 160 }, (_, i) => `行 ${i}`).join('\n')), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/OVER-SIZE: \.brain\/concepts\/over\.md/.test(out), `应带 .brain/ 前缀: ${out}`);
+    assert.ok(!/(^|[^.])concepts\/over\.md/.test(out.replace(/\.brain\/concepts/g, '')), `不该出现无前缀路径: ${out}`);
+  });
+
   // 回归: .brain 顶层文件（index/log/todo）也是真实页。
   // 以前只把子目录当页 → [[todo]] 被判死链（误报），反过来逼用户删掉正确引用。
   test('链到顶层文件 [[todo]] 不算死链；真不存在的仍报', async () => {
@@ -898,8 +908,8 @@ describe('Done 归档', () => {
     ]), 'utf8');
     await cmdTodoArchive({ dir: projectA, keepDays: 3 });
     const out = await cmdLint({ dir: projectA });
-    assert.ok(!/ORPHAN-PAGE: sessions\/.*todo归档/.test(out), `归档页不该是孤儿: ${out}`);
-    assert.ok(!/INDEX-MISSING: sessions\/.*todo归档/.test(out), `归档页应已登记 index: ${out}`);
+    assert.ok(!/ORPHAN-PAGE: \.brain\/sessions\/.*todo归档/.test(out), `归档页不该是孤儿: ${out}`);
+    assert.ok(!/INDEX-MISSING: \.brain\/sessions\/.*todo归档/.test(out), `归档页应已登记 index: ${out}`);
   });
 
   test('dry-run 不动文件', async () => {

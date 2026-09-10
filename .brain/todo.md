@@ -1,6 +1,7 @@
 # 📋 Todo 看板
 ## Backlog
 ## Today / In Progress
+- [ ] LINT-PATH-PREFIX — lint 提示里的路径省略了 .brain/ 前缀，用户按报的路径去项目里找找不到（codebuddy 的 concepts/fnos-native-release-deploy.md 实际在 .brain/concepts/ 下，项目根没有 concepts/ 目录）。根因: listPages 里 rel=`${d}/${f}` 是 vault 相对；7 处提示(NO-FRONTMATTER/TEMPLATE-LINK/DEAD-LINK/ORPHAN-PAGE/UNRESOLVED-CONFLICT/OVER-SIZE/INDEX-MISSING)全用它。改法: rel 改 `.brain/${d}/${f}`。影响面: 只 lint 文本，无程序消费；但 test/store.test.js 两处正则（ORPHAN-PAGE/INDEX-MISSING 带 sessions\/ 的）需同步 (认领 2026-09-10)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10

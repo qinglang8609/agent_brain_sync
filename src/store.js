@@ -3,7 +3,7 @@
 import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { requireBrain, findBrainRoot, brainPath } from './index.js';
+import { requireBrain, findBrainRoot, brainPath, BRAIN_DIR } from './index.js';
 import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor, wrapupLogPath } from './wrapup.js';
@@ -661,7 +661,9 @@ async function listPages(vault) {
       const links = [...new Set([...body.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1].split('|')[0]))];
       pages.push({
         dir: d,
-        rel: `${d}/${f}`,
+        // 带上 .brain/ 前缀：这串会原样出现在 lint 提示里，用户会拿它去找文件。
+        // 坑: 曾经只给 vault 相对路径（concepts/x.md），用户到项目根找 concepts/ 找不到。
+        rel: `${BRAIN_DIR}/${d}/${f}`,
         slug: f.replace(/\.md$/, ''),
         body,
         frontmatter: fm ? fm[1] : '',
