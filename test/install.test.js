@@ -6,6 +6,7 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -116,6 +117,42 @@ describe('install codex', () => {
     const toml = await fs.readFile(join(CODEX_CFG, 'config.toml'), 'utf8');
     assert.ok(toml.includes('[mcp_servers.abs]'), toml);
     await fs.access(join(CODEX_CFG, 'skills', 'abs-agent-brain-sync', 'SKILL.md'));
+  });
+
+  // 回归: 三处 MCP 注册曾用 join(ABS_DIR,...) —— ABS_DIR = "install.js 自己住哪",
+  // 从仓库跑 abs install 就把仓库路径写进宿主配置(不稳定: 移包/卸全局即失效)。
+  // 且 codex 分支"已存在即跳过" → 写错永不修正。
+  test('MCP 路径写稳定的全局安装位置, 而非仓库路径', async () => {
+    const r = await run(['install', '--agent', 'codex', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const toml = await fs.readFile(join(CODEX_CFG, 'config.toml'), 'utf8');
+    const m = toml.match(/\[mcp_servers\.abs\][^\[]*?args\s*=\s*\["([^"]+)"\]/s);
+    assert.ok(m, `应写入 abs MCP args: ${toml}`);
+    const written = m[1];
+    assert.ok(written.endsWith('/bin/mcp.js'), `应指向 mcp.js: ${written}`);
+    assert.ok(written.startsWith('/'), `必须是绝对路径: ${written}`);
+    // 核心断言: 若本机存在全局安装, 必须写全局路径而不是仓库路径。
+    // (若不存在全局包, 回退仓库路径可以接受 —— 但那时本断言跳过)
+    const repoMcp = join(REPO, 'bin', 'mcp.js');
+    const globalMcp = join(dirname(process.execPath), '..', 'lib', 'node_modules',
+      '@fanchao8609/agent_brain_sync', 'bin', 'mcp.js');
+    if (existsSync(globalMcp)) {
+      assert.equal(written, globalMcp,
+        `存在全局包时应写全局路径(稳定), 而非仓库路径(移包/卸全局即失效): ${written}`);
+      assert.notEqual(written, repoMcp, '绝不能写仓库路径');
+    }
+  });
+
+  // 回归: 已存在的 abs 条目若路径过时(旧版写过仓库路径), 重装应校正
+  test('已存在但路径过时的 abs MCP 条目会被校正', async () => {
+    await fs.mkdir(CODEX_CFG, { recursive: true });
+    const p = join(CODEX_CFG, 'config.toml');
+    await fs.writeFile(p, '\n[mcp_servers.abs]\ncommand = "/usr/bin/node"\nargs = ["/stale/old/bin/mcp.js"]\n');
+    const r = await run(['install', '--agent', 'codex', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const toml = await fs.readFile(p, 'utf8');
+    assert.ok(!toml.includes('/stale/old/'), `陈旧路径应被替换: ${toml}`);
+    assert.ok(toml.includes('[mcp_servers.abs]'), '条目应保留');
   });
 
   test('对象形态 hooks.json 幂等重装 + 保留既有 hook; 卸载只删 abs', async () => {

@@ -6,6 +6,7 @@
 //   - OpenCode / Pi: 官方只吃 TS plugin/extension(无 shell-hook 配置) → 初版给出手工指引。
 // 纪律: 幂等(重复安装=更新)、原子写(tmp+rename)、卸载只删自己装的、写入前备份。
 import { promises as fs } from 'node:fs';
+import * as fsSync from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,31 @@ import { HOSTS, hostByKey } from './hosts.js';
 const ABS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HOOK_TEMPLATE = join(ABS_DIR, 'hooks', 'event.sh');
 const SKILL_SOURCE = join(ABS_DIR, 'skill', 'SKILL.md');
+
+/**
+ * 写进宿主 MCP 配置的 mcp.js 路径。
+ * 坑: 直接用 ABS_DIR 是不稳定的 —— ABS_DIR = "install.js 自己住哪", 从仓库跑
+ * `abs install` 就把仓库路径写进宿主配置。之后若卸载/移动全局包, 该路径直接失效;
+ * 而 Co​dex 分支又"已存在即跳过", 一旦写错永不修正。
+ * 现在优先解析本包的稳定安装位置（全局 node_modules），解析不到才回退 ABS_DIR。
+ */
+function mcpEntryPath() {
+  // 本包名（package.json），用于反查全局安装位置
+  let pkgName = '@fanchao8609/agent_brain_sync';
+  try {
+    pkgName = JSON.parse(fsSync.readFileSync(join(ABS_DIR, 'package.json'), 'utf8')).name || pkgName;
+  } catch { /* 保持默认 */ }
+  const candidates = [
+    // npm 全局根（最常见）
+    join(dirname(process.execPath), '..', 'lib', 'node_modules', pkgName, 'bin', 'mcp.js'),
+    join(process.env.npm_config_prefix || '', 'lib', 'node_modules', pkgName, 'bin', 'mcp.js'),
+  ];
+  for (const c of candidates) {
+    try { if (fsSync.existsSync(c)) return c; } catch { /* 试下一个 */ }
+  }
+  // 回退：仓库/本地安装形态
+  return join(ABS_DIR, 'bin', 'mcp.js');
+}
 
 const MARK = '// abs-managed (agent-brain-sync)'; // TS plugin 标记
 const JSON_MARK_KEY = 'abs-managed';             // JSON 内我们的命名空间
@@ -103,7 +129,7 @@ async function installClaudeCode({ withMcp, withSkill, log }) {
     settings.mcpServers = settings.mcpServers || {};
     settings.mcpServers['abs'] = {
       command: process.execPath,
-      args: [join(ABS_DIR, 'bin', 'mcp.js')],
+      args: [mcpEntryPath()],
     };
     await atomicWrite(settingsP, JSON.stringify(settings, null, 2));
     steps.push(`✓ MCP    → settings.json mcpServers.abs (stdio)`);
@@ -183,12 +209,21 @@ async function installCodex({ withMcp, withSkill, log }) {
     let text = '';
     try { text = await fs.readFile(mcpP, 'utf8'); } catch {}
     if (!text.includes('[mcp_servers.abs]')) {
-      const block = `\n[mcp_servers.abs]\ncommand = "${process.execPath}"\nargs = ["${join(ABS_DIR, 'bin', 'mcp.js')}"]\n`;
+      const block = `\n[mcp_servers.abs]\ncommand = "${process.execPath}"\nargs = ["${mcpEntryPath()}"]\n`;
       await backup(mcpP);
       await atomicWrite(mcpP, text.replace(/\s*$/, '') + '\n' + block);
       steps.push(`✓ MCP    → ${mcpP} [mcp_servers.abs]`);
     } else {
-      steps.push(`• MCP    → ${mcpP} 已存在, 跳过`);
+      // 已存在也要校对路径: 旧版可能写入了仓库路径(不稳定) 或全局包已迁移。
+      const want = mcpEntryPath();
+      const re = /(\[mcp_servers\.abs\][^\[]*?args\s*=\s*\[)"[^"]*"(\])/s;
+      if (re.test(text) && !text.includes(`"${want}"`)) {
+        await backup(mcpP);
+        await atomicWrite(mcpP, text.replace(re, `$1"${want}"$2`));
+        steps.push(`✓ MCP    → ${mcpP} 路径已校正 → ${want}`);
+      } else {
+        steps.push(`• MCP    → ${mcpP} 已存在且路径正确, 跳过`);
+      }
     }
   }
   if (withSkill) {
@@ -526,7 +561,7 @@ async function installOpenCode({ withMcp, withSkill, log }) {
     cfg.mcp = cfg.mcp || {};
     cfg.mcp['abs'] = {
       type: 'local',
-      command: [process.execPath, join(ABS_DIR, 'bin', 'mcp.js')],
+      command: [process.execPath, mcpEntryPath()],
     };
     await backup(mcpP);
     await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
