@@ -1,4 +1,5 @@
 # 🗒 操作日志
+## [2026-09-10 17:47] dev | 修 MCP 可观测性死代码: withTrace 从未被调用 → mcp.log 永不生成; 改为统一 tool() 注册入口(总是包 trace)。171 测试绿 + revert-check。注意
 ## [2026-09-10 17:33] dev | 命令面重整完成: abs todo 统一读写(task→todo 改名, add/start 等价), 消灭静默吞参; 修 9 处代码内旧命令名(teardown 注入文本/todo 空态提示); 1
 ## [2026-09-10 16:59] dev | 三件收尾: ①清理我造成的测试残留(2个 mark + hooks.log 19行 /tmp 痕迹) ②wrapup.log 加轮转(与 hooks.log 同类, 原来只追加不清理; 旧块 pars
 ## [2026-09-10 16:26] dev | 评估并撤销 daemon 方案: 实测 abs 27ms 中 node 启动占 20ms(读写仅3ms), daemon 只省5ms, 收益不抵常驻进程复杂度 → 撤掉3个新文件。沉淀概念页 perf

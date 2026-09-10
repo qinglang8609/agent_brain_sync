@@ -59,8 +59,16 @@ const server = new McpServer({
   version: pkgVersion(),
 });
 
+// 统一注册入口（总是经 withTrace）。
+// 坑: 以前 9 处工具各自直接调 server.tool(...) 而不包 withTrace, 导致 withTrace 定义了
+// 但从未被调用 → mcp.log 永远不生成。可观测性静默缺失(无任何症状), 藏了很久。
+// 现在工具只经本函数注册, 包 trace 这件事无法再被遗漏。
+function tool(name, description, schema, handler) {
+  server.tool(name, description, schema, withTrace(name, handler));
+}
+
 // 工具面（narrow on purpose — 只暴露读/查/记状态，不做深提炼）
-server.tool(
+tool(
   'abs_resolve_project',
   '定位当前项目的 .brain 图谱根（从给定目录向上找最近 .brain/）。多项目隔离的唯一入口。',
   { cwd: z.string().describe('当前工作目录，默认进程 cwd') },
@@ -73,7 +81,7 @@ server.tool(
   }
 );
 
-server.tool(
+tool(
   'abs_board',
   '读取当前项目 todo 看板（含断点/Next-Step）。先 resolve 得到项目，再传其根目录。',
   { cwd: z.string().describe('项目内任意目录') },
@@ -84,7 +92,7 @@ server.tool(
   }
 );
 
-server.tool(
+tool(
   'abs_load',
   '开机读状态：index 路线 + todo 看板 + 最近 log。跨会话续接的入口。',
   { cwd: z.string().describe('项目内任意目录') },
@@ -95,7 +103,7 @@ server.tool(
   }
 );
 
-server.tool(
+tool(
   'abs_task',
   '任务实时落盘（幂等键 = id）。add/start 登记 / note 补断点(改到哪个文件哪行) / blocked 碰壁 / done 完成归位。',
   {
@@ -113,7 +121,7 @@ server.tool(
   }
 );
 
-server.tool(
+tool(
   'abs_status',
   '当前项目 + 图谱概要（各类页数）。',
   { cwd: z.string().describe('项目内任意目录') },
@@ -124,7 +132,7 @@ server.tool(
   }
 );
 
-server.tool(
+tool(
   'abs_query',
   '检索当前项目 .brain/ 知识页（多词 OR）：以前踩过什么坑、哪页记了 X。',
   { cwd: z.string().describe('项目内任意目录'), terms: z.array(z.string()).min(1).describe('检索词') },
@@ -135,7 +143,7 @@ server.tool(
   }
 );
 
-server.tool(
+tool(
   'abs_lint',
   '图谱体检：死链/孤岛/缺 frontmatter/超尺寸/sources 堆积/index 漏列。',
   { cwd: z.string().describe('项目内任意目录') },
@@ -146,7 +154,7 @@ server.tool(
   }
 );
 
-server.tool(
+tool(
   'abs_note',
   '经验实时暂存：把刚踩的坑/技巧/结论一句话落进 sources/（防 context 断了流失）。Teardown 时再提炼进 concepts/。',
   {
@@ -161,7 +169,7 @@ server.tool(
   }
 );
 
-server.tool(
+tool(
   'abs_wrapup',
   '收尾保险：把当前 todo 未完成任务快照到 ~/.abs/log/wrapup.log（下会话 load 时展示滞留对账）。',
   { cwd: z.string().describe('项目内任意目录') },

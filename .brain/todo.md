@@ -5,6 +5,8 @@
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-10
 
+- [x] MCP-TRACE-DEAD — withTrace 定义了但 9 处工具都没包它 → mcp.log 从不生成(可观测性静默缺失,无任何症状)。已修: 统一经 tool() 注册,内部总是包 withTrace,遗漏不再可能; 新增 2 测试 + revert-check  (完成 2026-09-10)
+- [x] MCP-SMOKE-TEST — 验证 MCP 写通道（走 abs_abs_task 的 add action）  (完成 2026-09-10)
 - [x] FIX-SILENT-NOOP — 已修: abs todo 统一读写(add/start/note/blocked/done), 旧 task/board 报错提示, 只读命令拒绝多余参数, wrapup/teardown-check 移出 help。同步改 skill/README/MCP + 9 处代码内旧命令名  (完成 2026-09-10)
 - [x] DAEMON-IPC — 方案A: CLI/MCP 共用常驻 daemon (Unix socket), 消除 22ms node 启动开销 + 统一锁. 要点: ①daemon 自拉起+心跳 ②CLI 连不上时退化本地直读(安全网,必须可测) ③ABS_NO_DAEMON=1 开关 ④MCP server 也走同一 daemon 保证一致. 实测依据: 独立起进程 28.8ms vs 单进程内 0.2ms, 进程启动占99%  (完成 2026-09-10)
   ↳ 断点: 已撤销(方案A被否)。实现并跑通后实测收益仅 27→22ms: node启动20ms逃不掉(CLI必然起进程), daemon只省了读写的5ms。决定不加常驻进程, 改走规则约束(写操作只走MCP, ~2ms)。决策依据已留档概念页 perf-fixed-overhead 避免重提。3个新文件已删, bin/abs.js 已还原, 164测试绿

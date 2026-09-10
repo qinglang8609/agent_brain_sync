@@ -33,10 +33,10 @@ afterEach(async () => {
   await fs.rm(sandbox, { recursive: true, force: true });
 });
 
-async function startServer(cwd) {
+async function startServer(cwd, envOverride = {}) {
   child = spawn(process.execPath, [MCP], {
     cwd: cwd || sandbox,
-    env: { ...process.env, ABS_LOG: '0' },
+    env: { ...process.env, ABS_LOG: '0', ...envOverride },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   // 丢弃 stderr(不干扰); 等待子进程起来
@@ -182,5 +182,40 @@ describe('mcp: 无图谱与隔离', () => {
     // proj-b 向上走: proj-b → sandbox → /tmp..., 不会横跳 proj-a
     const r = await tool('abs_board', { cwd: join(projB, 'sub') });
     assert.ok(r.result?.isError, `proj-b 不应命中 proj-a: ${textOf(r)}`);
+  });
+});
+
+// ---------- 请求跟踪日志 (mcp.log) ----------
+// 回归: withTrace 曾定义了但 9 处工具都没包它 → mcp.log 从不生成。
+// 症状是"少了个日志"(无报错、无异常), 静默缺失藏了很久, 故用测试钉死。
+describe('mcp: 请求跟踪日志 (mcp.log)', () => {
+  test('每次工具调用写一行 (含 tool/耗时/结果)', async () => {
+    const logDir = join(sandbox, 'mcplog');
+    await fs.mkdir(logDir, { recursive: true });
+    await initBrain(projA);
+    await startServer(projA, { ABS_LOG_DIR: logDir, ABS_LOG: '1' });
+    await tool('abs_board', { cwd: projA });
+    // 等日志落盘(追加写是异步的)
+    let text = '';
+    for (let i = 0; i < 20 && !text; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      text = await fs.readFile(join(logDir, 'mcp.log'), 'utf8').catch(() => '');
+    }
+    assert.ok(text.includes('tool=abs_board'), `mcp.log 应记录工具名: ${text}`);
+    assert.ok(/OK \d+ms/.test(text), `应记录耗时与结果: ${text}`);
+  });
+
+  test('失败调用也留痕 (isError → ERR)', async () => {
+    const logDir = join(sandbox, 'mcplog2');
+    await fs.mkdir(logDir, { recursive: true });
+    await startServer(sandbox, { ABS_LOG_DIR: logDir, ABS_LOG: '1' });
+    // 无 .brain 的项目 → isError
+    await tool('abs_board', { cwd: projB });
+    let text = '';
+    for (let i = 0; i < 20 && !text; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      text = await fs.readFile(join(logDir, 'mcp.log'), 'utf8').catch(() => '');
+    }
+    assert.ok(/tool=abs_board .*ERR/.test(text), `失败也应留痕: ${text}`);
   });
 });
