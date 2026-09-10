@@ -1,4 +1,8 @@
 # 🗒 操作日志
+## [2026-09-10 16:04] dev | 沉淀静默丢数据排查方法论: 新增概念页 silent-data-loss-diagnosis(串行能否复现→组件级压测→临界区 trace 看 orig→write 序列; 证据到手前不给结论)。记录
+## [2026-09-10 16:03] note | "并发下才复现"不一定是并发 bug: 先单独压测被怀疑的组件(本次锁单独压 20/20 全对), 再换单线程串行复现。
+## [2026-09-10 16:03] note | id/键定位一律全等比对, 禁用 includes/子串: 'T11'.includes('T1') 为真 → T1 误
+## [2026-09-10 16:03] note | 定位"丢数据"类 bug 必须看写入序列而非猜机制: 往临界区加 trace(记录每次锁内的 orig→write 指纹
 ## [2026-09-10 16:02] dev | 修 id 子串匹配丢任务 bug: includes(id) → 行首 id token 全等比对(三处同源: findTaskLine/upsertTask/markDone); 零并发可复现(T1
 ## [2026-09-10 15:30] dev | 完成 6 项待办 + 3 个真 bug 修复 + 经验沉淀: ①版本对齐误判澄清(本地已 1.1.0) ②git 收尾(7 commits) ③loggedToday 裸日期 substring 守卫
 ## [2026-09-10 15:28] note | 类型签名/返回码推不出运行时语义: promptAsync 返回 204 void 被推断为"fire-and-forg
