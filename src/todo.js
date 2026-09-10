@@ -173,7 +173,12 @@ function mergeArchiveLines(existing, entries) {
     else out.push(line);
   }
   out.push('');
-  return out;
+  // 标记行按日期倒序（与 Done 日期组同风格：新的在上）。
+  // 否则顺序 = 归档先后，多次归档后读起来是乱的（如 08/09/07）。
+  const dateOf = (l) => (String(l).match(/(\d{4}-\d{2}-\d{2})/) || [''])[0];
+  const body = out.slice(1).filter((l) => l.trim());
+  body.sort((a, b) => dateOf(b).localeCompare(dateOf(a)));
+  return [out[0], ...body, ''];
 }
 
 /** 本地日期减 n 天（YYYY-MM-DD）。纯字符串入出，避免时区漂移。 */

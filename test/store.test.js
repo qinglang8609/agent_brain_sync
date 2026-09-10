@@ -823,6 +823,18 @@ describe('Done 归档', () => {
     assert.ok(r.skipped.some((s) => /未标日期/.test(s.date)));
   });
 
+  // ### 归档 区按日期倒序（新的在上），与 Done 日期组同风格；
+  // 否则顺序 = 归档先后，多次归档后读起来是乱的（如 08/09/07）。
+  test('归档标记行按日期倒序排列', () => {
+    const t = mk([
+      '### 2026-09-07', '', '- [x] C  (完成 2026-09-07)', '',
+      '### 归档', '- [[2026-09-08-todo归档]] 完成任务 22 条', '- [[2026-09-09-todo归档]] 完成任务 6 条', '',
+    ]);
+    const r = archiveDoneInText(t, { keepDays: 1, from: '2026-09-10' });
+    const order = [...r.text.matchAll(/\[\[(\d{4}-\d{2}-\d{2})-todo归档\]\]/g)].map((m) => m[1]);
+    assert.deepEqual(order, ['2026-09-09', '2026-09-08', '2026-09-07'], `应倒序: ${order}`);
+  });
+
   // 回归: ### 归档 区在 Done 内部，若被 parseDoneUnits 吃掉，markDone 重建 Done 时会丢
   test('### 归档 区在 markDone / 惰性分组重建后不丢', () => {
     const withArchive = mk(['### 2026-09-10', '', '- [x] A  (完成 2026-09-10)', '', '### 归档', '- [[S]] 完成任务 3 条', '']);
