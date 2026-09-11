@@ -3,7 +3,7 @@
 - [ ] INSTALL-HELP-FOOTGUN — abs install --help 会静默执行全量安装而非打印帮助。根因: bin/abs.js 把 --help 只当顶层命令处理(case 'help': case '--help'), 跟在 install 后面时落到 parseArgv 的通用分支 o['help']=true, 而 install 分支根本不读它 → 走安装路径。危害: 用户想看帮助却改了四宿主配置(幂等所以不炸, 但是意外副作用)。修法: ①install/uninstall 分支开头检查 opts.help 则打印该命令用法并 return ②或在 parseArgv 里遇 --help 直接短路。验证: abs install --help 不产生任何文件写入(沙盒断言), 且输出用法 (认领 2026-09-12)
 ## Today / In Progress
 - [ ] NOTE-TAGS-BOOL — abs note --tags 被解析成布尔 true → frontmatter 写成 tags: [source, true], 且 'abs,摘要' 还粘进了正文。复现: abs note '测试' --tags abs,摘要 → 页头 tags:[source,true]。根因疑在 bin/abs.js 的 parseArgv: --tags 被当成无值开关(与 --note 同类形态), 或值与下一位置参数错位。验证: 断言 tags 行含传入的各标签且正文不含标签串。非本次 LOG-TRUNC-100 引入(旧版同样复现, 已对 pristine 版验证) (认领 2026-09-12)
-- [ ] LOG-BACKFILL-34 — log.md 34 条历史残句的补全。事实认定: 完整原文在文件、git 全历史、归档 session 页里都不存在(逐 commit 核对过), 即截断发生在写入时、原文已销毁, 属不可恢复 → 只能重写不是还原。风险: 重写会掺入推断, 且自动替换脚本易误删原有开头(本次试写即把'修 Pi 缺失 MCP 注册：'整段开头吃掉, 已回滚)。正确做法: ①逐条人工确认(不可批量) ②保留残句原文并把补全部分用 ← 标记区分'原文'与'推断' ③或干脆不动, 让它们作为历史痕迹保留。建议优先级低——新写入已不再截断, 旧条目只影响追溯体验 (认领 2026-09-12)
+- [ ] LOG-BACKFILL-34 — 【已决定不修】log.md 34 条历史残句。事实认定: 完整原文在文件/git 全历史/归档 session 页均不存在(逐 commit 核对), 截断发生在写入时且原文已销毁 → 属不可恢复, 只能推断重写。风险实证: 本次试写批量脚本即把'修 Pi 缺失 MCP 注册：'整段开头吃掉(已回滚并逐字节校验)。已向用户确认: 旧的不管。保留此条仅为记录认定结论, 避免后续会话重复调查。新写入自 1.5.4 起不再截断。 (认领 2026-09-12)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-12
