@@ -1,4 +1,8 @@
 # 🗒 操作日志
+## [2026-09-11 23:49] dev | 修 Pi 缺失 MCP 注册：installPi 的 withMcp 分支只打印「走 extension 内桥接」却无任何桥接代码，导致无 cl​aude 宿主的机器上 abs MCP 完全缺失（本机
+## [2026-09-11 23:48] note | 「间接可用」不是「已配置」: abs install --agent pi 曾只打印「走 extension 内桥接」却
+## [2026-09-11 23:47] dev | 纠正 abs MCP 误判：此前结论「Pi 从未注册 MCP」有误——abs 经 mcp-adapter 的 hostConfigDiscovery 间接读 ~/.claude/settings.js
+## [2026-09-11 23:47] note | 宿主 MCP「没配置」可能是假象: ~/.pi/agent/mcp.json 的 mcpServers 为空是正确的——
 ## [2026-09-10 23:30] dev | 更正: 上一条'已沉淀经验(进程快照≠证据)'已撤回 —— 那属 bug-hunter 的排查纪律且它已覆盖('别用单个样本下结论'), 存进 abs 图谱是重复。按'sources 是暂存不是存档'
 ## [2026-09-10 23:28] dev | 查 MCP 孤儿进程: 结论是不存在泄漏 —— 上次看到两个 mcp.js 是重启过渡态，关 stdin 实验证明 bin/mcp.js 会自退(code=0)。已沉淀经验"进程快照≠证据"; 顺带发
 ## [2026-09-10 23:28] note | 进程快照会撞上过渡态，不能当证据：重启 pi 时我抓到一张 ps，看到两个 mcp.js 就断定"孤儿进程泄漏"。实际旧
