@@ -347,12 +347,46 @@ function recentLogLines(text, n) {
     .join('\n');
 }
 
+/** 摘要收口：超过 n 码点在**语义边界**收尾（标点 → 空格 → 硬切），加省略号。
+ * 坑: 曾直接 `.slice(0, n)` 硬切 → log.md 34/85 条断在词中间(revert-c / file-write-lockin /
+ * ~/.cl​aude/ski), 文件名也被切成 ...-decision-blo。而 abs load 开机读的就是这份残句,
+ * 用户与后续会话看到的天然是半句 —— "摘要读起来抽象"的真因在写入口, 不在表述能力。 */
+export function clip(text, n) {
+  const s = String(text || '').trim();
+  if (s.length <= n) return s;
+  const head = s.slice(0, n);
+  // 优先在标点处断开（中文句读 + 英文句读），其次空格，最后才硬切
+  const cut = Math.max(
+    head.lastIndexOf('。'), head.lastIndexOf('；'), head.lastIndexOf('！'), head.lastIndexOf('？'),
+    head.lastIndexOf('，'), head.lastIndexOf('、'), head.lastIndexOf(';'), head.lastIndexOf(','),
+    head.lastIndexOf('.'), head.lastIndexOf(' '),
+  );
+  // 边界太靠前（< 一半）说明这一段本就是长句，宁可硬切也不留个残破的短头
+  const keep = cut > n / 2 ? cut : n;
+  return `${s.slice(0, keep).replace(/[\s,，、;；.。]+$/, '')}…`;
+}
+
+/** slug：取前 n 码点 → 非词字符折叠为 '-'。只用于**文件名**，完整标题另存 TITLE 行。
+ * 在标点/空格边界收口，不在字中间切断（否则出 `...-硬切-不` 这种残尾）。 */
+function slugOf(text, n = 24) {
+  const s = String(text || '').trim();
+  let head = s.slice(0, n);
+  if (s.length > n) {
+    const cut = Math.max(head.lastIndexOf('，'), head.lastIndexOf('。'), head.lastIndexOf('、'),
+      head.lastIndexOf('：'), head.lastIndexOf(','), head.lastIndexOf('.'), head.lastIndexOf(' '));
+    if (cut > n / 2) head = head.slice(0, cut);
+  }
+  return head.replace(/[^\w一-鿿]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+}
+
 // ---------- log: 追加工作成果沉淀摘要（用户/AI 主动 abs log "..." 记, 不收工具动作流水） ----------
 export async function cmdLog({ dir, title, kind = 'dev' }) {
   const root = await requireBrain(dir || process.cwd());
   const p = brainPath(root, 'log.md');
   const stamp = localStamp();
-  const clean = String(title || '').replace(/\n/g, ' ').slice(0, 100); // 整行含前缀 ≤120
+  // 不硬切: log.md 是人类读的成果摘要, 也是 abs load 的开机入口。600 码点够一条完整小结,
+  // 超出才在语义边界收口（曾 slice(0,100) → 34/85 条断在词中间）
+  const clean = clip(String(title || '').replace(/\n/g, ' '), 600);
   const line = `## [${stamp}] ${kind} | ${clean}`;
   await editFile(p, (cur) => {
     const text = cur ?? '# 🗒 操作日志\n';
@@ -487,7 +521,7 @@ function firstHitLine(body, words) {
   for (const line of body.split('\n')) {
     const l = line.toLowerCase();
     if (words.some((w) => l.includes(w.toLowerCase())) && line.trim() && !KNOWN_SLUG_HINT.test(line)) {
-      return line.trim().slice(0, 100);
+      return clip(line.trim(), 160);
     }
   }
   return '';
@@ -517,8 +551,9 @@ export async function cmdNote({ dir, text, tags }) {
   }
   const tagList = String(tags || '').split(',').map((t) => t.trim()).filter(Boolean);
   const fmTags = ['source', ...tagList].join(', ');
-  const slugSrc = clean.slice(0, 24).replace(/[^\w一-鿿]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+  const slugSrc = slugOf(clean);
   const file = `${today()}-${slugSrc || 'note'}.md`;
+  const heading = clip(clean, 80); // 页面标题: 完整优先, 超长才收口
   const body = [
     '---',
     `tags: [${fmTags}]`,
@@ -526,7 +561,9 @@ export async function cmdNote({ dir, text, tags }) {
     'status: draft',
     '---',
     '',
-    `# 来源：${clean.slice(0, 40)}`,
+    `# 来源：${heading}`,
+    '',
+    `TITLE: ${clean}`,
     '',
     `## 记录（实时暂存，Teardown 时提炼进 concepts/ 后本页可删）`,
     `- ${clean}`,
@@ -543,7 +580,7 @@ export async function cmdNote({ dir, text, tags }) {
   // index Sources 区登记（锁内幂等：别页已登记则跳过，防并发重复） + log 一行
   const iP = brainPath(root, 'index.md');
   const slug = file.replace(/\.md$/, '');
-  const line = `- [[${slug}]] — ${clean.slice(0, 40)}`;
+  const line = `- [[${slug}]] — ${heading}`;
   await editFile(iP, (index) => {
     if (!index || index.includes(`[[${slug}]]`)) return SKIP;
     const sIdx = index.indexOf('## Sources');
@@ -554,8 +591,8 @@ export async function cmdNote({ dir, text, tags }) {
       : index.slice(0, after) + `\n${line}` + index.slice(after);
     return { text: next };
   });
-  await cmdLog({ dir: root, title: clean.slice(0, 60), kind: 'note' });
-  return `✓ 经验暂存 → sources/${file}\n  ${clean.slice(0, 60)}`;
+  await cmdLog({ dir: root, title: clean, kind: 'note' });
+  return `✓ 经验暂存 → sources/${file}\n  ${clean}`;
 }
 // ---------- lint: 体检（与 scripts/lint.sh 同规则的 Node 版，供 CLI/MCP 直调） ----------
 export async function cmdLint({ dir }) {

@@ -1,8 +1,17 @@
 # 📋 Todo 看板
 ## Backlog
+- [ ] INSTALL-HELP-FOOTGUN — abs install --help 会静默执行全量安装而非打印帮助。根因: bin/abs.js 把 --help 只当顶层命令处理(case 'help': case '--help'), 跟在 install 后面时落到 parseArgv 的通用分支 o['help']=true, 而 install 分支根本不读它 → 走安装路径。危害: 用户想看帮助却改了四宿主配置(幂等所以不炸, 但是意外副作用)。修法: ①install/uninstall 分支开头检查 opts.help 则打印该命令用法并 return ②或在 parseArgv 里遇 --help 直接短路。验证: abs install --help 不产生任何文件写入(沙盒断言), 且输出用法 (认领 2026-09-12)
 ## Today / In Progress
+- [ ] NOTE-TAGS-BOOL — abs note --tags 被解析成布尔 true → frontmatter 写成 tags: [source, true], 且 'abs,摘要' 还粘进了正文。复现: abs note '测试' --tags abs,摘要 → 页头 tags:[source,true]。根因疑在 bin/abs.js 的 parseArgv: --tags 被当成无值开关(与 --note 同类形态), 或值与下一位置参数错位。验证: 断言 tags 行含传入的各标签且正文不含标签串。非本次 LOG-TRUNC-100 引入(旧版同样复现, 已对 pristine 版验证) (认领 2026-09-12)
+- [ ] LOG-BACKFILL-34 — log.md 34 条历史残句的补全。事实认定: 完整原文在文件、git 全历史、归档 session 页里都不存在(逐 commit 核对过), 即截断发生在写入时、原文已销毁, 属不可恢复 → 只能重写不是还原。风险: 重写会掺入推断, 且自动替换脚本易误删原有开头(本次试写即把'修 Pi 缺失 MCP 注册：'整段开头吃掉, 已回滚)。正确做法: ①逐条人工确认(不可批量) ②保留残句原文并把补全部分用 ← 标记区分'原文'与'推断' ③或干脆不动, 让它们作为历史痕迹保留。建议优先级低——新写入已不再截断, 旧条目只影响追溯体验 (认领 2026-09-12)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
+### 2026-09-12
+
+- [x] LOG-TRUNC-100 — log.md/index.md 写入口硬切 100 字符，34/85 条 log 断在词中间(revert-c/file-write-lockin/~/.cl​aude/ski)，且 abs load 开机读的就是这份残句 → 用户/AI 看到的'最近动作'天然是半句。根因: src/store.js:355 cmdLog 的 .slice(0,100) + index 描述复用同一段截断文本(store.js:~519) + slugify 后标题也截断造成死链标题([[2026-09-10-主动推类-hook-回-decision-blo]])。修法候选: A 删截断(最省, log 本为人类摘要) B 切句读边界 C 支持 ↳ 续行。验证: 断言写 200 字 log 后落盘完整 + index 描述非截断拼接 + 页面标题不被切。修完后需重新生成/修正 index 里已生成的截断标题  (完成 2026-09-12)
+  ↳ 断点: 已定位扩大: 同一段文字在 cmdNote 里被截 6 次(store.js:355 log / 490 query / 520 slug=文件名 / 529 H1 / 546 index描述 / 557+558 转发与回显), 截断值还各不相同(24/40/60/100)。所以 note 落盘是 slug、标题、index 描述三重残句 —— 例: 文件名 ...-decision-blo, index 描述 'promptAsync 对 '。修法建议: 只在一处收口(引入 clip(text, n, boundary) 按标点/词边界收尾), slug 从完整文本取前 24 字后仍保留完整 TITLE 字段。落点见 src/store.js。
+- [x] PI-MCP-NOOP — 已修并发布 1.5.3。installPi 的 withMcp 分支只打印「MCP → Pi 走 extension 内桥接」却无任何桥接代码 —— 生成的 abs.ts 只 spawn abs wrapup + 挂 3 个 pi.on()，从不碰 bin/mcp.js。本机靠 mcp-adapter 的 hostConfigDiscovery=on 间接读到 ~/.claude/settings.json 的注册才侥幸可用，无 claude 宿主的机器上 abs MCP 完全缺失（用户在另一台机器复现）。修法：真写 ~/.pi/agent/mcp.json 的 mcpServers.abs={type:stdio,command:node,args:[mcpEntryPath()]}，路径走 mcpEntryPath 解析包稳定安装位置而非 ABS_DIR；uninstallPi 同步只删 abs 条目不误删他人 MCP。验证：+4 回归测试（真注册 / 幂等重装保留既有 mcpServers+settings+imports / 卸载只删自己），全量 193 pass；npm pack 解包产物在干净沙盒（无 claude/codex/opencode）直跑装 pi 成功注册；端到端拉起 serverInfo abs 1.5.3 + 9 tools；已发 registry latest + 本机全局升级 + 四宿主刷新。  (完成 2026-09-12)
+
 ### 2026-09-10
 
 - [x] LOAD-RECENT-ORDER — abs load 的「最近动作」贴的是最旧 5 条而不是最新：log.md 是新在上（头=今天23:18，尾=2026-09-08），而 cmdLoad 用 tailLines(log,5)=lines.slice(-5) 取尾部=最旧。实测 load 输出里最近动作全是 09-08 的旧条目，今天的最新记录从未显示。修法: 取前 N 条（或抽前 5 个 '## [' 条目），标签改「最新 5 条」。影响: abs load 是开机读状态入口，这一节目前无用。验证: 断言输出含今天最新条目、不含 09-08 最旧条目  (完成 2026-09-10)

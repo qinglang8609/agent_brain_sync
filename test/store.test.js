@@ -6,7 +6,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive, clip } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
@@ -281,13 +281,57 @@ describe('board/load/status', () => {
 
 // ---------- log ----------
 describe('cmdLog', () => {
-  test('追加一行且换行被清洗、限长', async () => {
+  test('追加一行且换行被清洗、超长在语义边界收口', async () => {
     await cmdLog({ dir: projectA, title: '[SessionStart]\nlong'.repeat(30) });
     const log = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
     const line = log.split('\n').find((l) => l.startsWith('## ['));
     assert.ok(line, '应有流水行');
-    assert.ok(!line.includes('\n'));
-    assert.ok(line.length <= 140, '行应被截断（时间戳+120 字符）');
+    assert.ok(!line.includes('\n'), '换行必须被清洗成单行');
+    // 不再断言"被硬切到 120 字符" —— 旧行为会把句子切在词中间(见 LOG-TRUNC-100)。
+    // 现仅在超长(>600)时于标点/空格边界收口, 且以 '…' 标识截断。
+    assert.ok(line.length <= 620, `超长应收口到 600 + 时间戳前缀: ${line.length}`);
+    assert.ok(!/(^|…)[\s,，、;；.。]+…$/.test(line), '收口处不应残留标点+空白');
+  });
+
+  test('超长摘要在标点边界收口, 且带省略号', async () => {
+    await cmdLog({ dir: projectA, title: '这是一句完整的结论。'.repeat(61) });
+    const log = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
+    const line = log.split('\n').find((l) => l.startsWith('## ['));
+    assert.ok(line.endsWith('…'), `超长应带省略号收口: ${line.slice(-20)}`);
+    assert.ok(!/[\s,，、;；.。]+…$/.test(line), '不应切出"标点+省略号"的残尾');
+  });
+
+  test('长摘要不被硬切在词中间（LOG-TRUNC-100 回归）', async () => {
+    const long = '修复 revert-check 在 file-write-locking 场景下的假通过问题，并补齐回归测试。';
+    await cmdLog({ dir: projectA, title: long });
+    const log = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
+    assert.ok(log.includes(long), '未超限的摘要必须原样落盘，不得截断');
+  });
+
+  test('clip: 短文本原样、超长切在标点、无标点才硬切', () => {
+    assert.equal(clip('abc', 10), 'abc');
+    assert.equal(clip('一二三四五六七八九十', 20), '一二三四五六七八九十');
+    const s = '第一句结束。第二句结束。第三句结束。第四句很长很长很长';
+    assert.equal(clip(s, 14), '第一句结束。第二句结束…');
+    assert.equal(clip('a'.repeat(50), 10), 'aaaaaaaaaa…', '无边界可切时硬切兜底');
+    // 边界太靠前(不足一半)则宁可硬切, 不留残破短头
+    assert.equal(clip(`短。${'x'.repeat(40)}`, 20), `短。${'x'.repeat(18)}…`, '边界太靠前则硬切');
+  });
+
+  test('note 文件名在标点边界收口，不切出残字（LOG-TRUNC-100 回归）', async () => {
+    await cmdNote({
+      dir: projectA,
+      text: '排查摘要读起来抽象的问题：先怀疑写入侧被硬切，不要先去调 prompt。判据是统计落盘文本的行尾。',
+    });
+    const files = await fs.readdir(join(projectA, '.brain', 'sources'));
+    const f = files.find((x) => x.includes('排查摘要'));
+    assert.ok(f, `应生成源页: ${files.join(', ')}`);
+    // 旧行为: 24 字硬切 → '...-硬切-不.md' (切出孤字 '不')
+    assert.ok(!/-\S\.md$/.test(f), `文件名不应以单字残尾结束: ${f}`);
+    assert.ok(f.endsWith('-先怀疑写入侧被硬切.md'), `应切在标点处: ${f}`);
+    // 完整文本仍保留在页内
+    const body = await fs.readFile(join(projectA, '.brain', 'sources', f), 'utf8');
+    assert.ok(body.includes('判据是统计落盘文本的行尾。'), '完整标题必须保留在页内');
   });
 });
 

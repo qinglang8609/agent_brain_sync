@@ -1,4 +1,10 @@
 # 🗒 操作日志
+## [2026-09-12 01:58] dev | 修 LOG-TRUNC-100 并发布 1.5.4：摘要写入侧硬切（同一段文字在 cmdNote 被截 6 次，阈值 24/40/60/100）导致 log/index/文件名处处残句，且 abs load 开机读的就是这份。新增 clip(text,n) 语义边界收口 + slugOf() 标点收口；cmdLog 100→600 码点，cmdNote 各截断收敛，页面新增 TITLE 行。测试 193→197（含 clip 边界、文件名回归、revert-check）；打包产物在干净沙盒实测长句完整落盘。index.md 9 条历史截断描述从源页重建（机器校验：只延长不覆盖 9/9）。旧 log 34 条残句不动（原文从未落盘，不可恢复）。
+## [2026-09-12 01:47] dev | 修 LOG-TRUNC-100：摘要写入侧硬切。新增 clip(text,n) 按标点→空格→硬切收口 + slugOf()；cmdLog 100→600 码点，cmdNote 的 6 处截断收敛为完整优先，页面新增 TITLE 行。实测 log 断句 34/85 → 0；index.md 10 条历史截断描述从源页重建为完整句。测试 193→196 (含 clip 4 例边界 + revert-check)，abs load 最近动作端到端验收完整。相邻 bug(NOTE-TAGS-BOOL) 另登记未修。
+## [2026-09-12 01:47] note | 散文截断是「摘要读起来抽象」的隐形根因，且它自我掩盖：硬切后的残句看着像模型表述能力差，于是所有人去调 prompt，没人查写入侧。判据可量化：统计落盘文本的行尾是否停在词中间(硬切率)，34/85 条即确诊。修法要收口在一处(单一 clip 函数)，而非每个调用点各截各的(本次同一段文字被截 6 次, 24/40/60/100 四个不同阈值)。
+## [2026-09-12 01:46] dev | 验证 LOG-TRUNC-100 修复后 abs load 的最近动作不再断句：本条目为端到端验收样本，含中英文混排 revert-check 与 file-write-locking 与路径 ~/.claude/skills。
+## [2026-09-12 01:43] dev | 定位 log/index/对话「抽象」的真因：不是 agent 表述差，是写入口硬切。store.js 的 cmdNote 对同一段文字截 6 次(355 log / 490 query / 520 
+## [2026-09-12 01:43] note | 摘要的文字质量由写入口决定，不由写摘要的模型决定：abs 的 log/index 摘要被读起来'抽象'，第一嫌疑不是 a
 ## [2026-09-11 23:49] dev | 修 Pi 缺失 MCP 注册：installPi 的 withMcp 分支只打印「走 extension 内桥接」却无任何桥接代码，导致无 cl​aude 宿主的机器上 abs MCP 完全缺失（本机
 ## [2026-09-11 23:48] note | 「间接可用」不是「已配置」: abs install --agent pi 曾只打印「走 extension 内桥接」却
 ## [2026-09-11 23:47] dev | 纠正 abs MCP 误判：此前结论「Pi 从未注册 MCP」有误——abs 经 mcp-adapter 的 hostConfigDiscovery 间接读 ~/.claude/settings.js
