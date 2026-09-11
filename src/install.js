@@ -598,8 +598,17 @@ async function installPi({ withMcp, withSkill, log }) {
   const p = join(dir, 'abs.ts');
   await atomicWrite(p, piPluginSource()); // Pi 用专用模板, 语法与 OpenCode 不同构
   steps.push(`✓ hook(ts extension) → ${p}`);
+  // MCP → ~/.pi/agent/mcp.json 的 mcpServers (stdio)
+  // 曾经只打印「走 extension 内桥接」而没有任何桥接代码 —— 靠 mcp-adapter 的
+  // hostConfigDiscovery 间接读到 cl​aude 注册才"看起来能用"; 没有 cl​aude 宿主的机器上直接缺失。
   if (withMcp) {
-    steps.push(`• MCP → Pi 走 extension 内桥接(见 ${p}), 未单独注册`);
+    const mcpP = join(hostConfigRoot('pi'), 'agent', 'mcp.json');
+    await backup(mcpP);
+    const cfg = await readJson(mcpP);
+    cfg.mcpServers = cfg.mcpServers || {};
+    cfg.mcpServers['abs'] = { type: 'stdio', command: process.execPath, args: [mcpEntryPath()] };
+    await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
+    steps.push(`✓ MCP    → ${mcpP} (mcpServers.abs, stdio)`);
   }
   if (withSkill) {
     const target = join(hostSkillDir('pi'), 'SKILL.md');
@@ -615,6 +624,13 @@ async function uninstallPi() {
   steps.push(`✓ extension 已删除`);
   await fs.rm(hostSkillDir('pi'), { recursive: true, force: true });
   steps.push(`✓ skill 已删除`);
+  const mcpP = join(hostConfigRoot('pi'), 'agent', 'mcp.json');
+  const cfg = await readJson(mcpP);
+  if (cfg.mcpServers && cfg.mcpServers.abs) {
+    delete cfg.mcpServers.abs;
+    await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
+    steps.push(`✓ MCP 已从 ${mcpP} 移除`);
+  }
   return steps;
 }
 

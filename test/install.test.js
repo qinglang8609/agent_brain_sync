@@ -203,6 +203,47 @@ describe('install opencode / pi', () => {
     await fs.access(join(sandbox, 'pi', 'agent', 'skills', 'abs-agent-brain-sync', 'SKILL.md'));
   });
 
+  // 回归: 曾经 withMcp 只打印「走 extension 内桥接」而没有任何桥接代码 ——
+  // 靠 mcp-adapter 的 hostConfigDiscovery 间接读到 cl​aude 注册才"看起来能用",
+  // 没有 cl​aude 宿主的机器上 abs MCP 直接缺失。必须真写 mcp.json。
+  test('pi 必须真注册 MCP 到 mcp.json (不能只靠 hostConfigDiscovery 间接发现)', async () => {
+    await run(['install', '--agent', 'pi', '--yes']);
+    const cfg = JSON.parse(await fs.readFile(join(sandbox, 'pi', 'agent', 'mcp.json'), 'utf8'));
+    const entry = cfg.mcpServers?.abs;
+    assert.ok(entry, 'mcpServers.abs 必须存在');
+    assert.equal(entry.type, 'stdio');
+    assert.ok(entry.args[0].endsWith('bin/mcp.js'), 'args 应指向 bin/mcp.js');
+  });
+
+  test('pi MCP 幂等重装 + 不覆盖既有 mcpServers / settings / imports', async () => {
+    const p = join(sandbox, 'pi', 'agent', 'mcp.json');
+    await fs.mkdir(dirname(p), { recursive: true });
+    await fs.writeFile(p, JSON.stringify({
+      mcpServers: { other: { command: 'foo' } },
+      settings: { hostConfigDiscovery: 'on' },
+      imports: ['cl​aude-code'],
+    }));
+    await run(['install', '--agent', 'pi', '--yes']);
+    const first = await fs.readFile(p, 'utf8');
+    await run(['install', '--agent', 'pi', '--yes']);
+    assert.equal(await fs.readFile(p, 'utf8'), first, '重装必须幂等');
+    const cfg = JSON.parse(first);
+    assert.ok(cfg.mcpServers.other, '既有 mcpServers 条目必须保留');
+    assert.equal(cfg.settings.hostConfigDiscovery, 'on', '既有 settings 必须保留');
+    assert.deepEqual(cfg.imports, ['cl​aude-code'], '既有 imports 必须保留');
+  });
+
+  test('pi 卸载只删 mcpServers.abs, 保留其它宿主体', async () => {
+    const p = join(sandbox, 'pi', 'agent', 'mcp.json');
+    await fs.mkdir(dirname(p), { recursive: true });
+    await fs.writeFile(p, JSON.stringify({ mcpServers: { other: { command: 'foo' } } }));
+    await run(['install', '--agent', 'pi', '--yes']);
+    await run(['uninstall', '--agent', 'pi', '--yes']);
+    const cfg = JSON.parse(await fs.readFile(p, 'utf8'));
+    assert.ok(!cfg.mcpServers.abs, 'abs 必须被移除');
+    assert.ok(cfg.mcpServers.other, '别人的 MCP 不能被误删');
+  });
+
   // 回归: 收尾注入必须在 agent_end 上(只挂 session_shutdown 时, 干活到一半永远不触发收尾)。
   test('pi 扩展挂 agent_end 收尾注入: 真改过文件 + 今日未收尾才注入, 每会话一次', async () => {
     await run(['install', '--agent', 'pi', '--yes']);
