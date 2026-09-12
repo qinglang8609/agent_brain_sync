@@ -1,11 +1,13 @@
 # 📋 Todo 看板
 ## Backlog
 ## Today / In Progress
-- [ ] OPTS-DOUBLE-KEYS — parseArgv 返回的 opts 同时带 raw 与 normalized 两份 key(keep-days/keepDays, no-mcp/mcp...), 后者才是读者。审查建议收成显式白名单映射。收益=形状整洁, 风险=再碰刚修好的解析路径(现有 9 条测试钉着)。低优先。 (认领 2026-09-12)
+- [ ] OPTS-DOUBLE-KEYS @fanchao — parseArgv 返回的 opts 同时带 raw 与 normalized 两份 key(keep-days/keepDays, no-mcp/mcp...), 后者才是读者。审查建议收成显式白名单映射。收益=形状整洁, 风险=再碰刚修好的解析路径(现有 9 条测试钉着)。低优先。 (认领 2026-09-12)
+- [ ] USER-ATTRIBUTION @fanchao — abs 增加用户姓名设置: 未设则写操作报错要求设置; todo/log/生成的文档标记 @name。方案已过目, 待用户确认三个歧义点(检查放哪层/配置存哪/标记格式与位置)后开工 (认领 2026-09-12)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-12
 
+- [x] SMOKE-TEST — 验证作者标记 @fanchao 【落地】 (完成 2026-09-12)
 - [x] ZW-CHARS-IN-COMMENTS — src/install.js 三处注释(:152/:209/:723)含 U+200B 零宽字符, 会让基于文本的匹配(edit/grep)静默失配 —— 本次修 bug 时反复踩到(edit 的 oldText 永远匹配不上, 因为多了一个不可见字符)。已清除, 两个源文件现为 0 处 Cf 字符。 【落地】 (完成 2026-09-12)
 - [x] AGENTS-SKILL-READONLY-DETECT — ~/.agents/skills/ 归 skills CLI 所有(abs 不写它), 但常有一份手工 cp 的残留副本会与真身脱节。处置: 只读检测+告警+给清理命令, 绝不代删代写。内容逐字节相同则静默, --no-skill 时不检查。 【落地】 (完成 2026-09-12)
 - [x] CODEX-TOML-ARGS-MULTILINE — codex config.toml 的 [mcp_servers.abs] 路径校对曾经只找单行 /^\s*args\s*=/ 原地替换 —— args 写成多行数组时那行不匹配, 走 else 只打印'无 args 行,未动', 旧路径静默保留。且 body.includes 判等会被 command 行里的同串骗过。修法: 新增 findTomlKeyRange 把 args 作整体替换(跨行吃到配对 ]); 无 args 行则整段重写 section。 【落地】 (完成 2026-09-12)
