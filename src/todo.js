@@ -93,6 +93,28 @@ export function doneDateOf(line) {
   return m ? m[1] : '';
 }
 
+// ---------- Done 结语契约 ----------
+// 为什么需要: `[x]` 原本同时表示「真落地」「评估后不做」「仅设计过」三种完全不同的状态，
+// 读的人(下一个会话/未来的自己)无法区分。实测翻车: 读 daemon 条的 [x] 当成已落地，
+// 实际它跑通后被撤销、代码全删 —— 基于假记录得出「daemon 是过配项」的错误结论。
+// 结论: 图谱的价值取决于「可被信任」，一条状态失真的记录比一百条冗长记录的危害大一个量级。
+export const DONE_KINDS = ['落地', '否决', '仅方案'];
+
+/** 从 Done 任务行提取结语标记；无标记返回 ''。 */
+export function doneKindOf(line) {
+  const m = String(line).match(/【(落地|否决|仅方案)】/);
+  return m ? m[1] : '';
+}
+
+/** 追写结语到任务行：插在 `(完成 …)` 之前，幂等（已有则原位替换）。 */
+export function withDoneKind(line, kind) {
+  if (!kind) return line;
+  const base = String(line).replace(/【(落地|否决|仅方案)】/g, '').replace(/\s{2,}/g, ' ').trimEnd();
+  const i = base.lastIndexOf(' (完成 ');
+  if (i === -1) return `${base} 【${kind}】`;
+  return `${base.slice(0, i)} 【${kind}】${base.slice(i)}`;
+}
+
 /** 判断一行是否为任务行（- [x] / - [ ]，允许缩进）。 */
 function isTaskLine(l) {
   return /^\s*- \[[ x]\]/.test(l);

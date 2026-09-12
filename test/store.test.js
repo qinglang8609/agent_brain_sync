@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive, clip } from '../src/store.js';
-import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage } from '../src/todo.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage, doneDateOf, doneKindOf, withDoneKind } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
 
@@ -1010,5 +1010,79 @@ describe('Done 归档', () => {
       mk(['### 2026-09-10', '', '- [x] NEW  (完成 2026-09-10)', '']), 'utf8');
     const out = await cmdTodoArchive({ dir: projectA, keepDays: 3 });
     assert.ok(out.includes('无可归档'), out);
+  });
+});
+
+// ---------- Done 结语契约 ----------
+// 为什么需要: `[x]` 原同时表示「真落地」「评估后不做」「仅设计过」。实测翻车:
+// 把"跑通后又被撤销"的 daemon 条当成已落地 → 基于假记录得出错误结论。
+// 记录可被信任比记录多寡重要一个量级，故用测试钉死写入侧与 lint。
+describe('Done 结语契约', () => {
+  async function doneLines() {
+    const t = await readTodo(projectA);
+    return t.split('\n').filter((l) => /^\s*- \[x\]/.test(l));
+  }
+
+  test('done 默认结语为【落地】', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'K-1', note: 'x' });
+    await cmdTask({ dir: projectA, action: 'done', id: 'K-1' });
+    const ls = await doneLines();
+    assert.ok(ls[0].includes('【落地】'), ls[0]);
+    assert.equal(doneKindOf(ls[0]), '落地');
+  });
+
+  test('--as 否决 / 仅方案 写入正确且落在 (完成 …) 之前', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'K-2', note: 'x' });
+    await cmdTask({ dir: projectA, action: 'done', id: 'K-2', as: '否决' });
+    await cmdTask({ dir: projectA, action: 'start', id: 'K-3', note: 'y' });
+    await cmdTask({ dir: projectA, action: 'done', id: 'K-3', as: '仅方案' });
+    const ls = await doneLines();
+    const k2 = ls.find((l) => l.includes('K-2'));
+    const k3 = ls.find((l) => l.includes('K-3'));
+    assert.equal(doneKindOf(k2), '否决');
+    assert.equal(doneKindOf(k3), '仅方案');
+    // 顺序: 结语在完成日期之前，保证 doneDateOf 仍能取到日期（分组依赖它）
+    assert.match(k2, /【否决】 \(完成 \d{4}-\d{2}-\d{2}\)/);
+    assert.ok(doneDateOf(k2), `结语插错位置导致日期丢失: ${k2}`);
+  });
+
+  test('非法 --as 抛错且不落盘', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'K-4', note: 'x' });
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'done', id: 'K-4', as: '随便' }),
+      /--as 只接受/,
+    );
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('- [ ] K-4'), '非法 as 时任务应保持未完成');
+  });
+
+  test('withDoneKind 幂等: 重复调用不叠标记', () => {
+    let l = '- [x] X — n (完成 2026-09-12)';
+    l = withDoneKind(l, '落地');
+    l = withDoneKind(l, '否决');
+    assert.equal((l.match(/【/g) || []).length, 1, l);
+    assert.equal(doneKindOf(l), '否决', '应原位替换而非叠加');
+  });
+
+  test('lint 抓出缺结语的 Done 条目', async () => {
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo 看板', '## Backlog', '', '## Today / In Progress', '', '## Blocked',
+       '## Done（只留近期，旧的迁 log.md/快照）', '', '### 2026-09-11', '',
+       '- [x] NO-KIND — 没标 (完成 2026-09-11)', '',
+       '- [x] HAS-KIND — 标了 【落地】 (完成 2026-09-11)', ''].join('\n'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('DONE-NO-KIND'), out);
+    assert.ok(out.includes('1 条缺结语'), `应只报 1 条(已标的不算): ${out}`);
+  });
+
+  test('lint: Done 条目全带结语时不报', async () => {
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo 看板', '## Backlog', '', '## Today / In Progress', '', '## Blocked',
+       '## Done（只留近期，旧的迁 log.md/快照）', '', '### 2026-09-11', '',
+       ...['落地', '否决', '仅方案'].map((k, i) => `- [x] OK-${i} — n 【${k}】 (完成 2026-09-11)`), ''].join('\n'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!out.includes('DONE-NO-KIND'), out);
   });
 });

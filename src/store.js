@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { requireBrain, findBrainRoot, brainPath, BRAIN_DIR } from './index.js';
-import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody } from './todo.js';
+import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor, wrapupLogPath } from './wrapup.js';
 
@@ -402,7 +402,7 @@ export async function cmdLog({ dir, title, kind = 'dev' }) {
 // ---------- task: 登记/推进（幂等键 = 行首 id；hook 也调这个） ----------
 // 纪律: task 过程动作(start/done/note/blocked)只改 todo.md, 不写 log.md。
 // log.md 是「工作成果沉淀摘要」(用户/AI 主动 abs log "..." 记), 不收工具动作流水。
-export async function cmdTask({ dir, action, id, section, note }) {
+export async function cmdTask({ dir, action, id, section, note, as }) {
   const root = await requireBrain(dir || process.cwd());
   if (action === 'start') {
     const text = `${id}${note ? ' — ' + note : ''}`;
@@ -423,13 +423,17 @@ export async function cmdTask({ dir, action, id, section, note }) {
   }
   if (action === 'done') {
     // 找到匹配 id 的行，勾选并归位 Done（简化：若行在某 section 则标记完成）
-    const res = await markDone(brainPath(root, 'todo.md'), id);
+    // --as 结语：落地(默认) / 否决 / 仅方案 —— 让 [x] 可被信任（见 todo.js DONE_KINDS）
+    if (as && !DONE_KINDS.includes(as)) {
+      throw new Error(`✗ --as 只接受: ${DONE_KINDS.join(' | ')}（收到 "${as}"）`);
+    }
+    const res = await markDone(brainPath(root, 'todo.md'), id, as || '落地');
     return res;
   }
   throw new Error(`unknown task action: ${action}`);
 }
 
-async function markDone(file, id) {
+async function markDone(file, id, kind = '落地') {
   const res = await editFile(file, (text) => {
     const lines = text.split('\n');
     let changed = false;
@@ -440,7 +444,10 @@ async function markDone(file, id) {
       const l = lines[i];
       if (!moved && idOfTaskLine(l) === wantId) {
         changed = true;
-        const head = l.replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + ` (完成 ${today()})`;
+        const head = withDoneKind(
+          l.replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + ` (完成 ${today()})`,
+          kind,
+        );
         const bp = [];
         while (i + 1 < lines.length && lines[i + 1].trimStart().startsWith('↳')) bp.push(lines[++i]);
         moved = [head, ...bp];
@@ -454,7 +461,7 @@ async function markDone(file, id) {
   });
   return res === SKIP
     ? `(未找到含 "${id}" 的未完成任务行)`
-    : `✓ 已完成并归位 Done: ${id}`;
+    : `✓ 已完成并归位 Done: ${id} 【${kind}】`;
 }
 
 // ---------- show: 查看 index/todo/log（只读面） ----------
@@ -668,6 +675,20 @@ export async function cmdLint({ dir }) {
     const DONE_MAX = 60;
     if (doneLines > DONE_MAX) {
       issues.push(`DONE-PILED-UP: Done 区 ${doneLines} 行 > ${DONE_MAX}; 跑 \`abs todo archive\` 迁出旧日期组`);
+    }
+
+    // 结语契约：Done 的 [x] 必须带【落地/否决/仅方案】。
+    // 为什么钉死: 无结语的 [x] 同时意味着"真做完了"和"只想过"，读的人无法区分。
+    // 实测翻车: 把"跑通后又被撤销"的 daemon 条当成已落地 → 得出错误结论。
+    // 只查 Done 区（含历史归档前的旧条目也算），不做自动改写（改记录属内容决策，不该由 lint 代劳）。
+    const doneBody = todoTxt.split('\n').slice(di + 1);
+    const noKind = doneBody.filter((l) => /^\s*- \[x\]/.test(l) && !doneKindOf(l));
+    if (noKind.length) {
+      const sample = (noKind[0].match(/- \[x\] (\S+)/) || [, '?'])[1];
+      issues.push(
+        `DONE-NO-KIND: Done 区 ${noKind.length} 条缺结语（如 ${sample}）。` +
+        `逐条补 \`--as 落地|否决|仅方案\`（新条目：abs todo done <id> --as …）`,
+      );
     }
   }
 

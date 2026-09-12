@@ -69,6 +69,7 @@ function parseArgv(args) {
     else if (a === '--id') { o.id = args[++i]; }
     else if (a === '--section') { o.section = args[++i]; }
     else if (a === '--note') { o.note = args[++i]; }
+    else if (a === '--as') { o.as = args[++i]; }
     else if (a === '--payload') { o.payload = args[++i]; }
     else if (a === '--keep-days') { o.keepDays = args[++i]; }
     else if (a === '--dry-run') { o.dryRun = true; }
@@ -95,7 +96,9 @@ const usage = `abs — agent-brain-sync 记忆工具
   abs todo add     <id> [--note ..] [--section ..]  登记任务 (start 同义)
   abs todo note    <id> --note "断点/进度"   实时落 ↳ 断点 行
   abs todo blocked <id> --note "卡点原因"    移入 Blocked 区
-  abs todo done    <id>                      完成并归位 Done
+  abs todo done    <id> [--as 落地|否决|仅方案]    完成；结语标明到底"做成了没有"
+                               默认 落地。否决=评估后不做(含做了又撤)；仅方案=只设计过
+                               不加结语或结语失真会让下一个会话把"想过"当成"做完了"。
   abs log "完成 X：…"         记一行工作成果 (无参=查看)
   abs note "经验一句话" [--tags 坑,docker]    经验实时暂存 → sources/
 
@@ -201,9 +204,9 @@ async function main() {
             `  登记任务: abs todo add <id> --note "做什么"`,
           );
         }
-        rejectExtra(rest2, `abs todo ${sub} <id>${action === 'done' ? '' : ' --note "…"'}`);
-        if (!id) throw new Error(`✗ 缺 <id>\n  用法: abs todo ${sub} <id>${action === 'done' ? '' : ' --note "…"'}`);
-        console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note: opts.note }));
+        rejectExtra(rest2, `abs todo ${sub} <id>${action === 'done' ? ' [--as 落地|否决|仅方案]' : ' --note "…"'}`);
+        if (!id) throw new Error(`✗ 缺 <id>\n  用法: abs todo ${sub} <id>${action === 'done' ? ' [--as 落地|否决|仅方案]' : ' --note "…"'}`);
+        console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note: opts.note, as: opts.as }));
         break;
       }
       case 'note': {
