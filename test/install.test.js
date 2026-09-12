@@ -415,3 +415,112 @@ describe('uninstall 只删本 agent, 不误删其它', () => {
     await fs.access(join(HOME, '.abs', 'log', 'mcp.log'));
   });
 });
+
+// ---------- 全量安装 (install --yes) 保留既有配置 ----------
+// 为什么单列: 既有测试只覆盖 `install --agent <单个>`；全量安装是四宿主同一条进程里
+// 依次跑，是用户实际最常用的路径（`abs install --yes`），且一旦某宿主"读-改-写"
+// 退化成"直接覆盖"，会静默清掉用户其它工具的 hook/MCP 配置 —— 后果重且难察觉。
+// 本层用真实文件预置"别人的"配置，逐宿主断言安装后仍在。
+describe('全量安装 install --yes 不破坏既有配置', () => {
+  const PI_MCP = () => join(sandbox, 'pi', 'agent', 'mcp.json');
+  const OC_JSON = () => join(sandbox, 'opencode', 'opencode.json');
+  const CODEX_TOML = () => join(sandbox, 'codex', 'config.toml');
+  const CODEX_HOOKS = () => join(sandbox, 'codex', 'hooks.json');
+
+  /** 预置四宿主的"他人配置"，返回原始文本快照。 */
+  async function seedAll() {
+    await fs.mkdir(join(sandbox, 'pi', 'agent'), { recursive: true });
+    await fs.writeFile(PI_MCP(), JSON.stringify({
+      mcpServers: { othersrv: { command: 'echo' } },
+      settings: { model: 'x' },
+      imports: ['@a/b'],
+      _custom: 'MUST-SURVIVE',
+    }, null, 2));
+    await fs.mkdir(dirname(OC_JSON()), { recursive: true });
+    await fs.writeFile(OC_JSON(), JSON.stringify({ mcp: { other: { command: 'echo' } } }, null, 2));
+    await fs.mkdir(CODEX_CFG, { recursive: true });
+    await fs.writeFile(CODEX_TOML(), '[other]\nkey = 1\n# MINE-KEEP\n');
+    await fs.writeFile(CODEX_HOOKS(), JSON.stringify(
+      { SessionStart: [{ type: 'command', command: '/usr/local/bin/moshi-codex' }] }, null, 2));
+  }
+
+  test('pi: 全量安装后 mcpServers/settings/imports/自定义字段全保', async () => {
+    await seedAll();
+    const r = await run(['install', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = JSON.parse(await fs.readFile(PI_MCP(), 'utf8'));
+    assert.ok(cfg.mcpServers.othersrv, '他人 mcpServers 必须保留');
+    assert.deepEqual(cfg.settings, { model: 'x' }, '既有 settings 必须保留');
+    assert.deepEqual(cfg.imports, ['@a/b'], '既有 imports 必须保留');
+    assert.equal(cfg._custom, 'MUST-SURVIVE', '未知自定义字段必须保留');
+    assert.ok(cfg.mcpServers.abs, 'abs 自身必须已注册');
+  });
+
+  test('opencode: 全量安装后既有 mcp 服务保留', async () => {
+    await seedAll();
+    await run(['install', '--yes']);
+    const cfg = JSON.parse(await fs.readFile(OC_JSON(), 'utf8'));
+    assert.ok(cfg.mcp.other, '他人 MCP 服务必须保留');
+    assert.ok(cfg.mcp.abs, 'abs 必须已注册');
+  });
+
+  test('codex: 全量安装后 config.toml 既有内容与 hooks.json 他人 hook 保留', async () => {
+    await seedAll();
+    await run(['install', '--yes']);
+    const toml = await fs.readFile(CODEX_TOML(), 'utf8');
+    assert.ok(toml.includes('MINE-KEEP'), 'config.toml 既有内容必须保留');
+    assert.ok(toml.includes('[mcp_servers.abs]'), 'abs MCP 必须已写入');
+    const hooks = await fs.readFile(CODEX_HOOKS(), 'utf8');
+    assert.ok(hooks.includes('moshi-codex'), '他人 hook 必须保留');
+    assert.ok(hooks.includes('/.abs/hooks/'), 'abs hook 必须已追加');
+  });
+
+  test('四宿主全量安装后均无 @@占位符@@ 残留 (模板替换完整)', async () => {
+    await run(['install', '--yes']);
+    const tplFiles = [
+      join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'),
+      join(sandbox, 'opencode', 'plugins', 'abs.ts'),
+    ];
+    for (const f of tplFiles) {
+      const src = await fs.readFile(f, 'utf8');
+      const left = src.match(/@@[A-Z_]+@@/g);
+      assert.ok(!left, `${f} 残留占位符 ${left?.join(',')} —— 安装产物会是坏 TS`);
+    }
+  });
+
+  test('全量安装幂等: 连续两次安装四宿主产物逐字节一致', async () => {
+    await seedAll();
+    await run(['install', '--yes']);
+    const snap = {};
+    for (const f of [PI_MCP(), OC_JSON(), CODEX_TOML(), CODEX_HOOKS(), CC_SETTINGS(),
+      join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'),
+      join(sandbox, 'opencode', 'plugins', 'abs.ts')]) {
+      snap[f] = await fs.readFile(f, 'utf8');
+    }
+    await run(['install', '--yes']);
+    for (const [f, before] of Object.entries(snap)) {
+      assert.equal(await fs.readFile(f, 'utf8'), before, `${f} 重装必须幂等`);
+    }
+  });
+
+  test('全量卸载: 四宿主都清 abs, 且都保留他人配置', async () => {
+    await seedAll();
+    await run(['install', '--yes']);
+    const r = await run(['uninstall', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    // 各自的 abs 都没了
+    assert.ok(!existsSync(PI_MCP()) || !JSON.parse(await fs.readFile(PI_MCP(), 'utf8')).mcpServers?.abs);
+    assert.ok(!existsSync(join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts')), 'pi 扩展应删');
+    assert.ok(!existsSync(join(sandbox, 'opencode', 'plugins', 'abs.ts')), 'opencode 插件应删');
+    // 他人的还在
+    const pi = JSON.parse(await fs.readFile(PI_MCP(), 'utf8'));
+    assert.ok(pi.mcpServers.othersrv, 'pi 他人 MCP 必须保留');
+    assert.deepEqual(pi.imports, ['@a/b'], 'pi imports 必须保留');
+    const oc = JSON.parse(await fs.readFile(OC_JSON(), 'utf8'));
+    assert.ok(oc.mcp.other, 'opencode 他人 MCP 必须保留');
+    assert.ok((await fs.readFile(CODEX_TOML(), 'utf8')).includes('MINE-KEEP'), 'codex toml 必须保留');
+    assert.ok((await fs.readFile(CODEX_HOOKS(), 'utf8')).includes('moshi-codex'), 'codex 他人 hook 必须保留');
+    const cc = JSON.parse(await fs.readFile(CC_SETTINGS(), 'utf8'));
+    assert.equal(cc._custom ?? 'MUST-SURVIVE', 'MUST-SURVIVE', 'cc 自定义字段必须保留');
+  });
+});
