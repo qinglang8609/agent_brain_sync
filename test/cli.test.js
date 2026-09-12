@@ -264,3 +264,75 @@ describe('cli: 未知命令/help', () => {
     assert.ok(r.stdout.includes('--version'), 'help 应列出 --version');
   });
 });
+
+// ---------- 子命令 --help 不得触发实际动作 ----------
+// 坑(INSTALL-HELP-FOOTGUN): --help 原本只在顶层命令被识别。`abs install --help`
+// 落到 parseArgv 的通用分支（o.help=true），而 install 分支根本不读它 → 用户想看帮助，
+// 实际执行了全量安装，改了四宿主配置、写 15 个文件。同类命令都应有此守卫。
+describe('cli: 子命令 --help 只打印用法', () => {
+  /** 隔离的 HOME/配置根，用于断言"没有任何文件被写"。 */
+  async function isolated() {
+    const home = join(sandbox, 'help-home');
+    await fs.mkdir(home, { recursive: true });
+    return {
+      HOME: home,
+      CLAUDE_CONFIG_DIR: join(sandbox, 'help-cc'),
+      CODEX_HOME: join(sandbox, 'help-cx'),
+      ABS_OPENCODE_HOME: join(sandbox, 'help-oc'),
+      ABS_PI_HOME: join(sandbox, 'help-pi'),
+    };
+  }
+  async function countFiles(dir) {
+    let n = 0;
+    try {
+      for (const e of await fs.readdir(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) n += await countFiles(join(dir, e.name));
+        else n++;
+      }
+    } catch { /* 目录不存在算 0 */ }
+    return n;
+  }
+
+  test('abs install --help 打印用法且不写任何文件', async () => {
+    const env = await isolated();
+    const r = await run(['install', '--help'], { env });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes('用法'), `应打印用法: ${r.stdout}`);
+    assert.ok(!r.stdout.includes('▸'), `不得真的执行安装(进度前缀 ▸ 出现): ${r.stdout}`);
+    assert.equal(await countFiles(env.HOME), 0, '不得写入任何文件');
+    assert.equal(await countFiles(env.CLAUDE_CONFIG_DIR), 0, '不得改宿主配置');
+  });
+
+  test('abs uninstall --help 打印用法且不写任何文件', async () => {
+    const env = await isolated();
+    const r = await run(['uninstall', '--help'], { env });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes('用法'), `应打印用法: ${r.stdout}`);
+    assert.ok(!r.stdout.includes('▸'), `不得真的执行卸载(进度前缀 ▸ 出现): ${r.stdout}`);
+    assert.equal(await countFiles(env.HOME), 0, '不得写入任何文件');
+  });
+});
+
+// ---------- note --tags 值解析 ----------
+// 坑(NOTE-TAGS-BOOL): --tags 没有专门分支 → 落到 parseArgv 通用分支变成布尔 true，
+// 于是 frontmatter 写成 `tags: [source, true]`，且 `abs,摘要` 还粘进了正文与标题。
+describe('cli: note --tags 值解析', () => {
+  beforeEach(() => run(['init', '--dir', proj]));
+
+  test('--tags 的逗号分隔值写入 frontmatter，且不粘进正文', async () => {
+    const r = await run(['note', '标签解析测试', '--tags', 'abs,摘要']);
+    assert.equal(r.code, 0, r.stderr);
+    const dir = join(proj, '.brain', 'sources');
+    const files = (await fs.readdir(dir)).filter((f) => f.endsWith('.md'));
+    assert.equal(files.length, 1, `应落一页: ${files.join(', ')}`);
+    const body = await fs.readFile(join(dir, files[0]), 'utf8');
+    const fm = body.split('---')[1] || '';
+    assert.ok(fm.includes('abs'), `tags 应含 abs: ${fm}`);
+    assert.ok(fm.includes('摘要'), `tags 应含 摘要: ${fm}`);
+    assert.ok(!fm.includes('true'), `不得把 --tags 解析成布尔: ${fm}`);
+    // 正文/标题不得粘上标签串
+    const contentOnly = body.split('---').slice(2).join('---');
+    assert.ok(!contentOnly.includes('abs,摘要'), `标签不得粘进正文: ${contentOnly.slice(0, 200)}`);
+    assert.ok(!files[0].includes('abs-摘要'), `文件名不应含标签串: ${files[0]}`);
+  });
+});

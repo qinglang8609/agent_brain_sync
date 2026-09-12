@@ -72,6 +72,8 @@ function parseArgv(args) {
     else if (a === '--as') { o.as = args[++i]; }
     else if (a === '--payload') { o.payload = args[++i]; }
     else if (a === '--keep-days') { o.keepDays = args[++i]; }
+    else if (a === '--tags') { o.tags = args[++i]; }
+    else if (a === '--help') { o.help = true; }
     else if (a === '--dry-run') { o.dryRun = true; }
     else if (a === '--yes') { o.yes = true; }
     else if (a === '--repair') { o.repair = true; }
@@ -117,6 +119,47 @@ const usage = `abs — agent-brain-sync 记忆工具
 
 注: abs wrapup / abs teardown-check 是 hook 内部命令, 不需手动调用。
 `;
+
+/** 子命令级用法（abs <cmd> --help 时打印）。 */
+const subUsage = {
+  install: [
+    'abs install — 把 MCP + hook + skill 安装到 AI 编码宿主',
+    '',
+    '用法:',
+    '  abs install [--agent <宿主>] [--yes] [--no-mcp] [--no-skill]',
+    '',
+    '参数:',
+    '  --agent <宿主>   只装一个宿主: claude-code | codex | opencode | pi',
+    '                   (不传则在 TTY 下交互多选; 非 TTY / --yes 时为全部)',
+    '  --yes            不交互，直接装全部宿主（自动化用）',
+    '  --no-mcp         不注册 MCP server',
+    '  --no-skill       不装 skill',
+    '',
+    '说明:',
+    '  • 幂等: 重复安装不会叠加，也不会覆盖宿主的其它配置',
+    '  • 配置文件解析失败时会中止（不会清空你的配置）',
+    '  • 安装前会备份原配置（同日多份保留最近 5 份）',
+    '',
+    '例:',
+    '  abs install                    交互选择',
+    '  abs install --yes              全部宿主',
+    '  abs install --agent pi --yes   只装 pi',
+  ].join('\n'),
+  uninstall: [
+    'abs uninstall — 从 AI 编码宿主移除 abs 的 MCP / hook / skill',
+    '',
+    '用法:',
+    '  abs uninstall [--agent <宿主>] [--yes]',
+    '',
+    '参数:',
+    '  --agent <宿主>   只卸一个宿主: claude-code | codex | opencode | pi（不传=全部）',
+    '  --yes            不交互',
+    '',
+    '说明:',
+    '  • 只删 abs 自己装的东西，保留你其它的 hook / MCP / 配置字段',
+    '  • 配置文件无法解析时会跳过该文件（不覆盖）但仍清理 abs 的脚本与 skill',
+  ].join('\n'),
+};
 
 /**
  * 拒绝多余的未知位置参数。
@@ -213,8 +256,20 @@ async function main() {
         console.log(await cmdNote({ dir: opts.dir, text: opts._.join(' '), tags: opts.tags }));
         break;
       }
-      case 'install':  await runInstall({ agent: opts.agent, mcp: opts.mcp !== false, skill: opts.skill !== false, yes: opts.yes }); break;
-      case 'uninstall': await runUninstall({ agent: opts.agent, yes: opts.yes }); break;
+      case 'install':
+      case 'uninstall': {
+        // 子命令级 --help: 打印用法后直接返回。
+        // 坑(INSTALL-HELP-FOOTGUN): 以前 --help 只在顶层命令被识别，跟在 install 后面时
+        // 落到 parseArgv 的通用分支，而 install 分支根本不读它 → 用户想看帮助，
+        // 实际执行了全量安装（幂等不炸，但确实改了四宿主配置，写了 15 个文件）。
+        if (opts.help) { console.log(subUsage[cmd]); break; }
+        if (cmd === 'install') {
+          await runInstall({ agent: opts.agent, mcp: opts.mcp !== false, skill: opts.skill !== false, yes: opts.yes });
+        } else {
+          await runUninstall({ agent: opts.agent, yes: opts.yes });
+        }
+        break;
+      }
       case 'agents':   console.log(installSummary()); break;
       case 'query': {
         console.log(await cmdQuery({ dir: opts.dir, terms: opts._ }));
