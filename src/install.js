@@ -86,7 +86,7 @@ async function backup(p) {
   } catch { return null; } // 文件不存在则无备份
 }
 
-async function readJson(p) {
+async function readJson(p, { strict = true } = {}) {
   let text;
   try {
     text = await fs.readFile(p, 'utf8');
@@ -98,12 +98,15 @@ async function readJson(p) {
   try {
     return JSON.parse(text);
   } catch (e) {
+    if (!strict) return null; // 宽松模式: 调用方据此跳过写文件，但仍继续其它清理
     // 关键: 「文件不存在」与「存在但解析失败」必须分开处理。
     // 曾经两者都返回 {}，于是只要用户的配置里有 JSONC 注释/尾逗号/多一个字符，
     // 就会被当作空对象重建 → 用户的 hooks/permissions/model/mcpServers 静默全消失。
     // 而 JSONC（带 // 注释）正是 CL​aude Code 官方文档鼓励的写法，命中率不低。
     // 测例: 带注释的 settings.json 安装后 myKey/permissions 全丢，且无任何报错。
     // 处置: 宁可整个安装失败，也不写坏用户文件（与 requireBrain 同原则）。
+    //   宽松模式(strict:false)供"卸载"使用: 跳过配置文件、但仍清理 abs 自己的脚本/skill，
+    //   避免因一个坏配置就留下残余。
     throw new Error(
       `配置文件无法解析为 JSON，已中止以免覆盖你的配置:\n` +
       `  ${p}\n` +
@@ -252,9 +255,13 @@ async function installClaudeCode({ withMcp, withSkill, log }) {
 async function uninstallClaudeCode() {
   const steps = [];
   const settingsP = claudeSettingsPath();
-  const settings = await readJson(settingsP);
+  const settings = await readJson(settingsP, { strict: false });
+  if (settings === null) {
+    // 配置解析失败: 跳过该文件（绝不覆盖），但仍继续清理 abs 自己的脚本/skill。
+    steps.push(`⚠ ${settingsP} 无法解析为 JSON，已跳过（未改动你的配置）`);
+  }
   let touched = false;
-  if (settings.hooks) {
+  if (settings && settings.hooks) {
     const events = HOSTS[0].events;
     for (const ev of events) {
       if (!Array.isArray(settings.hooks[ev])) continue;
@@ -266,11 +273,11 @@ async function uninstallClaudeCode() {
       }
     }
   }
-  if (settings.mcpServers && settings.mcpServers.abs) {
+  if (settings && settings.mcpServers && settings.mcpServers.abs) {
     delete settings.mcpServers.abs; touched = true;
   }
   if (touched) await atomicWrite(settingsP, JSON.stringify(settings, null, 2));
-  steps.push(`✓ hooks/MCP 已从 ${settingsP} 移除`);
+  if (settings) steps.push(`✓ hooks/MCP 已从 ${settingsP} 移除`);
   // staged hook 脚本目录 —— 只删本 agent 的，绝不整删 ~/.abs/（其它 agent 的 hook / mcp.log 共存）
   await fs.rm(join(homedir(), '.abs', 'hooks', 'claude-code'), { recursive: true, force: true });
   steps.push(`✓ ~/.abs/hooks/claude-code/ (本 agent hook 脚本) 已删除`);
@@ -355,13 +362,16 @@ async function uninstallCodex() {
   const steps = [];
   const home = process.env.CODEX_HOME || join(homedir(), '.codex');
   const p = join(home, 'hooks.json');
-  const cfg = await readJson(p);
+  const cfg = await readJson(p, { strict: false });
+  if (cfg === null) {
+    steps.push(`⚠ ${p} 无法解析为 JSON，已跳过（未改动你的配置）`);
+  }
   let changed = false;
-  if (Array.isArray(cfg.hooks)) { // 历史扁平数组形态
+  if (cfg && Array.isArray(cfg.hooks)) {
     const before = cfg.hooks.length;
     cfg.hooks = cfg.hooks.filter((h) => !isAbsStagedCommand(String(h.command || '')));
     changed = cfg.hooks.length !== before;
-  } else if (cfg.hooks && typeof cfg.hooks === 'object') { // 对象形态 {EventName: [...]}
+  } else if (cfg && cfg.hooks && typeof cfg.hooks === 'object') {
     for (const ev of Object.keys(cfg.hooks)) {
       const arr = cfg.hooks[ev];
       if (!Array.isArray(arr)) continue;
@@ -504,8 +514,11 @@ async function uninstallOpenCode() {
   await fs.rm(plugin, { force: true });
   steps.push(`✓ plugin 已删除`);
   const mcpP = join(hostConfigRoot('opencode'), 'opencode.json');
-  const cfg = await readJson(mcpP);
-  if (cfg.mcp && cfg.mcp.abs) {
+  const cfg = await readJson(mcpP, { strict: false });
+  if (cfg === null) {
+    steps.push(`⚠ ${mcpP} 无法解析为 JSON，已跳过（未改动你的配置）`);
+  }
+  if (cfg && cfg.mcp && cfg.mcp.abs) {
     delete cfg.mcp.abs;
     await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
     steps.push(`✓ MCP 已从 ${mcpP} 移除`);
@@ -548,8 +561,11 @@ async function uninstallPi() {
   await fs.rm(hostSkillDir('pi'), { recursive: true, force: true });
   steps.push(`✓ skill 已删除`);
   const mcpP = join(hostConfigRoot('pi'), 'agent', 'mcp.json');
-  const cfg = await readJson(mcpP);
-  if (cfg.mcpServers && cfg.mcpServers.abs) {
+  const cfg = await readJson(mcpP, { strict: false });
+  if (cfg === null) {
+    steps.push(`⚠ ${mcpP} 无法解析为 JSON，已跳过（未改动你的配置）`);
+  }
+  if (cfg && cfg.mcpServers && cfg.mcpServers.abs) {
     delete cfg.mcpServers.abs;
     await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
     steps.push(`✓ MCP 已从 ${mcpP} 移除`);

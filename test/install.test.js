@@ -717,4 +717,20 @@ describe('入口路径稳定性', () => {
       assert.ok(!m[1].includes(REPO), `pi 扩展不得烧仓库路径: ${m[1]}`);
     }
   });
+
+  test('[C1-卸载] 配置损坏时: 保留用户文件 + 仍清理 abs 自己的脚本与 skill', async () => {
+    // 修复 C1 后引入的取舍: 若卸载也在解析失败时直接抛错，abs 的 staged 脚本与 skill
+    // 会残留（清理代码在 readJson 之后）。故卸载走宽松模式: 跳过配置文件、继续清理自己的东西。
+    await fs.mkdir(CC_CFG, { recursive: true });
+    await fs.writeFile(CC_SETTINGS(), JSON.stringify({ myKey: 'KEEP' }, null, 2), 'utf8');
+    await run(['install', '--agent', 'claude-code', '--yes']);
+    const broken = '{ // broken\n  "myKey": "KEEP"\n}\n';
+    await fs.writeFile(CC_SETTINGS(), broken, 'utf8');
+    const r = await run(['uninstall', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, `卸载应正常完成: ${r.stderr}`);
+    assert.ok(r.stdout.includes('无法解析'), '应明确告知跳过了该文件');
+    assert.equal(await fs.readFile(CC_SETTINGS(), 'utf8'), broken, '用户文件一字不动');
+    assert.ok(!existsSync(join(HOME, '.abs', 'hooks', 'claude-code', 'abs-Stop.sh')), 'abs hook 脚本应被清理');
+    assert.ok(!existsSync(join(CC_CFG, 'skills', 'abs-agent-brain-sync')), 'abs skill 应被清理');
+  });
 });
