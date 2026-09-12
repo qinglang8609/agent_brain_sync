@@ -204,8 +204,8 @@ describe('install opencode / pi', () => {
   });
 
   // 回归: 曾经 withMcp 只打印「走 extension 内桥接」而没有任何桥接代码 ——
-  // 靠 mcp-adapter 的 hostConfigDiscovery 间接读到 cl​aude 注册才"看起来能用",
-  // 没有 cl​aude 宿主的机器上 abs MCP 直接缺失。必须真写 mcp.json。
+  // 靠 mcp-adapter 的 hostConfigDiscovery 间接读到 claude 注册才"看起来能用",
+  // 没有 claude 宿主的机器上 abs MCP 直接缺失。必须真写 mcp.json。
   test('pi 必须真注册 MCP 到 mcp.json (不能只靠 hostConfigDiscovery 间接发现)', async () => {
     await run(['install', '--agent', 'pi', '--yes']);
     const cfg = JSON.parse(await fs.readFile(join(sandbox, 'pi', 'agent', 'mcp.json'), 'utf8'));
@@ -221,7 +221,7 @@ describe('install opencode / pi', () => {
     await fs.writeFile(p, JSON.stringify({
       mcpServers: { other: { command: 'foo' } },
       settings: { hostConfigDiscovery: 'on' },
-      imports: ['cl​aude-code'],
+      imports: ['claude-code'],
     }));
     await run(['install', '--agent', 'pi', '--yes']);
     const first = await fs.readFile(p, 'utf8');
@@ -230,7 +230,7 @@ describe('install opencode / pi', () => {
     const cfg = JSON.parse(first);
     assert.ok(cfg.mcpServers.other, '既有 mcpServers 条目必须保留');
     assert.equal(cfg.settings.hostConfigDiscovery, 'on', '既有 settings 必须保留');
-    assert.deepEqual(cfg.imports, ['cl​aude-code'], '既有 imports 必须保留');
+    assert.deepEqual(cfg.imports, ['claude-code'], '既有 imports 必须保留');
   });
 
   test('pi 卸载只删 mcpServers.abs, 保留其它宿主体', async () => {
@@ -274,21 +274,21 @@ describe('install opencode / pi', () => {
     }
   });
 
-  // 回归: op​encode 插件曾把 event 回调入参写成 ({ name }), 但官方 API 是 ({ event }) 且事件名在
+  // 回归: opencode 插件曾把 event 回调入参写成 ({ name }), 但官方 API 是 ({ event }) 且事件名在
   // event.type —— 导致 name 恒 undefined, 插件从未触发(0 条日志) 静默失效。
-  test('op​encode 插件用正确的 event 回调签名与事件名 (event.type, 非 name)', async () => {
+  test('opencode 插件用正确的 event 回调签名与事件名 (event.type, 非 name)', async () => {
     await run(['install', '--agent', 'opencode', '--yes']);
     const src = await fs.readFile(join(sandbox, 'opencode', 'plugins', 'abs.ts'), 'utf8');
     assert.ok(/event:\s*async\s*\(\{\s*event\s*\}\)/.test(src), 'event 回调应解构 { event }');
     assert.ok(!/event:\s*async\s*\(\{\s*name\s*\}\)/.test(src), '不得再用错误的 ({ name }) 签名');
     assert.ok(src.includes('event.type') || src.includes('event && event.type'), '应从 event.type 取事件名');
-    assert.ok(!src.includes('"session.start"') && !src.includes('"session.end"'), 'op​encode 事件名不是 session.start/end');
+    assert.ok(!src.includes('"session.start"') && !src.includes('"session.end"'), 'opencode 事件名不是 session.start/end');
     assert.ok(src.includes('session.idle'), '应用 session.idle 作为每轮结束信号');
   });
 
-  // 回归: op​encode 加载器取 default 导出; 用 export const 命名导出会被静默忽略
+  // 回归: opencode 加载器取 default 导出; 用 export const 命名导出会被静默忽略
   // (实际踩过: 签名/事件名都修对了, 但导出方式错 → 插件仍不加载, 日志恒 0 条)。
-  test('op​encode 插件用 default 导出 (mod.default.server), 非命名导出', async () => {
+  test('opencode 插件用 default 导出 (mod.default.server), 非命名导出', async () => {
     await run(['install', '--agent', 'opencode', '--yes']);
     const src = await fs.readFile(join(sandbox, 'opencode', 'plugins', 'abs.ts'), 'utf8');
     assert.ok(/export default \{/.test(src), '应有 export default { id, server }');
@@ -297,8 +297,8 @@ describe('install opencode / pi', () => {
     assert.ok(/const server = async \(\{ client, directory \}\)/.test(src), 'server 应接收 { client, directory }');
   });
 
-  // 回归: op​encode 侧的收尾自动化 (与 pi 的 agent_end 同策略)
-  test('op​encode 插件 session.idle 收尾注入: 真改过文件才推, 每会话一次', async () => {
+  // 回归: opencode 侧的收尾自动化 (与 pi 的 agent_end 同策略)
+  test('opencode 插件 session.idle 收尾注入: 真改过文件才推, 每会话一次', async () => {
     await run(['install', '--agent', 'opencode', '--yes']);
     const src = await fs.readFile(join(sandbox, 'opencode', 'plugins', 'abs.ts'), 'utf8');
     assert.ok(src.includes('tool.execute.after'), '应用 tool.execute.after 观测真实写操作');
@@ -522,5 +522,153 @@ describe('全量安装 install --yes 不破坏既有配置', () => {
     assert.ok((await fs.readFile(CODEX_HOOKS(), 'utf8')).includes('moshi-codex'), 'codex 他人 hook 必须保留');
     const cc = JSON.parse(await fs.readFile(CC_SETTINGS(), 'utf8'));
     assert.equal(cc._custom ?? 'MUST-SURVIVE', 'MUST-SURVIVE', 'cc 自定义字段必须保留');
+  });
+});
+
+// ---------- opencode 路径歧义警告 ----------
+// 背景: opencode 默认读 ~/.config/opencode/，但它同样尊重 XDG_CONFIG_HOME。
+// 若用户设了该变量而本工具仍写默认路径，插件会装了不生效（静默失效）。
+// 本组钉死"何时警告、何时不警告"——警告不该刷屏，也不该在真有问题时沉默。
+describe('opencode 路径歧义警告', () => {
+  const XDG = () => join(sandbox, 'xdg');
+  // 注意: sbEnv 默认注入 ABS_OPENCODE_HOME（测试隔离需要），而它会压制警告。
+  // 测警告时须显式清空它，模拟"真实用户没设该变量"的情形。
+  const realEnv = (extra = {}) => ({ ABS_OPENCODE_HOME: '', ...extra });
+
+  test('设了 XDG_CONFIG_HOME(与默认不同) → 警告并指出两个路径', async () => {
+    const r = await run(['install', '--agent', 'opencode', '--yes'], {
+      env: realEnv({ XDG_CONFIG_HOME: XDG() }),
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes('XDG_CONFIG_HOME'), `应警告 XDG: ${r.stdout}`);
+    assert.ok(r.stdout.includes(join(XDG(), 'opencode')), '应指出 opencode 实际会读的路径');
+    assert.ok(r.stdout.includes('可能不一致'), '应说明风险');
+  });
+
+  test('未设 XDG_CONFIG_HOME → 不警告(不刷屏)', async () => {
+    const r = await run(['install', '--agent', 'opencode', '--yes'], {
+      env: realEnv({ XDG_CONFIG_HOME: '' }),
+    });
+    assert.ok(!r.stdout.includes('可能不一致'), `不该警告: ${r.stdout}`);
+  });
+
+  test('设了 OPENCODE_CONFIG → 警告', async () => {
+    const r = await run(['install', '--agent', 'opencode', '--yes'], {
+      env: realEnv({ OPENCODE_CONFIG: join(sandbox, 'custom.json') }),
+    });
+    assert.ok(r.stdout.includes('OPENCODE_CONFIG'), `应警告 OPENCODE_CONFIG: ${r.stdout}`);
+  });
+
+  test('显式指定 ABS_OPENCODE_HOME → 不警告(用户已决定目标)', async () => {
+    // sbEnv 默认注入 ABS_OPENCODE_HOME，此处即"显式指定"场景
+    const r = await run(['install', '--agent', 'opencode', '--yes'], {
+      env: { XDG_CONFIG_HOME: XDG() },
+    });
+    assert.ok(!r.stdout.includes('可能不一致'), `显式指定时不该警告: ${r.stdout}`);
+  });
+
+  test('XDG_CONFIG_HOME 指向的位置恰好等于默认路径 → 不警告(无歧义)', async () => {
+    // 清空 ABS_OPENCODE_HOME 后，本工具写入 HOME/.config/opencode；
+    // 让 XDG_CONFIG_HOME 的父目录正好是 HOME/.config，即推导出的路径与写入路径一致。
+    const cfgParent = join(HOME, '.config');
+    const r = await run(['install', '--agent', 'opencode', '--yes'], {
+      env: realEnv({ XDG_CONFIG_HOME: cfgParent }),
+    });
+    assert.ok(!r.stdout.includes('可能不一致'),
+      `路径一致时不该警告: ${r.stdout}`);
+  });
+
+  test('警告不妨碍安装本身完成', async () => {
+    const r = await run(['install', '--agent', 'opencode', '--yes'], {
+      env: realEnv({ XDG_CONFIG_HOME: XDG() }),
+    });
+    assert.equal(r.code, 0);
+    // 清空 ABS_OPENCODE_HOME 后，配置根是 HOME/.config/opencode
+    const root = join(HOME, '.config', 'opencode');
+    await fs.access(join(root, 'plugins', 'abs.ts'));
+    await fs.access(join(root, 'skills', 'abs-agent-brain-sync', 'SKILL.md'));
+  });
+  // 顺手补一条: 清空后确实写入默认路径（上面两条断言依赖此前提）
+  test('未显式指定时写入默认路径 ~/.config/opencode', async () => {
+    await run(['install', '--agent', 'opencode', '--yes'], { env: realEnv() });
+    const root = join(HOME, '.config', 'opencode');
+    await fs.access(join(root, 'plugins', 'abs.ts'));
+  });
+
+});
+// ---------- 四宿主安装流程: 用户数据安全回归 ----------
+// 本组全部来自一次只读审查 + 逐条实证复现。每条都曾在真实代码里复现过，
+// 修复后钉死于此 —— 若改动回滚，这些断言必须变红。
+describe('安装流程: 用户数据安全', () => {
+  test('[C1] 配置为 JSONC(带注释) → 中止安装且不覆盖用户配置', async () => {
+    // 修复前: readJson 的 catch 把"解析失败"当成"文件不存在"返回 {}，
+    // 安装以 {} 为基底重写 → 用户的 hooks/permissions/自定义字段静默全消失，退出码还是 0。
+    // JSONC 正是 claude code 官方文档鼓励的写法，命中率不低。
+    await fs.mkdir(CC_CFG, { recursive: true });
+    const body = '{\n  // user comment\n  "myKey": "MUST-SURVIVE",\n  "permissions": { "allow": ["Bash"] }\n}\n';
+    await fs.writeFile(CC_SETTINGS(), body, 'utf8');
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.notEqual(r.code, 0, '解析失败必须非零退出（否则脚本无法感知）');
+    assert.equal(await fs.readFile(CC_SETTINGS(), 'utf8'), body, '用户文件必须一字不动');
+  });
+
+  test('[C1] 正常 JSON 仍照常安装（修复不误伤）', async () => {
+    await fs.mkdir(CC_CFG, { recursive: true });
+    await fs.writeFile(CC_SETTINGS(), JSON.stringify({ myKey: 'KEEP', hooks: {} }, null, 2), 'utf8');
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = JSON.parse(await fs.readFile(CC_SETTINGS(), 'utf8'));
+    assert.equal(cfg.myKey, 'KEEP');
+    assert.ok(JSON.stringify(cfg.hooks).includes('.abs/hooks/'));
+  });
+
+  test('[C2] 卸载 codex: [mcp_servers.abs] 后仍有其它 section → TOML 不被破坏', async () => {
+    // 修复前: 正则 /\n?\[mcp_servers\.abs\][^\[]*/s 的 [^\[]* 在 args = [...] 的 [ 处截断，
+    // 留下非法行 ["/…/mcp.js"] 冒充 section 头 → 用户 codex 启动时 TOML 解析失败。
+    await fs.mkdir(CODEX_CFG, { recursive: true });
+    await fs.writeFile(join(CODEX_CFG, 'config.toml'),
+      '[other]\nkeep = 1\n\n[mcp_servers.abs]\ncommand = "node"\nargs = ["/x/bin/mcp.js"]\n\n[third]\nkeep = 2\n', 'utf8');
+    await run(['install', '--agent', 'codex', '--yes']);
+    await run(['uninstall', '--agent', 'codex', '--yes']);
+    const t = await fs.readFile(join(CODEX_CFG, 'config.toml'), 'utf8');
+    assert.ok(t.includes('[third]'), 'abs 段之后的用户 section 必须保留');
+    assert.ok(t.includes('keep = 2'), '后续 section 的内容必须保留');
+    assert.ok(t.includes('[other]') && t.includes('keep = 1'), '前面的 section 必须保留');
+    assert.ok(!t.includes('[mcp_servers.abs]'), 'abs 段应被移除');
+    // 不得出现把数组值当 section 头的非法形态
+    const bad = t.split('\n').filter((l) => /^\s*\["/.test(l));
+    assert.equal(bad.length, 0, `TOML 出现非法 section 头: ${bad.join(' | ')}`);
+    assert.ok(!/args\s*=\s*\[[^\]]*$/.test(t.replace(/\n[\s\S]*$/, '')), 'args 数组不应被截断');
+  });
+
+  test('[H1] config.toml 里只有注释形式的 [mcp_servers.abs] → 仍真实注册', async () => {
+    // 修复前: includes('[mcp_servers.abs]') 不区分注释，判定"已存在且路径正确, 跳过"，
+    // 实际从未注册（用户永久连不上 MCP，且重装永不修复）。
+    await fs.mkdir(CODEX_CFG, { recursive: true });
+    await fs.writeFile(join(CODEX_CFG, 'config.toml'), '[other]\nkeep = 1\n# 例: [mcp_servers.abs]\n', 'utf8');
+    const r = await run(['install', '--agent', 'codex', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const t = await fs.readFile(join(CODEX_CFG, 'config.toml'), 'utf8');
+    const real = t.split('\n').filter((l) => l.trim() === '[mcp_servers.abs]');
+    assert.equal(real.length, 1, `必须有一个真实(非注释)的 [mcp_servers.abs] 段: \n${t}`);
+    assert.ok(t.includes('keep = 1'), '用户原有内容必须保留');
+  });
+
+  test('[H2] 用户 hook 命令含 /.abs/hooks/ 子串 → 安装与卸载都不得删它', async () => {
+    // 修复前: entryHasAbs 用 command.includes('/.abs/hooks/')，任何命令文本里恰好
+    // 出现该片段的用户 hook 都会被当成 abs 的，安装时静默丢弃、卸载时删掉。
+    await fs.mkdir(CC_CFG, { recursive: true });
+    const userCmd = 'grep -r try /home/u/.abs/hooks/ > /tmp/report';
+    await fs.writeFile(CC_SETTINGS(), JSON.stringify({
+      hooks: { SessionStart: [{ hooks: [{ type: 'command', command: userCmd }] }] },
+    }, null, 2), 'utf8');
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok((await fs.readFile(CC_SETTINGS(), 'utf8')).includes('grep -r try'),
+      '安装不得丢弃用户 hook');
+    await run(['uninstall', '--agent', 'claude-code', '--yes']);
+    const after = await fs.readFile(CC_SETTINGS(), 'utf8');
+    assert.ok(after.includes('grep -r try'), '卸载不得误删用户 hook');
+    assert.ok(!after.includes('abs-SessionStart.sh'), 'abs 自己的 hook 仍应被清理');
   });
 });

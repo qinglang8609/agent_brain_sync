@@ -73,14 +73,105 @@ async function backup(p) {
 }
 
 async function readJson(p) {
-  try { return JSON.parse(await fs.readFile(p, 'utf8')); } catch { return {}; }
+  let text;
+  try {
+    text = await fs.readFile(p, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return {}; // 文件不存在 = 空配置（正常首装）
+    throw e;                             // 权限/IO 错不能静默吞
+  }
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    // 关键: 「文件不存在」与「存在但解析失败」必须分开处理。
+    // 曾经两者都返回 {}，于是只要用户的配置里有 JSONC 注释/尾逗号/多一个字符，
+    // 就会被当作空对象重建 → 用户的 hooks/permissions/model/mcpServers 静默全消失。
+    // 而 JSONC（带 // 注释）正是 CL​aude Code 官方文档鼓励的写法，命中率不低。
+    // 测例: 带注释的 settings.json 安装后 myKey/permissions 全丢，且无任何报错。
+    // 处置: 宁可整个安装失败，也不写坏用户文件（与 requireBrain 同原则）。
+    throw new Error(
+      `配置文件无法解析为 JSON，已中止以免覆盖你的配置:\n` +
+      `  ${p}\n` +
+      `  ${e.message}\n` +
+      `  若文件含 // 注释或尾逗号（JSONC），请先转成标准 JSON；` +
+      `或备份后移走该文件重跑。`,
+    );
+  }
 }
 
-const ABS_HOOK_MARK = '/.abs/hooks/';
-/** 判断一个 hook 数组元素是不是 abs 装的(command 指向 ~/.abs/hooks/)。卸载/幂等去重用。 */
+/**
+ * 判断一个 hook 数组元素是不是 abs 装的（用于卸载只删自己、安装去重）。
+ *
+ * 修复: 曾经用 command.includes('/.abs/hooks/') —— 子串匹配。任何「命令文本里恰好
+ * 出现该片段」的用户 hook 都会被误判为 abs 装的，于是卸载时删掉、安装时静默丢弃。
+ * 实测真例（都被误删）:
+ *   grep -r try /home/u/.abs/hooks/ > /tmp/report
+ *   tar czf /tmp/b.tgz /home/u/.abs/hooks/ && echo done
+ * 现在改为精确匹配本工具实际写入的路径前缀: <homedir>/.abs/hooks/<agentKey>/abs-
+ * （stageHookScripts 生成的脚本名统一是 abs-<Event>.sh）。
+ */
+function absHookDir(agentKey) {
+  return join(homedir(), '.abs', 'hooks', agentKey);
+}
+function isAbsStagedCommand(cmd) {
+  if (typeof cmd !== 'string') return false;
+  // 取命令里的绝对路径 token 逐个比对，避免子串误判
+  const tokens = cmd.match(/\S+/g) || [];
+  return tokens.some((t) => {
+    const base = t.replace(/^['"]|['"]$/g, '');
+    return base.includes('/.abs/hooks/') && /(^|\/)\.abs\/hooks\/[^/]+\/abs-[^/]*$/.test(base);
+  });
+}
 function entryHasAbs(entry) {
   const hs = entry && entry.hooks ? (Array.isArray(entry.hooks) ? entry.hooks : [entry.hooks]) : [];
-  return hs.some((h) => typeof h?.command === 'string' && h.command.includes(ABS_HOOK_MARK));
+  const cmds = [];
+  for (const h of hs) if (h && typeof h.command === 'string') cmds.push(h.command);
+  // 兼容扁平形态 { command } （无 hooks 字段）
+  if (entry && typeof entry.command === 'string') cmds.push(entry.command);
+  return cmds.some(isAbsStagedCommand);
+}
+
+// ============================ TOML section 行级工具 ============================
+// 为什么不用正则: 曾用 /\n?\[mcp_servers\.abs\][^\[]*/s 删 section，
+// 而 `[^\[]*` 会在下一个 `[` 处停下 —— `args = ["/x/mcp.js"]` 的数组左括号就是 `[`。
+// 结果卸载后把数组值原地截成活一个假 section 头，留下非法行 `["/…/mcp.js"]`，
+// 用户 co​dex 启动时 TOML 解析直接失败（卸载却给用户留个坏配置）。
+// 另一坑: 用 includes('[mcp_servers.abs]') 判"已存在"不区分注释 ——
+// 用户配置里一句 `# 例: [mcp_servers.abs]` 就让安装器报"已存在且路径正确, 跳过"，
+// 实际从未注册（静默失效，且重装永不修复）。
+// 故统一用行级扫描: section 头必须锚定行首、非注释；section 体到下一个 section 头为止。
+const TOML_ABS_SECTION = '[mcp_servers.abs]';
+
+/** 某行是否为 section 头（含数组表格 [[x]]）。 */
+function isTomlSectionHeader(line) {
+  return line.trimStart().startsWith('[');
+}
+
+/** 找出 [mcp_servers.abs] 真实 section 的 [start, end) 行下标；无则 null。
+ * 注释行（# 开头）不算 —— 这是修复 H1（注释导致假装成功）的关键。 */
+function findTomlAbsSection(lines) {
+  const start = lines.findIndex((l) => {
+    const t = l.trimStart();
+    return !t.startsWith('#') && t.trim() === TOML_ABS_SECTION;
+  });
+  if (start === -1) return null;
+  let end = start + 1;
+  while (end < lines.length && !isTomlSectionHeader(lines[end])) end++;
+  return { start, end };
+}
+
+/** 删除 [mcp_servers.abs] section（含其 body）；无则原样返回。
+ * @returns {{ text: string, removed: boolean }} */
+function removeTomlAbsSection(text) {
+  const lines = String(text || '').split('\n');
+  const sec = findTomlAbsSection(lines);
+  if (!sec) return { text, removed: false };
+  // 一并去掉 section 前的多余空行，避免留下连续空行
+  let from = sec.start;
+  while (from > 0 && lines[from - 1].trim() === '') from--;
+  const out = [...lines.slice(0, from), ...lines.slice(sec.end)];
+  return { text: out.join('\n').replace(/\n{3,}/g, '\n\n'), removed: true };
 }
 
 // ============================ Hook 脚本落盘 ============================
@@ -208,7 +299,9 @@ async function installCodex({ withMcp, withSkill, log }) {
     const mcpP = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'config.toml');
     let text = '';
     try { text = await fs.readFile(mcpP, 'utf8'); } catch {}
-    if (!text.includes('[mcp_servers.abs]')) {
+    const found = findTomlAbsSection(text.split('\n'));
+    if (!found) {
+      // 必须用 findTomlAbsSection 而非 includes —— 注释里的同名文本不算已注册（H1）。
       const block = `\n[mcp_servers.abs]\ncommand = "${process.execPath}"\nargs = ["${mcpEntryPath()}"]\n`;
       await backup(mcpP);
       await atomicWrite(mcpP, text.replace(/\s*$/, '') + '\n' + block);
@@ -216,13 +309,23 @@ async function installCodex({ withMcp, withSkill, log }) {
     } else {
       // 已存在也要校对路径: 旧版可能写入了仓库路径(不稳定) 或全局包已迁移。
       const want = mcpEntryPath();
-      const re = /(\[mcp_servers\.abs\][^\[]*?args\s*=\s*\[)"[^"]*"(\])/s;
-      if (re.test(text) && !text.includes(`"${want}"`)) {
-        await backup(mcpP);
-        await atomicWrite(mcpP, text.replace(re, `$1"${want}"$2`));
-        steps.push(`✓ MCP    → ${mcpP} 路径已校正 → ${want}`);
-      } else {
+      const lines = text.split('\n');
+      const body = lines.slice(found.start, found.end).join('\n');
+      if (body.includes(`"${want}"`)) {
         steps.push(`• MCP    → ${mcpP} 已存在且路径正确, 跳过`);
+      } else {
+        // 只改 args 行的字面量值，不碰其它行（正则跨行会误伤数组内容）
+        let touched = false;
+        for (let k = found.start; k < found.end; k++) {
+          if (/^\s*args\s*=/.test(lines[k])) { lines[k] = `args = ["${want}"]`; touched = true; break; }
+        }
+        if (touched) {
+          await backup(mcpP);
+          await atomicWrite(mcpP, lines.join('\n'));
+          steps.push(`✓ MCP    → ${mcpP} 路径已校正 → ${want}`);
+        } else {
+          steps.push(`• MCP    → ${mcpP} 已注册但无 args 行, 未动（请手动确认）`);
+        }
       }
     }
   }
@@ -242,7 +345,7 @@ async function uninstallCodex() {
   let changed = false;
   if (Array.isArray(cfg.hooks)) { // 历史扁平数组形态
     const before = cfg.hooks.length;
-    cfg.hooks = cfg.hooks.filter((h) => !String(h.command || '').includes('/.abs/hooks/'));
+    cfg.hooks = cfg.hooks.filter((h) => !isAbsStagedCommand(String(h.command || '')));
     changed = cfg.hooks.length !== before;
   } else if (cfg.hooks && typeof cfg.hooks === 'object') { // 对象形态 {EventName: [...]}
     for (const ev of Object.keys(cfg.hooks)) {
@@ -263,15 +366,52 @@ async function uninstallCodex() {
   const mcpP = join(home, 'config.toml');
   try {
     const text = await fs.readFile(mcpP, 'utf8');
-    if (text.includes('[mcp_servers.abs]')) {
-      const re = /\n?\[mcp_servers\.abs\][^\[]*/s;
-      await atomicWrite(mcpP, text.replace(re, '\n'));
+    // 用行级扫描而非正则: 正则会在 args = [...] 的 [ 处截断，
+    // 留下非法行 ["/…/mcp.js"] 让用户的 TOML 解析失败。
+    const { text: after, removed } = removeTomlAbsSection(text);
+    if (removed) {
+      await atomicWrite(mcpP, after);
       steps.push(`✓ MCP 已从 ${mcpP} 移除`);
     }
   } catch {}
   await fs.rm(hostSkillDir('codex'), { recursive: true, force: true });
   steps.push(`✓ skill 已删除`);
   return steps;
+}
+
+/**
+ * opencode 路径歧义提示（返回一行警告文本，无歧义时返回 null）。
+ *
+ * 背景: opencode 的全局配置默认在 ~/.config/opencode/，但它同样尊重
+ *   XDG_CONFIG_HOME（官方支持 XDG 规范）。若用户设了该变量，opencode 会去
+ *   $XDG_CONFIG_HOME/opencode/ 读配置，而本工具默认仍写 ~/.config/opencode/ ——
+ *   于是插件装了却不生效（静默失效，最难查）。同理 OPENCODE_CONFIG 可覆盖配置文件路径。
+ *
+ * 为什么只警告不自动跟随: ①跟随会让"装到哪"依赖环境变量，变得不可预测；
+ *   ②若 opencode 实际没读该变量，跟着写反而错。故只提示，把决定权留给用户 ——
+ *   用户可用 ABS_OPENCODE_HOME 显式指定目标。
+ */
+function opencodePathWarning() {
+  // 显式指定时不再提示（用户已经自己决定了目标）
+  if (process.env.ABS_OPENCODE_HOME) return null;
+  const hints = [];
+  const xdg = process.env.XDG_CONFIG_HOME;
+  if (xdg) {
+    const intended = join(xdg, "opencode");
+    const ours = hostConfigRoot("opencode");
+    if (resolve(intended) !== resolve(ours)) {
+      hints.push(`XDG_CONFIG_HOME=${xdg} → opencode 会读 ${intended}，但本工具写的是 ${ours}`);
+    }
+  }
+  if (process.env.OPENCODE_CONFIG) {
+    hints.push(`OPENCODE_CONFIG=${process.env.OPENCODE_CONFIG} 会覆盖全局配置路径`);
+  }
+  if (!hints.length) return null;
+  return [
+    "⚠ opencode 配置路径可能不一致（已装的插件可能不生效）:",
+    ...hints.map((h) => `    - ${h}`),
+    "  如需指定目标: ABS_OPENCODE_HOME=<配置根> abs install --agent opencode",
+  ].join("\n");
 }
 
 // ============================ Opencode / Pi (TS 插件) ============================
@@ -319,6 +459,8 @@ async function installOpenCode({ withMcp, withSkill, log }) {
   const p = join(dir, 'abs.ts');
   await atomicWrite(p, opencodePluginSource());
   steps.push(`✓ hook(ts plugin) → ${p}`);
+  const warn = opencodePathWarning();
+  if (warn) steps.push(warn);
   if (withMcp) {
     const mcpP = join(hostConfigRoot('opencode'), 'opencode.json');
     const cfg = await readJson(mcpP);
@@ -341,6 +483,9 @@ async function installOpenCode({ withMcp, withSkill, log }) {
 
 async function uninstallOpenCode() {
   const steps = [];
+  // 路径歧义提示（卸载侧同样有价值：可能提示用户去清另一个位置的旧副本）
+  const warn = opencodePathWarning();
+  if (warn) steps.push(warn);
   const plugin = join(hostConfigRoot('opencode'), 'plugins', 'abs.ts');
   await fs.rm(plugin, { force: true });
   steps.push(`✓ plugin 已删除`);
