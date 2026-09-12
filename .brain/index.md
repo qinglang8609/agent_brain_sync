@@ -36,6 +36,8 @@ lint 兜底（SOURCES-PILED-UP / DONE-PILED-UP，均带测试）。
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 ## Sources
+- [[2026-09-12-mcp-陈旧路径不只在一个文件]] — MCP 陈旧路径不只在一个文件: pi-mcp-adapter 的 hostConfigDiscovery 把 9 个外部 store…
+- [[2026-09-12-agents-skills]] — ~/.agents/skills/ 不是无主目录, 是 skills CLI(npx skills, ~/.agents/.skill-lock.json…
 ## Syntheses
 ## Sessions
 - [[log-2026-09-10]] — 修 Co​dex 安装崩溃(对象 vs 扁平数组) + 补收尾自动化(pi agent_end 注入) + lint 反向死引用检查; 含自动化形同虚设的根因剖析

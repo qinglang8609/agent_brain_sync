@@ -124,6 +124,64 @@ describe('install codex', () => {
     const toml = await fs.readFile(join(CODEX_CFG, 'config.toml'), 'utf8');
     assert.ok(toml.includes('[mcp_servers.abs]'), toml);
     await fs.access(join(CODEX_CFG, 'skills', 'abs-agent-brain-sync', 'SKILL.md'));
+
+  // 回归: 曾经只找单行 `/^\s*args\s*=/` 并原地替换 —— args 写成多行数组时
+  // 那一行不匹配，走 else 只打印"无 args 行, 未动"，旧路径**静默保留**成陈旧配置。
+  test('args 写成多行数组时也被校正 (不再静默留旧路径)', async () => {
+    await fs.mkdir(CODEX_CFG, { recursive: true });
+    const stale = '/Users/someone/Code/skills/agent_brain_sync/bin/mcp.js';
+    await fs.writeFile(join(CODEX_CFG, 'config.toml'), [
+      'model = "gpt-5"',
+      '',
+      '[mcp_servers.abs]',
+      'command = "/old/node"',
+      'args = [',
+      `  "${stale}",`,
+      ']',
+      '',
+      '[mcp_servers.other]',
+      'command = "z"',
+      '',
+    ].join('\n'), 'utf8');
+    const r = await run(['install', '--agent', 'codex', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const toml = await fs.readFile(join(CODEX_CFG, 'config.toml'), 'utf8');
+    assert.ok(!toml.includes(stale), '陈旧路径必须被清掉: ' + toml);
+    assert.ok(toml.includes('node_modules'), '应写入稳定全局路径: ' + toml);
+    assert.ok(toml.includes('[mcp_servers.other]'), '其它 section 不得丢');
+    assert.ok(toml.includes('command = "/old/node"'), 'command 不得改');
+  });
+
+  test('section 无 args 行时整段补写 args (不再只提示不动)', async () => {
+    await fs.mkdir(CODEX_CFG, { recursive: true });
+    await fs.writeFile(join(CODEX_CFG, 'config.toml'), [
+      '[mcp_servers.abs]',
+      'command = "/old/node"',
+      '',
+    ].join('\n'), 'utf8');
+    const r = await run(['install', '--agent', 'codex', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const toml = await fs.readFile(join(CODEX_CFG, 'config.toml'), 'utf8');
+    assert.ok(toml.includes('args = ['), '应补上 args: ' + toml);
+    assert.ok(toml.includes('node_modules'), toml);
+  });
+
+  test('args 旧但 command 含正确串时, 不误判为"已是正确路径"', async () => {
+    // 坑: 旧代码用 body.includes(`"${want}"`) 判等 —— command 行里恰好出现同串就被骗过。
+    await fs.mkdir(CODEX_CFG, { recursive: true });
+    const rr = await run(['install', '--agent', 'codex', '--yes']);
+    assert.equal(rr.code, 0, rr.stderr);
+    let toml = await fs.readFile(join(CODEX_CFG, 'config.toml'), 'utf8');
+    const want = toml.match(/args = \["([^"]+)"\]/)[1];
+    toml = toml.replace('args = ["' + want + '"]', 'args = ["/stale/old/mcp.js"]');
+    toml = toml.replace(/command = "[^"]*"/, 'command = "' + want + '"');
+    await fs.writeFile(join(CODEX_CFG, 'config.toml'), toml, 'utf8');
+    const r = await run(['install', '--agent', 'codex', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const after = await fs.readFile(join(CODEX_CFG, 'config.toml'), 'utf8');
+    assert.ok(!after.includes('/stale/old/mcp.js'), 'args 的旧路径必须被校正: ' + after);
+  });
+
   });
 
   // 回归: 三处 MCP 注册曾用 join(ABS_DIR,...) —— ABS_DIR = "install.js 自己住哪",
@@ -707,6 +765,236 @@ describe('安装流程: 用户数据安全', () => {
     assert.ok(!after.includes(`abs-SessionStart.sh`), `abs 自己的 hook 仍应被清理`);
   });
 });
+
+// ---------- ~/.claude.json 用户级 MCP store 校正 ----------
+// 背景: ~/.claude.json 是 Claude Code 自己的用户级 MCP store（`claude mcp add` 写它），
+// abs 原本从不读写它。它里面的 mcpServers.abs 若是历史/手工写入的仓库路径，就没人校正，
+// 且会被 pi-mcp-adapter 的 hostConfigDiscovery 读走，盖过 abs 自己写对的 settings.json。
+// 故 install 时"顺带校正已存在的条目"（不新增），uninstall 时"对称只删这一键"。
+describe('~/.claude.json 用户级 MCP store 校正', () => {
+  // CLAUDE_CONFIG_DIR=<sandbox>/cc → CC home = <sandbox>，故该文件在 <sandbox>/.claude.json
+  const USER_JSON = () => join(sandbox, '.claude.json');
+  const STALE = '/Users/someone/Code/skills/agent_brain_sync/bin/mcp.js';
+
+  const seed = async (obj) => {
+    await fs.writeFile(USER_JSON(), JSON.stringify(obj, null, 2), 'utf8');
+  };
+  const read = async () => JSON.parse(await fs.readFile(USER_JSON(), 'utf8'));
+  test('单宿主安装 (--agent codex) 也会校正外部 store', async () => {
+    // 坑: 校正若放在 installClaudeCode 里，`abs install --agent coDEX` 就完全跳过它。
+    // 外部 store 与"装了哪个宿主"无关，故必须挂在 runInstall 层。
+    const AG = join(HOME, '.agents', 'mcp.json');
+    await fs.mkdir(dirname(AG), { recursive: true });
+    await fs.writeFile(AG, JSON.stringify({ mcpServers: { abs: { command: '/n', args: [STALE] } } }), 'utf8');
+    const r = await run(['install', '--agent', 'codex', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = JSON.parse(await fs.readFile(AG, 'utf8'));
+    assert.notEqual(cfg.mcpServers.abs.args[0], STALE, '单宿主安装也必须校正: ' + r.stdout);
+    assert.ok(!cfg.mcpServers.abs.args[0].includes('some/skills'), cfg.mcpServers.abs.args[0]);
+
+  test('单宿主卸载 (--agent coDEX) 也会清理外部 store', async () => {
+    // 坑: 清理若放在 uninstallClaudeCode 里，`abs uninstall --agent coDEX` 就漏清理。
+    const AG = join(HOME, '.agents', 'mcp.json');
+    await fs.mkdir(dirname(AG), { recursive: true });
+    await fs.writeFile(AG, JSON.stringify({
+      mcpServers: { abs: { command: '/n', args: ['/x/mcp.js'] }, keep: { command: 'z' } },
+      topKeep: 1,
+    }), 'utf8');
+    const r = await run(['uninstall', '--agent', 'codex', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = JSON.parse(await fs.readFile(AG, 'utf8'));
+    assert.ok(!cfg.mcpServers.abs, '单宿主卸载也必须清理: ' + r.stdout);
+    assert.deepEqual(cfg.mcpServers.keep, { command: 'z' }, '他人条目不得删');
+    assert.equal(cfg.topKeep, 1, '无关顶层键不得删');
+
+  test('coDEX config.json 两种容器名 (mcp_servers / mcpServers) 都能校正', async () => {
+    // pi-mcp-adapter 读的是 obj.mcp_servers ?? obj.mcpServers（extractServers），
+    // 故两种写法都得认，否则写成 mcpServers 的那份会漏校正成陈旧值。
+    const J = join(CODEX_CFG, 'config.json');
+    for (const k of ['mcp_servers', 'mcpServers']) {
+      await fs.mkdir(dirname(J), { recursive: true });
+      await fs.writeFile(J, JSON.stringify({
+        [k]: { abs: { command: '/old/node', args: [STALE] }, keep: { command: 'z' } },
+        topKeep: 1,
+      }), 'utf8');
+      const r = await run(['install', '--agent', 'codex', '--yes']);
+      assert.equal(r.code, 0, r.stderr);
+      const cfg = JSON.parse(await fs.readFile(J, 'utf8'));
+      assert.ok(!cfg[k].abs.args[0].includes('skills'), `${k}: 陈旧路径应被校正: ` + r.stdout);
+      assert.ok(cfg[k].abs.args[0].includes('node_modules'), k);
+      assert.equal(cfg[k].abs.command, '/old/node', `${k}: command 不得改`);
+      assert.deepEqual(cfg[k].keep, { command: 'z' }, `${k}: 他人条目不得丢`);
+      assert.equal(cfg.topKeep, 1, `${k}: 无关顶层键不得丢`);
+
+      await run(['uninstall', '--agent', 'codex', '--yes']);
+      const after = JSON.parse(await fs.readFile(J, 'utf8'));
+      assert.ok(!after[k].abs, `${k}: 卸载应删 abs`);
+      assert.deepEqual(after[k].keep, { command: 'z' }, `${k}: 卸载不得删他人条目`);
+    }
+  });
+
+  });
+
+  });
+
+
+  test('陈旧的仓库路径被校正为稳定路径（只改 args，command 与其它键保留）', async () => {
+    await seed({
+      numStartups: 42,
+      mcpServers: { abs: { type: 'stdio', command: '/some/node', args: [STALE], env: {} } },
+      projects: { '/x': { y: 1 } },
+    });
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = await read();
+    assert.notEqual(cfg.mcpServers.abs.args[0], STALE, '陈旧路径应被校正');
+    assert.ok(!cfg.mcpServers.abs.args[0].includes('some/skills'), cfg.mcpServers.abs.args[0]);
+    assert.equal(cfg.mcpServers.abs.command, '/some/node', 'command 不得改动');
+    assert.deepEqual(cfg.mcpServers.abs.env, {}, '其它键不得丢失');
+    assert.equal(cfg.numStartups, 42, '无关顶层键不得丢失');
+    assert.deepEqual(cfg.projects, { '/x': { y: 1 } }, 'projects 不得丢失');
+    assert.ok(r.stdout.includes('已校正'), r.stdout);
+  });
+
+  test('已正确时幂等: 不写文件、mtime 不变', async () => {
+    // 该文件不存在时 abs 不会创建它（不往别人的 store 里塞东西），故先预置一份
+    // 已存在的条目，再由 install 校正成正确值 —— 第二次才谈得上幂等。
+    await seed({ mcpServers: { abs: { type: 'stdio', command: '/some/node', args: [STALE] } } });
+    await run(['install', '--agent', 'claude-code', '--yes']);
+    const mtime1 = (await fs.stat(USER_JSON())).mtimeMs;
+    await new Promise((res) => setTimeout(res, 12)); // 让 mtime 有区分度
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal((await fs.stat(USER_JSON())).mtimeMs, mtime1, '幂等时不应重写文件');
+    assert.ok(!/已校正/.test(r.stdout), '已正确时不应再校正: ' + r.stdout);
+  });
+
+  test('无 mcpServers.abs 键时不新增条目', async () => {
+    await seed({ mcpServers: { other: { command: 'x' } }, foo: 1 });
+    const before = await fs.readFile(USER_JSON(), 'utf8');
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = await read();
+    assert.ok(!cfg.mcpServers.abs, '不得往别人的 store 里塞条目');
+    assert.deepEqual(cfg.mcpServers.other, { command: 'x' }, '既有条目不得改动');
+    assert.equal(await fs.readFile(USER_JSON(), 'utf8'), before, '文件应一字不动');
+  });
+
+  test('文件不存在: 静默跳过, 不创建文件', async () => {
+    assert.ok(!existsSync(USER_JSON()));
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!existsSync(USER_JSON()), '不得凭空创建 CC 的 store');
+  });
+
+  test('JSON 损坏: 不抛错、不写坏文件', async () => {
+    const broken = '{ // JSONC\n  "mcpServers": {}\n}\n';
+    await fs.writeFile(USER_JSON(), broken, 'utf8');
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, '坏 JSON 不得中断安装: ' + r.stderr);
+    assert.equal(await fs.readFile(USER_JSON(), 'utf8'), broken, '用户文件一字不动');
+    // 安装本身仍应完成
+    assert.ok(existsSync(CC_SETTINGS()), 'settings.json 仍应写入');
+  });
+
+  test('卸载: 只删 mcpServers.abs, 保留其它键与文件', async () => {
+    await seed({
+      mcpServers: {
+        abs: { type: 'stdio', command: '/some/node', args: [STALE] },
+        keepme: { command: 'y' },
+      },
+      someTop: 'KEEP',
+    });
+    await run(['install', '--agent', 'claude-code', '--yes']);
+    const r = await run(['uninstall', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const cfg = await read();
+    assert.ok(!cfg.mcpServers.abs, 'abs 条目应删除');
+    assert.deepEqual(cfg.mcpServers.keepme, { command: 'y' }, '他人条目不得删');
+    assert.equal(cfg.someTop, 'KEEP', '无关顶层键不得删');
+    assert.ok(r.stdout.includes('已移除'), r.stdout);
+  });
+
+  test('卸载时无该键: 不动文件、不报错', async () => {
+    await seed({ mcpServers: { other: { command: 'x' } } });
+    const before = await fs.readFile(USER_JSON(), 'utf8');
+    await run(['install', '--agent', 'claude-code', '--yes']);
+    await fs.writeFile(USER_JSON(), before, 'utf8'); // 还原成无 abs 键状态
+    const r = await run(['uninstall', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(await fs.readFile(USER_JSON(), 'utf8'), before, '文件应一字不动');
+  });
+
+  test('共享/通用 store (~/.agents/mcp.json、~/.config/mcp/mcp.json) 同样被校正', async () => {
+    // 这两个也是 pi-mcp-adapter 的发现源（AGENTS_GLOBAL_CONFIG_PATHS /
+    // GENERIC_GLOBAL_CONFIG_PATH），陈旧值同样会经发现链复活。
+    const AG = join(HOME, '.agents', 'mcp.json');
+    const GEN = join(HOME, '.config', 'mcp', 'mcp.json');
+    await fs.mkdir(dirname(AG), { recursive: true });
+    await fs.mkdir(dirname(GEN), { recursive: true });
+    await fs.writeFile(AG, JSON.stringify({ mcpServers: { abs: { command: '/some/node', args: [STALE] } } }), 'utf8');
+    await fs.writeFile(GEN, JSON.stringify({ mcpServers: { abs: { command: '/some/node', args: [STALE] } } }), 'utf8');
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    for (const f of [AG, GEN]) {
+      const cfg = JSON.parse(await fs.readFile(f, 'utf8'));
+      assert.notEqual(cfg.mcpServers.abs.args[0], STALE, `${f} 的陈旧路径应被校正`);
+      assert.equal(cfg.mcpServers.abs.command, '/some/node', `${f} command 不得改`);
+    }
+    await run(['uninstall', '--agent', 'claude-code', '--yes']);
+    for (const f of [AG, GEN]) {
+      const cfg = JSON.parse(await fs.readFile(f, 'utf8'));
+      assert.ok(!cfg.mcpServers.abs, `${f} 的 abs 条目应被移除`);
+    }
+  });
+});
+
+
+// ---------- ~/.agents/skills/ 只读检测 ----------
+// 背景: ~/.agents/skills/ 归 `skills` CLI 所有（~/.agents/.skill-lock.json 是它的账本），
+// 各宿主 skills/ 只是它 fan-out 的目标。abs **不写**那里 —— 写了就绕过 lockfile，
+// 会被它下次 sync 判成异常或覆盖。但现实里常有一份手工 cp 的副本（实测与 abs install
+// 同一秒、内容相同、lockfile 却没人认领），它不会随 install 更新、会与真身脱节。
+// 处置: 只读检测 + 告警提示清理命令，绝不代删代写。
+describe('~/.agents/skills/ 只读检测', () => {
+  const AG_SKILL = () => join(HOME, '.agents', 'skills', 'abs-agent-brain-sync', 'SKILL.md');
+
+  test('不存在时不打扰 (无告警、不创建目录)', async () => {
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes('~/.agents/skills'), '不该无中生有告警: ' + r.stdout);
+    assert.ok(!existsSync(join(HOME, '.agents')), 'abs 绝不得创建 ~/.agents');
+  });
+
+  test('存在但内容陈旧 → 告警并给出清理命令 (仍不改写它)', async () => {
+    await fs.mkdir(dirname(AG_SKILL()), { recursive: true });
+    const stale = '---\nname: abs-agent-brain-sync\ndescription: 旧版本\n---\n\n旧内容\n';
+    await fs.writeFile(AG_SKILL(), stale, 'utf8');
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes('不一致的副本'), '应告警: ' + r.stdout);
+    assert.ok(r.stdout.includes('rm -rf'), '应给清理命令: ' + r.stdout);
+    // 关键: 绝不代用户删或改 —— 那是别人的目录
+    assert.equal(await fs.readFile(AG_SKILL(), 'utf8'), stale, 'abs 不得改写该文件');
+  });
+
+  test('内容与当前版本一致时不告警', async () => {
+    await fs.mkdir(dirname(AG_SKILL()), { recursive: true });
+    await fs.copyFile(join(REPO, 'skill', 'SKILL.md'), AG_SKILL());
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes('不一致的副本'), '一致时不该告警: ' + r.stdout);
+  });
+
+  test('--no-skill 时不检查', async () => {
+    await fs.mkdir(dirname(AG_SKILL()), { recursive: true });
+    await fs.writeFile(AG_SKILL(), '---\nname: x\ndescription: y\n---\n旧\n', 'utf8');
+    const r = await run(['install', '--agent', 'claude-code', '--yes', '--no-skill']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes('不一致的副本'), '装了 skill 才需要看 skill 告警: ' + r.stdout);
+  });
+});
+
 
 // ---------- 入口路径必须稳定（不烧仓库路径） ----------
 // 背景: ABS_DIR = "install.js 自己住哪"。从仓库跑 `abs install` 就把仓库路径

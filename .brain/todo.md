@@ -5,6 +5,10 @@
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-12
 
+- [x] ZW-CHARS-IN-COMMENTS — src/install.js 三处注释(:152/:209/:723)含 U+200B 零宽字符, 会让基于文本的匹配(edit/grep)静默失配 —— 本次修 bug 时反复踩到(edit 的 oldText 永远匹配不上, 因为多了一个不可见字符)。已清除, 两个源文件现为 0 处 Cf 字符。 【落地】 (完成 2026-09-12)
+- [x] AGENTS-SKILL-READONLY-DETECT — ~/.agents/skills/ 归 skills CLI 所有(abs 不写它), 但常有一份手工 cp 的残留副本会与真身脱节。处置: 只读检测+告警+给清理命令, 绝不代删代写。内容逐字节相同则静默, --no-skill 时不检查。 【落地】 (完成 2026-09-12)
+- [x] CODEX-TOML-ARGS-MULTILINE — codex config.toml 的 [mcp_servers.abs] 路径校对曾经只找单行 /^\s*args\s*=/ 原地替换 —— args 写成多行数组时那行不匹配, 走 else 只打印'无 args 行,未动', 旧路径静默保留。且 body.includes 判等会被 command 行里的同串骗过。修法: 新增 findTomlKeyRange 把 args 作整体替换(跨行吃到配对 ]); 无 args 行则整段重写 section。 【落地】 (完成 2026-09-12)
+- [x] MCP-FOREIGN-STORE — install 时校正 9 个外部 MCP store(~/.claude.json、~/.claude/mcp.json、Claude Desktop、Cursor、Windsurf、codex config.json 双容器名、~/.config/mcp/mcp.json、~/.agents/mcp.json ×2)里已存在的 mcpServers.abs.args。只改 args 不动 command、不新增条目、缺失/坏 JSON 静默跳过、幂等不写。uninstall 对称只删该键。校正挂在 runInstall/runUninstall 层(与宿主无关, 否则 --agent codex 单宿主路径漏跑)。 【落地】 (完成 2026-09-12)
 - [x] LOG-BACKFILL-34 — 【已决定不修】log.md 34 条历史残句。事实认定: 完整原文在文件/git 全历史/归档 session 页均不存在(逐 commit 核对), 截断发生在写入时且原文已销毁 → 属不可恢复, 只能推断重写。风险实证: 本次试写批量脚本即把'修 Pi 缺失 MCP 注册：'整段开头吃掉(已回滚并逐字节校验)。已向用户确认: 旧的不管。保留此条仅为记录认定结论, 避免后续会话重复调查。新写入自 1.5.4 起不再截断。 【否决】 (完成 2026-09-12)
 - [x] NOTE-TAGS-BOOL — abs note --tags 被解析成布尔 true → frontmatter 写成 tags: [source, true], 且 'abs,摘要' 还粘进了正文。复现: abs note '测试' --tags abs,摘要 → 页头 tags:[source,true]。根因疑在 bin/abs.js 的 parseArgv: --tags 被当成无值开关(与 --note 同类形态), 或值与下一位置参数错位。验证: 断言 tags 行含传入的各标签且正文不含标签串。非本次 LOG-TRUNC-100 引入(旧版同样复现, 已对 pristine 版验证) 【落地】 (完成 2026-09-12)
 - [x] INSTALL-HELP-FOOTGUN — abs install --help 会静默执行全量安装而非打印帮助。根因: bin/abs.js 把 --help 只当顶层命令处理(case 'help': case '--help'), 跟在 install 后面时落到 parseArgv 的通用分支 o['help']=true, 而 install 分支根本不读它 → 走安装路径。危害: 用户想看帮助却改了四宿主配置(幂等所以不炸, 但是意外副作用)。修法: ①install/uninstall 分支开头检查 opts.help 则打印该命令用法并 return ②或在 parseArgv 里遇 --help 直接短路。验证: abs install --help 不产生任何文件写入(沙盒断言), 且输出用法 【落地】 (完成 2026-09-12)

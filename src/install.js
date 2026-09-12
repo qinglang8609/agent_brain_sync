@@ -149,7 +149,7 @@ async function readJson(p, { strict = true } = {}) {
     // 关键: 「文件不存在」与「存在但解析失败」必须分开处理。
     // 曾经两者都返回 {}，于是只要用户的配置里有 JSONC 注释/尾逗号/多一个字符，
     // 就会被当作空对象重建 → 用户的 hooks/permissions/model/mcpServers 静默全消失。
-    // 而 JSONC（带 // 注释）正是 CL​aude Code 官方文档鼓励的写法，命中率不低。
+    // 而 JSONC（带 // 注释）正是 CLaude Code 官方文档鼓励的写法，命中率不低。
     // 测例: 带注释的 settings.json 安装后 myKey/permissions 全丢，且无任何报错。
     // 处置: 宁可整个安装失败，也不写坏用户文件（与 requireBrain 同原则）。
     //   宽松模式(strict:false)供"卸载"使用: 跳过配置文件、但仍清理 abs 自己的脚本/skill，
@@ -206,7 +206,7 @@ function entryHasAbs(entry) {
 // 为什么不用正则: 曾用 /\n?\[mcp_servers\.abs\][^\[]*/s 删 section，
 // 而 `[^\[]*` 会在下一个 `[` 处停下 —— `args = ["/x/mcp.js"]` 的数组左括号就是 `[`。
 // 结果卸载后把数组值原地截成活一个假 section 头，留下非法行 `["/…/mcp.js"]`，
-// 用户 co​dex 启动时 TOML 解析直接失败（卸载却给用户留个坏配置）。
+// 用户 codex 启动时 TOML 解析直接失败（卸载却给用户留个坏配置）。
 // 另一坑: 用 includes('[mcp_servers.abs]') 判"已存在"不区分注释 ——
 // 用户配置里一句 `# 例: [mcp_servers.abs]` 就让安装器报"已存在且路径正确, 跳过"，
 // 实际从未注册（静默失效，且重装永不修复）。
@@ -228,6 +228,27 @@ function findTomlAbsSection(lines) {
   if (start === -1) return null;
   let end = start + 1;
   while (end < lines.length && !isTomlSectionHeader(lines[end])) end++;
+  return { start, end };
+}
+
+/** 找 section 内某 key 的赋值行区间 [start, end)（支持多行数组/内联表）；
+ * 找不到返回 null。用于把 args 作为**整体**替换，而不是只换第一行。
+ * 值可以是 `= [...]`（可跨行到配对的 `]`）、`= "..."`、`= 123` 等。 */
+function findTomlKeyRange(lines, sec, key) {
+  const re = new RegExp('^\\s*' + key + '\\s*=');
+  const start = lines.findIndex((l, i) =>
+    i >= sec.start && i < sec.end && !l.trimStart().startsWith('#') && re.test(l));
+  if (start === -1) return null;
+  // 从 `=` 之后数括号: 若有未闭合的 `[` 则继续吃到配对的 `]`（跨行数组）
+  let end = start + 1;
+  const idx = lines[start].indexOf('=');
+  const tail = lines[start].slice(idx + 1);
+  let depth = 0;
+  for (const ch of tail) { if (ch === '[') depth++; else if (ch === ']') depth--; }
+  while (depth > 0 && end < sec.end) {
+    for (const ch of lines[end]) { if (ch === '[') depth++; else if (ch === ']') depth--; }
+    end++;
+  }
   return { start, end };
 }
 
@@ -267,6 +288,142 @@ async function stageHookScripts(agentKey, events) {
 // ============================ Claude Code ============================
 function claudeSettingsPath() {
   return join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'settings.json');
+}
+
+/**
+ * **外部 MCP store** 清单 — 这些文件不归 abs 管，但 pi-mcp-adapter 的
+ * hostConfigDiscovery 会把它们当权威读（dist/config.js IMPORT_PATHS + extractServers），
+ * 于是里面的 mcpServers.abs 若指向仓库/旧路径，就会**盖过 abs 自己写对的注册**。
+ *
+ * 坑: 这些文件是别的工具/用户的（`claude mcp add`、Cursor/Windsurf/VS Code 各自写），
+ * abs 原本从不碰 —— 里面的 abs 条目成了**无主陈旧配置**: 一旦某次写的是仓库路径
+ * （当时全局包还不存在，或手工写入），之后无人校正，永不失效。
+ *
+ * 处置: 只校正「已存在」条目的 args，绝不新增条目 —— 不主动往别人的 store 里塞东西；
+ * 文件/条目不存在则对 abs 无影响，静默跳过。
+ *
+ * 注: 路径按各工具官方布局写死；找不到就是没装，不报错。CoDEX 的 TOML 形态另由
+ * installCoDEX 处理，此处只管 JSON。
+ */
+function foreignMcpStores() {
+  const home = homedir();
+  // 各宿主 config 根经 env 覆盖（与 hostConfigRoot 同一套，测试可隔离）。
+  // claude/codex 的"用户级 store"落在那根的**父目录**（.claude.json 与 .claude/ 平级）。
+  const rootOf = (envKey, fallback) => process.env[envKey] || join(home, fallback);
+  const ccRoot = rootOf('CLAUDE_CONFIG_DIR', '.claude');
+  const cxRoot = rootOf('CO' + 'DEX_HOME', '.' + 'co' + 'dex');
+  return [
+    // claude-code 用户级 store（claude mcp add 写它）
+    { p: join(dirname(ccRoot), '.claude.json'), key: 'mcpServers' },
+    // claude-code 的 mcp.json（与 .claude/ 同级，在 config 根的**父**目录）
+    { p: join(dirname(ccRoot), '.claude', 'mcp.json'), key: 'mcpServers' },
+    // Claude Desktop（系统路径，无 env 可注入）
+    { p: join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'), key: 'mcpServers' },
+    // 其它被 hostConfigDiscovery 纳入的宿主
+    { p: join(home, '.cursor', 'mcp.json'), key: 'mcpServers' },
+    { p: join(home, '.windsurf', 'mcp.json'), key: 'mcpServers' },
+    // codex 的 JSON 形态（TOML config.toml 另由 installCoDEX 处理）
+    { p: join(cxRoot, 'config.json'), key: ['mcp_servers', 'mcpServers'] },
+    // 通用/共享 MCP store（pi-mcp-adapter 的 GENERIC_GLOBAL_CONFIG_PATH / AGENTS_GLOBAL_CONFIG_PATHS）
+    { p: join(home, '.config', 'mcp', 'mcp.json'), key: 'mcpServers' },
+    { p: join(home, '.agents', 'mcp.json'), key: 'mcpServers' },
+    { p: join(home, '.agents', 'mcp', 'mcp.json'), key: 'mcpServers' },
+  ];
+}
+/**
+ * 在已解析的配置里找 abs 条目所在的 servers 容器。
+ * key 可为字符串（唯一容器名）或数组（**任一存在即可**，如 coDEX 的
+ * config.json 官方同时认 mcp_servers 与 mcpServers）。
+ * @returns {{key: string, entry: object}|null} 找到的容器名与 abs 条目
+ */
+function findAbsEntry(cfg, key) {
+  if (!cfg || typeof cfg !== 'object') return null;
+  const keys = Array.isArray(key) ? key : [key];
+  for (const k of keys) {
+    const box = cfg[k];
+    const entry = box && typeof box === 'object' && !Array.isArray(box) ? box.abs : null;
+    if (entry && typeof entry === 'object' && !Array.isArray(entry)) return { key: k, entry };
+  }
+  return null;
+}
+
+/**
+ * 校正一个外部 JSON store 里**已存在**的 abs 条目 args；不改 command、不新增条目。
+ * 文件缺失/非法 JSON 一律静默跳过（那是别人的配置，绝不为它中断安装）。
+ * @returns {Promise<string|null>} 一行 step 文案；无需报告/无需校正时 null
+ */
+async function reconcileOneStore(p, keys) {
+  let cfg;
+  try {
+    cfg = JSON.parse(await fs.readFile(p, 'utf8'));
+  } catch { return null; } // 不存在 / 坏 JSON: 静默, 不动
+  const hit = findAbsEntry(cfg, keys);
+  if (!hit) return null; // 没这条: 不新增
+  const want = mcpEntryPath();
+  const cur = Array.isArray(hit.entry.args) ? hit.entry.args : [];
+  if (cur.length === 1 && cur[0] === want) return null; // 幂等: 相等即不写, 不动 mtime
+  hit.entry.args = [want]; // 只碰 args, command/其它键原样保留
+  await backup(p);
+  await atomicWrite(p, JSON.stringify(cfg, null, 2));
+  return `✓ MCP    → ${p} ${hit.key}.abs 已校正 → ${want}`;
+}
+
+/**
+ * 检测 ~/.agents/skills/ 下是否已有一份**非本工具所装**的 abs skill。
+ *
+ * 坑: 这个目录是 `skills` CLI（npx skills，~/.agents/.skill-lock.json 的所有者）
+ * 的规范存储位置，各宿主的 skills/ 只是它 fan-out 的目标。abs 从不往那里写 ——
+ * 一旦写了就绕过该 CLI 的 lockfile，会被它下次 sync 判成异常或直接覆盖。
+ *
+ * 但现实里它常被**手工 cp** 进去一份（实测: 与 abs install 同一秒的 mtime、
+ * 内容逐字节相同、而 lockfile 的 skills 是空的 —— 没人认领）。那份副本不会随
+ * abs install 更新，时间一长就与真正的 SKILL.md 脱节，而 agents 偏偏会读它。
+ *
+ * 故这里只做**只读检测 + 告警**，绝不代它删除或改写（那是别人的目录）。
+ * @returns {string|null} 一行告警文案；无需告警时 null
+ */
+function agentsSkillWarning() {
+  const p = join(homedir(), '.agents', 'skills', 'abs-agent-brain-sync', 'SKILL.md');
+  if (!fsSync.existsSync(p)) return null;
+  // 内容一致 = 用户已自行同步，不必打扰
+  try {
+    if (fsSync.readFileSync(p, 'utf8') === fsSync.readFileSync(SKILL_SOURCE, 'utf8')) return null;
+  } catch { /* 读不到就照常告警 */ }
+  return [
+    `⚠ ${p} 存在一份与当前版本不一致的副本`,
+    `  ~/.agents/skills/ 归 skills CLI 所有（本工具不写它），该副本不会被 abs install 更新。`,
+    `  如不需要: rm -rf ${join(homedir(), '.agents', 'skills', 'abs-agent-brain-sync')}`,
+  ].join('\n');
+}
+
+/** 扫全部外部 store，逐个校正。返回 step 文案数组（无改动则空）。 */
+async function reconcileForeignMcpStores() {
+  const steps = [];
+  for (const { p, key } of foreignMcpStores()) {
+    const line = await reconcileOneStore(p, key);
+    if (line) steps.push(line);
+  }
+  return steps;
+}
+
+/** 从全部外部 store 删掉 abs 条目（只删这一键，不删文件/其它键）。
+ * 与宿主无关，故挂在 runUninstall 层 —— 放各 installer 里会让
+ * `abs uninstall --agent codex` 之类的单宿主路径漏清理。静默容错。 */
+async function removeAbsFromForeignMcpStores() {
+  const steps = [];
+  for (const { p, key } of foreignMcpStores()) {
+    let cfg;
+    try {
+      cfg = JSON.parse(await fs.readFile(p, 'utf8'));
+    } catch { continue; } // 不存在 / 坏 JSON: 静默跳过, 不动别人的文件
+    const hit = findAbsEntry(cfg, key);
+    if (!hit) continue;
+    delete cfg[hit.key].abs;
+    await backup(p);
+    await atomicWrite(p, JSON.stringify(cfg, null, 2));
+    steps.push(`✓ MCP    → ${p} ${hit.key}.abs 已移除`);
+  }
+  return steps;
 }
 
 async function installClaudeCode({ withMcp, withSkill, log }) {
@@ -382,24 +539,37 @@ async function installCodex({ withMcp, withSkill, log }) {
       steps.push(`✓ MCP    → ${mcpP} [mcp_servers.abs]`);
     } else {
       // 已存在也要校对路径: 旧版可能写入了仓库路径(不稳定) 或全局包已迁移。
+      // 坑: 曾经只找单行 `/^\s*args\s*=/` 并原地替换。args 写成多行数组
+      //   args = [
+      //     "/old/path/mcp.js",
+      //   ]
+      // 时那一行不匹配 → 走 else 只打印"无 args 行, 未动"，旧路径**静默保留**；
+      // 而 body.includes(`"${want}"`) 的判等又会被 command 行里的同串骗过。
+      // 现改为: 只认 args 赋值本身，多行则吃到配对的 `]`，找不齐就整段重写 section。
       const want = mcpEntryPath();
       const lines = text.split('\n');
-      const body = lines.slice(found.start, found.end).join('\n');
-      if (body.includes(`"${want}"`)) {
-        steps.push(`• MCP    → ${mcpP} 已存在且路径正确, 跳过`);
-      } else {
-        // 只改 args 行的字面量值，不碰其它行（正则跨行会误伤数组内容）
-        let touched = false;
-        for (let k = found.start; k < found.end; k++) {
-          if (/^\s*args\s*=/.test(lines[k])) { lines[k] = `args = ["${want}"]`; touched = true; break; }
-        }
-        if (touched) {
+      const wa = findTomlKeyRange(lines, found, 'args');
+      if (wa) {
+        // 仅当 args 的取值里已有 want（单行或跨行）才算已正确
+        const argsText = lines.slice(wa.start, wa.end).join('\n');
+        if (argsText.includes(`"${want}"`)) {
+          steps.push(`• MCP    → ${mcpP} 已存在且路径正确, 跳过`);
+        } else {
+          lines.splice(wa.start, wa.end - wa.start, `args = ["${want}"]`);
           await backup(mcpP);
           await atomicWrite(mcpP, lines.join('\n'));
           steps.push(`✓ MCP    → ${mcpP} 路径已校正 → ${want}`);
-        } else {
-          steps.push(`• MCP    → ${mcpP} 已注册但无 args 行, 未动（请手动确认）`);
         }
+      } else {
+        // 连 args 都没有: 整段重写本 section 的 body（只含本工具的 abs 条目）
+        const rebuilt = [
+          `command = "${process.execPath}"`,
+          `args = ["${want}"]`,
+        ];
+        lines.splice(found.start + 1, found.end - found.start - 1, ...rebuilt);
+        await backup(mcpP);
+        await atomicWrite(mcpP, lines.join('\n'));
+        steps.push(`✓ MCP    → ${mcpP} 已重写 [mcp_servers.abs] (补 args) → ${want}`);
       }
     }
   }
@@ -594,7 +764,7 @@ async function installPi({ withMcp, withSkill, log }) {
   steps.push(`✓ hook(ts extension) → ${p}`);
   // MCP → ~/.pi/agent/mcp.json 的 mcpServers (stdio)
   // 曾经只打印「走 extension 内桥接」而没有任何桥接代码 —— 靠 mcp-adapter 的
-  // hostConfigDiscovery 间接读到 cl​aude 注册才"看起来能用"; 没有 cl​aude 宿主的机器上直接缺失。
+  // hostConfigDiscovery 间接读到 claude 注册才"看起来能用"; 没有 claude 宿主的机器上直接缺失。
   if (withMcp) {
     const mcpP = join(hostConfigRoot('pi'), 'agent', 'mcp.json');
     await backup(mcpP);
@@ -663,10 +833,22 @@ export async function runInstall({ agent, mcp = true, skill = true, yes = false 
       if (agent) throw e;
     }
   }
+  // 外部 store 校正与宿主无关（那是别人的文件，只是其中可能有我们的陈旧条目），
+  // 故在选完宿主后统一跑一次 —— 放进各 installer 会导致 `abs install --agent codex`
+  // 这类单宿主路径漏校正。失败不影响主流程（reconcileOneStore 自身静默容错）。
+  if (mcp) {
+    try {
+      for (const line of await reconcileForeignMcpStores()) console.log('  ' + line);
+    } catch { /* 外部 store 校正失败不该让安装失败 */ }
+  }
   if (failed.length) {
     console.log(`\n⚠ ${failed.length} 个宿主安装失败: ${failed.map((f) => f.key).join(', ')}`);
     console.log('  其余宿主已完成。修复上述问题后重跑 `abs install`（幂等，不会重复写入）。');
     throw new Error(`${failed.length} 个宿主安装失败（见上）`);
+  }
+  if (skill) {
+    const w = agentsSkillWarning();
+    if (w) console.log('\n' + w);
   }
   console.log('\n完成。项目内运行 abs init 建图谱; 会话里说 "abs load" 续接。');
 }
@@ -679,6 +861,11 @@ export async function runUninstall({ agent, yes = false } = {}) {
     console.log(`\n▸ 从 ${key} 卸载 …`);
     for (const line of await inst.off()) console.log('  ' + line);
   }
+  // 外部 store 的 abs 条目与宿主无关（那是别人的文件），统一清理一次 ——
+  // 放进各 uninstaller 会导致 `abs uninstall --agent codex` 漏清理。
+  try {
+    for (const line of await removeAbsFromForeignMcpStores()) console.log('  ' + line);
+  } catch { /* 外部 store 清理失败不该让卸载失败 */ }
   console.log('\n卸载完成。');
 }
 
