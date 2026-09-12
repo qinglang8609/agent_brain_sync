@@ -563,3 +563,63 @@ describe('cli: 使用者姓名与作者标记', () => {
     assert.ok(!todo.includes('@fileuser'), `不得用文件里的名字: ${todo}`);
   });
 });
+
+// ---------- 未设姓名时的主动提醒 ----------
+// 坑: 守卫只在写操作报错，而 init/load/hook 提醒一路沉默 ——
+// 用户建了图谱、跑了 load、直到第一次 todo add 才撞墙，中间无从知道要设姓名。
+// 三处都该主动提：init 输出 / load 开场 / hook 收尾注入。
+describe('cli: 未设姓名时的主动提醒', () => {
+  function envNoUser(extra = {}) {
+    return { ABS_CONFIG_DIR: join(sandbox, 'u-cfg'), ABS_USER: undefined, ...extra };
+  }
+
+  test('abs init 后提示设置姓名', async () => {
+    const p = join(sandbox, 'p-init');
+    await fs.mkdir(p, { recursive: true });
+    const r = await run(['init', '--dir', p], { env: envNoUser() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes('尚未设置使用者姓名'), `init 应提醒: ${r.stdout}`);
+    assert.ok(r.stdout.includes('abs config set user'), `应给设置命令: ${r.stdout}`);
+  });
+
+  test('abs load 开场提示设置姓名', async () => {
+    const p = join(sandbox, 'p-load');
+    await fs.mkdir(p, { recursive: true });
+    await run(['init', '--dir', p], { env: envNoUser() });
+    const r = await run(['load', '--dir', p], { env: envNoUser() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes('尚未设置使用者姓名'), `load 应提醒: ${r.stdout.slice(0, 300)}`);
+    // 提醒应在最前（开机第一屏）
+    const warnIdx = r.stdout.indexOf('尚未设置使用者姓名');
+    const routeIdx = r.stdout.indexOf('当前路线');
+    assert.ok(warnIdx < routeIdx, '提醒应出现在路线之前');
+  });
+
+  test('已设姓名时 init/load 不啰嗦', async () => {
+    const p = join(sandbox, 'p-ok');
+    await fs.mkdir(p, { recursive: true });
+    const env = { ABS_CONFIG_DIR: join(sandbox, 'u-cfg'), ABS_USER: 'fanchao' };
+    const i = await run(['init', '--dir', p], { env });
+    assert.ok(!i.stdout.includes('尚未设置'), `已设姓名不该提醒: ${i.stdout}`);
+    const l = await run(['load', '--dir', p], { env });
+    assert.ok(!l.stdout.includes('尚未设置'), `已设姓名 load 不该提醒: ${l.stdout.slice(0, 200)}`);
+  });
+
+  test('teardown-check 注入的收尾指令含设姓名步骤（未设时）', async () => {
+    // 用全新项目目录：守卫③要求「log.md 今日无条目」，
+    // 同 describe 前面用例已写过 log 会让这里恒返回 {}。
+    const p = join(sandbox, 'p-td');
+    const cfgDir = join(sandbox, 'td-cfg'); // 独立配置目录，确保仍处于「未设姓名」状态
+    await fs.mkdir(p, { recursive: true });
+    const env = { ABS_CONFIG_DIR: cfgDir, ABS_USER: undefined, ABS_LOG_DIR: join(sandbox, 'td-log') };
+    await run(['init', '--dir', p], { env });
+    const trans = join(sandbox, 'td.jsonl');
+    await fs.writeFile(trans,
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write' }] } }) + '\n', 'utf8');
+    const payload = JSON.stringify({ session_id: 'ses_NU', cwd: p, transcript_path: trans });
+    const r = await run(['teardown-check', '--payload', payload], { env });
+    assert.match(r.stdout, /^push:/, `应注入而非放行: ${r.stdout}`);
+    const reason = JSON.parse(r.stdout.slice(5)).reason;
+    assert.ok(reason.includes('abs config set user'), `收尾指令应含设姓名步骤: ${reason}`);
+  });
+});

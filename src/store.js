@@ -3,7 +3,7 @@
 import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
-import { requireUser, atTag } from './userconfig.js';
+import { requireUser, atTag, getUser } from './userconfig.js';
 import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
@@ -35,7 +35,11 @@ async function createSkeleton(root, brain) {
   await fs.writeFile(join(brain, 'index.md'), indexTemplate(), 'utf8');
   await fs.writeFile(join(brain, 'log.md'), logTemplate(), 'utf8');
   await fs.writeFile(join(brain, 'todo.md'), todoTemplate(), 'utf8');
-  return `✓ 已建图谱 ${brain}\n  (模板见 SKILL.md「文件标准」)`;
+  // 建完就提示设姓名 —— 否则用户一路到第一次 todo add 才撞墙，
+  // 中间 init/load 都不提，根本不知道该设。
+  const who = await getUser();
+  const hint = who ? '' : `\n  ⚠ 尚未设置使用者姓名，写操作(todo add/log/note)会先报错。\n    请先设置: abs config set user <你的名字>`;
+  return `✓ 已建图谱 ${brain}\n  (模板见 SKILL.md「文件标准」)${hint}`;
 }
 
 /** 结构体检：6 目录 + 3 文件逐一核对。ok=false 时 problems 列出缺失项。 */
@@ -163,6 +167,17 @@ export async function cmdLoad({ dir }) {
   const stranded = await strandedFor(root);
   const sections = [
     `📂 abs → 项目: ${root}`,
+  ];
+  // 未设姓名时开场就提醒 —— load 是开机第一屏，不在这里提，
+  // 用户要撞到第一次写操作才知道（init/load 一路沉默）。
+  if (!(await getUser())) {
+    sections.push(
+      '⚠ 尚未设置使用者姓名（写操作会先报错）',
+      '→ abs config set user <你的名字>    (或临时: ABS_USER=<名字> abs ...)',
+      ''
+    );
+  }
+  sections.push(
     '--- 当前路线 (index.md) ---',
     index || '(index.md 为空)',
     '',
@@ -171,15 +186,15 @@ export async function cmdLoad({ dir }) {
     '',
     '--- 最近动作 (log.md, 最新 5 条) ---',
     recentLogLines(log, 5) || '(log.md 为空)',
-  ];
+  );
   if (stranded.length) {
     const rows = stranded.map((t) => {
       const bp = t.bp.length ? `\n    ${t.bp.map((b) => `↳ 断点: ${b}`).join('\n    ')}` : '';
       return `  - ${t.body}${bp}`;
     });
+    // 插在项目行之后、其它内容之前
     sections.splice(
-      0, 1,
-      `📂 abs → 项目: ${root}`,
+      1, 0,
       '⏳ 上会话滞留（未 done，先对账）',
       rows.join('\n'),
       '→ 完成: abs todo done <id>；未完: abs todo note <id> --note 断点',
@@ -319,7 +334,12 @@ export async function cmdTeardownCheck({ dir, payload }) {
     await fs.writeFile(mark, stamp).catch(() => {});
 
     const msg = [
-      '[abs 收尾提醒] 本会话改过文件但 .brain/ 今天还没有记录。请立即走收尾循环：',
+      // 未设姓名时把设置指令插到第0条 —— 否则后续 todo add/log/note 全会被守卫拦下，
+    // 而收尾提醒本身不提这事，使用者只会看到一连串报错。
+    (await getUser() ? [] : [
+      '0) 本机尚未设置使用者姓名 —— 先跑 abs config set user <你的名字>，否则下面 2/3/4 都会被拦下；',
+    ]),
+    '[abs 收尾提醒] 本会话改过文件但 .brain/ 今天还没有记录。请立即走收尾循环：',
       '1) 跑 abs load 看 Today 还有哪些未完成；',
       '2) 实际做完漏登记的 abs todo done <id>，做到一半的 abs todo note <id> --note "断点"；',
       '3) 值得留的经验 abs note "..."（宁少勿滥，能从代码 grep 到的不记）；',
