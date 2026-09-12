@@ -35,16 +35,31 @@ function stableBinPath(entryFile) {
   try {
     pkgName = JSON.parse(fsSync.readFileSync(join(ABS_DIR, 'package.json'), 'utf8')).name || pkgName;
   } catch { /* 保持默认 */ }
+
+  // 各平台 npm 全局根下的本包位置。
+  // Unix (nvm/homebrew/apt): <node根>/lib/node_modules/<pkg>
+  // Windows:                 %APPDATA%\npm\node_modules\<pkg>
+  // 注: 曾经只有 Unix 候选 —— Windows 上两个都不中，会回退到 ABS_DIR（仓库路径），
+  //     即 H3 在 Windows 上仍会复现。此条为代码层推断，未在 Windows 实测。
+  const nodeRoot = dirname(dirname(process.execPath)); // <node>/bin/node → <node>
   const candidates = [
-    // npm 全局根（最常见）
-    join(dirname(process.execPath), '..', 'lib', 'node_modules', pkgName, 'bin', entryFile),
+    join(nodeRoot, 'lib', 'node_modules', pkgName, 'bin', entryFile),   // Unix
   ];
-  // npm_config_prefix 未设置时会产生相对路径候选（依赖 cwd），只在其存在时才加入
+  // npm 自己报告的全局根（npm_config_prefix 由 npm 子进程设置；交互 shell 里通常为空）
   if (process.env.npm_config_prefix) {
     candidates.push(join(process.env.npm_config_prefix, 'lib', 'node_modules', pkgName, 'bin', entryFile));
+    candidates.push(join(process.env.npm_config_prefix, 'node_modules', pkgName, 'bin', entryFile));
   }
+  if (process.platform === 'win32' && process.env.APPDATA) {
+    candidates.push(join(process.env.APPDATA, 'npm', 'node_modules', pkgName, 'bin', entryFile));
+  }
+
   for (const c of candidates) {
-    try { if (fsSync.existsSync(c)) return c; } catch { /* 试下一个 */ }
+    try {
+      // 归一化为绝对路径，避免任何依赖 cwd 的相对候选被误用
+      const abs = resolve(c);
+      if (fsSync.existsSync(abs)) return abs;
+    } catch { /* 试下一个 */ }
   }
   // 回退：仓库/本地安装形态
   return join(ABS_DIR, 'bin', entryFile);

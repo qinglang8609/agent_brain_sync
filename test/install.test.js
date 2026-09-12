@@ -22,7 +22,7 @@ let CODEX_CFG;    // CODEX_HOME
 
 /** 默认沙盒 env: 覆盖 HOME + 各宿主 config 根到 sandbox 下。 */
 function sbEnv(extra = {}) {
-  return {
+  const env = {
     ...process.env,
     HOME,
     CLAUDE_CONFIG_DIR: CC_CFG,
@@ -31,6 +31,13 @@ function sbEnv(extra = {}) {
     ABS_PI_HOME: join(sandbox, 'pi'),
     ...extra,
   };
+  // 清掉 npm 注入的变量，让子进程看到与真实用户一致的环境。
+  // 坑: 跑 npm test / npx 时 npm_config_prefix 会被自动设置，而 stableBinPath
+  // 恰好因它命中"全局包"分支 —— 于是即使默认候选已写坏（少一层 ..），
+  // 测试仍会变绿，掩盖真实回归。手动跑 abs install 的用户环境里该变量为空。
+  delete env.npm_config_prefix;
+  delete env.npm_config_global_prefix;
+  return env;
 }
 
 const ABS_HOOK_MARK = '/.abs/hooks/';
@@ -698,13 +705,20 @@ describe('入口路径稳定性', () => {
     return m[1];
   }
 
-  test('从仓库运行时, hook 脚本不烧仓库路径（本机已装全局包）', async () => {
-    // 前置: 本机存在全局安装（CI/无全局包环境跳过，只断言形态）
+  test('从仓库运行时, hook 脚本指向全局包而非仓库', async () => {
+    // 关键: 只要本机存在全局安装，就必须断言"指向全局包"。
+    // 早期版本写成"若含 node_modules 才断言不含仓库路径"——条件分支让它漏掉过一次
+    // 真实回归（stableBinPath 少了一层 .. → 解析失败 → 静默回退到仓库路径）。
     const r = await run(['install', '--agent', 'claude-code', '--yes']);
     assert.equal(r.code, 0, r.stderr);
     const bin = await stagedAbsBin('claude-code');
     assert.ok(bin.endsWith(join('bin', 'abs.js')), bin);
-    if (bin.includes('node_modules')) {
+    const globalMjs = join(
+      dirname(process.execPath), '..', 'lib', 'node_modules',
+      '@fanchao8609/agent_brain_sync', 'bin', 'abs.js',
+    );
+    if (existsSync(globalMjs)) {
+      assert.ok(bin.includes('node_modules'), `本机有全局包, hook 应指向它, 实际: ${bin}`);
       assert.ok(!bin.includes(REPO), `hook 不得烧仓库路径: ${bin}`);
     }
   });
