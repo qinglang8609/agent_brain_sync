@@ -672,3 +672,49 @@ describe('安装流程: 用户数据安全', () => {
     assert.ok(!after.includes('abs-SessionStart.sh'), 'abs 自己的 hook 仍应被清理');
   });
 });
+
+// ---------- 入口路径必须稳定（不烧仓库路径） ----------
+// 背景: ABS_DIR = "install.js 自己住哪"。从仓库跑 `abs install` 就把仓库路径
+// 烧进 hook 脚本/宿主配置；仓库被移动或删除后，hook 静默失效（脚本里那个 bin 不存在）。
+// MCP 侧早已修成"优先全局包"，但 hook 与 pi 扩展没跟上 —— 同一份安装里
+// hook 指向仓库、MCP 指向全局，是两个不同的包。现统一走 stableBinPath()。
+describe('入口路径稳定性', () => {
+  /** 从生成的 hook 脚本里取 ABS_BIN= 的值。 */
+  async function stagedAbsBin(agent) {
+    const p = join(HOME, '.abs', 'hooks', agent, 'abs-Stop.sh');
+    const src = await fs.readFile(p, 'utf8');
+    const m = src.match(/ABS_BIN="([^"]*)"/);
+    assert.ok(m, `hook 脚本里应有 ABS_BIN: ${p}`);
+    return m[1];
+  }
+
+  test('从仓库运行时, hook 脚本不烧仓库路径（本机已装全局包）', async () => {
+    // 前置: 本机存在全局安装（CI/无全局包环境跳过，只断言形态）
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const bin = await stagedAbsBin('claude-code');
+    assert.ok(bin.endsWith(join('bin', 'abs.js')), bin);
+    if (bin.includes('node_modules')) {
+      assert.ok(!bin.includes(REPO), `hook 不得烧仓库路径: ${bin}`);
+    }
+  });
+
+  test('hook 与 MCP 解析到同一个包（不出现两个不同的包）', async () => {
+    await run(['install', '--agent', 'claude-code', '--yes']);
+    const hookBin = await stagedAbsBin('claude-code');
+    const mcp = JSON.parse(await fs.readFile(CC_SETTINGS(), 'utf8')).mcpServers.abs.args[0];
+    // 取各自的"包根"比较: hook 是 <pkg>/bin/abs.js，MCP 是 <pkg>/bin/mcp.js
+    const pkgOf = (p) => dirname(dirname(p));
+    assert.equal(pkgOf(hookBin), pkgOf(mcp), `hook=${hookBin} 与 mcp=${mcp} 应属同一个包`);
+  });
+
+  test('pi 扩展的 ABS_BIN 同样不烧仓库路径', async () => {
+    await run(['install', '--agent', 'pi', '--yes']);
+    const p = join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts');
+    const m = (await fs.readFile(p, 'utf8')).match(/const ABS_BIN = "([^"]*)"/);
+    assert.ok(m, 'pi 扩展应有 ABS_BIN');
+    if (m[1].includes('node_modules')) {
+      assert.ok(!m[1].includes(REPO), `pi 扩展不得烧仓库路径: ${m[1]}`);
+    }
+  });
+});

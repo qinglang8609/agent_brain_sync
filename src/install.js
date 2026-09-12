@@ -17,13 +17,19 @@ const HOOK_TEMPLATE = join(ABS_DIR, 'hooks', 'event.sh');
 const SKILL_SOURCE = join(ABS_DIR, 'skill', 'SKILL.md');
 
 /**
- * 写进宿主 MCP 配置的 mcp.js 路径。
+ * 本包的稳定入口路径解析（mcp.js / abs.js 通用）。
+ *
  * 坑: 直接用 ABS_DIR 是不稳定的 —— ABS_DIR = "install.js 自己住哪", 从仓库跑
- * `abs install` 就把仓库路径写进宿主配置。之后若卸载/移动全局包, 该路径直接失效;
- * 而 Co​dex 分支又"已存在即跳过", 一旦写错永不修正。
- * 现在优先解析本包的稳定安装位置（全局 node_modules），解析不到才回退 ABS_DIR。
+ * `abs install` 就把仓库路径烧进宿主配置/hook 脚本。之后若卸载/移动仓库或全局包,
+ * 该路径直接失效; 而某些分支"已存在即跳过", 一旦写错永不修正。
+ *
+ * 故统一优先解析本包的稳定安装位置（全局 node_modules），解析不到才回退 ABS_DIR。
+ * 单一收口: MCP 注册与 hook 脚本都走这里 —— 曾经 MCP 修了、hook 没修,
+ * 同一份安装里 hook 指向仓库而 MCP 指向全局，是两个不同的包。
+ *
+ * @param entryFile 包内相对 bin/ 的文件名，如 'mcp.js' / 'abs.js'
  */
-function mcpEntryPath() {
+function stableBinPath(entryFile) {
   // 本包名（package.json），用于反查全局安装位置
   let pkgName = '@fanchao8609/agent_brain_sync';
   try {
@@ -31,14 +37,22 @@ function mcpEntryPath() {
   } catch { /* 保持默认 */ }
   const candidates = [
     // npm 全局根（最常见）
-    join(dirname(process.execPath), '..', 'lib', 'node_modules', pkgName, 'bin', 'mcp.js'),
-    join(process.env.npm_config_prefix || '', 'lib', 'node_modules', pkgName, 'bin', 'mcp.js'),
+    join(dirname(process.execPath), '..', 'lib', 'node_modules', pkgName, 'bin', entryFile),
   ];
+  // npm_config_prefix 未设置时会产生相对路径候选（依赖 cwd），只在其存在时才加入
+  if (process.env.npm_config_prefix) {
+    candidates.push(join(process.env.npm_config_prefix, 'lib', 'node_modules', pkgName, 'bin', entryFile));
+  }
   for (const c of candidates) {
     try { if (fsSync.existsSync(c)) return c; } catch { /* 试下一个 */ }
   }
   // 回退：仓库/本地安装形态
-  return join(ABS_DIR, 'bin', 'mcp.js');
+  return join(ABS_DIR, 'bin', entryFile);
+}
+
+/** 写进宿主 MCP 配置的 mcp.js 路径。 */
+function mcpEntryPath() {
+  return stableBinPath('mcp.js');
 }
 
 const MARK = '// abs-managed (agent-brain-sync)'; // TS plugin 标记
@@ -184,7 +198,7 @@ async function stageHookScripts(agentKey, events) {
     const name = `abs-${ev}.sh`;
     const p = join(dir, name);
     const script = tpl
-      .replaceAll('__ABS_BIN__', join(ABS_DIR, 'bin', 'abs.js'))
+      .replaceAll('__ABS_BIN__', stableBinPath('abs.js'))
       .replaceAll('__NODE_BIN__', process.execPath)
       .replaceAll('__EVENT__', ev);
     await atomicWrite(p, script);
@@ -430,7 +444,7 @@ function opencodePluginSource() {
 function piPluginSource() {
   // 模板已外置到 hooks/abs.pi.ts。理由同 opencodePluginSource。
   return renderPluginTemplate('abs.pi.ts', {
-    '@@ABS_BIN@@': join(ABS_DIR, 'bin', 'abs.js'),
+    '@@ABS_BIN@@': stableBinPath('abs.js'),
     '@@MARK@@': MARK,
   });
 }
