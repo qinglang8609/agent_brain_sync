@@ -178,13 +178,19 @@ async function readJson(p, { strict = true } = {}) {
 function absHookDir(agentKey) {
   return join(homedir(), '.abs', 'hooks', agentKey);
 }
+/** 本工具会生成的 hook 脚本名（与 stageHookScripts 的 abs-<Event>.sh 一致）。 */
+const ABS_SCRIPT_NAMES = new Set(
+  [...new Set(HOSTS.flatMap((h) => h.events))].map((ev) => `abs-${ev}.sh`),
+);
 function isAbsStagedCommand(cmd) {
   if (typeof cmd !== 'string') return false;
-  // 取命令里的绝对路径 token 逐个比对，避免子串误判
+  // 逐个路径 token 比对: 必须是 <…>/.abs/hooks/<宿名>/<本工具生成的脚本名>。
+  // 不用"任意 abs-*"——那会把用户自己的 abs-mine.sh 也判成我们的（实测边界）。
   const tokens = cmd.match(/\S+/g) || [];
-  return tokens.some((t) => {
-    const base = t.replace(/^['"]|['"]$/g, '');
-    return base.includes('/.abs/hooks/') && /(^|\/)\.abs\/hooks\/[^/]+\/abs-[^/]*$/.test(base);
+  return tokens.some((raw) => {
+    const t = raw.replace(/^['"]+|['"]+$/g, '');
+    const m = t.match(/(?:^|\/)\.abs\/hooks\/([^/]+)\/([^/]+)$/);
+    return !!m && ABS_SCRIPT_NAMES.has(m[2]);
   });
 }
 function entryHasAbs(entry) {

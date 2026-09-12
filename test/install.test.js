@@ -688,6 +688,24 @@ describe('安装流程: 用户数据安全', () => {
     assert.ok(after.includes('grep -r try'), '卸载不得误删用户 hook');
     assert.ok(!after.includes('abs-SessionStart.sh'), 'abs 自己的 hook 仍应被清理');
   });
+
+  test(`[H2-边界] 用户脚本名形如 abs-mine.sh → 不得被当成 abs 自己的`, async () => {
+    // 边界: 早期正则用 abs-[^/]*$ 匹配，会把用户自己的 abs-mine.sh 也判成我们的 ——
+    // 概率低但后果同样是误删用户配置。现改为只认本工具会生成的精确脚本名
+    // (abs-<已知事件>.sh)。
+    await fs.mkdir(CC_CFG, { recursive: true });
+    const userScript = `/home/u/.abs/hooks/claude-code/abs-mine.sh`;
+    await fs.writeFile(CC_SETTINGS(), JSON.stringify({
+      hooks: { SessionStart: [{ hooks: [{ type: `command`, command: userScript }] }] },
+    }, null, 2), `utf8`);
+    await run([`install`, `--agent`, `claude-code`, `--yes`]);
+    assert.ok((await fs.readFile(CC_SETTINGS(), `utf8`)).includes(`abs-mine.sh`),
+      `安装不得丢弃用户的 abs-mine.sh`);
+    await run([`uninstall`, `--agent`, `claude-code`, `--yes`]);
+    const after = await fs.readFile(CC_SETTINGS(), `utf8`);
+    assert.ok(after.includes(`abs-mine.sh`), `卸载不得误删用户的 abs-mine.sh`);
+    assert.ok(!after.includes(`abs-SessionStart.sh`), `abs 自己的 hook 仍应被清理`);
+  });
 });
 
 // ---------- 入口路径必须稳定（不烧仓库路径） ----------
