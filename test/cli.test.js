@@ -385,6 +385,35 @@ describe('cli: argv 解析', () => {
     assert.equal(r.code, 0, `未知 flag 不应崩: ${r.stderr}`);
   });
 
+  // 坑(OPTS-DOUBLE-KEYS): parseArgv 曾 `...values` 后再叠加 camelCase → opts 同时带
+  // 两份 key（keep-days 与 keepDays、no-mcp 与 mcp），读者得猜哪份算数。
+  // 现在只输出规范形状；raw flag 属于纯噪音（grep 验证 opts['keep-days'] 零引用）。
+  // 断言方式: 直接 eval 提取的 parseArgv（它未导出，但这段是纯函数），
+  // 比走 CLI 快且能看到完整形状。
+  test('opts 只带规范键，不携带 raw 双份（keep-days/dry-run/no-mcp/no-skill）', async () => {
+    const src = await fs.readFile(join(REPO, 'bin', 'abs.js'), 'utf8');
+    const a = src.indexOf('const FLAG_SPEC');
+    const b = src.indexOf('const usage = `');
+    const extracted = src.slice(a, b);
+    const { parseArgs } = await import('node:util');
+    const parseArgv = new Function('parseArgs', `${extracted}\nreturn parseArgv;`)(parseArgs);
+
+    const o = parseArgv(['todo', 'archive', '--keep-days', '5', '--dry-run']);
+    assert.equal(o.keepDays, '5', '规范键 keepDays 应就位');
+    assert.equal(o.dryRun, true, '规范键 dryRun 应就位');
+    for (const raw of ['keep-days', 'dry-run', 'no-mcp', 'no-skill']) {
+      assert.ok(!(raw in o), `raw 键 "${raw}" 不得出现在 opts: ${JSON.stringify(o)}`);
+    }
+    // 负向开关转正向布尔
+    assert.equal(parseArgv(['install', '--no-mcp']).mcp, false);
+    assert.equal(parseArgv(['install', '--no-skill']).skill, false);
+    assert.equal(parseArgv(['load']).mcp, true, '未给 --no-mcp 时 mcp 应为 true');
+    // 未知 flag 仍静默收下（旧行为，不进位置参数）
+    const u = parseArgv(['lint', '--totally-unknown']);
+    assert.equal(u['totally-unknown'], true, '未知 flag 应静默收下（key 即 flag 名）');
+    assert.deepEqual(u._, ['lint'], '未知 flag 不得进位置参数');
+  });
+
   // ---- 以下三条是 parseArgs 迁移的真实回归面（曾各自由现一次 P0） ----
   // 坑1: parseArgs 会把**任何** `-` 开头的 token 当选项，连正文一起吃。
   // 回归面: abs note "-X 是个坑" 曾静默丢掉正文、只建空目录。

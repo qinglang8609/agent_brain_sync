@@ -83,6 +83,9 @@ const FLAG_SPEC = {
   'no-skill': { type: 'boolean' },
 };
 
+/** 已被"规范键"接管的 raw flag：不再原样漏出（见 parseArgv 返回处的白名单注释）。 */
+const KNOWN_RAW = new Set(['keep-days', 'dry-run', 'no-mcp', 'no-skill']);
+
 function parseArgv(args) {
   // 坑: parseArgs 会把**任何** `-` 开头的 token 当选项，连正文一起吃：
   // `abs note "-X 是个坑"` → values={X:true,' ':true,是:true,…}，正文全丢（旧手写版只认 `--` 长选项）。
@@ -125,17 +128,39 @@ function parseArgv(args) {
   if (missing.length) {
     throw new Error(`✗ ${missing.join('、')} 缺少值\n  用法: --<flag> <值>（如 --dir /path/to/project）`);
   }
+  // 只输出**读者实际用的**规范形状：camelCase 键 + mcp/skill 正向布尔。
+  // 坑(OPTS-DOUBLE-KEYS): 曾 `...values` 之后再叠加 camelCase → opts 同时带两份 key
+  // （keep-days 与 keepDays、no-mcp 与 mcp），读者得自己猜哪份算数。raw 键无人读，
+  // 属纯噪音（grep 验证：opts['keep-days'] 零引用）。
+  // 用显式白名单而非 ...values：新增 flag 必须在此声明一次，否则"声明了却没接线"
+  // 会静默变成"读不到"，而不是意外漏出一个无名键。
   const o = {
-    ...values,
     _: positionals,
+    dir: values.dir,
+    agent: values.agent,
+    id: values.id,
+    section: values.section,
+    note: values.note,
+    as: values.as,
+    payload: values.payload,
+    tags: values.tags,
+    help: !!values.help,
+    yes: !!values.yes,
+    repair: !!values.repair,
+    full: !!values.full,
     keepDays: values['keep-days'],
-    dryRun: values['dry-run'],
+    dryRun: !!values['dry-run'],
+    mcp: !values['no-mcp'],
+    skill: !values['no-skill'],
   };
-  if (values['no-mcp']) o.mcp = false;
-  if (values['no-skill']) o.skill = false;
+  // 未声明的 `--unknown` 静默收下（旧行为：不进位置参数，也不报错）。
+  // 这条保留是因为 rejectExtra 只看位置参数 —— 把未知 flag 放进去会改成报错，
+  // 那是另一个行为变更，不在本次范围内。
+  for (const [k, v] of Object.entries(values)) {
+    if (!(k in o) && !KNOWN_RAW.has(k)) o[k] = v;
+  }
   return o;
 }
-
 const usage = `abs — agent-brain-sync 记忆工具
 
 读:

@@ -179,7 +179,7 @@ export async function cmdLoad({ dir }) {
   }
   sections.push(
     '--- 当前路线 (index.md) ---',
-    index || '(index.md 为空)',
+    collapseIndex(index) || '(index.md 为空)',
     '',
     '--- Todo 看板 (todo.md) ---',
     collapseDone(todo).text || '(todo.md 为空)',
@@ -203,6 +203,47 @@ export async function cmdLoad({ dir }) {
     );
   }
   return sections.join('\n');
+}
+
+/** index.md 在 `abs load` 里的折叠形态：保留「当前路线」（那是 load 要传达的状态，
+ * 且有界），把页面清单各分区折成计数。
+ *
+ * 坑: index 的 concept 清单带每一页的一句话描述，**隨图谱线性增长** —— 本仓库 17 条
+ * 占 load 输出 2286/3571 tok（64%），另一台 40 条的项目约 2.3 倍。它刚成了 Done 之后
+ * 最大的单体膨胀源（Done 已折叠，见 collapseDone）。
+ *
+ * 续接真正需要的只是「有哪些分区、各多少页」（据此知道去哪找），不需要每页写了什么 ——
+ * 要那个用 `abs index`（或直接读 index.md / 按词 `abs query`）。
+ * `## 当前路线` 不折（它是路线内容本身，非清单）。 */
+export function collapseIndex(text) {
+  const s = String(text || '').trim();
+  if (!s) return '';
+  const out = [];
+  let mode = null;      // null=逐行透传（路线区/文件头）；字符串=当前在计数的分区名
+  let n = 0;            // mode 非 null 时的清单行计数
+  const flush = () => {
+    if (mode !== null) out.push(n ? `## ${mode}（${n} 页）` : `## ${mode}`);
+    mode = null;
+    n = 0;
+  };
+  for (const l of s.split('\n')) {
+    const m = l.match(/^##\s+(.+?)\s*$/);
+    if (m) {
+      flush();
+      const name = m[1].trim();
+      if (/路线|Roadmap/i.test(name)) {
+        out.push(l);   // 「当前路线」是内容不是清单：原样保留
+        mode = null;
+      } else {
+        mode = name;   // 页面清单分区：只计数
+      }
+      continue;
+    }
+    if (mode === null) out.push(l);      // 透传区（含文件头 H1、路线区正文）
+    else if (l.trim().startsWith('-')) n++;
+  }
+  flush();
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 // ---------- wrapup: 滞留快照（B）/ load 内展示由 cmdLoad 完成（A） ----------

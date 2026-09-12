@@ -6,7 +6,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive, clip } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive, clip, collapseIndex } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage, doneDateOf, doneKindOf, withDoneKind } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
@@ -351,6 +351,45 @@ describe('board/load/status', () => {
     assert.ok(!out.includes(long), '超长日志条目应被收口，不原样进 load');
     const sec = out.split('--- 最近动作')[1] || '';
     assert.ok(Buffer.byteLength(sec) < 1200, `最近动作一段应受控，实际 ${Buffer.byteLength(sec)}B`);
+  });
+
+  // 回归: index 的 concept 清单带每页一句话描述，**隨图谱线性增长** ——
+  // 本仓库 17 条占 load 输出 64%（2286/3571 tok），另一台 40 条的项目约 2.3 倍。
+  // 与 Done 同类：都是"清单隨历史膨胀"。load 只需知道去哪个分区找，不需要每页写了什么。
+  test('load 的 index 区不隨图谱页数增长（清单折成计数）', () => {
+    const idxP = join(projectA, '.brain', 'index.md');
+    const build = (n) => [
+      '# 🗂 图谱索引', '', '## 当前路线 (Roadmap)', '', '**已落地**：跑起来了。', '',
+      '## Concepts',
+      ...Array.from({ length: n }, (_, i) => `- [[concept-${i}]] — 一条相当时长的概念页描述文字用来模拟真实积累`),
+      '## Sessions', '- [[log-1]] — 一次会话', '',
+    ].join('\n');
+    return (async () => {
+      await fs.writeFile(idxP, build(3), 'utf8');
+      const smallOut = await cmdLoad({ dir: projectA });
+      await fs.writeFile(idxP, build(60), 'utf8');
+      const bigOut = await cmdLoad({ dir: projectA });
+      const growth = Buffer.byteLength(bigOut) / Buffer.byteLength(smallOut);
+      assert.ok(growth < 1.3,
+        `concept 从 3 条涨到 60 条，load 输出不得显著膨胀（${Buffer.byteLength(smallOut)}→${Buffer.byteLength(bigOut)}B, ×${growth.toFixed(2)}）`);
+      assert.ok(bigOut.includes('## Concepts（60 页）'), `应给分区计数: ${bigOut.slice(0, 600)}`);
+      assert.ok(!bigOut.includes('concept-59'), 'index 明细不应进 load 输出');
+      // 路线是内容不是清单：必须原样保留（否则 load 就失去意义了）
+      assert.ok(bigOut.includes('**已落地**：跑起来了。'), `路线内容不得被折叠掉: ${bigOut.slice(0, 800)}`);
+      // 逃生口：完整 index 仍可拿
+      const full = await cmdShow({ view: 'index', dir: projectA });
+      assert.ok(full.includes('concept-59'), 'abs index 应给完整清单');
+    })();
+  });
+
+  test('collapseIndex: 路线原样、清单只计数（纯函数边界）', () => {
+    const t = ['# H', '', '## 当前路线 (Roadmap)', '', '> 引用行保留', '', '## Concepts', '- [[a]] — x', '- [[b]] — y', '## Syntheses', ''].join('\n');
+    const o = collapseIndex(t);
+    assert.ok(o.includes('# H') && o.includes('> 引用行保留'), `文件头/路线应原样: ${o}`);
+    assert.ok(o.includes('## Concepts（2 页）'), `应计数: ${o}`);
+    assert.ok(o.includes('## Syntheses'), `空分区保留名字（不写 0 页）: ${o}`);
+    assert.ok(!o.includes('[[a]]'), `清单行不得保留: ${o}`);
+    assert.equal(collapseIndex(''), '');
   });
 
   test('status 报告项目 + 各类页数', async () => {
