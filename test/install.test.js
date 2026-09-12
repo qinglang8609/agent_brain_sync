@@ -792,4 +792,28 @@ describe('安装健壮性', () => {
     }
     assert.ok(!r.stdout.includes('选择要安装'), `--yes 不应弹交互: ${r.stdout}`);
   });
+
+  test('[M4] 同日多次安装产生多份备份（不被覆盖），且总量有上限', async () => {
+    // 修复前: 备份名只有日期 → 同日第二次安装直接覆盖第一份，
+    // 用户想回滚到"装坏之前"时最早的副本已不存在。
+    await fs.mkdir(CC_CFG, { recursive: true });
+    await fs.writeFile(CC_SETTINGS(), JSON.stringify({ v: 0 }, null, 2), 'utf8');
+    // 逐次修改内容再安装，确保每次备份的源不同
+    for (let i = 1; i <= 3; i++) {
+      await fs.writeFile(CC_SETTINGS(), JSON.stringify({ v: i, hooks: {} }, null, 2), 'utf8');
+      await run(['install', '--agent', 'claude-code', '--yes']);
+      await new Promise((r) => setTimeout(r, 1100)); // 时间戳精度到秒
+    }
+    const baks = (await fs.readdir(CC_CFG)).filter((f) => f.includes('.abs-bak-'));
+    assert.ok(baks.length >= 2, `同日多次安装应留下多份备份，实际 ${baks.length}: ${baks.join(', ')}`);
+    // 上限: 不能无限增长
+    for (let i = 4; i <= 8; i++) {
+      await fs.writeFile(CC_SETTINGS(), JSON.stringify({ v: i, hooks: {} }, null, 2), 'utf8');
+      await run(['install', '--agent', 'claude-code', '--yes']);
+      await new Promise((r) => setTimeout(r, 1100));
+    }
+    const after = (await fs.readdir(CC_CFG)).filter((f) => f.includes('.abs-bak-'));
+    assert.ok(after.length <= 5, `备份应保留上限 5，实际 ${after.length}`);
+    assert.ok(after.length >= 2, '仍应保留最近几份');
+  }, { timeout: 60000 });
 });

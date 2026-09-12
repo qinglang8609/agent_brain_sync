@@ -8,7 +8,7 @@
 import { promises as fs } from 'node:fs';
 import * as fsSync from 'node:fs';
 import { homedir } from 'node:os';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HOSTS, hostByKey } from './hosts.js';
 
@@ -92,10 +92,30 @@ async function atomicWrite(p, text) {
 
 async function backup(p) {
   try {
-    const bak = `${p}.abs-bak-${new Date().toISOString().slice(0, 10)}`;
+    // 文件名含日期+时分秒: 曾经只有日期，同日多次安装/卸载会互相覆盖，
+    // 只剩最后一份 —— 用户装坏了想回滚时，最早的可用副本已经不在了。
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const bak = `${p}.abs-bak-${ts}`;
     await fs.copyFile(p, bak);
+    await pruneBackups(p);
     return bak;
   } catch { return null; } // 文件不存在则无备份
+}
+
+/** 只保留最近 KEEP 份备份（按文件名时间戳倒序），避免备份目录无限增长。 */
+const BACKUP_KEEP = 5;
+async function pruneBackups(p) {
+  try {
+    const dir = dirname(p);
+    const base = `${basename(p)}.abs-bak-`;
+    const olds = (await fs.readdir(dir))
+      .filter((f) => f.startsWith(base))
+      .sort()          // 时间戳格式 YYYY-MM-DD-HH-mm-ss 字典序 == 时间序
+      .reverse();
+    for (const f of olds.slice(BACKUP_KEEP)) {
+      await fs.rm(join(dir, f), { force: true });
+    }
+  } catch { /* 清理失败不影响主流程 */ }
 }
 
 async function readJson(p, { strict = true } = {}) {
