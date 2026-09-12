@@ -54,8 +54,11 @@ if (sid) {                      // ← 坑：拿不到 id 就整段跳过
 ```js
 const sid = String(ev.session_id || '').replace(/[^\w-]/g, '');
 const key = sid || 'nosession-' + day + '-' + root;   // ← 退化：项目 + 日期
-const mark = join(homedir(), '.abs', 'log', `teardown-${key}.mark`);
+const mark = join(absLogDir(), `teardown-${key}.mark`);   // absLogDir() = ABS_LOG_DIR || ~/.abs/log
 ```
+
+（注：曾写作 `join(homedir(), '.abs', 'log', …)` —— 那样会绕过 `ABS_LOG_DIR`，
+测试注入沙盒时隔离不到，mark 落到真实家目录。已收口进 `absLogDir()`。）
 
 **原则：节流器不允许有"跳过"分支。**要么按会话，要么按更粗的维度（项目+日期），
 但永远要有一个能刹住的键。
