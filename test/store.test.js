@@ -26,6 +26,9 @@ beforeEach(async () => {
   sandbox = await fs.mkdtemp(join(tmpdir(), 'abs-test-'));
   projectA = await mkProject('proj-a');
   projectB = await mkProject('proj-b');
+  // 写操作现要求设置使用者姓名（否则报错不落盘）。测试统一用固定姓名，
+  // 既避开依赖 ~/.abs/config.json，也直接断言标记内容。
+  process.env.ABS_USER = 'tester';
   await cmdInit({ dir: projectA });
 });
 
@@ -203,7 +206,7 @@ describe('cmdTask', () => {
   test('start 登记进 Today 区并带认领日期', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'T-1', note: '做 X' });
     const t = await readTodo(projectA);
-    assert.ok(t.includes('T-1 — 做 X'));
+    assert.ok(t.includes('T-1 @tester — 做 X'), `作者应紧跟 id: ${t}`);
     assert.ok(t.includes(`认领 ${today()}`));
   });
 
@@ -215,6 +218,8 @@ describe('cmdTask', () => {
     assert.equal(hits.length, 1, `应只有一行 T-2，实际 ${hits.length}:\n${hits.join('\n')}`);
     assert.ok(t.includes('v2'), '重复 start 应更新 note 为最新');
     assert.ok(!t.includes('v1'), '旧 note 不应残留');
+    // 坑: upsertTask 原位更新时会重建整行 —— 重建时若不把原 @author 带上，作者会静默丢失。
+    assert.ok(t.includes('T-2 @tester — v2'), `幂等更新后作者不得丢失: ${hits.join('\n')}`);
   });
 
   test('done 勾选并归位（保持一行，标完成日期）', async () => {
@@ -456,7 +461,7 @@ describe('cmdNote (经验实时暂存)', () => {
     const index = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
     assert.ok(/## Sources/.test(index));
     const log = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
-    assert.ok(log.includes('note |'), 'log 应有一行 note 流水');
+    assert.ok(log.includes('note |') || log.includes('note @'), 'log 应有一行 note 流水');
   });
 
   test('空文本拒绝', async () => {

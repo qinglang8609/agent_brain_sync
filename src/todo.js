@@ -390,10 +390,12 @@ export async function upsertTask(brainRoot, { section, text }) {
     // 在所有分区中找该 id 对应的未完成任务行（Done 的已完成行不重复动）；全等比对
     const idx = findTaskLine(lines, id);
     if (idx !== -1) {
-      // 原位更新：保留断点附属行，只换任务行本体
+      // 原位更新：保留断点附属行 + 原@作者，只换任务行本体
+      const author = extractAuthor(lines[idx].replace(/^- \[ \] /, ''));
       const oldNote = extractNote(lines[idx].replace(/^- \[ \] /, ''));
       const merged = note && oldNote && oldNote.startsWith(note) ? `${note}${oldNote.slice(note.length)}` : note || oldNote;
-      const newLine = `- [ ] ${id}${merged ? ' — ' + merged : ''} (认领 ${today()})`;
+      const at = author ? ` @${author}` : '';
+      const newLine = `- [ ] ${id}${at}${merged ? ' — ' + merged : ''} (认领 ${today()})`;
       lines[idx] = newLine;
       return { text: lines.join('\n'), updated: true };
     }
@@ -410,10 +412,18 @@ export function extractId(text) {
   return m ? m[1] : null;
 }
 
-/** 提取 " — " 后的 note 部分。 */
+/** 提取 " — " 后的 note 部分（剥掉紧跟在 id 后的 `@author` 标记及尾部 `(认领 ...)`）。
+ * 格式: `<id> @author — <note> (认领 date)`。@author 可选（旧行/未设置姓名时无）。 */
 export function extractNote(text) {
   const i = String(text).indexOf(' — ');
-  return i === -1 ? '' : String(text).slice(i + 3).replace(/\s*\(认领[^)]*\)\s*$/, '');
+  if (i === -1) return '';
+  return String(text).slice(i + 3).replace(/\s*\(认领[^)]*\)\s*$/, '').trim();
+}
+
+/** 提取 id 后的 `@author` 标记（无则空）。供 upsertTask 原位重建行时保留作者。 */
+export function extractAuthor(text) {
+  const m = String(text).match(/^\S+\s+@([\w\u4e00-\u9fff.-]+)/);
+  return m ? m[1] : '';
 }
 
 /**

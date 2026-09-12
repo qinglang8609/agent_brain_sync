@@ -3,6 +3,7 @@
 import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
+import { requireUser, atTag } from './userconfig.js';
 import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
@@ -383,12 +384,15 @@ function slugOf(text, n = 24) {
 // ---------- log: 追加工作成果沉淀摘要（用户/AI 主动 abs log "..." 记, 不收工具动作流水） ----------
 export async function cmdLog({ dir, title, kind = 'dev' }) {
   const root = await requireBrain(dir || process.cwd());
+  const who = await requireUser(); // 写操作守卫
   const p = brainPath(root, 'log.md');
   const stamp = localStamp();
   // 不硬切: log.md 是人类读的成果摘要, 也是 abs load 的开机入口。600 码点够一条完整小结,
   // 超出才在语义边界收口（曾 slice(0,100) → 34/85 条断在词中间）
   const clean = clip(String(title || '').replace(/\n/g, ' '), 600);
-  const line = `## [${stamp}] ${kind} | ${clean}`;
+  // 作者前置于 kind：`## [时间] @name dev | 内容`。
+  // 一眼先看到谁做的（与 todo 行 `ID @name — 说明` 排版对齐）。
+  const line = `## [${stamp}] ${atTag(who)} ${kind} | ${clean}`;
   await editFile(p, (cur) => {
     const text = cur ?? '# 🗒 操作日志\n';
     // 倒序：新行插在标题后（若已是模板占位行则替换它）
@@ -405,13 +409,14 @@ export async function cmdLog({ dir, title, kind = 'dev' }) {
 // log.md 是「工作成果沉淀摘要」(用户/AI 主动 abs log "..." 记), 不收工具动作流水。
 export async function cmdTask({ dir, action, id, section, note, as }) {
   const root = await requireBrain(dir || process.cwd());
+  // 写操作守卫：无姓名不落盘（hook 调的 wrapup/teardown-check 不经过这里，不受影响）
+  const who = await requireUser();
   if (action === 'start') {
-    const text = `${id}${note ? ' — ' + note : ''}`;
     const r = await upsertTask(root, {
       section: section || 'Today / In Progress',
-      text: `${text} (认领 ${today()})`,
+      text: `${id} ${atTag(who)}${note ? ' — ' + note : ''} (认领 ${today()})`,
     });
-    return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  ${id}${note ? ' — ' + note : ''}`;
+    return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  ${id} ${atTag(who)}${note ? ' — ' + note : ''}`;
   }
   if (action === 'blocked') {
     const r = await moveBlocked(root, { id, reason: note });
@@ -547,6 +552,7 @@ export async function cmdNote({ dir, text, tags }) {
   } catch {
     return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
   }
+  const who = await requireUser(); // 写操作守卫
   const srcDir = brainPath(root, 'sources');
   await fs.mkdir(srcDir, { recursive: true });
   // 幂等: 同文本 60s 内只落一份
@@ -565,6 +571,7 @@ export async function cmdNote({ dir, text, tags }) {
   const body = [
     '---',
     `tags: [${fmTags}]`,
+    `author: ${who}`,
     `updated: ${today()}`,
     'status: draft',
     '---',
@@ -600,7 +607,7 @@ export async function cmdNote({ dir, text, tags }) {
     return { text: next };
   });
   await cmdLog({ dir: root, title: clean, kind: 'note' });
-  return `✓ 经验暂存 → sources/${file}\n  ${clean}`;
+  return `✓ 经验暂存 → sources/${file}\n  ${clean} ${atTag(who)}`;
 }
 // ---------- lint: 体检（与 scripts/lint.sh 同规则的 Node 版，供 CLI/MCP 直调） ----------
 export async function cmdLint({ dir }) {

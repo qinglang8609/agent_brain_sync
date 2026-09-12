@@ -27,6 +27,8 @@ function sbEnv(extra = {}) {
   return {
     ...process.env,
     HOME,
+    ABS_USER: 'tester', // 写操作现要求设置姓名；指向沙箱避开真实配置
+    ABS_CONFIG_DIR: join(sandbox, 'abs-cfg'),
     CLAUDE_CONFIG_DIR: join(sandbox, 'claude'),
     CODEX_HOME: CODEX_CFG,
     ABS_OPENCODE_HOME: join(sandbox, 'opencode'),

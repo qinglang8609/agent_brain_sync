@@ -3,6 +3,7 @@
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
 import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdTeardownCheck, cmdTodoArchive } from '../src/store.js';
+import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -159,6 +160,10 @@ const usage = `abs — agent-brain-sync 记忆工具
                             归档 Done 区旧日期组 → sessions/<日期>-todo归档.md
                             (默认保留近 3 天; 任一天有未完成则整天不归档)
   abs lint                   图谱体检 (死链/孤岛/超尺寸/堆积)
+  abs config [show]          查看使用者姓名 (标记作者用)
+  abs config set user <名字> 设置使用者姓名 → ~/.abs/config.json
+                             未设置时写操作(todo/log/note)会报错要求先设置
+                             临时覆盖: ABS_USER=<名字> abs ...
   abs init [--repair]        建 .brain/ 图谱; 结构不完整时报明细, --repair 只补缺不覆盖
   abs install [--agent <宿主>]   安装 MCP+hook+skill (宿主: claude-code/codex/opencode/pi)
   abs uninstall [--agent <...>]  卸载
@@ -237,6 +242,28 @@ const TODO_ACTIONS = {
   blocked: 'blocked',
   done: 'done',
 };
+
+/** abs config —— 读/写用户设置（目前只有 user）。 */
+async function cmdConfig({ sub, value }) {
+  const p = userConfigPath();
+  if (!sub || sub === 'show' || sub === 'get') {
+    const u = await getUser();
+    return u
+      ? `user = ${u}\n  (来源: ${process.env.ABS_USER ? 'ABS_USER 环境变量' : p})`
+      : `user 未设置\n  设置: abs config set user <你的名字>\n  (或临时: ABS_USER=<名字> abs ...)`;
+  }
+  if (sub === 'set') {
+    const [key, ...rest] = String(value || '').split(/\s+/).filter(Boolean);
+    if (key !== 'user') throw new Error(`✗ abs config set 目前只支持 user\n  用法: abs config set user <你的名字>`);
+    // 名字含空格时不该静默只取第一个词（会被 setUser 的字符校验拒）。
+    // 拼接后交给 setUser 统一判定，报错文案里能看到完整输入。
+    const name = rest.join(' ');
+    if (rest.length > 1) throw new Error(`✗ 姓名不能含空格（收到 "${name}"）\n  @标记无法解析带空格的姓名`);
+    const u = await setUser(name);
+    return `✓ user = ${u}\n  → ${p}`;
+  }
+  throw new Error(`✗ 未知子命令 "${sub}"\n  用法: abs config [show] / abs config set user <名字>`);
+}
 
 async function main() {
   try {
@@ -317,6 +344,10 @@ async function main() {
         } else {
           await runUninstall({ agent: opts.agent, yes: opts.yes });
         }
+        break;
+      }
+      case 'config': {
+        console.log(await cmdConfig({ sub: opts._[0], value: opts._.slice(1).join(' ') }));
         break;
       }
       case 'query': {

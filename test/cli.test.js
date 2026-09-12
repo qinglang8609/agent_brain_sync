@@ -20,19 +20,23 @@ beforeEach(async () => {
   sandbox = await fs.mkdtemp(join(tmpdir(), 'abs-cli-'));
   proj = join(sandbox, 'proj');
   await fs.mkdir(proj, { recursive: true });
+  // 写操作现要求设置使用者姓名；子进程经 ...process.env 继承。
+  // 指向沙盒配置目录，避免读到真实 ~/.abs/config.json 造成不一致。
+  process.env.ABS_USER = 'tester';
+  process.env.ABS_CONFIG_DIR = join(sandbox, 'abs-cfg');
 });
 
 afterEach(async () => {
   await fs.rm(sandbox, { recursive: true, force: true });
 });
 
-/** 跑一次 CLI, 返回 {code, stdout, stderr}。 */
+/** 跑一次 CLI, 返回 {code, stdout, stderr}。
+ * opts.env 里值为 undefined 的键会被删掉（用于「显式取消」beforeEach 设的 ABS_USER 等）。 */
 function run(args, opts = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [CLI, ...args], {
-      cwd: proj,
-      env: { ...process.env, ...opts.env },
-    });
+    const env = { ...process.env, ...opts.env };
+    for (const [k, v] of Object.entries(env)) if (v === undefined) delete env[k];
+    const child = spawn(process.execPath, [CLI, ...args], { cwd: proj, env });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => (out += d));
@@ -441,5 +445,121 @@ describe('cli: argv 解析', () => {
     await fs.access(join(logDir, 'teardown-ses_TD.mark')); // 老代码: 这里失败
     await assert.rejects(() => fs.access(join(fakeHome, '.abs', 'log', 'teardown-ses_TD.mark')),
       'mark 不得写到 HOME/.abs/log');
+  });
+});
+
+// ---------- 使用者姓名（作者标记）----------
+// 需求: 运行 abs 时检查用户姓名, 未设置则要求设置; todo/log/生成文档标 @name。
+// 关键设计: **只在写操作检查** —— hook 会在会话结束非交互调 abs wrapup / teardown-check,
+// 那儿拦人会卡断收尾流程。故这里必须显式断言只读命令与 hook 命令不受影响。
+describe('cli: 使用者姓名与作者标记', () => {
+  /** 隔离配置目录 + 显式姓名/无名，避免读到真实 ~/.abs/config.json。 */
+  function envNoUser(extra = {}) {
+    // ABS_USER 显式置 undefined = 删掉它（空串不生效：getUser 会跳过空值，
+    // 从而让 beforeEach 设的 'tester' 泄露进来）。同理 ABS_CONFIG_DIR 指向沙箱。
+    return { ABS_CONFIG_DIR: join(sandbox, 'u-cfg'), ABS_USER: undefined, ...extra };
+  }
+  function envUser(name = 'fanchao', extra = {}) {
+    return { ABS_CONFIG_DIR: join(sandbox, 'u-cfg'), ABS_USER: name, ...extra };
+  }
+
+  test('未设姓名: 写操作报错并给出设置命令', async () => {
+    await run(['init', '--dir', proj], { env: envNoUser() });
+    for (const args of [
+      ['todo', 'add', 'T1', '--note', 'x', '--dir', proj],
+      ['log', '完成某事', '--dir', proj],
+      ['note', '某经验', '--dir', proj],
+    ]) {
+      const r = await run(args, { env: envNoUser() });
+      assert.notEqual(r.code, 0, `${args.join(' ')} 应被拦下`);
+      assert.ok(r.stderr.includes('尚未设置使用者姓名'), `应报未设置: ${r.stderr}`);
+      assert.ok(r.stderr.includes('abs config set user'), `应给出设置命令: ${r.stderr}`);
+    }
+    // 确认真的没落盘
+    const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8').catch(() => '');
+    assert.ok(!todo.includes('T1'), `未设姓名时不得落盘: ${todo}`);
+  });
+
+  test('未设姓名: 只读命令与 hook 命令不受影响', async () => {
+    await run(['init', '--dir', proj], { env: envNoUser() });
+    // 只读：必须照常工作
+    for (const args of [['load', '--dir', proj], ['status', '--dir', proj], ['lint', '--dir', proj], ['log', '--dir', proj]]) {
+      const r = await run(args, { env: envNoUser() });
+      assert.equal(r.code, 0, `只读命令 ${args[0]} 不应被姓名守卫拦: ${r.stderr}`);
+    }
+    // hook 路径：收尾自动化调它们，绝不能因缺姓名而失败
+    const w = await run(['wrapup', '--dir', proj], { env: envNoUser() });
+    assert.equal(w.code, 0, `abs wrapup 不应被拦(会卡断收尾): ${w.stderr}`);
+    const t = await run(['teardown-check', '--payload', '{}'], { env: envNoUser() });
+    assert.equal(t.code, 0, `abs teardown-check 不应被拦: ${t.stderr}`);
+  });
+
+  test('config set user 落盘, config 可查看, 坏字符被拒', async () => {
+    const env = envNoUser();
+    const set = await run(['config', 'set', 'user', 'fanchao'], { env });
+    assert.equal(set.code, 0, set.stderr);
+    assert.ok(set.stdout.includes('fanchao'), set.stdout);
+    // 落盘到 ABS_CONFIG_DIR 而非真实 ~/.abs
+    const cfg = JSON.parse(await fs.readFile(join(env.ABS_CONFIG_DIR, 'config.json'), 'utf8'));
+    assert.equal(cfg.user, 'fanchao');
+    // show 能读到落盘值（删掉 ABS_USER，强制走文件）
+    const envFileOnly = { ABS_CONFIG_DIR: env.ABS_CONFIG_DIR, ABS_USER: undefined };
+    const show = await run(['config'], { env: envFileOnly });
+    assert.ok(show.stdout.includes('fanchao'), `config 应显示已设姓名: ${show.stdout}`);
+    // 含空格的姓名被拒（@name 标记无法解析带空格的名字）
+    const bad = await run(['config', 'set', 'user', 'fan chao'], { env });
+    assert.notEqual(bad.code, 0);
+    assert.ok(bad.stderr.includes('不能含空格'), bad.stderr);
+    // 其它非法字符（如 $）同样被拒
+    const bad2 = await run(['config', 'set', 'user', 'fa$n'], { env });
+    assert.notEqual(bad2.code, 0);
+    assert.ok(bad2.stderr.includes('不支持的字符'), bad2.stderr);
+  });
+
+  test('设姓名后: todo 行标 @name, 且 config 文件持久生效', async () => {
+    await run(['init', '--dir', proj], { env: envNoUser() });
+    await run(['config', 'set', 'user', 'fanchao'], { env: envNoUser() });
+    // 只留 ABS_CONFIG_DIR，删掉 ABS_USER → 必须从文件读到
+    const env = { ABS_CONFIG_DIR: join(sandbox, 'u-cfg'), ABS_USER: undefined };
+    const r = await run(['todo', 'add', 'T1', '--note', '做点事', '--dir', proj], { env });
+    assert.equal(r.code, 0, r.stderr);
+    const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.ok(/- \[ \] T1 @fanchao — 做点事 \(认领 \d{4}-\d{2}-\d{2}\)/.test(todo),
+      `todo 行应为 'ID @name — 说明 (认领 date)': ${todo}`);
+  });
+
+  test('log 行标 @name（作者前置于 kind）', async () => {
+    await run(['init', '--dir', proj], { env: envNoUser() });
+    const env = envUser('alice');
+    const r = await run(['log', '完成作者标记', '--dir', proj], { env });
+    assert.equal(r.code, 0, r.stderr);
+    const log = await fs.readFile(join(proj, '.brain', 'log.md'), 'utf8');
+    assert.ok(/^## \[[\d-]+ [\d:]+\] @alice dev \| 完成作者标记/m.test(log),
+      `log 行格式应为 '[时间] @name kind | 内容': ${log}`);
+  });
+
+  test('note 页 frontmatter 含 author 字段（四项 tags/author/updated/status）', async () => {
+    await run(['init', '--dir', proj], { env: envNoUser() });
+    const env = envUser('bob');
+    const r2 = await run(['note', '经验一条', '--tags', '坑', '--dir', proj], { env });
+    assert.equal(r2.code, 0, r2.stderr);
+    const dir = join(proj, '.brain', 'sources');
+    const files = (await fs.readdir(dir)).filter((f) => f.endsWith('.md'));
+    const body = await fs.readFile(join(dir, files[0]), 'utf8');
+    const fm = body.split('---')[1] || '';
+    assert.ok(fm.includes('author: bob'), `frontmatter 应含 author: ${fm}`);
+    assert.ok(fm.includes('tags:'), 'tags 仍应在');
+    assert.ok(fm.includes('updated:'), 'updated 仍应在');
+    assert.ok(fm.includes('status:'), 'status 仍应在');
+  });
+
+  test('ABS_USER 覆盖配置文件（临时身份，不改落盘）', async () => {
+    await run(['init', '--dir', proj], { env: envNoUser() });
+    await run(['config', 'set', 'user', 'fileuser'], { env: envNoUser() });
+    const env = { ABS_CONFIG_DIR: join(sandbox, 'u-cfg'), ABS_USER: 'envuser' };
+    await run(['todo', 'add', 'T2', '--note', 'x', '--dir', proj], { env });
+    const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.ok(todo.includes('@envuser'), `环境变量应优先: ${todo}`);
+    assert.ok(!todo.includes('@fileuser'), `不得用文件里的名字: ${todo}`);
   });
 });

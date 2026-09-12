@@ -58,6 +58,29 @@ Obsidian 可直接打开的 Markdown 图谱（`.brain/`）做统一落点。
 > 为什么：方案先过目能省掉整轮返工；登记让跨会话可续；"问开工"把决定权留在用户手里。
 > **这不是拖延** —— 总结方案本身就是工作，做完再问。
 
+## 使用者姓名（作者标记）
+
+图谱需要知道「谁登记的」。写操作（`todo add/note/blocked/done`、`log`、`note`）会检查：
+**未设置姓名则报错并给设置命令**，不默默落盘无名条目。
+
+```bash
+abs config set user <你的名字>     # 写入 ~/.abs/config.json，一次即可
+abs config                        # 查看当前姓名
+ABS_USER=<名字> abs todo add ...   # 临时覆盖（CI/多身份），不改落盘配置
+```
+
+设置后自动标记：
+- `todo.md`：`- [ ] TASK-ID @fanchao — 说明 (认领 2026-09-12)`（作者紧跟 id，扫板先看到人）
+- `log.md`：`## [2026-09-12 13:17] @fanchao dev | 完成 X`（作者前置于 kind）
+- `sources/`：frontmatter `author: fanchao`
+
+**只读命令不检查**（`load`/`todo`/`status`/`lint`/`query`/`index`/`log` 无参）——
+hook 在会话结束时非交互调 `abs wrapup`/`abs teardown-check`，那儿拦人会卡断收尾。
+
+> `index.md` **不加**作者：index 行是覆盖式更新的，作者会从"创建者"漂成"最后改的人"，
+> 语义不固定。要查谁写的，看该页自己的 `author`。
+> 历史条目**不回填**（原文/现场已不在，回填等于编造）。
+
 ## 图谱定位（一个项目一个 `.brain/`，abs 自动定位不用手工指定路径）
 
 `.brain/` 放项目根，一个项目只建一份。所有 `abs` 命令（`abs load/todo/note/task/query/lint...`）
@@ -204,11 +227,12 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`。`abs st
 
 ## 知识页格式（concepts/entities/syntheses）
 
-所有页统一 frontmatter 三项：`tags / updated / status`（无额外字段）。
+所有页统一 frontmatter：`tags / author / updated / status`。
 
 ```markdown
 ---
 tags: [concept, 领域]   # 首标签 ∈ entity|concept|source|synthesis|session-log
+author: fanchao         # 作者（abs note 自动写；手写页也须填）
 updated: YYYY-MM-DD
 status: draft           # 或 reviewed（仅指知识冲突裁决结案）
 ---

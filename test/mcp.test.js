@@ -36,7 +36,7 @@ afterEach(async () => {
 async function startServer(cwd, envOverride = {}) {
   child = spawn(process.execPath, [MCP], {
     cwd: cwd || sandbox,
-    env: { ...process.env, ABS_LOG: '0', ...envOverride },
+    env: { ...process.env, ABS_LOG: '0', ABS_USER: 'tester', ABS_CONFIG_DIR: join(sandbox, 'abs-cfg'), ...envOverride },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   // 丢弃 stderr(不干扰); 等待子进程起来

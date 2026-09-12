@@ -17,6 +17,8 @@ let project;
 beforeEach(async () => {
   sandbox = await fs.mkdtemp(join(tmpdir(), 'abs-lock-test-'));
   project = join(sandbox, 'proj');
+  process.env.ABS_USER = 'tester'; // 写操作现要求设置姓名
+  process.env.ABS_CONFIG_DIR = join(sandbox, 'abs-cfg');
   await cmdInit({ dir: project });
 });
 
@@ -86,7 +88,8 @@ describe('并发写保护', () => {
   test('多进程 CLI 并发 task start 不丢(排队等锁不饿死)', async () => {
     const N = 6;
     const runs = await Promise.all(Array.from({ length: N }, (_, i) => new Promise((resolve) => {
-      const c = spawn(process.execPath, [CLI, 'todo', 'add', `MPCLI-${i}`, '--note', `x${i}`, '--dir', project]);
+      const c = spawn(process.execPath, [CLI, 'todo', 'add', `MPCLI-${i}`, '--note', `x${i}`, '--dir', project],
+        { env: { ...process.env, ABS_USER: 'tester', ABS_CONFIG_DIR: join(sandbox, 'abs-cfg') } });
       c.on('close', (code) => resolve(code));
     })));
     for (const code of runs) assert.equal(code, 0, `某进程退出码非 0 (LockTimeout 饿死): ${runs.filter((x) => x !== 0).join(',')}`);
