@@ -316,6 +316,43 @@ describe('board/load/status', () => {
     assert.ok(out.includes('log.md'));
   });
 
+  // 回归: load/todo 曾全量打印 Done 区，而 Done 无上限增长 → 长历史项目上
+  // abs load 直接把上下文塞满（实报：「另一台机器 abs load 塞了 40%」）。
+  // 实测本仓库修复前 Done 占 load 输出的 68.8%（19.6KB/28.4KB）。
+  test('load 输出不随 Done 区增长（按日期折叠计数）', async () => {
+    const todoP = join(projectA, '.brain', 'todo.md');
+    const base = await fs.readFile(todoP, 'utf8');
+    const small = base.split('## Done')[0] + '## Done（只留近期，旧的迁 log.md/快照）\n- [x] D-1 [[tester]] — 小事 (完成 2026-09-01) 【落地】\n';
+    await fs.writeFile(todoP, small, 'utf8');
+    const smallOut = await cmdLoad({ dir: projectA });
+
+    // 塞 300 条 Done（~40KB），load 输出大小应基本不变
+    const many = Array.from({ length: 300 }, (_, i) =>
+      `- [x] D-BIG-${i} [[tester]] — 一条很长的历史任务说明文字用来模拟真实积累 (完成 2026-08-${String(1 + (i % 28)).padStart(2, '0')}) 【落地】`);
+    await fs.writeFile(todoP, base.split('## Done')[0] + '## Done（只留近期，旧的迁 log.md/快照）\n' + many.join('\n') + '\n', 'utf8');
+    const bigOut = await cmdLoad({ dir: projectA });
+
+    const growth = Buffer.byteLength(bigOut) / Buffer.byteLength(smallOut);
+    assert.ok(growth < 1.5,
+      `Done 从 1 条涨到 300 条，load 输出不得显著膨胀（实际 ${Buffer.byteLength(smallOut)}→${Buffer.byteLength(bigOut)}B, ×${growth.toFixed(2)}）`);
+    assert.ok(bigOut.includes('300 条'), `应给出 Done 计数: ${bigOut.slice(-400)}`);
+    assert.ok(!bigOut.includes('D-BIG-7 '), 'Done 明细不应进 load 输出');
+    // 明细仍可拿（逃生口）
+    const full = await cmdShow({ view: 'todo', dir: projectA, full: true });
+    assert.ok(full.includes('D-BIG-7 '), '--full 应给全量明细');
+  });
+
+  // 回归: 日志条目本身可长达 800B+，5 条就 2.9KB。load 是开机读状态，每条按语义边界收口。
+  test('load 的「最近动作」每条收口，不随日志条目变长而膨胀', async () => {
+    const logP = join(projectA, '.brain', 'log.md');
+    const long = 'X'.repeat(3000);
+    await fs.writeFile(logP, ['# 🗒 操作日志', `## [2026-09-10 10:00] dev | ${long}`, ''].join('\n'), 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(!out.includes(long), '超长日志条目应被收口，不原样进 load');
+    const sec = out.split('--- 最近动作')[1] || '';
+    assert.ok(Buffer.byteLength(sec) < 1200, `最近动作一段应受控，实际 ${Buffer.byteLength(sec)}B`);
+  });
+
   test('status 报告项目 + 各类页数', async () => {
     const out = await cmdStatus({ dir: projectA });
     assert.ok(out.includes('concepts/: 0 页'));

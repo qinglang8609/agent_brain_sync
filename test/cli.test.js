@@ -77,7 +77,7 @@ describe('cli: todo', () => {
     assert.equal(s.code, 0, s.stderr);
     const d = await run(['todo', 'done', 'T1']);
     assert.equal(d.code, 0, d.stderr);
-    const t = await run(['todo']);
+    const t = await run(['todo', '--full']);
     assert.ok(t.stdout.includes('T1'));
   });
 

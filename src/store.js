@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
 import { requireUser, atTag, getUser } from './userconfig.js';
-import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf } from './todo.js';
+import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf, collapseDone } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 
@@ -128,9 +128,9 @@ export function logTemplate() {
 }
 
 // ---------- board: 看板 ----------
-export async function cmdBoard({ dir }) {
+export async function cmdBoard({ dir, full }) {
   const root = await requireBrain(dir || process.cwd());
-  return boardText(root);
+  return boardText(root, undefined, { full: !!full });
 }
 
 // ---------- status: 定位报告 + 图谱概要 ----------
@@ -182,7 +182,8 @@ export async function cmdLoad({ dir }) {
     index || '(index.md 为空)',
     '',
     '--- Todo 看板 (todo.md) ---',
-    todo.trim() || '(todo.md 为空)',
+    collapseDone(todo).text || '(todo.md 为空)',
+    '\n（Done 已按日期折叠计数；明细: abs todo --full）',
     '',
     '--- 最近动作 (log.md, 最新 5 条) ---',
     recentLogLines(log, 5) || '(log.md 为空)',
@@ -366,6 +367,9 @@ function recentLogLines(text, n) {
     .split('\n')
     .filter((l) => /^##\s*\[/.test(l))
     .slice(0, n)
+    // 每条按语义边界收口：load 是开机读状态，只求"上会话做到哪"的线索，不须全文。
+    // 坑: 不收口时 5 条能占 2.9KB（单条 800B），又是一处随日志变长而膨胀的上下文。
+    .map((l) => clip(l, 220))
     .join('\n');
 }
 
@@ -493,7 +497,7 @@ async function markDone(file, id, kind = '落地') {
 }
 
 // ---------- show: 查看 index/todo/log（只读面） ----------
-export async function cmdShow({ dir, view }) {
+export async function cmdShow({ dir, view, full }) {
   const v = String(view || '').toLowerCase();
   if (!['todo', 'index', 'log'].includes(v)) {
     return '用法: abs <todo|index|log>  — todo=看板(原 board), index=图谱索引, log=操作流水';
@@ -510,7 +514,7 @@ export async function cmdShow({ dir, view }) {
     return `${v}.md 不存在于 ${brainPath(root)}。初始化/补齐: abs init --repair`;
   }
   if (!text) return `(${v}.md 为空)`;
-  return v === 'todo' ? boardText(root, text) : text;
+  return v === 'todo' ? boardText(root, text, { full: !!full }) : text;
 }
 // ---------- query: 检索知识图谱（多词 OR，扫全 .md 页） ----------
 const KNOWN_SLUG_HINT = /模板残留|\[\[slug\]\]/;

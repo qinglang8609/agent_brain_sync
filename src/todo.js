@@ -160,6 +160,51 @@ function renderDoneGroups(units) {
   return out;
 }
 
+/** 把 Done 区从「全量行」折叠为「按日期计数」，供 `abs load` / `abs todo` 这类
+ * 给人（和 AI 上下文）看的视图用。
+ *
+ * 坑: 这两个命令此前直接 `todo.trim()` 全量打印，而 Done 区**无上限增长** ——
+ * 本仓库一处就占 load 输出的 68.8%（19.6KB/28.4KB）。长历史机器上直接把
+ * 上下文塞满（实报：「另一台机器 abs load 塞了 40%」）。
+ * 这与 hooks.log / wrapup.log 同类问题（那两处有轮转），故这里只给计数，
+ * 要看明细用 `abs todo` 加 `--full`，或直接看 todo.md / 归档页。
+ *
+ * `### 归档` 区（历史的「归档 N 条」标记行）体积小且是长期引用，原样保留。
+ * 返回 { text, doneCount }；text 不含 `## Done` 标题行。 */
+export function collapseDone(text) {
+  const lines = String(text).split('\n');
+  const di = lines.findIndex((l) => l.startsWith('## Done'));
+  if (di === -1) return { text: String(text).trim(), doneCount: 0 };
+  const head = lines.slice(0, di);
+  const rest = lines.slice(di + 1);
+  const { groupLines, archiveLines } = splitDoneBody(rest);
+  const units = parseDoneUnits(groupLines);
+  // 按日期归组计数（新日期在前），未标日期的归尾
+  const byDate = new Map();
+  let undated = 0;
+  for (const u of units) {
+    if (!u.date) undated++;
+    else byDate.set(u.date, (byDate.get(u.date) || 0) + 1);
+  }
+  const counts = [...byDate.entries()]
+    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    .map(([d, n]) => `${d} ${n} 条`);
+  if (undated) counts.push(`未标日期 ${undated} 条`);
+  // 只列最近 MAX_DONE_DATE_LINES 个日期组：日期组本身也随历史增长（实测 300 条跨 28 天
+  // 会把 load 输出从 660B 拉到 1203B）。载入视图只需"最近做了多少"，早期历史看归档页。
+  const MAX_DONE_DATE_LINES = 7;
+  const shown = counts.slice(0, MAX_DONE_DATE_LINES);
+  if (counts.length > MAX_DONE_DATE_LINES) {
+    const rest = counts.length - MAX_DONE_DATE_LINES;
+    shown.push(`… 另有 ${rest} 个更早日期组（abs todo --full 看全量）`);
+  }
+  const doneLines = units.length
+    ? [`## Done（${units.length} 条，按日期折叠）`, ...shown.map((c) => `- ${c}`)]
+    : ['## Done（0 条）'];
+  const out = [...head, ...doneLines, '', ...archiveLines].join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return { text: out, doneCount: units.length };
+}
+
 /** 归档标记区标题。它在 Done 区内部、日期分组之后，形如：
  *   ### 归档
  *   - [[2026-09-10-todo归档]] 完成任务 10 条
@@ -513,9 +558,12 @@ export async function moveBlocked(brainRoot, { id, reason }) {
 }
 
 // ---------- 看板输出 ----------
-export async function boardText(brainRoot, textOverride) {
+export async function boardText(brainRoot, textOverride, { full = false } = {}) {
   const text = textOverride !== undefined ? textOverride : await readTodo(brainRoot);
   const head = `📂 abs → 项目: ${brainRoot}`;
   if (!text.trim()) return `${head}\n\n（todo.md 为空，先 abs todo add 登记任务）`;
-  return `${head}\n\n${text.trim()}`;
+  // Done 区折叠：它无上限增长，全量打印会把上下文塞满（见 collapseDone 注释）
+  const body = full ? text.trim() : collapseDone(text).text;
+  const hint = full ? '' : '\n\n（Done 只给计数；看明细: abs todo --full）';
+  return `${head}\n\n${body}${hint}`;
 }

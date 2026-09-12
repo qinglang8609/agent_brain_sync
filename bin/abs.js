@@ -76,6 +76,7 @@ const FLAG_SPEC = {
   'keep-days': { type: 'string' },
   'help': { type: 'boolean' },
   'dry-run': { type: 'boolean' },
+  'full': { type: 'boolean' },
   'yes': { type: 'boolean' },
   'repair': { type: 'boolean' },
   'no-mcp': { type: 'boolean' },
@@ -313,8 +314,8 @@ async function main() {
       case 'todo': {
         const [sub, id, ...rest2] = opts._;
         if (!sub) {
-          rejectExtra([id, ...rest2].filter(Boolean), 'abs todo');
-          console.log(await cmdShow({ dir: opts.dir, view: 'todo' }));
+          rejectExtra([id, ...rest2].filter(Boolean), 'abs todo [--full]');
+          console.log(await cmdShow({ dir: opts.dir, view: 'todo', full: opts.full }));
           break;
         }
         const action = TODO_ACTIONS[sub];
