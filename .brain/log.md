@@ -1,4 +1,5 @@
 # 🗒 操作日志
+## [2026-09-12 11:18] dev | 清空 todo 看板：INSTALL-HELP-FOOTGUN 与 NOTE-TAGS-BOOL 复核确认仍可复现并修复（install --help 曾写 15 文件；note --tags 曾写成 tags:[source,true]），LOG-BACKFILL-34 复核残句原文确不存在、维持【否决】。新增 3 条回归测试含 revert-check。
 ## [2026-09-12 01:59] dev | 发布 1.5.4：摘要写入侧硬切修复上线。registry latest=1.5.4，本机全局已升级并用真实命令实测（155 字长句完整落盘，尾 '全缺失（用户在另一台机器复现）。'），四宿主 hook/skill/MCP 已刷新。打包产物在干净沙盒预验通过后才发。
 ## [2026-09-12 01:58] dev | 修 LOG-TRUNC-100 并发布 1.5.4：摘要写入侧硬切（同一段文字在 cmdNote 被截 6 次，阈值 24/40/60/100）导致 log/index/文件名处处残句，且 abs load 开机读的就是这份。新增 clip(text,n) 语义边界收口 + slugOf() 标点收口；cmdLog 100→600 码点，cmdNote 各截断收敛，页面新增 TITLE 行。测试 193→197（含 clip 边界、文件名回归、revert-check）；打包产物在干净沙盒实测长句完整落盘。index.md 9 条历史截断描述从源页重建（机器校验：只延长不覆盖 9/9）。旧 log 34 条残句不动（原文从未落盘，不可恢复）。
 ## [2026-09-12 01:47] dev | 修 LOG-TRUNC-100：摘要写入侧硬切。新增 clip(text,n) 按标点→空格→硬切收口 + slugOf()；cmdLog 100→600 码点，cmdNote 的 6 处截断收敛为完整优先，页面新增 TITLE 行。实测 log 断句 34/85 → 0；index.md 10 条历史截断描述从源页重建为完整句。测试 193→196 (含 clip 4 例边界 + revert-check)，abs load 最近动作端到端验收完整。相邻 bug(NOTE-TAGS-BOOL) 另登记未修。
