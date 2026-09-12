@@ -14,7 +14,7 @@ import { promises as fs } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = join(REPO, 'bin', 'abs.js');
@@ -473,4 +473,37 @@ describe('零宽字符守卫 (ZWSP)', () => {
       assert.ok(!codeOnly.includes(ZWSP), `${name} 代码行(非注释)不应含 ZWSP`);
     }
   });
+});
+
+// ---------- 插件模板源文件守卫 ----------
+// 为什么需要: 模板原本是嵌在 install.js 里的模板字符串(671 行)，测试只能读"生成产物"
+// 间接断言，模板本身写坏要在安装后才暴露。外置成真文件后可直测源文件，
+// 且 @@占位符@@ 未替换会直接产出坏 TS（静默失效的一种），故在源头钉死。
+describe('插件模板源文件 (hooks/*.ts)', () => {
+  const TPL = {
+    'abs.opencode.ts': { need: ['@@MARK@@'], forbid: ['@@ABS_BIN@@'] },
+    'abs.pi.ts': { need: ['@@ABS_BIN@@', '@@MARK@@'], forbid: [] },
+  };
+
+  for (const [name, spec] of Object.entries(TPL)) {
+    test(`${name} 存在且占位符齐备`, async () => {
+      const p = join(REPO, 'hooks', name);
+      const src = await fs.readFile(p, 'utf8');
+      for (const k of spec.need) assert.ok(src.includes(k), `${name} 缺占位符 ${k}`);
+      for (const k of spec.forbid) assert.ok(!src.includes(k), `${name} 不会用到 ${k}，不应出现`);
+    });
+
+    test(`${name} 占位符替换后语法可解析 (node --check)`, async () => {
+      const p = join(REPO, 'hooks', name);
+      const src = await fs.readFile(p, 'utf8');
+      // 替换为合法值后语法检查 —— 占位符位残不符时会在这里炸出
+      const filled = src
+        .replace(/@@ABS_BIN@@/g, '/tmp/abs.js')
+        .replace(/@@MARK@@/g, '// abs-managed');
+      const tmp = join(sandbox, `chk-${name.replace(/[^\w.]/g, '_')}.mts`);
+      await fs.writeFile(tmp, filled, 'utf8');
+      const r = spawnSync(process.execPath, ['--check', tmp], { encoding: 'utf8' });
+      assert.equal(r.status, 0, `${name} 替换后语法错误:\n${r.stderr}`);
+    });
+  }
 });
