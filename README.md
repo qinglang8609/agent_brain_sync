@@ -120,7 +120,7 @@ npm uninstall -g @fanchao8609/agent_brain_sync
 ## 开发
 
 ```bash
-npm test           # 110+ 单测（node:test，零外部测试依赖）
+npm test           # 全部单测（node:test，零外部测试依赖）
 npm run pack:check # 预览 npm 发布产物
 ```
 
@@ -130,9 +130,8 @@ npm run pack:check # 预览 npm 发布产物
 agent_brain_sync/
 ├── bin/abs.js      CLI 入口
 ├── bin/mcp.js      MCP server (stdio)
-├── src/index.js    图谱定位（只认当前目录的 .brain/）
+├── src/index.js    图谱定位（只认当前目录的 .brain/）+ 全局技术日志目录
 ├── src/lock.js     并发写保护（原子锁 + 排队 + SKIP）
-├── src/brainio.js  统一读写收口
 ├── src/todo.js     todo.md 分区读写
 ├── src/store.js    CLI 命令实现
 ├── src/hosts.js    四宿主接入定义

@@ -336,3 +336,110 @@ describe('cli: note --tags 值解析', () => {
     assert.ok(!files[0].includes('abs-摘要'), `文件名不应含标签串: ${files[0]}`);
   });
 });
+
+// ---------- argv 解析契约 ----------
+// 坑: parseArgv 曾是 117 行手写 if-else；改用 node:util.parseArgs 后，语义靠这段钉住。
+// 重点: --no-mcp / --no-skill 是**负向开关**，必须转成 mcp:false / skill:false，
+// 若哪天又退回携带 true 的原样值，install 会把「不要 MCP」理解成「要 MCP」。
+// 断言方式: 跑 `abs install --help`（只打印用法、不写盘），看它是否认得这些 flag。
+describe('cli: argv 解析', () => {
+  // 从外部可观测的代理: install --no-mcp 与 --no-skill 不得被当成未知参数而报错
+  test('--no-mcp / --no-skill 被识别为合法 flag（不报未知参数）', async () => {
+    for (const flag of ['--no-mcp', '--no-skill']) {
+      const r = await run(['install', flag, '--help']);
+      assert.equal(r.code, 0, `${flag} 应被接受: ${r.stderr}`);
+      assert.ok(r.stdout.includes('用法'), `应打印 install 用法: ${r.stdout}`);
+    }
+  });
+
+  test('负向开关真的生效: install --no-mcp 不注册 MCP', async () => {
+    // 自建隔离 env（同 help 测试的做法: 四宿主配置根均指向沙盒）
+    const env = {
+      HOME: join(sandbox, 'argv-home'),
+      CLAUDE_CONFIG_DIR: join(sandbox, 'argv-cc'),
+      CODEX_HOME: join(sandbox, 'argv-cx'),
+      ABS_OPENCODE_HOME: join(sandbox, 'argv-oc'),
+      ABS_PI_HOME: join(sandbox, 'argv-pi'),
+    };
+    const r = await run(['install', '--agent', 'claude-code', '--no-mcp', '--no-skill', '--yes'], { env });
+    assert.equal(r.code, 0, r.stderr);
+    // 未注册 MCP → settings.json 里不应有 mcpServers.abs
+    const settings = await fs.readFile(join(env.CLAUDE_CONFIG_DIR, 'settings.json'), 'utf8').catch(() => '');
+    assert.ok(!settings.includes('mcpServers'), `--no-mcp 不得注册 MCP: ${settings.slice(0, 300)}`);
+  });
+
+  test('--keep-days 传值（非布尔）且 --dry-run 为开关', async () => {
+    await run(['init', '--dir', proj]);
+    const r = await run(['todo', 'archive', '--keep-days', '7', '--dry-run']);
+    assert.equal(r.code, 0, r.stderr);
+    // 值真被读到: 输出里提到保留天数(而非把 '7' 当位置参数报错)
+    assert.ok(!r.stderr.includes('不认识多余参数'), `--keep-days 的值不得被当位置参数: ${r.stderr}`);
+  });
+
+  test('未知 --flag 不抛异常（历史行为: 静默收下）', async () => {
+    const r = await run(['lint', '--totally-unknown']);
+    assert.equal(r.code, 0, `未知 flag 不应崩: ${r.stderr}`);
+  });
+
+  // ---- 以下三条是 parseArgs 迁移的真实回归面（曾各自由现一次 P0） ----
+  // 坑1: parseArgs 会把**任何** `-` 开头的 token 当选项，连正文一起吃。
+  // 回归面: abs note "-X 是个坑" 曾静默丢掉正文、只建空目录。
+  test('以 - 开头的正文不被当短选项吃掉', async () => {
+    await run(['init', '--dir', proj]);
+    const r = await run(['note', '-X 是个坑', '--dir', proj]);
+    assert.equal(r.code, 0, r.stderr);
+    const dir = join(proj, '.brain', 'sources');
+    const files = (await fs.readdir(dir)).filter((f) => f.endsWith('.md'));
+    assert.equal(files.length, 1, `正文不得丢失（sources 应有 1 页）: ${files.join(', ')}`);
+    const body = await fs.readFile(join(dir, files[0]), 'utf8');
+    assert.ok(body.includes('-X 是个坑'), `正文应完整保留: ${body.slice(0, 300)}`);
+  });
+
+  // 坑2: 旧版只认 `--` 长选项 → `-x` 落位置参数被 rejectExtra 拒。
+  // parseArgs 把 `-x` 当短选项静默吃掉 → lint 照跑。现已隔离恢复旧行为。
+  test('裸 -x 仍被当作多余参数拒绝（不得静默吃掉）', async () => {
+    await run(['init', '--dir', proj]);
+    const r = await run(['lint', '-x', '--dir', proj]);
+    assert.notEqual(r.code, 0, `-x 应被拒绝: ${r.stdout}`);
+    assert.ok(r.stderr.includes('不认识多余参数'), `应报多余参数: ${r.stderr}`);
+  });
+
+  // 坑3: parseArgs 对「声明的 string 选项缺值」不报错，而把值设成 true，
+  // 一路传到 resolve(true) 才抛裸栈。现在在 parseArgv 里就拦下并给清晰用法。
+  test('声明的 string 选项缺值时报清晰错误（不裸栈）', async () => {
+    const r = await run(['init', '--dir']);
+    assert.notEqual(r.code, 0);
+    assert.ok(r.stderr.includes('缺少值'), `应报缺值: ${r.stderr}`);
+    assert.ok(!r.stderr.includes('ERR_INVALID_ARG_TYPE'), `不得泄裸栈: ${r.stderr}`);
+  });
+
+  // 坑4: resolve(undefined) 抛 ERR_INVALID_ARG_TYPE，**不**自动回退 cwd。
+  // 不带 --dir 时 store.js 必须显式回退 cwd，否则 init/load/board 全崩。
+  test('不带 --dir 时回退当前目录（不崩）', async () => {
+    const r = await run(['init']);
+    assert.equal(r.code, 0, `init 不带 --dir 应成功: ${r.stderr}`);
+    assert.ok(r.stdout.includes('已建图谱'), r.stdout);
+    await fs.access(join(proj, '.brain', 'todo.md')); // 建在了 cwd(= proj)
+  });
+
+  // 坑5: teardown mark 曾用裸 homedir() 拼路径 → 彽过 ABS_LOG_DIR，
+  // 测试注入沙盒永远隔离不到它（会往真实 ~/.abs/log/ 写 mark，污染真机去重状态）。
+  // 断言: HOME 与 ABS_LOG_DIR 分开时，mark 落 ABS_LOG_DIR，绝不落 HOME。
+  test('teardown mark 落 ABS_LOG_DIR，不落 HOME/.abs/log', async () => {
+    await run(['init', '--dir', proj]);
+    const logDir = join(sandbox, 'td-log');
+    const fakeHome = join(sandbox, 'td-home'); // ≠ logDir，老代码会写到这
+    await fs.mkdir(fakeHome, { recursive: true });
+    // transcript 里带 Write 工具足迹 → 满足「本会话改过文件」守卫
+    const trans = join(sandbox, 'trans.jsonl');
+    await fs.writeFile(trans,
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write' }] } }) + '\n', 'utf8');
+    const payload = JSON.stringify({ session_id: 'ses_TD', cwd: proj, transcript_path: trans });
+    const r = await run(['teardown-check', '--payload', payload],
+      { env: { HOME: fakeHome, ABS_LOG_DIR: logDir } });
+    assert.match(r.stdout, /^push:/, `应触发注入: ${r.stdout}`);
+    await fs.access(join(logDir, 'teardown-ses_TD.mark')); // 老代码: 这里失败
+    await assert.rejects(() => fs.access(join(fakeHome, '.abs', 'log', 'teardown-ses_TD.mark')),
+      'mark 不得写到 HOME/.abs/log');
+  });
+});

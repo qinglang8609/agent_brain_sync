@@ -2,12 +2,13 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdTeardownCheck, cmdTodoArchive } from '../src/store.js';
-import { runInstall, runUninstall, installSummary } from '../src/install.js';
+import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdTeardownCheck, cmdTodoArchive } from '../src/store.js';
+import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { parseArgs } from 'node:util';
 
 const ABS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -60,28 +61,76 @@ async function cmdUpdate({ yes }) {
 
 const [,, cmd, ...rest] = process.argv;
 
+// 所有 flag 集中声明。parseArgs 只负责「把 argv 切成键值」，形状转换（keep-days → keepDays，
+// no-mcp → mcp:false）在下面一处收口。曾手写了 117 行 if-else 逐 flag 分支。
+const FLAG_SPEC = {
+  'dir': { type: 'string' },
+  'agent': { type: 'string' },
+  'id': { type: 'string' },
+  'section': { type: 'string' },
+  'note': { type: 'string' },
+  'as': { type: 'string' },
+  'payload': { type: 'string' },
+  'tags': { type: 'string' },
+  'keep-days': { type: 'string' },
+  'help': { type: 'boolean' },
+  'dry-run': { type: 'boolean' },
+  'yes': { type: 'boolean' },
+  'repair': { type: 'boolean' },
+  'no-mcp': { type: 'boolean' },
+  'no-skill': { type: 'boolean' },
+};
+
 function parseArgv(args) {
-  const o = { _: [] };
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--dir') { o.dir = args[++i]; }
-    else if (a === '--agent') { o.agent = args[++i]; }
-    else if (a === '--id') { o.id = args[++i]; }
-    else if (a === '--section') { o.section = args[++i]; }
-    else if (a === '--note') { o.note = args[++i]; }
-    else if (a === '--as') { o.as = args[++i]; }
-    else if (a === '--payload') { o.payload = args[++i]; }
-    else if (a === '--keep-days') { o.keepDays = args[++i]; }
-    else if (a === '--tags') { o.tags = args[++i]; }
-    else if (a === '--help') { o.help = true; }
-    else if (a === '--dry-run') { o.dryRun = true; }
-    else if (a === '--yes') { o.yes = true; }
-    else if (a === '--repair') { o.repair = true; }
-    else if (a === '--no-mcp') { o.mcp = false; }
-    else if (a === '--no-skill') { o.skill = false; }
-    else if (a.startsWith('--')) { o[a.slice(2)] = true; }
-    else o._.push(a);
+  // 坑: parseArgs 会把**任何** `-` 开头的 token 当选项，连正文一起吃：
+  // `abs note "-X 是个坑"` → values={X:true,' ':true,是:true,…}，正文全丢（旧手写版只认 `--` 长选项）。
+  // 也不能简单地把所有非 `--` token 剔走 —— 那样 `--dir /x` 的值 `/x` 会被误剔。
+  // 解法: 先用 tokens 看清每个 token 的 kind，只把「`--` 开头且 name 在 FLAG_SPEC 里」当真选项，
+  // 其余（包括 `-x` 与 `--unknown`）一律按原序交回位置参数，复刻旧手写逻辑。
+  const { values: rawValues, tokens } = parseArgs({
+    args,
+    options: FLAG_SPEC,
+    allowPositionals: true,
+    strict: false,
+    tokens: true,
+  });
+  const values = {};
+  const positionals = [];
+  const seenIdx = new Set(); // 同一个 argv 下标可能因 `-X 是个坑` 被拆出多个 token，只收一次
+  // tokens 会把 `-X 是个坑` 拆成 5 个短选项（一个字符一个），但原始 argv 里它只是一个 token。
+  // 而 token.index 就是原始 argv 的下标 → 直接按下标取回原串，才能拿回未拆的正文。
+  for (const t of tokens) {
+    const known = t.kind === 'option' && FLAG_SPEC[t.name] !== undefined && t.rawName.startsWith('--');
+    if (known) {
+      // 同名重复出现时后者胜（旧手写版行为）
+      values[t.name] = t.value === undefined ? true : t.value;
+    } else if (t.kind === 'positional') {
+      positionals.push(t.value);
+    } else {
+      // `-x` / `--unknown` / 未知长选项: 都不是我们声明的 flag。
+      // 旧手写版里 `-x` 落位置参数（→ 被 rejectExtra 拦），`--unknown` 静默收下。
+      // 区分: `--` 开头的按旧的「静默收下」当布尔（不进位置参数），其余按 argv 原值整体回位置参数
+      // （**不拆**，否则 note 正文会被切成碎片；同一 index 只收一次）。
+      if (t.rawName && t.rawName.startsWith('--')) values[t.name] = true;
+      else if (!seenIdx.has(t.index)) { seenIdx.add(t.index); positionals.push(args[t.index]); }
+    }
   }
+  // 坑: parseArgs 对「声明的 string 选项缺值」不报错（值会变 true），
+  // 于是 `abs init --dir` 一路传到 resolve(true) 才抛裸栈。在此拦下并给清晰用法。
+  const missing = Object.entries(values)
+    .filter(([k, v]) => FLAG_SPEC[k]?.type === 'string' && typeof v !== 'string')
+    .map(([k]) => `--${k}`);
+  if (missing.length) {
+    throw new Error(`✗ ${missing.join('、')} 缺少值\n  用法: --<flag> <值>（如 --dir /path/to/project）`);
+  }
+  const o = {
+    ...values,
+    _: positionals,
+    keepDays: values['keep-days'],
+    dryRun: values['dry-run'],
+  };
+  if (values['no-mcp']) o.mcp = false;
+  if (values['no-skill']) o.skill = false;
   return o;
 }
 
@@ -190,8 +239,8 @@ const TODO_ACTIONS = {
 };
 
 async function main() {
-  const opts = parseArgv(rest);
   try {
+    const opts = parseArgv(rest);
     if (RENAMED[cmd]) throw new Error(RENAMED[cmd]());
     switch (cmd) {
       case 'init': {
@@ -270,7 +319,6 @@ async function main() {
         }
         break;
       }
-      case 'agents':   console.log(installSummary()); break;
       case 'query': {
         console.log(await cmdQuery({ dir: opts.dir, terms: opts._ }));
         break;

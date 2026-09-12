@@ -2,11 +2,10 @@
 // 命令: init / board / status / load / task / query / lint
 import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
-import { homedir } from 'node:os';
-import { requireBrain, findBrainRoot, brainPath, BRAIN_DIR } from './index.js';
+import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
 import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf } from './todo.js';
 import { editFile, SKIP } from './lock.js';
-import { appendWrapup, strandedFor, wrapupLogPath } from './wrapup.js';
+import { appendWrapup, strandedFor } from './wrapup.js';
 
 // ---------- init: 建 .brain/ 骨架 ----------
 const BRAIN_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];
@@ -97,8 +96,10 @@ export async function cmdRepair({ dir }) {
 }
 
 function resolveProjectDir(dir) {
-  if (!dir) return process.cwd();
-  return resolve(dir);
+  // 必须显式回退 cwd: resolve(undefined) 会抛 ERR_INVALID_ARG_TYPE，
+  // 并不像看上去那样「自动回退」。曾误删此分支为 resolve(dir)，把 abs init/load/board
+  // 不带 --dir 全部变成裸栈崩溃。
+  return resolve(dir || process.cwd());
 }
 
 export function indexTemplate() {
@@ -308,7 +309,7 @@ export async function cmdTeardownCheck({ dir, payload }) {
     //    绝不"无节流"——否则一旦宿主张不到 id, decision:block 就会无限自激。
     const sid = String(ev.session_id || ev.sessionId || '').replace(/[^\w-]/g, '');
     const key = sid || 'nosession-' + day + '-' + root.replace(/[^\w]/g, '_');
-    const mark = join(homedir(), '.abs', 'log', `teardown-${key}.mark`);
+    const mark = join(absLogDir(), `teardown-${key}.mark`);
     try {
       await fs.access(mark);
       return '{}'; // 本会话(或本项目今日)已推过
