@@ -1,6 +1,7 @@
 # 📋 Todo 看板
 ## Backlog
 ## Today / In Progress
+- [ ] OPTS-DOUBLE-KEYS — parseArgv 返回的 opts 同时带 raw 与 normalized 两份 key(keep-days/keepDays, no-mcp/mcp...), 后者才是读者。审查建议收成显式白名单映射。收益=形状整洁, 风险=再碰刚修好的解析路径(现有 9 条测试钉着)。低优先。 (认领 2026-09-12)
 ## Blocked
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-12
