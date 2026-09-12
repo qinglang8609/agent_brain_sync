@@ -559,12 +559,22 @@ describe('opencode 路径歧义警告', () => {
     assert.ok(r.stdout.includes('OPENCODE_CONFIG'), `应警告 OPENCODE_CONFIG: ${r.stdout}`);
   });
 
-  test('显式指定 ABS_OPENCODE_HOME → 不警告(用户已决定目标)', async () => {
-    // sbEnv 默认注入 ABS_OPENCODE_HOME，此处即"显式指定"场景
+  test('显式指定 ABS_OPENCODE_HOME 且与 XDG 不一致 → 仍警告', async () => {
+    // 修复: 曾经 ABS_OPENCODE_HOME 一被设置就无条件静默，
+    // 于是"显式指定的目标"与"opencode 实际会读的位置"不一致时也不提示。
+    // 正确语义: 只比较路径是否一致，与目标来自默认值还是 env 无关。
     const r = await run(['install', '--agent', 'opencode', '--yes'], {
-      env: { XDG_CONFIG_HOME: XDG() },
+      env: { XDG_CONFIG_HOME: XDG() }, // ABS_OPENCODE_HOME 由 sbEnv 注入 → 两者必不一致
     });
-    assert.ok(!r.stdout.includes('可能不一致'), `显式指定时不该警告: ${r.stdout}`);
+    assert.ok(r.stdout.includes('可能不一致'), `不一致就该警告: ${r.stdout}`);
+    assert.ok(r.stdout.includes('显式指定'), '应说明目标是显式指定的，便于用户判断');
+  });
+
+  test('显式指定 ABS_OPENCODE_HOME 且无 XDG → 静默(无歧义)', async () => {
+    const r = await run(['install', '--agent', 'opencode', '--yes'], {
+      env: { XDG_CONFIG_HOME: '', OPENCODE_CONFIG: '' },
+    });
+    assert.ok(!r.stdout.includes('可能不一致'), `无歧义时不该警告: ${r.stdout}`);
   });
 
   test('XDG_CONFIG_HOME 指向的位置恰好等于默认路径 → 不警告(无歧义)', async () => {
@@ -732,5 +742,54 @@ describe('入口路径稳定性', () => {
     assert.equal(await fs.readFile(CC_SETTINGS(), 'utf8'), broken, '用户文件一字不动');
     assert.ok(!existsSync(join(HOME, '.abs', 'hooks', 'claude-code', 'abs-Stop.sh')), 'abs hook 脚本应被清理');
     assert.ok(!existsSync(join(CC_CFG, 'skills', 'abs-agent-brain-sync')), 'abs skill 应被清理');
+  });
+});
+
+// ---------- 安装健壮性: 中途失败 / --yes 语义 ----------
+describe('安装健壮性', () => {
+  test('[M1] 某宿主失败不阻断其余宿主，且不留 tmp 残骸', async () => {
+    // 修复前: 任一处抛错直接上抛 → 前序宿主已装、后续宿主全未装（半成品）；
+    // atomicWrite 失败还会留下 <file>.abs-tmp-* 残骸。
+    // 用「目录占位文件路径」制造 atomicWrite 的 EISDIR。
+    await fs.mkdir(join(CODEX_CFG, 'config.toml'), { recursive: true });
+    const r = await run(['install', '--yes']);
+    assert.notEqual(r.code, 0, '有宿主失败时应非零退出');
+    assert.ok(r.stdout.includes('安装失败'), `应报告失败宿主: ${r.stdout}`);
+    // 后续宿主（codex 之后的 opencode / pi）必须已安装 —— 不被跳过
+    await fs.access(join(sandbox, 'opencode', 'plugins', 'abs.ts'));
+    await fs.access(join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'));
+    // 不得留 tmp 残骸
+    const codexFiles = await fs.readdir(CODEX_CFG);
+    const tmpLeft = codexFiles.filter((f) => f.includes('.abs-tmp-'));
+    assert.equal(tmpLeft.length, 0, `不应留 tmp 残骸: ${tmpLeft.join(', ')}`);
+  });
+
+  test('[M1] 单宿主失败时仍上抛（保持非零退出语义）', async () => {
+    await fs.mkdir(join(CODEX_CFG, 'config.toml'), { recursive: true });
+    const r = await run(['install', '--agent', 'codex', '--yes']);
+    assert.notEqual(r.code, 0, '单宿主失败必须非零退出');
+  });
+
+  test('[M1] atomicWrite 失败时清理 tmp（不留半成品）', async () => {
+    // 目标路径被目录占位 → rename 必失败；断言目录里没有 .abs-tmp-* 残留
+    await fs.mkdir(join(CODEX_CFG, 'config.toml'), { recursive: true });
+    await run(['install', '--agent', 'codex', '--yes']);
+    const left = (await fs.readdir(CODEX_CFG)).filter((f) => f.includes('.abs-tmp-'));
+    assert.equal(left.length, 0, `tmp 必须被清理: ${left.join(', ')}`);
+  });
+
+  test('[M2] --yes 语义: 非 TTY 下不弹交互（自动化不挂起）', async () => {
+    // pickAgents 以前只看 isTTY、忽略 yes。本测试在非 TTY 下跑（spawn 无 pty），
+    // 断言安装直接完成全四宿主 —— 若哪天改成 TTY-only 判定，这里会挂或超时。
+    const r = await run(['install', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    for (const [p, name] of [
+      [join(CC_CFG, 'settings.json'), 'claude-code'],
+      [join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'), 'pi'],
+      [join(sandbox, 'opencode', 'plugins', 'abs.ts'), 'opencode'],
+    ]) {
+      await fs.access(p).catch(() => { throw new Error(`${name} 未安装: ${p}`); });
+    }
+    assert.ok(!r.stdout.includes('选择要安装'), `--yes 不应弹交互: ${r.stdout}`);
   });
 });

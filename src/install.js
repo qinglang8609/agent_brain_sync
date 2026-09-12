@@ -74,8 +74,20 @@ export function hostSkillDir(key) {
 async function atomicWrite(p, text) {
   await fs.mkdir(dirname(p), { recursive: true });
   const tmp = `${p}.abs-tmp-${Date.now()}`;
-  await fs.writeFile(tmp, text, 'utf8');
-  await fs.rename(tmp, p);
+  try {
+    await fs.writeFile(tmp, text, 'utf8');
+  } catch (e) {
+    // 写 tmp 就失败（如目标是目录）: 清掉半成品再抛，否则沙盒里留 .abs-tmp-* 残骸
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw e;
+  }
+  try {
+    await fs.rename(tmp, p);
+  } catch (e) {
+    // rename 失败（如目标路径被目录占位）: 同样清理，不留 tmp
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw e;
+  }
 }
 
 async function backup(p) {
@@ -416,23 +428,28 @@ async function uninstallCodex() {
  *   用户可用 ABS_OPENCODE_HOME 显式指定目标。
  */
 function opencodePathWarning() {
-  // 显式指定时不再提示（用户已经自己决定了目标）
-  if (process.env.ABS_OPENCODE_HOME) return null;
+  // 本工具实际会写入的位置（ABS_OPENCODE_HOME 覆盖时即该值）
+  const ours = hostConfigRoot("opencode");
   const hints = [];
+
+  // opencode 自身可能读取的位置。它支持 XDG 规范，故 XDG_CONFIG_HOME 优先于 ~/.config。
   const xdg = process.env.XDG_CONFIG_HOME;
-  if (xdg) {
-    const intended = join(xdg, "opencode");
-    const ours = hostConfigRoot("opencode");
-    if (resolve(intended) !== resolve(ours)) {
-      hints.push(`XDG_CONFIG_HOME=${xdg} → opencode 会读 ${intended}，但本工具写的是 ${ours}`);
-    }
+  const opencodeWillRead = xdg ? join(xdg, "opencode") : null;
+  if (opencodeWillRead && resolve(opencodeWillRead) !== resolve(ours)) {
+    hints.push(`XDG_CONFIG_HOME=${xdg} → opencode 会读 ${opencodeWillRead}，但本工具写的是 ${ours}`);
   }
   if (process.env.OPENCODE_CONFIG) {
-    hints.push(`OPENCODE_CONFIG=${process.env.OPENCODE_CONFIG} 会覆盖全局配置路径`);
+    hints.push(`OPENCODE_CONFIG=${process.env.OPENCODE_CONFIG} 会覆盖全局配置路径（优先级高于上面两者）`);
   }
+
   if (!hints.length) return null;
+  // 修复: 曾经 ABS_OPENCODE_HOME 一被设置就无条件 return null —— 于是即使用户
+  // 显式指定的目标与 opencode 实际会读的位置也不一致，警告仍完全静默。
+  // 现在改为「只比较路径是否一致」: 一致就静默（无歧义），不一致就提示，
+  // 无论目标来自默认值还是显式 env。
+  const via = process.env.ABS_OPENCODE_HOME ? "（目标由 ABS_OPENCODE_HOME 显式指定）" : "";
   return [
-    "⚠ opencode 配置路径可能不一致（已装的插件可能不生效）:",
+    "⚠ opencode 配置路径可能不一致（已装的插件可能不生效）:" + via,
     ...hints.map((h) => `    - ${h}`),
     "  如需指定目标: ABS_OPENCODE_HOME=<配置根> abs install --agent opencode",
   ].join("\n");
@@ -586,14 +603,29 @@ export function installSummary() {
 }
 
 export async function runInstall({ agent, mcp = true, skill = true, yes = false } = {}) {
-  const targets = agent ? [agent] : await pickAgents();
+  const targets = agent ? [agent] : await pickAgents(yes);
+  const failed = [];
   for (const key of targets) {
     const inst = INSTALLERS[key];
     if (!inst) throw new Error(`未知 agent: ${key} (可用: ${Object.keys(INSTALLERS).join(', ')})`);
     console.log(`\n▸ 安装到 ${key} …`);
-    for (const line of await inst.on({ withMcp: mcp, withSkill: skill })) {
-      console.log('  ' + line);
+    try {
+      for (const line of await inst.on({ withMcp: mcp, withSkill: skill })) {
+        console.log('  ' + line);
+      }
+    } catch (e) {
+      // 逐宿主容错: 一个宿主失败不应让其余宿主整体被跳过。
+      // 坑: 曾经任一处报错就直接上抛，于是前序宿主已装、后续宿主全未装 —— 半成品状态。
+      // 注意: 单宿主安装(agent 指定)时仍上抛，保持 CLI 非零退出语义。
+      failed.push({ key, msg: String(e && e.message ? e.message : e) });
+      console.error(`  ✗ ${key} 安装失败: ${failed[failed.length - 1].msg}`);
+      if (agent) throw e;
     }
+  }
+  if (failed.length) {
+    console.log(`\n⚠ ${failed.length} 个宿主安装失败: ${failed.map((f) => f.key).join(', ')}`);
+    console.log('  其余宿主已完成。修复上述问题后重跑 `abs install`（幂等，不会重复写入）。');
+    throw new Error(`${failed.length} 个宿主安装失败（见上）`);
   }
   console.log('\n完成。项目内运行 abs init 建图谱; 会话里说 "abs load" 续接。');
 }
@@ -610,8 +642,11 @@ export async function runUninstall({ agent, yes = false } = {}) {
 }
 
 // 交互式多选（无 TTY 时回退为全部）
-async function pickAgents() {
-  if (!process.stdin.isTTY) return Object.keys(INSTALLERS);
+async function pickAgents(yes = false) {
+  // --yes / 非 TTY: 直接全选，绝不弹交互。
+  // 坑: 曾经只看 isTTY，--yes 被收下却从不使用 —— 在 TTY 里跑
+  //     abs install --yes（自动化/脚本）仍会弹提示并挂起等输入。
+  if (yes || !process.stdin.isTTY) return Object.keys(INSTALLERS);
   const readline = await import('node:readline/promises');
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   console.log('选择要安装的智能体 (逗号分隔, 回车=全部):');
