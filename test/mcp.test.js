@@ -111,11 +111,11 @@ describe('mcp: 握手 + 工具清单', () => {
 
 // ---------- resolve_project 定位 ----------
 describe('mcp: resolve_project', () => {
-  test('从子目录向上定位含 .brain 的项目', async () => {
+  test('只看当前目录: 子目录不再向上穿透', async () => {
     await initBrain(projA);
     await startServer();
     const r = await tool('abs_resolve_project', { cwd: join(projA, 'sub', 'deep') });
-    assert.equal(textOf(r), projA);
+    assert.ok(textOf(r).includes('abs init'), `子目录不应命中祖先图谱: ${textOf(r)}`);
   });
 
   test('无图谱给提示(不抛错)', async () => {

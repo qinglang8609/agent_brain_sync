@@ -310,15 +310,10 @@ const server = async ({ client, directory }) => {
     } catch {} // fire-and-forget: 永不阻塞宿主
   }
 
-  // 从 cwd 向上找最近含 .brain/ 的祖先目录
+  // 定位当前项目的 .brain/：只看 cwd 本身，不向上搜索（防爬到家目录图谱）
   async function findBrain(cwd) {
-    let d = cwd || process.cwd()
-    for (;;) {
-      try { const st = await stat(join(d, ".brain")); if (st.isDirectory()) return join(d, ".brain") } catch {}
-      const up = dirname(d)
-      if (up === d) return null
-      d = up
-    }
+    const d = cwd || process.cwd()
+    try { const st = await stat(join(d, ".brain")); return st.isDirectory() ? join(d, ".brain") : null } catch { return null }
   }
 
   // 判定"今天是否收尾过": 必须匹配 log.md 的条目头 '## [YYYY-MM-DD HH:MM]'。
@@ -436,7 +431,7 @@ async function logHook(evt: string): Promise<void> {
 }
 
 // 会话结束时快照当前项目滞留任务到 wrapup.log（detached fire-and-forget，wrapup 自身幂等去重不刷屏）。
-// cwd 用事件 ctx.cwd（当前项目），让 abs 从该目录向上定位 .brain/。
+// cwd 用事件 ctx.cwd（当前项目），让 abs 在该目录定位 .brain/。
 function snapshotWrapup(cwd: string): void {
   try {
     const child = spawn(process.execPath, [ABS_BIN, "wrapup"], {
@@ -466,18 +461,10 @@ function hasWriteWork(toolResults: any[]): boolean {
   return false
 }
 
-/** 从 cwd 向上找最近含 .brain/ 的祖先目录。 */
+/** 定位当前项目的 .brain/：只看 cwd 本身，不向上搜索（防爬到家目录图谱）。 */
 async function findBrain(cwd: string): Promise<string | null> {
-  let d = cwd || process.cwd()
-  for (;;) {
-    try {
-      const st = await stat(join(d, ".brain"))
-      if (st.isDirectory()) return join(d, ".brain")
-    } catch {}
-    const up = dirname(d)
-    if (up === d) return null
-    d = up
-  }
+  const d = cwd || process.cwd()
+  try { const st = await stat(join(d, ".brain")); return st.isDirectory() ? join(d, ".brain") : null } catch { return null }
 }
 
 /**

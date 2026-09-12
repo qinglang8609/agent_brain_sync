@@ -3,7 +3,7 @@
 **跨会话 AI 编码记忆。** 让 AI 会话不再「重开就失忆」：任务进度、经验、踩坑都落盘到项目里的 markdown 图谱，下一个会话开机能直接读回来。
 
 - 图谱纯 markdown，放在项目根 `.brain/`，**可以进 git**，人和 AI 读同一份
-- 多项目自动隔离：从当前目录向上找最近的 `.brain/`
+- 多项目自动隔离：只在当前目录找 `.brain/`，不向上穿透
 - 并发安全：CLI / MCP / hook 同时写不会互相覆盖
 
 npm 包名 `@fanchao8609/agent_brain_sync`，全局命令 **`abs`**。
@@ -130,7 +130,7 @@ npm run pack:check # 预览 npm 发布产物
 agent_brain_sync/
 ├── bin/abs.js      CLI 入口
 ├── bin/mcp.js      MCP server (stdio)
-├── src/index.js    图谱定位（向上找最近 .brain/）
+├── src/index.js    图谱定位（只认当前目录的 .brain/）
 ├── src/lock.js     并发写保护（原子锁 + 排队 + SKIP）
 ├── src/brainio.js  统一读写收口
 ├── src/todo.js     todo.md 分区读写

@@ -14,7 +14,7 @@ import { strandedFor } from '../src/wrapup.js';
 // ---------- 测试沙盒: 每个用例一个临时目录 ----------
 let sandbox;
 let projectA; // A 项目根（含 .brain/）
-let projectB; // B 项目根（无 .brain/）→ 定位应向上穿透 A 找到最近祖先
+let projectB; // B 项目根（无 .brain/）→ 定位应为 null（不向上搜索）
 
 async function mkProject(name) {
   const p = join(sandbox, name);
@@ -35,14 +35,27 @@ afterEach(async () => {
 
 // ---------- 定位层 (src/index.js) ----------
 describe('findBrainRoot 定位', () => {
-  test('从项目子目录向上找到 .brain/', async () => {
+  test('只认当前目录自身的 .brain/', async () => {
     const root = await findBrainRoot(join(projectA, 'sub', 'deep'));
+    assert.equal(root, null, '子目录不应向上穿透命中祖先图谱');
+  });
+
+  test('当前目录就是项目根时命中', async () => {
+    const root = await findBrainRoot(projectA);
     assert.equal(root, projectA);
   });
 
   test('无图谱返回 null', async () => {
     const root = await findBrainRoot(projectB);
     assert.equal(root, null);
+  });
+
+  // 回归: 曾从 cwd 无限上爬，在 vault/家目录场景命中 ~/.brain，静默把项目挂到别人图谱上。
+  test('祖先目录有 .brain/ 也不误命中', async () => {
+    await cmdInit({ dir: sandbox }); // sandbox 建图谱
+    await fs.rm(join(projectA, '.brain'), { recursive: true, force: true }); // A 自己无图谱
+    const root = await findBrainRoot(projectA);
+    assert.equal(root, null, '祖先有图谱不等于本项目有图谱');
   });
 
   test('requireBrain 无图谱时抛错且信息含 abs init', async () => {

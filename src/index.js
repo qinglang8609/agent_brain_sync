@@ -1,23 +1,23 @@
 // src/index.js — 图谱定位：多项目隔离的核心。
-// 从给定 cwd 向上找最近含 `.brain/` 的祖先目录即命中。
+// 只看给定目录本身有没有 `.brain/`，不向上搜索。
 // 这是唯一"项目定位"逻辑，被 CLI / MCP / hook 共用，代码确定、不靠猜。
 import { promises as fs } from 'node:fs';
-import { join, dirname, resolve, basename } from 'node:path';
+import { join, resolve, basename } from 'node:path';
 
 export const BRAIN_DIR = '.brain';
 
-/** 向上找最近含 .brain/ 的祖先目录。找不到返回 null。 */
+/**
+ * 定位图谱根：仅当 `dir` 本身含 `.brain/` 才命中，否则返回 null。
+ * 故意不向上搜索：向上会从任意目录爬到 ~ 命中家目录图谱（如 ~/.brain），
+ * 把无关项目静默挂到别的图谱上。宁可报错，不猜。
+ */
 export async function findBrainRoot(startDir) {
-  let dir = resolve(startDir || process.cwd());
-  for (;;) {
-    try {
-      const st = await fs.stat(join(dir, BRAIN_DIR));
-      if (st.isDirectory()) return dir;
-    } catch { /* not here, keep walking up */ }
-    const parent = dirname(dir);
-    if (parent === dir) return null; // reached filesystem root
-    dir = parent;
-  }
+  const dir = resolve(startDir || process.cwd());
+  try {
+    const st = await fs.stat(join(dir, BRAIN_DIR));
+    if (st.isDirectory()) return dir;
+  } catch { /* 本目录没有图谱 */ }
+  return null;
 }
 
 /** 解析图谱内文件的绝对路径。brainRoot 须已定位。 */
@@ -30,8 +30,8 @@ export async function requireBrain(startDir) {
   const root = await findBrainRoot(startDir);
   if (!root) {
     throw new Error(
-      `abs: 找不到 .brain/ 图谱（从 ${resolve(startDir)} 向上搜索无果）。\n` +
-      `  请在项目根先运行: abs init`
+      `abs: 目录 ${resolve(startDir)} 下没有 .brain/ 图谱（不向上搜索）。\n` +
+      `  请在该目录运行: abs init`
     );
   }
   return root;
