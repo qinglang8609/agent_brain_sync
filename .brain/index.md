@@ -32,7 +32,8 @@ lint 兜底（SOURCES-PILED-UP / DONE-PILED-UP，均带测试）。
 - [[self-triggering-hook-loop]] — 自触发 hook 死循环: 主动推会触发下一轮→ 必须双保险(宿主防重入字段 + 己方节流), 且节流器不允许有"跳过"分支
 - [[opencode-inject-channel-verdict]] — op​encode 注入通道判定: promptAsync(204)/prompt(200)/command(200) 均能唤醒 idle session; tui.* 假成功不唤醒; "零 nudge"真因是 gate 非通道
 - [[summary-truncation-hidden-cause]] — 散文截断是「摘要读起来抽象」的隐形根因且自我掩盖: 先查写入侧(硬切率 34/85 即确诊), 别去调 prompt; 修法须收口在一处
-- [[symbol-reference-needs-real-run]] — 引用新符号 / 判"等价"前必须真跑到那条分支: node --check 与测试绿都查不出未导入标识符; 判两段代码等价时只测恒真式同样不算验证(删 resolveProjectDir 的回退分支即此坑)
+- [[symbol-reference-needs-real-run]] — 引用新符号/判"等价"/新功能测试, 验证必须真跑到: node --check 查不出未导入标识符; 判等价只测恒真式不算验证(删 resolveProjectDir 回退分支即此坑); 新测试要跑破坏验证, 不红=没盖到
+- [[guard-blocks-noninteractive-callers]] — 加前置守卫前先问「谁在非交互地调我」: hook/CI 调的内部命令一律放行, 否则守卫失效是静默的(报错被吞); 必配一条「hook 路径不被拦」的测试
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 ## Sources
