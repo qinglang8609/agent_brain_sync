@@ -1,10 +1,10 @@
 ---
-tags: [concept, 验证, 导入, ReferenceError, 坑]
+tags: [concept, 验证, 等价判断, 重构, 坑]
 updated: 2026-09-12
 status: reviewed
 ---
 
-# 引用新符号后必须真跑一条命令：语法检查查不出「未导入」
+# 引用新符号 / 判等价前，必须真跑到那条分支
 
 ## 触发场景
 新增/修改了一个标识符引用（`import`、常量、函数名），
@@ -36,7 +36,28 @@ node bin/abs.js status --dir .
 判据很简单：**能跑到那条代码路径，才算验证过。** 语法检查证明"能解析"，
 不等于"能执行"——中间隔着一个运行时符号解析。
 
+## 变体：判"等价"时必须跑到**那条**分支
+同一根因的另一种形态（2026-09-12 再栽）：做重构时把某段代码判为"等价冗余"而删掉，
+验证方式是跑 `node -e` 对比 —— 但其实只测了恒真式。
+
+**实例**：`resolveProjectDir(dir)` 原本是 `if (!dir) return cwd; return resolve(dir)`，
+判断"`resolve(undefined)` 本就回退 cwd，前半段冗余"，于是删成 `resolve(dir)`。
+实际 `resolve(undefined)` **抛 `ERR_INVALID_ARG_TYPE`**，`resolve` 不接受 undefined。
+后果：`abs init/load/board/note` 凡不带 `--dir` 全部裸栈崩溃 —— 主路径。
+当时的"验证"是 `resolve('/a/b') === resolve('/a/b')`，一个恒真式，根本没碰到出问题的分支。
+
+同一 diff 里还有一次同型：手写 `parseArgv` 只认 `--` 长选项，换成 `node:util.parseArgs` 后
+`-X 是个坑` 被当成 5 个短选项把正文吃光（`values={X:true,' ':true,是:true,…}`）——
+因为只验证了"常规 flag 能解析"，没验证"以 `-` 开头的参数字面量"。
+
+**判据**：说"行为不变"前，对每个**分支**各跑一次新旧对照，用真实入口而非表达式推演。
+"两段代码读起来等价"不是证据；"两个分支各跑一遍结果相同"才是。
+
+两个实例都由对抗式审查抓出，而非自查 —— 说明"等价"自判本身不可靠：
+判的人是刚写完这段代码的人，他已经相信它等价了。
+
 ## 关联连接
 - [[host-plugin-silent-failure]] — 同源：把"通过了一项弱检查"当成"验证过了"
 - [[silent-data-loss-diagnosis]] — 同属"证据不充分就下结论"的坑
+- [[self-triggering-hook-loop]] — 相关：同样是被"看起来对"骗过
 - [[AgentBrainSync]] — 项目实体页

@@ -32,13 +32,12 @@ lint 兜底（SOURCES-PILED-UP / DONE-PILED-UP，均带测试）。
 - [[self-triggering-hook-loop]] — 自触发 hook 死循环: 主动推会触发下一轮→ 必须双保险(宿主防重入字段 + 己方节流), 且节流器不允许有"跳过"分支
 - [[opencode-inject-channel-verdict]] — op​encode 注入通道判定: promptAsync(204)/prompt(200)/command(200) 均能唤醒 idle session; tui.* 假成功不唤醒; "零 nudge"真因是 gate 非通道
 - [[summary-truncation-hidden-cause]] — 散文截断是「摘要读起来抽象」的隐形根因且自我掩盖: 先查写入侧(硬切率 34/85 即确诊), 别去调 prompt; 修法须收口在一处
-- [[symbol-reference-needs-real-run]] — 引用新符号后必须真跑一条命令: node --check 与测试绿都查不出「未导入标识符」, 跑到那行才抛 ReferenceError
+- [[symbol-reference-needs-real-run]] — 引用新符号 / 判"等价"前必须真跑到那条分支: node --check 与测试绿都查不出未导入标识符; 判两段代码等价时只测恒真式同样不算验证(删 resolveProjectDir 的回退分支即此坑)
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 ## Sources
 - [[2026-09-12-mcp-陈旧路径不只在一个文件]] — MCP 陈旧路径不只在一个文件: pi-mcp-adapter 的 hostConfigDiscovery 把 9 个外部 store…
 - [[2026-09-12-agents-skills]] — ~/.agents/skills/ 不是无主目录, 是 skills CLI(npx skills, ~/.agents/.skill-lock.json…
-- [[2026-09-12-over-engineering]] — over-engineering 审计里的"等价删除"必须先跑到那条分支: 我把 resolveProjectDir 的 if(!dir) return…
 ## Syntheses
 ## Sessions
 - [[log-2026-09-10]] — 修 Co​dex 安装崩溃(对象 vs 扁平数组) + 补收尾自动化(pi agent_end 注入) + lint 反向死引用检查; 含自动化形同虚设的根因剖析
