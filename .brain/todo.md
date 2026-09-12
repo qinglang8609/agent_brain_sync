@@ -6,6 +6,7 @@
 ## Done（只留近期，旧的迁 log.md/快照）
 ### 2026-09-12
 
+- [x] ENTITY-LINK-USER @fanchao — 作者标记 @name → [[name]] wiki 链接格式; 用户独立实体页 entities/<user>.md (含技术栈/特点, config set user 或首次写操作时创建); extractAuthor 兼容旧 @name 与新 [[name]]; index.md 不塞作者, 改 query/load 输出附带页 author; lint 加 [[人名]] 有人页存在校验 【落地】 (完成 2026-09-12)
 - [x] USER-ATTRIBUTION @fanchao — abs 增加用户姓名设置: 未设则写操作报错要求设置; todo/log/生成的文档标记 @name。方案已过目, 待用户确认三个歧义点(检查放哪层/配置存哪/标记格式与位置)后开工 【落地】 (完成 2026-09-12)
 - [x] SMOKE-TEST — 验证作者标记 @fanchao 【落地】 (完成 2026-09-12)
 - [x] ZW-CHARS-IN-COMMENTS — src/install.js 三处注释(:152/:209/:723)含 U+200B 零宽字符, 会让基于文本的匹配(edit/grep)静默失配 —— 本次修 bug 时反复踩到(edit 的 oldText 永远匹配不上, 因为多了一个不可见字符)。已清除, 两个源文件现为 0 处 Cf 字符。 【落地】 (完成 2026-09-12)
