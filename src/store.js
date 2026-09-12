@@ -405,6 +405,7 @@ function slugOf(text, n = 24) {
 export async function cmdLog({ dir, title, kind = 'dev' }) {
   const root = await requireBrain(dir || process.cwd());
   const who = await requireUser(); // 写操作守卫
+  await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
   const p = brainPath(root, 'log.md');
   const stamp = localStamp();
   // 不硬切: log.md 是人类读的成果摘要, 也是 abs load 的开机入口。600 码点够一条完整小结,
@@ -431,6 +432,7 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
   const root = await requireBrain(dir || process.cwd());
   // 写操作守卫：无姓名不落盘（hook 调的 wrapup/teardown-check 不经过这里，不受影响）
   const who = await requireUser();
+  await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
   if (action === 'start') {
     const r = await upsertTask(root, {
       section: section || 'Today / In Progress',
@@ -540,12 +542,22 @@ export async function cmdQuery({ dir, terms }) {
       const body = await fs.readFile(full, 'utf8').catch(() => '');
       const matched = words.filter((w) => body.toLowerCase().includes(w.toLowerCase()));
       if (matched.length) {
-        hits.push({ full, slug: f.replace(/\.md$/, ''), matched, snippet: firstHitLine(body, words) });
+        // 作者从本页 frontmatter 读（权威来源）。不在 index 行里重复 ——
+        // index 行是覆盖式更新的，作者会从"创建者"漂成"最后改的人"。
+        const au = body.match(/^author:\s*(.+)$/m);
+        hits.push({
+          full, slug: f.replace(/\.md$/, ''), matched,
+          author: au ? au[1].trim() : '',
+          snippet: firstHitLine(body, words),
+        });
       }
     }
   }
   if (!hits.length) return `query [${words.join(', ')}]: 无命中。用 abs lint 看图谱健康；首次使用先 abs init。`;
-  const lines = hits.map((h) => `📄 ${h.slug}  (命中: ${h.matched.join(', ')})\n    ${h.snippet}`);
+  const lines = hits.map((h) => {
+    const by = h.author ? `  @${h.author}` : '';
+    return `📄 ${h.slug}${by}  (命中: ${h.matched.join(', ')})\n    ${h.snippet}`;
+  });
   return [`query [${words.join(', ')}] → ${hits.length} 页:`, '', ...lines].join('\n');
 }
 
@@ -573,6 +585,7 @@ export async function cmdNote({ dir, text, tags }) {
     return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
   }
   const who = await requireUser(); // 写操作守卫
+  await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
   const srcDir = brainPath(root, 'sources');
   await fs.mkdir(srcDir, { recursive: true });
   // 幂等: 同文本 60s 内只落一份
@@ -604,6 +617,7 @@ export async function cmdNote({ dir, text, tags }) {
     `- ${clean}`,
     '',
     '## 关联连接',
+    `- ${atTag(who)} — 本页沉淀者`,
     '（提炼成 concepts 规律页后，在此挂双链到该页）',
     '',
   ].join('\n');
@@ -613,22 +627,70 @@ export async function cmdNote({ dir, text, tags }) {
   await fs.writeFile(tmp, body, 'utf8');
   await fs.rename(tmp, srcFile);
   // index Sources 区登记（锁内幂等：别页已登记则跳过，防并发重复） + log 一行
-  const iP = brainPath(root, 'index.md');
   const slug = file.replace(/\.md$/, '');
-  const line = `- [[${slug}]] — ${heading}`;
+  await registerInIndex(root, 'Sources', slug, heading);
+  await cmdLog({ dir: root, title: clean, kind: 'note' });
+  return `✓ 经验暂存 → sources/${file}\n  ${clean} ${atTag(who)}`;
+}
+// ---------- person: 使用者实体页（首次需要时创建，已存在则不动） ----------
+/** 确保 entities/<name>.md 存在。已存在一律不动（里面的技术栈/特点是人工沉淀的）。
+ * 用 `wx` 独占写：并发下后到者拿到 EEXIST 就静默跳过，不覆盖。
+ * 失败不抛：建页是附带动作，不能因为它让 todo/log 写不进去。
+ * 返回 'created' | 'exists' | 'skip'。 */
+export async function ensurePersonPage(root, name) {
+  const nm = String(name || '').trim();
+  if (!nm || !/^[\w\u4e00-\u9fff.-]+$/.test(nm)) return 'skip';
+  const dir = brainPath(root, 'entities');
+  const file = join(dir, `${nm}.md`);
+  const body = [
+    '---',
+    'tags: [entity, person]',
+    `author: ${nm}`,
+    `updated: ${today()}`,
+    'status: draft',
+    '---',
+    '',
+    `# ${nm}`,
+    '',
+    '## 技术栈',
+    '<!-- 沉淀时填: 主力语言/框架/工具链。例: TypeScript + Node, 熟悉 MCP 协议与 CLI 工具链 -->',
+    '',
+    '## 特点 / 工作习惯',
+    '<!-- 沉淀时填: 决策偏好、沟通习惯、反复出现的判断倾向。例: 先要方案后动手; 质疑"这需求是否需要存在" -->',
+    '',
+    '## 名下踩过的坑',
+    '（本页被 [[todo]] / [[log]] 里的作者标记引用；沉淀经验时在此挂双链）',
+    '',
+  ].join('\n');
+  try {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(file, body, { encoding: 'utf8', flag: 'wx' });
+  } catch (e) {
+    if (e.code === 'EEXIST') return 'exists';
+    return 'skip';
+  }
+  // 只有真建成才登记 index（否则 index 指向不存在的页 → INDEX-DEAD-LINK）。
+  // 放这里而非各调用点：todo/log/note 三条写路径都要登记，抄三遍必漂。
+  await registerInIndex(root, 'Entities', nm, `${nm} — 使用者；技术栈 / 特点 / 名下踩过的坑`);
+  return 'created';
+}
+
+/** 把新页登记进 index.md 的指定分区（幂等）。供人页/其它程序建页用。 */
+export async function registerInIndex(root, section, slug, desc) {
+  const iP = brainPath(root, 'index.md');
   await editFile(iP, (index) => {
     if (!index || index.includes(`[[${slug}]]`)) return SKIP;
-    const sIdx = index.indexOf('## Sources');
+    const sIdx = index.indexOf(`## ${section}`);
     if (sIdx === -1) return SKIP;
     const after = index.indexOf('\n## ', sIdx + 1);
+    const line = `- [[${slug}]] — ${desc}`;
     const next = after === -1
       ? `${index.replace(/\s*$/, '')}\n${line}\n`
       : index.slice(0, after) + `\n${line}` + index.slice(after);
     return { text: next };
   });
-  await cmdLog({ dir: root, title: clean, kind: 'note' });
-  return `✓ 经验暂存 → sources/${file}\n  ${clean} ${atTag(who)}`;
 }
+
 // ---------- lint: 体检（与 scripts/lint.sh 同规则的 Node 版，供 CLI/MCP 直调） ----------
 export async function cmdLint({ dir }) {
   let root;

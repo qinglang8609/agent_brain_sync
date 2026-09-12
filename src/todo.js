@@ -391,10 +391,13 @@ export async function upsertTask(brainRoot, { section, text }) {
     const idx = findTaskLine(lines, id);
     if (idx !== -1) {
       // 原位更新：保留断点附属行 + 原@作者，只换任务行本体
-      const author = extractAuthor(lines[idx].replace(/^- \[ \] /, ''));
-      const oldNote = extractNote(lines[idx].replace(/^- \[ \] /, ''));
+      const raw = lines[idx].replace(/^- \[ \] /, '');
+      const author = extractAuthor(raw);
+      const legacy = isLegacyAuthorTag(raw); // 旧行保持旧形态，不静默改写
+      const oldNote = extractNote(raw);
       const merged = note && oldNote && oldNote.startsWith(note) ? `${note}${oldNote.slice(note.length)}` : note || oldNote;
-      const at = author ? ` @${author}` : '';
+      const at = author ? ` ${legacy ? '@' + author : '[['
+        + author + ']]'}` : '';
       const newLine = `- [ ] ${id}${at}${merged ? ' — ' + merged : ''} (认领 ${today()})`;
       lines[idx] = newLine;
       return { text: lines.join('\n'), updated: true };
@@ -420,10 +423,23 @@ export function extractNote(text) {
   return String(text).slice(i + 3).replace(/\s*\(认领[^)]*\)\s*$/, '').trim();
 }
 
-/** 提取 id 后的 `@author` 标记（无则空）。供 upsertTask 原位重建行时保留作者。 */
+/** 提取 id 后的作者标记（无则空）。供 upsertTask 原位重建行时保留作者。
+ * 两种形态都要认：
+ *   - 新: `- [ ] ID [[fanchao]] — note`   (wikilink 到人页)
+ *   - 旧: `- [ ] ID @fanchao — note`      (裸 at 标记, 历史行)
+ * 旧行只在原位更新时按原形态保留, 不做批量回填(原文/现场已不在, 回填等于编造)。
+ * 返回的是**纯姓名**（不含 [[ ]] 与 @），由调用方决定用什么形态重写。 */
 export function extractAuthor(text) {
-  const m = String(text).match(/^\S+\s+@([\w\u4e00-\u9fff.-]+)/);
-  return m ? m[1] : '';
+  const s = String(text);
+  const link = s.match(/^\S+\s+\[\[([^\]]+)\]\]/);
+  if (link) return link[1].trim();
+  const at = s.match(/^\S+\s+@([\w\u4e00-\u9fff.-]+)/);
+  return at ? at[1] : '';
+}
+
+/** 判断行里的作者标记是旧裸 `@name` 形态（保留旧形态，不擅自升级）。 */
+export function isLegacyAuthorTag(text) {
+  return !/^\S+\s+\[\[/.test(String(text)) && /^\S+\s+@/.test(String(text));
 }
 
 /**

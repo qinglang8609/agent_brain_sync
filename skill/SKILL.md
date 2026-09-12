@@ -69,17 +69,24 @@ abs config                        # 查看当前姓名
 ABS_USER=<名字> abs todo add ...   # 临时覆盖（CI/多身份），不改落盘配置
 ```
 
-设置后自动标记：
-- `todo.md`：`- [ ] TASK-ID @fanchao — 说明 (认领 2026-09-12)`（作者紧跟 id，扫板先看到人）
-- `log.md`：`## [2026-09-12 13:17] @fanchao dev | 完成 X`（作者前置于 kind）
+设置后自动标记（**作者是人页的 wikilink，点得进去看技术栈/特点**）：
+- `todo.md`：`- [ ] TASK-ID [[fanchao]] — 说明 (认领 2026-09-12)`（作者紧跟 id，扫板先看到人）
+- `log.md`：`## [2026-09-12 13:17] [[fanchao]] dev | 完成 X`（作者前置于 kind）
 - `sources/`：frontmatter `author: fanchao`
+
+同时自动建人页 `.brain/entities/<name>.md`（含「技术栈 / 特点·工作习惯 / 名下踩过的坑」三个空槽），
+并登记进 `index.md` 的 Entities 区。**已存在则一律不动** —— 里面的内容是人工沉淀的，机器不许覆盖。
+
+> **沉淀时顺手填人页**：经验提炼进 concepts/ 时，若观察到工程师的技术栈或判断倾向，
+> 写进 `entities/<name>.md`。这页是可积累的画像，不是一次性标签。
 
 **只读命令不检查**（`load`/`todo`/`status`/`lint`/`query`/`index`/`log` 无参）——
 hook 在会话结束时非交互调 `abs wrapup`/`abs teardown-check`，那儿拦人会卡断收尾。
 
-> `index.md` **不加**作者：index 行是覆盖式更新的，作者会从"创建者"漂成"最后改的人"，
-> 语义不固定。要查谁写的，看该页自己的 `author`。
-> 历史条目**不回填**（原文/现场已不在，回填等于编造）。
+> `index.md` 的**经验行不加作者**：index 行是覆盖式更新的，作者会从"创建者"漂成"最后改的人"，
+> 语义不固定。要查谁写的，看该页自己的 `author`，或 `abs query` 输出（带每页 author）。
+> 历史条目**不回填**：旧行的裸 `@name` 只在原位更新时按原形态保留，不批量改写（原文/现场已不在，
+> 回填等于编造）。
 
 ## 图谱定位（一个项目一个 `.brain/`，abs 自动定位不用手工指定路径）
 
@@ -232,11 +239,13 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`。`abs st
 ```markdown
 ---
 tags: [concept, 领域]   # 首标签 ∈ entity|concept|source|synthesis|session-log
-author: fanchao         # 作者（abs note 自动写；手写页也须填）
+author: fanchao         # 作者（abs note 自动写；手写页也须填，且与 entities/<name>.md 同名）
 updated: YYYY-MM-DD
 status: draft           # 或 reviewed（仅指知识冲突裁决结案）
 ---
 ```
+
+作者名同时是**人页 slug**：`[[fanchao]]` → `entities/fanchao.md`（技术栈 / 特点 / 名下踩过的坑）。
 
 - **关联连接区**：每页必须有 `## 关联连接`，用 `[[页面名]]` 链相关页。严禁孤岛页。
 - **知识冲突**：与旧页矛盾不静默覆盖。加 `## 知识冲突` 两版都留、标来源时间，交人工裁决。

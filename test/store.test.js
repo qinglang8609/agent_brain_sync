@@ -206,7 +206,7 @@ describe('cmdTask', () => {
   test('start 登记进 Today 区并带认领日期', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'T-1', note: '做 X' });
     const t = await readTodo(projectA);
-    assert.ok(t.includes('T-1 @tester — 做 X'), `作者应紧跟 id: ${t}`);
+    assert.ok(t.includes('T-1 [[tester]] — 做 X'), `作者应紧跟 id 且为 wikilink: ${t}`);
     assert.ok(t.includes(`认领 ${today()}`));
   });
 
@@ -219,7 +219,7 @@ describe('cmdTask', () => {
     assert.ok(t.includes('v2'), '重复 start 应更新 note 为最新');
     assert.ok(!t.includes('v1'), '旧 note 不应残留');
     // 坑: upsertTask 原位更新时会重建整行 —— 重建时若不把原 @author 带上，作者会静默丢失。
-    assert.ok(t.includes('T-2 @tester — v2'), `幂等更新后作者不得丢失: ${hits.join('\n')}`);
+    assert.ok(t.includes('T-2 [[tester]] — v2'), `幂等更新后作者不得丢失: ${hits.join('\n')}`);
   });
 
   test('done 勾选并归位（保持一行，标完成日期）', async () => {
@@ -257,6 +257,31 @@ describe('cmdTask', () => {
   test('done 未找到 id 时给明确提示不抛错', async () => {
     const r = await cmdTask({ dir: projectA, action: 'done', id: 'NOPE' });
     assert.ok(r.includes('NOPE'));
+  });
+
+  test('已设姓名但人页缺失: 下次写入自动重建（不报错、不丢沉淀）', async () => {
+    const personPath = join(projectA, '.brain', 'entities', 'tester.md');
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-P1' }); // 首次写 → 建页
+    assert.ok(await fs.readFile(personPath, 'utf8').then(() => true, () => false), '首次写应建人页');
+    await fs.rm(personPath); // 模拟被删/未同步
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-P2', note: '重建' });
+    const back = await fs.readFile(personPath, 'utf8');
+    assert.ok(back.includes('# tester'), `人页应重建: ${back}`);
+    const index = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(index.includes('[[tester]]'), '重建后应重新登记 index');
+  });
+
+  test('旧 @name 行原位更新时保持旧形态（不静默改写历史行）', async () => {
+    // 坑: extractAuthor 只认新 [[name]] 的话，遇到历史 @name 行会取不到作者 →
+    // upsertTask 重建整行时把作者静默抹掉。两种形态必须都认。
+    const todoPath = join(projectA, '.brain', 'todo.md');
+    let t = await fs.readFile(todoPath, 'utf8');
+    t = t.replace('## Today / In Progress', '## Today / In Progress\n- [ ] T-OLD @legacy — 老行');
+    await fs.writeFile(todoPath, t, 'utf8');
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-OLD', note: '新说明' });
+    const after = await readTodo(projectA);
+    assert.ok(after.includes('T-OLD @legacy — 新说明'), `旧 @name 应保留且不升级为 [[ ]]: ${after}`);
+    assert.ok(!after.includes('[[legacy]]'), '旧行不应被静默改写成 wikilink');
   });
 });
 

@@ -62,7 +62,9 @@ export async function requireUser() {
   );
 }
 
-/** 标记串：`@name`。用于 todo 行 / log 行 / 页面 frontmatter。 */
+/** 标记串：`[[name]]`（wikilink 到人页 entities/<name>.md）。
+ * 用 wiki 链接而非裸 `@name`：人是图谱实体，点得进去看技术栈/特点。
+ * 旧数据里的裸 `@name` 仍可解析（见 todo.js extractAuthor），但不回填。 */
 export function atTag(name) {
-  return `@${name}`;
+  return `[[${name}]]`;
 }

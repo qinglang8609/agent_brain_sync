@@ -516,7 +516,7 @@ describe('cli: 使用者姓名与作者标记', () => {
     assert.ok(bad2.stderr.includes('不支持的字符'), bad2.stderr);
   });
 
-  test('设姓名后: todo 行标 @name, 且 config 文件持久生效', async () => {
+  test('设姓名后: todo 行标 [[name]] wikilink, 且 config 文件持久生效', async () => {
     await run(['init', '--dir', proj], { env: envNoUser() });
     await run(['config', 'set', 'user', 'fanchao'], { env: envNoUser() });
     // 只留 ABS_CONFIG_DIR，删掉 ABS_USER → 必须从文件读到
@@ -524,8 +524,14 @@ describe('cli: 使用者姓名与作者标记', () => {
     const r = await run(['todo', 'add', 'T1', '--note', '做点事', '--dir', proj], { env });
     assert.equal(r.code, 0, r.stderr);
     const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.ok(/- \[ \] T1 @fanchao — 做点事 \(认领 \d{4}-\d{2}-\d{2}\)/.test(todo),
-      `todo 行应为 'ID @name — 说明 (认领 date)': ${todo}`);
+    assert.ok(/- \[ \] T1 \[\[fanchao\]\] — 做点事 \(认领 \d{4}-\d{2}-\d{2}\)/.test(todo),
+      `todo 行应为 'ID [[name]] — 说明 (认领 date)': ${todo}`);
+    // 人页随之建立并登记 index（否则 [[fanchao]] 是死链）
+    const person = await fs.readFile(join(proj, '.brain', 'entities', 'fanchao.md'), 'utf8');
+    assert.ok(person.includes('# fanchao'), `人页应有 H1: ${person}`);
+    assert.ok(person.includes('## 技术栈') && person.includes('## 特点'), '人页应有技术栈/特点空槽');
+    const index = await fs.readFile(join(proj, '.brain', 'index.md'), 'utf8');
+    assert.ok(index.includes('[[fanchao]]'), `人页应登记进 index: ${index}`);
   });
 
   test('log 行标 @name（作者前置于 kind）', async () => {
@@ -534,8 +540,8 @@ describe('cli: 使用者姓名与作者标记', () => {
     const r = await run(['log', '完成作者标记', '--dir', proj], { env });
     assert.equal(r.code, 0, r.stderr);
     const log = await fs.readFile(join(proj, '.brain', 'log.md'), 'utf8');
-    assert.ok(/^## \[[\d-]+ [\d:]+\] @alice dev \| 完成作者标记/m.test(log),
-      `log 行格式应为 '[时间] @name kind | 内容': ${log}`);
+    assert.ok(/^## \[[\d-]+ [\d:]+\] \[\[alice\]\] dev \| 完成作者标记/m.test(log),
+      `log 行格式应为 '[时间] [[name]] kind | 内容': ${log}`);
   });
 
   test('note 页 frontmatter 含 author 字段（四项 tags/author/updated/status）', async () => {
@@ -559,7 +565,7 @@ describe('cli: 使用者姓名与作者标记', () => {
     const env = { ABS_CONFIG_DIR: join(sandbox, 'u-cfg'), ABS_USER: 'envuser' };
     await run(['todo', 'add', 'T2', '--note', 'x', '--dir', proj], { env });
     const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.ok(todo.includes('@envuser'), `环境变量应优先: ${todo}`);
+    assert.ok(todo.includes('[[envuser]]'), `环境变量应优先: ${todo}`);
     assert.ok(!todo.includes('@fileuser'), `不得用文件里的名字: ${todo}`);
   });
 });

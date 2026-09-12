@@ -260,7 +260,17 @@ async function cmdConfig({ sub, value }) {
     const name = rest.join(' ');
     if (rest.length > 1) throw new Error(`✗ 姓名不能含空格（收到 "${name}"）\n  @标记无法解析带空格的姓名`);
     const u = await setUser(name);
-    return `✓ user = ${u}\n  → ${p}`;
+    // 立即建人页（用户说"两者都行"：配置时建一份，首次写操作也会兜底建）。
+    // 没 .brain/ 就跳过 —— 全局配置不该强绑某个项目。
+    let extra = '';
+    try {
+      const { requireBrain } = await import('../src/index.js');
+      const { ensurePersonPage } = await import('../src/store.js');
+      const root = await requireBrain(process.cwd());
+      const r = await ensurePersonPage(root, u);
+      if (r === 'created') extra = `\n  人页: .brain/entities/${u}.md (已登记 index)`;
+    } catch { /* 无图谱 / 建页失败都不影响配置生效 */ }
+    return `✓ user = ${u}\n  → ${p}${extra}`;
   }
   throw new Error(`✗ 未知子命令 "${sub}"\n  用法: abs config [show] / abs config set user <名字>`);
 }
