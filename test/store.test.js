@@ -713,6 +713,27 @@ describe('cmdLint', () => {
     assert.ok(out.includes('TEMPLATE-LINK'), out);
   });
 
+  // 回归: 占位符必然不在 names 里，若不短路就**同一条链接报两次**
+  // （TEMPLATE-LINK 一条对 + DEAD-LINK 一条噪音），让 lint 输出虚胖且误导。
+  test('模板占位只报 TEMPLATE-LINK，不再重复报 DEAD-LINK', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'tpl2.md'), PAGE('见 [[页面名]]'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    const lines = out.split('\n').filter((l) => l.includes('tpl2.md'));
+    assert.ok(lines.some((l) => l.startsWith('TEMPLATE-LINK')), `应报模板残留: ${out}`);
+    assert.ok(!lines.some((l) => l.startsWith('DEAD-LINK')),
+      `同一条占位符不得再报 DEAD-LINK: ${lines.join(' | ')}`);
+  });
+
+  // 描述语法的字面量 `[[<slug>]]`（尖括号不是合法 wikilink 字符）在任务描述里很常见，
+  // 归为 TEMPLATE-LINK（非真链接），而非 DEAD-LINK。
+  test('尖括号占位 [[<slug>]] 归为模板残留而非死链', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'tpl3.md'), PAGE('在 ### 归档 段留 [[<slug>]] 完成任务'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    const lines = out.split('\n').filter((l) => l.includes('tpl3.md'));
+    assert.ok(lines.some((l) => l.startsWith('TEMPLATE-LINK')), `应报模板残留: ${out}`);
+    assert.ok(!lines.some((l) => l.startsWith('DEAD-LINK')), `不应报死链: ${lines.join(' | ')}`);
+  });
+
   test('index 漏列被检出', async () => {
     await fs.writeFile(
       join(projectA, '.brain', 'entities', 'Docker.md'),

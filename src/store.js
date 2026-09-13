@@ -765,8 +765,16 @@ export async function cmdLint({ dir }) {
   for (const pg of pages) {
     if (!pg.hasFrontmatter) issues.push(`NO-FRONTMATTER: ${pg.rel}`);
     for (const ln of pg.links) {
-      if (/slug|Name|name|Date|页面名$/.test(ln)) issues.push(`TEMPLATE-LINK: ${pg.rel} -> [[${ln}]]`);
-      if (!names.has(ln)) issues.push(`DEAD-LINK: ${pg.rel} -> [[${ln}]]`);
+      // 两类都不是真链接，只报 TEMPLATE-LINK（且不短路就会再报一次 DEAD-LINK，同一条报两遍）：
+      //   ① 模板占位: `[[页面名]]` / `[[slug]]` / `[[Name]]` —— 模板没填
+      //   ② 描述语法时引用的字面量: `[[<slug>]]` —— 尖括号不是合法 wikilink 字符，
+      //      而是任务描述在解释格式（如 “在 ### 归档 段留下 [[<slug>]] 完成任务 N 条”）。
+      // 单靠关键字（slug/name）分辨不了两者，故额外认尖括号形态。
+      if (/^<.+>$/.test(ln) || /slug|Name|name|Date|页面名$/.test(ln)) {
+        issues.push(`TEMPLATE-LINK: ${pg.rel} -> [[${ln}]]`);
+      } else if (!names.has(ln)) {
+        issues.push(`DEAD-LINK: ${pg.rel} -> [[${ln}]]`);
+      }
     }
     // ORPHAN: sources/ 暂存页与 todo 归档页豁免。前者是暂存线索（提炼成 concept 前天然孤立），
     // 后者是历史数据倾倒（已登记在 index.md，就是图谱入口，无需再制造双链）。
