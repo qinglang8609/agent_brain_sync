@@ -72,11 +72,18 @@ abs log "完成 X"                          # 记一行流水；abs log 无参 =
 abs query <词>                            # 检索图谱（多词 OR）
 abs status                                # 当前项目 + 图谱概要
 abs lint                                  # 体检：死链/孤岛/超尺寸/堆积
+abs rule                                  # 列出 index.md 的 ## Rules 硬规则
+abs rule add "一句话"                     # 追加一条硬规则（违反会丢数据/静默失效级的）
+abs config show                           # 查看使用者姓名（标记作者用）
+abs config set user <名字>                # 设置作者名 → ~/.abs/config.json
 abs todo archive                          # 归档 Done 区旧日期组（默认留近 3 天）
+abs update                                # 升级到最新版并刷新四宿主 hook/skill
 ```
 
 > `abs todo start` 与 `abs todo add` 等价（都登记任务）。
 > 旧版 `abs task ...` / `abs board` 已改名，会报错并提示新写法。
+> `abs wrapup` / `abs teardown-check` 是 hook 内部命令，无需手动调用。
+> **升级后分区名自动归一**：`abs load` 每次都会顺手核对 `index/log/todo` 三文件结构，旧的英文/中文分区名（如 `## 当前路线 (Roadmap)` → `## Roadmap`、`# 🗂 图谱索引` → `# 🗂 Graph Index`）会被自动改回标准；缺分区自动补建，无头文件只提醒不自动改。
 
 ### 工作流
 
@@ -100,6 +107,8 @@ abs update
 npm i -g @fanchao8609/agent_brain_sync@latest
 abs install    # 重新刷 hook/skill
 ```
+
+> ⚠️ 改完源码（尤其 `skill/SKILL.md`、`src/`）后**必须 `abs install --yes` 重扇出**，否则宿主还在跑旧副本 —— 版本号与代码会脱节。发布用 `npm version patch`（自动打 tag），别手改 `package.json` 的 version；发布后 `npm view` 有缓存延迟，必要时 `npm cache clean --force` 再验。
 
 ---
 
@@ -136,6 +145,8 @@ agent_brain_sync/
 ├── src/store.js    CLI 命令实现
 ├── src/hosts.js    四宿主接入定义
 ├── src/install.js  安装/卸载（分区共存合并）
+├── src/userconfig.js  使用者姓名配置（作者标记）
+├── src/wrapup.js   Stop 收尾快照/归档
 ├── hooks/event.sh  hook 模板
 ├── skill/SKILL.md  技能（装到各智能体）
 └── test/           单测
