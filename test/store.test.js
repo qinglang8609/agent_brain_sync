@@ -785,6 +785,69 @@ describe('cmdLint', () => {
     const out = await cmdLint({ dir: projectA });
     assert.ok(out.includes('ORPHAN-PAGE'), out);
   });
+
+  // NO-INBOUND: 有出边但无人指向。ORPHAN-PAGE 只抓"零出零入"，
+  // 抓不到"连了 5 条出去却没人连它"的悬挂页（实测本仓 file-shape-check-on-load 即是）。
+  test('有出边但零入边 → NO-INBOUND (ORPHAN 抓不到这种)', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'hangs.md'),
+      PAGE('# 悬挂页\n链向 [[good]]\n关联 [[good]]'),
+      'utf8'
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('NO-INBOUND'), `应报悬挂: ${out}`);
+    assert.ok(!out.includes('ORPHAN-PAGE: .brain/concepts/hangs.md'), `有出边不该报 ORPHAN: ${out}`);
+  });
+
+  test('有人链接后不再报 NO-INBOUND', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'pointed.md'),
+      PAGE('# 被指向\n无出边'),
+      'utf8'
+    );
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'pointer.md'),
+      PAGE('# 指向者\n关联 [[pointed]]'),
+      'utf8'
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!out.includes('NO-INBOUND: .brain/concepts/pointed.md'), `被指向不该报: ${out}`);
+  });
+
+  // SOURCE-UNDISTILLED: source 超龄仍未链到任何 concept = 暂存了没归位。
+  // 只数总量（SOURCES-PILED-UP）抓不到"4 个 source 里 3 个没提炼"。
+  test('超龄未提炼的 source → SOURCE-UNDISTILLED (按 mtime 判龄)', async () => {
+    const p = join(projectA, '.brain', 'sources', '2026-01-01-老线索.md');
+    await fs.writeFile(p, '---\ntags: [source]\nupdated: 2026-01-01\nstatus: draft\n---\n没归结到概念页', 'utf8');
+    const old = new Date(Date.now() - 10 * 86400 * 1000);
+    await fs.utimes(p, old, old);
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('SOURCE-UNDISTILLED'), `应报未提炼: ${out}`);
+  });
+
+  test('新鲜 source 不报 SOURCE-UNDISTILLED (未超龄)', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'sources', '2026-09-13-今日线索.md'),
+      '---\ntags: [source]\nupdated: 2026-09-13\nstatus: draft\n---\n刚记的',
+      'utf8'
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!out.includes('SOURCE-UNDISTILLED: .brain/sources/2026-09-13-今日线索.md'), `新鲜不该报: ${out}`);
+  });
+
+  test('source 链到 concept 后不再报 SOURCE-UNDISTILLED（即使超龄）', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'distilled-target.md'),
+      PAGE('# 提炼目标\n无出边'),
+      'utf8'
+    );
+    const p = join(projectA, '.brain', 'sources', '2026-01-02-已提炼.md');
+    await fs.writeFile(p, '---\ntags: [source]\nupdated: 2026-01-02\nstatus: draft\n---\n## 关联连接\n- [[distilled-target]] — 已提炼', 'utf8');
+    const old = new Date(Date.now() - 10 * 86400 * 1000);
+    await fs.utimes(p, old, old);
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!out.includes('SOURCE-UNDISTILLED: .brain/sources/2026-01-02-已提炼.md'), `已提炼不该报: ${out}`);
+  });
 });
 
 // ---------- 收尾保险: wrapup 快照 + load 滞留展示 (WRAPUP) ----------

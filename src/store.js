@@ -944,6 +944,10 @@ export async function cmdLint({ dir }) {
     if (f.endsWith('.md')) names.add(f.replace(/\.md$/, ''));
   }
   const linkedNames = new Set(pages.flatMap((p) => p.links));
+  // 入度统计（不含 index.md）：图上"有人引用它"才算被接上。
+  // index 是入口清单（每页都会被登记），算进去就永远不会有 NO-INBOUND —— 失去意义。
+  const inbound = new Map();
+  for (const p of pages) for (const ln of p.links) inbound.set(ln, (inbound.get(ln) || 0) + 1);
   // index.md 里列的 [[x]] —— 用于反向查死引用（列了但页不存在）
   let indexLinks = [];
   try {
@@ -972,6 +976,12 @@ export async function cmdLint({ dir }) {
     if (!isTerminal && !pg.links.length && !linkedNames.has(pg.slug)) {
       issues.push(`ORPHAN-PAGE: ${pg.rel} (no links out, no links in)`);
     }
+    // NO-INBOUND: 有出边但无人指向 = 挂在图上没人接。ORPHAN-PAGE 只抓"零出零入"，
+    // 抓不到"连了 5 条出去却没人连它"的悬挂页（实测 concepts/file-shape-check-on-load 即是）。
+    // 只查知识页（concepts/entities/syntheses）——sources/sessions 的孤立是设计使然。
+    if (['concepts', 'entities', 'syntheses'].includes(pg.dir) && !(inbound.get(pg.slug) || 0)) {
+      issues.push(`NO-INBOUND: ${pg.rel} (无人链接到本页；在相关页的 ## 关联连接 挂一条 [[${pg.slug}]]）`);
+    }
     if (/知识冲突/.test(pg.body) && /status: draft/.test(pg.frontmatter)) {
       issues.push(`UNRESOLVED-CONFLICT: ${pg.rel}`);
     }
@@ -994,6 +1004,21 @@ export async function cmdLint({ dir }) {
 
   const nsrc = pages.filter((p) => p.dir === 'sources').length;
   if (nsrc > 10) issues.push(`SOURCES-PILED-UP: sources/ has ${nsrc} files > 10; 提炼归档旧 source`);
+
+  // SOURCE-UNDISTILLED: source 页超过 SOURCE_STALE_DAYS 天仍没链到任何 concept 页 = 暂存了没归位。
+  // 只数总量（SOURCES-PILED-UP）抓不到"4 个 source 里 3 个没提炼"——实测本仓即如此。
+  // 判据机械可判：出边里有没有 concepts/ 的页 + mtime 超龄，不猜语义。
+  const conceptSlugs = new Set(pages.filter((p) => p.dir === 'concepts').map((p) => p.slug));
+  const staleMs = SOURCE_STALE_DAYS * 86400 * 1000;
+  for (const pg of pages) {
+    if (pg.dir !== 'sources') continue;
+    if (pg.links.some((ln) => conceptSlugs.has(ln))) continue;
+    let ageMs = 0;
+    try { ageMs = Date.now() - (await fs.stat(join(root, pg.rel))).mtimeMs; } catch { continue; }
+    if (ageMs > staleMs) {
+      issues.push(`SOURCE-UNDISTILLED: ${pg.rel}（${SOURCE_STALE_DAYS} 天未提炼成 concept；提炼后删 source 并清引用）`);
+    }
+  }
 
   // Rules 区：它的价值在“少而重”，且不被折叠（load 每次都全量读）。
   // 无上限增长 = 把 load 又撑回去（同 Done / index 清单的膨胀根因）。
@@ -1071,6 +1096,10 @@ const PAGE_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];
 // 提成常量避免检查条件与提示文本各写一份而漂移。
 const PAGE_MAX_LINES = 150;
 const PAGE_MAX_BYTES = 8 * 1024;
+
+// source 页超龄未提炼的天数阈值（SOURCE-UNDISTILLED）。
+// 7 天 = 跨过至少一个完整工作周还没人提炼，基本等于被遗忘。
+const SOURCE_STALE_DAYS = 7;
 
 async function listPages(vault) {
   let indexText = '';

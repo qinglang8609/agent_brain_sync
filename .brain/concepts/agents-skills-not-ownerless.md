@@ -35,6 +35,7 @@ status: reviewed
 
 ## 关联连接
 - [[deploy-artifact-copies]] — 同族：产物多份、改一份不算改
+- [[skill-rewrite-residual-old-methods]] — 重写 skill 时的同类残留（旧方法成悬空引用）
 - [[abs-install-layout]] — 四宿主安装器与各落点路径
 - [[mcp-stale-paths-multi-store]] — 同类：外部权威状态不止一处
 - [[AgentBrainSync]] — 项目实体页

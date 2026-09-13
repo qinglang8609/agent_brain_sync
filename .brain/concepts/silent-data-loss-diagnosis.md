@@ -69,6 +69,7 @@ WRITE 50d73b1 19 -> a55bfc4 19     ← ⚠ 19 → 19, 条数没增长！
 
 ## 关联连接
 - [[file-write-locking]] — 并发写保护设计；本页的"锁被冤枉"结论依赖它的压测方式
+- [[file-shape-check-on-load]] — 同族：结构被改坏时 load 仍"成功"但读到错内容 = 静默失效
 - [[host-plugin-silent-failure]] — 同属"静默失效"家族（不报错、无痕、靠猜必错）
 - [[self-triggering-hook-loop]] — 同为"守卫写错导致行为静默异常"
 - [[AgentBrainSync]] — 项目实体页

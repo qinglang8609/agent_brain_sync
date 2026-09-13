@@ -20,7 +20,7 @@ abs todo                     # 看板（Done 折成计数；明细 abs todo --fu
 abs index / abs log          # 完整 index.md / log.md
 abs status                   # 当前项目 + 图谱概要
 abs query <词1> [词2 …]      # 检索 .brain/ 知识页（多词 OR）
-abs lint                     # 图谱体检（死链/孤岛/超限/堆积/Rules 超限）
+abs lint                     # 图谱体检（死链/悬挂/超限/堆积/未提炼/Rules 超限）
 
 # 写
 abs todo add <id> --note "做什么"              # 登记任务（start 同义）
@@ -148,7 +148,7 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 3. **sources 是暂存**：提炼成规律后删/归档，并清掉指向它的引用（防死链）。
 4. **能不能用一行链接代替新增整页**？
 
-`abs lint` 兜底：死链/孤岛/缺 frontmatter/超限/sources 堆积/index 漏列/Rules 超限。
+`abs lint` 兜底：死链/孤岛/**悬挂页(NO-INBOUND)**/缺 frontmatter/超限/sources 堆积/**超龄未提炼(SOURCE-UNDISTILLED)**/index 漏列/Rules 超限。
 ## 开场：Init Sync（开工 / 默认续 todo）
 
 图谱已存在；收到第一个核心开发指令**之前**走这条链载入上下文：
@@ -252,7 +252,9 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 
 - `abs query <词>` 检索（多词 OR）→ 读命中页 → 答用 `[[页面名]]` 标来源。
   **代码问题（符号在哪/谁调用）不在 .brain，直接读源码**；.brain 只答"踩过什么坑/上次做到哪"。
-- `abs lint` 体检：死链/孤岛/缺 frontmatter/模板残留/超尺寸/sources 堆积/index 漏列/Rules 超限。
+- `abs lint` 体检：死链/孤岛/**悬挂页**/缺 frontmatter/模板残留/超尺寸/sources 堆积/**超龄未提炼**/index 漏列/Rules 超限。
+  - `NO-INBOUND`：有出边但无人 `[[链接]]` 到你 = 挂在图上没人接（孤岛检查只抓"零出零入"）。
+  - `SOURCE-UNDISTILLED`：source 超 7 天仍未链到任何 concept = 暂存了没归位。
 
 ## 三层分工
 
