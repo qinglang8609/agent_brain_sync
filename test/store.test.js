@@ -6,8 +6,8 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive, clip, collapseIndex } from '../src/store.js';
-import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage, doneDateOf, doneKindOf, withDoneKind } from '../src/todo.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive, cmdTopic, clip, collapseIndex, indexTemplate, checkBrainShape, currentTopicText } from '../src/store.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage, doneDateOf, doneKindOf, withDoneKind, upsertTopicLine, topicTree, promoteTopic } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
 
@@ -311,7 +311,8 @@ describe('board/load/status', () => {
 
   test('load 输出 index + todo + log 三段', async () => {
     const out = await cmdLoad({ dir: projectA });
-    assert.ok(out.includes('index.md'));
+    // index.md 现在只以图谱清单计数呈现（Roadmap 已删，Rules 空则不占字节）
+    assert.ok(out.includes('## Concepts'), `应输出 index 清单段: ${out}`);
     assert.ok(out.includes('Todo'));
     assert.ok(out.includes('log.md'));
   });
@@ -359,7 +360,7 @@ describe('board/load/status', () => {
   test('load 的 index 区不隨图谱页数增长（清单折成计数）', () => {
     const idxP = join(projectA, '.brain', 'index.md');
     const build = (n) => [
-      '# 🗂 Graph Index', '', '## Roadmap', '', '**已落地**：跑起来了。', '',
+      '# 🗂 Graph Index', '', '## Rules', '', '> 硬规则一条。', '',
       '## Concepts',
       ...Array.from({ length: n }, (_, i) => `- [[concept-${i}]] — 一条相当时长的概念页描述文字用来模拟真实积累`),
       '## Sessions', '- [[log-1]] — 一次会话', '',
@@ -374,22 +375,86 @@ describe('board/load/status', () => {
         `concept 从 3 条涨到 60 条，load 输出不得显著膨胀（${Buffer.byteLength(smallOut)}→${Buffer.byteLength(bigOut)}B, ×${growth.toFixed(2)}）`);
       assert.ok(bigOut.includes('## Concepts（60 页）'), `应给分区计数: ${bigOut.slice(0, 600)}`);
       assert.ok(!bigOut.includes('concept-59'), 'index 明细不应进 load 输出');
-      // 路线是内容不是清单：必须原样保留（否则 load 就失去意义了）
-      assert.ok(bigOut.includes('**已落地**：跑起来了。'), `路线内容不得被折叠掉: ${bigOut.slice(0, 800)}`);
+      // Rules 是内容不是清单：必须原样保留（否则 load 就失去意义了）
+      assert.ok(bigOut.includes('> 硬规则一条。'), `Rules 内容不得被折叠掉: ${bigOut.slice(0, 800)}`);
+      // Roadmap 已删（它是 AI 自己写的方向总结，会带偏会话）：模板/load 都不应再出现
+      assert.ok(!bigOut.includes('## Roadmap'), `不应再有 Roadmap 区: ${bigOut.slice(0, 400)}`);
       // 逃生口：完整 index 仍可拿
       const full = await cmdShow({ view: 'index', dir: projectA });
       assert.ok(full.includes('concept-59'), 'abs index 应给完整清单');
     })();
   });
 
-  test('collapseIndex: 路线原样、清单只计数（纯函数边界）', () => {
-    const t = ['# H', '', '## Roadmap', '', '> 引用行保留', '', '## Concepts', '- [[a]] — x', '- [[b]] — y', '## Syntheses', ''].join('\n');
+  test('collapseIndex: 清单只计数（Rules 交给 rulesSection 单独成段）', () => {
+    const t = ['# H', '', '## Rules', '', '> 引用行', '', '## Concepts', '- [[a]] — x', '- [[b]] — y', '## Syntheses', ''].join('\n');
     const o = collapseIndex(t);
-    assert.ok(o.includes('# H') && o.includes('> 引用行保留'), `文件头/路线应原样: ${o}`);
+    assert.ok(o.includes('# H'), `文件头应原样: ${o}`);
+    assert.ok(!o.includes('## Rules'), `Rules 不得重复输出（已单独成段）: ${o}`);
     assert.ok(o.includes('## Concepts（2 页）'), `应计数: ${o}`);
     assert.ok(o.includes('## Syntheses'), `空分区保留名字（不写 0 页）: ${o}`);
     assert.ok(!o.includes('[[a]]'), `清单行不得保留: ${o}`);
     assert.equal(collapseIndex(''), '');
+  });
+
+  test('load 只打印「当前话题」一行，不打印整棵树', async () => {
+    await cmdTopic({ dir: projectA, action: 'new', id: '#1 根话题' });
+    await cmdTopic({ dir: projectA, action: 'new', id: '#1.1 子话题' });
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(out.includes('当前话题'), `应有当前话题段: ${out}`);
+    assert.ok(out.includes('⌖ #1 根话题 › #1.1 子话题'), `应给父链: ${out}`);
+    // 关键：整棵树不得进首屏（它会被反复读并带偏后续会话）
+    assert.ok(!/--- Topics \(todo\.md\) ---/.test(out), '不得再打印整棵树');
+  });
+
+  test('currentTopic: 最深活话题才算当前（父已让位给子）', () => {
+    const base = '# 📋 Todo Board\n\n## Topics\n';
+    let t = upsertTopicLine(base, { id: '#1', title: '根', state: '进行中' }).text;
+    assert.ok(currentTopicText(t).includes('#1 根'), `单根即当前: ${t}`);
+    t = upsertTopicLine(t, { id: '#1.1', title: '子', state: '进行中' }).text;
+    assert.ok(currentTopicText(t).includes('#1 根 › #1.1 子'), `有活子时当前=子: ${currentTopicText(t)}`);
+    // 子结案 → 当前回到父；全结案 → 无当前
+    t = upsertTopicLine(t, { id: '#1.1', title: '子', state: '已结论' }).text;
+    assert.ok(currentTopicText(t).includes('#1 根') && !currentTopicText(t).includes('子'), `子结案回父: ${currentTopicText(t)}`);
+    t = upsertTopicLine(t, { id: '#1', title: '根', state: '已否决' }).text;
+    assert.equal(currentTopicText(t), '', '无活话题则无当前行');
+  });
+
+  test('话题 id 点分层级自动成父子（不用手写 └─ 父）', () => {
+    const base = '# 📋 Todo Board\n\n## Topics\n';
+    const a = upsertTopicLine(base, { id: '#1', title: '根', state: '进行中' }).text;
+    const b = upsertTopicLine(a, { id: '#1.1', title: '子', state: '进行中' }).text;
+    const tree = topicTree(b);
+    assert.equal(tree.find((n) => n.id === '#1.1').parent, '#1', '点分 id 应自动推父');
+    assert.equal(tree.find((n) => n.id === '#1').parent, null, '根无父');
+  });
+
+  test('promoteTopic: 话题移进 Today，同 id 不留 Topics（移动不是复制）', () => {
+    let t = '# 📋 Todo Board\n\n## Topics\n\n## Today / In Progress\n';
+    t = upsertTopicLine(t, { id: '#1', title: '根', state: '进行中', conclusion: '定案了' }).text;
+    t = upsertTopicLine(t, { id: '#1.1', title: '要动手', state: '进行中', conclusion: '方案已定' }).text;
+    const r = promoteTopic(t, '#1.1');
+    assert.deepEqual(r.changed, ['话题 #1.1 → Today / In Progress']);
+    // 同 id 仍可追（一条命，不是两份记录）
+    assert.ok(topicTree(r.text).find((n) => n.id === '#1.1') === undefined, '不再在 Topics');
+    assert.ok(r.text.includes('- [ ] #1.1'), `Today 应有同 id 任务: ${r.text}`);
+    assert.ok(r.text.includes('方案已定'), '结论应捎过去（丢了就没上下文）');
+    const todaySeg = r.text.split('## Today / In Progress')[1].split('## ')[0];
+    assert.ok(todaySeg.includes('#1.1'), `应在 Today 区内: ${todaySeg}`);
+    // 不存在的话题不动
+    assert.deepEqual(promoteTopic(r.text, '#999').changed, []);
+  });
+
+  test('indexTemplate 不含 Roadmap（旧项目的 Roadmap 会被归为非标准分区留末尾）', async () => {
+    const t = indexTemplate();
+    assert.ok(!t.includes('Roadmap'), `模板不应再有 Roadmap: ${t}`);
+    assert.ok(t.includes('## Rules') && t.includes('## Concepts'), `模板分区应完整: ${t}`);
+    // 存量项目带 Roadmap：结构核对不得弄丢其正文
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Roadmap\n\n**已落地**：X。\n\n## Rules\n\n- 一条。\n', 'utf8');
+    await checkBrainShape(projectA);
+    const after = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(after.includes('**已落地**：X。'), `旧 Roadmap 正文不得丢: ${after}`);
+    assert.ok(after.includes('## Rules'), `标准分区保留: ${after}`);
   });
 
   test('status 报告项目 + 各类页数', async () => {

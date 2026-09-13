@@ -93,7 +93,7 @@ tool(
 
 tool(
   'abs_load',
-  '开机读状态：index 路线 + todo 看板 + 最近 log。跨会话续接的入口。',
+  '开机读状态：index 的 Rules + 图谱计数 + todo 看板 + 最近 log。跨会话续接的入口。',
   { cwd: z.string().describe('项目根目录（.brain/ 所在处）') },
   async ({ cwd }) => {
     const root = await findBrainRoot(cwd || process.cwd());

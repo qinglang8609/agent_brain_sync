@@ -15,7 +15,7 @@ Obsidian 可直接打开的 Markdown 图谱（`.brain/`）做统一落点。
 
 ```bash
 # 读
-abs load                     # 开机读状态（Roadmap + Rules + todo + 最新 log）
+abs load                     # 开机读状态（Rules + 图谱计数 + todo + 最新 log）
 abs todo                     # 看板（Done 折成计数；明细 abs todo --full）
 abs index / abs log          # 完整 index.md / log.md
 abs status                   # 当前项目 + 图谱概要
@@ -101,8 +101,7 @@ abs config [set user <名字>]                   # 使用者姓名（写操作�
 
 | 分区 | 放什么 | 怎么用 |
 |---|---|---|
-| `## Roadmap` | 方向：已落地 / 下一阶段候选 | **写方向不写版本号**（复述第三方状态必然漂移）。有界的，load 原样展示 |
-| `## Rules` | 本项目铁律 | 见下 |
+| `## Rules` | 本项目铁律 | 见下（load 里**原样全量**输出，不折） |
 | `## Concepts` `## Entities` `## Sources` `## Syntheses` `## Sessions` | 各类页的清单 | 每页一行 `- [[slug]] — 一句话`（`abs note`/建归档页会自动登记），load 里折成计数 |
 
 **`## Rules` 区**：铁律清单，`abs load` 每次都全量读（代码里明确不折它）。
@@ -153,7 +152,7 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 
 图谱已存在；收到第一个核心开发指令**之前**走这条链载入上下文：
 
-1. **读状态**：`abs load`（或 MCP `abs_load`）读 index 路线 + Rules + todo 看板 + 最近 log。
+1. **读状态**：`abs load`（或 MCP `abs_load`）读 index 的 Rules + 图谱计数 + todo 看板 + 最近 log。
    > **开工前先看 `## Rules`** —— 那是本项目踩过坑后定下的硬规则，每条都是曾经付过代价的。
    > 违反的代价一般是丢数据/静默失效/白干活，而它就在 load 输出里，没有理由不看。
    >
@@ -162,7 +161,7 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
    > - **index 页面清单** → 各分区只给页数（concept 清单占 load 输出 64%，隨图谱线性增长）
    > - 「最近动作」每条按语义边界收口到 220 字符
    >
-   > **路线(Roadmap) 与 Rules 两区原样保留** —— 那是 load 要传达的状态本身（代码里明确不折）。
+   > **`## Rules` 区原样保留** —— 那是 load 要传达的状态本身（代码里明确不折）。
    > 要全量明细：`abs todo --full` / `abs index`，或直接读 `.brain/` 文件、
    > `.brain/sessions/<日期>-todo归档.md`。
 2. **对账滞留（强制，别跳过）**：若 `abs load` 顶部出现 `⏳ 上会话滞留`，说明上会话有任务做完/做到一半就断了。**先收尾再开工**：

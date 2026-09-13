@@ -2,7 +2,7 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive } from '../src/store.js';
+import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdTopic } from '../src/store.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
@@ -73,6 +73,7 @@ const FLAG_SPEC = {
   'as': { type: 'string' },
   'payload': { type: 'string' },
   'tags': { type: 'string' },
+  'state': { type: 'string' },
   'keep-days': { type: 'string' },
   'help': { type: 'boolean' },
   'dry-run': { type: 'boolean' },
@@ -142,6 +143,7 @@ function parseArgv(args) {
     section: values.section,
     note: values.note,
     as: values.as,
+    state: values.state,
     payload: values.payload,
     tags: values.tags,
     help: !!values.help,
@@ -165,7 +167,8 @@ const usage = `abs — agent-brain-sync 记忆工具
 
 读:
   abs load                   开机读状态 (index/todo/log)
-  abs todo                   任务看板 Today / In Progress / Blocked / Done
+  abs todo                   任务看板 Topics / Backlog / Today / Blocked / Done
+  abs topic                  话题树（讨论轨道，含已证伪）；无参=查看
   abs index                  图谱索引 index.md
   abs log                    流水 log.md
   abs status                 当前项目 + 图谱概要
@@ -174,6 +177,10 @@ const usage = `abs — agent-brain-sync 记忆工具
   abs todo add     <id> [--note ..] [--section ..]  登记任务 (start 同义)
   abs todo note    <id> --note "断点/进度"   实时落 ↳ 断点 行
   abs todo blocked <id> --note "卡点原因"    移入 Blocked 区
+  abs topic new    "#1 标题" [--state 状态] [--note 结论]   登记/更新话题
+                    状态: 进行中|已结论|已否决|待验证|已落地|未落地
+                    子话题: abs topic new "#1.1 标题"（父子由 id 点分层级自动推）
+  abs topic promote <id>      讨论成熟、要动手 → 移进 Today（同 id 追踪，不复制）
   abs todo done    <id> [--as 落地|否决|仅方案]    完成；结语标明到底"做成了没有"
                                默认 落地。否决=评估后不做(含做了又撤)；仅方案=只设计过
                                不加结语或结语失真会让下一个会话把"想过"当成"做完了"。
@@ -337,6 +344,28 @@ async function main() {
         rejectExtra(opts._, 'abs status');
         console.log(await cmdStatus({ dir: opts.dir }));
         break;
+      // abs topic —— 分区（话题树）：无子命令=树视图；带子命令=话题写操作
+      case 'topic': {
+        const [sub, id, ...rest2] = opts._;
+        if (!sub) {
+          rejectExtra([id, ...rest2].filter(Boolean), 'abs topic');
+          console.log(await cmdTopic({ dir: opts.dir }));
+          break;
+        }
+        const r = await cmdTopic({
+          dir: opts.dir,
+          action: sub,
+          id,
+          // 标题 = 第 3 个位置参数起的全部（含空格），未给则用 id 本身
+          title: rest2.join(' ') || undefined,
+          state: opts.state,
+          conclusion: opts.note,
+          full: opts.full,
+          clear: opts.clear,
+        });
+        console.log(r);
+        break;
+      }
       // abs todo —— 无子命令=看板；带子命令=任务写操作
       case 'todo': {
         const [sub, id, ...rest2] = opts._;

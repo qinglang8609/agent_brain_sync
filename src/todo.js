@@ -52,20 +52,28 @@ export const SEC = {
   today: 'Today / In Progress',
   blocked: 'Blocked',
   done: 'Done',
+  // 分区（话题树总看板）：讨论层面的话题状态机，与「要落实的事」（Backlog/Today）分层。
+  // 讨论出话题 → 记分区；成熟到要动手 → 才落一行任务。
+  // 中文标题「分区」比 Topic 更直白；LEGACY 里把英文 Topic 也归一过来。
+  topics: 'Topics',
   archived: 'Archived',   // Done 区内部的归档标记区（原 '### 归档'）
   undated: 'Undated',     // Done 区内部无完成日期的尾组（原 '### （未标日期）'）
 };
 
 /** 旧名 → 新名。供 `abs init --repair` 一次性迁移（幂等）。
  * 只改匹配整行的标题，不动正文；不做模糊替换（防误改正文里提到的旧名）。 */
+// 分区标题归一（英文 Topic / 话题 都归一到「分区」）
 export const LEGACY_SECTION_RENAMES = [
   // H1（文件标题）
   ['# 🗂 图谱索引', '# 🗂 Graph Index'],
   ['# 🗒 操作日志', '# 🗒 Activity Log'],
   ['# 📋 Todo 看板', '# 📋 Todo Board'],
   // ## 分区
-  ['## 当前路线 (Roadmap)', '## Roadmap'],
   ['## Done（只留近期，旧的迁 log.md/快照）', '## Done'],
+  ['## Topic', '## Topics'],
+  ['## 话题', '## Topics'],
+  ['## 话题树', '## Topics'],
+  ['## 分区', '## Topics'],
   // ### 区内分组标题
   ['### 归档', '### Archived'],
   ['### （未标日期）', '### Undated'],
@@ -89,15 +97,21 @@ export function renameLegacySections(text) {
 export function todoTemplate() {
   // 由 rebuildStructure 生成，保证“模板”与“重排结果”逐字节一致
   // （否则 load 会把新建的模板又重排一次 = 无意义的写盘）。
+  // 注意（2026-09-13 踩坑）：rebuildStructure 的 order 要**带 `## ` 前缀**，
+  // 而 TODO_SECTIONS 是裸名（两者用途不同，不能复用 —— 曾误传裸名导致
+  // 生成出没有 `##` 的裸标题行，模板直接损坏、Backlog 分区消失）。
   return rebuildStructure(
-    ['# 📋 Todo Board', '## Backlog', '- [ ] 待办任务', '## Today / In Progress', '## Blocked', '## Done'].join('\n'),
-    { h1: '# 📋 Todo Board', order: ['## Backlog', '## Today / In Progress', '## Blocked', '## Done'] },
+    ['# 📋 Todo Board', ...TODO_SECTIONS.map((s) => `## ${s}`)].join('\n'),
+    { h1: '# 📋 Todo Board', order: TODO_SECTIONS.map((s) => `## ${s}`) },
   ).text;
 }
 
-/** 归一化 todo.md 分区：老格式（In Progress/Todo）迁移为 B4 定稿格式（Backlog→Today / In Progress→Blocked→Done）。
- * 幂等：已是新格式则原样返回。迁移原则——老 "In Progress" 内容进 "Today / In Progress"，老 "Todo" 内容进 "Backlog"。 */
-export const TODO_SECTIONS = ['Backlog', 'Today / In Progress', 'Blocked', 'Done'];
+/** 分区分区（话题树）：**置顶** —— 回答「我们在做什么、分了几叉、哪些已死」。
+ * 设计取舍（2026-09-13 用户定）：讨论轨道与执行轨道必须分开。
+ * 实测教训：一轮会话讨论了 14 条话题线，而 todo 只能反映 1 条（记录率 7%）——
+ * 因为话题一旦「已结论/已证伪」就不该再占待办位，但也不该消失。
+ * 故：分区置顶存话题状态（含已证伪），Backlog/Today 只存「要动手的事」。 */
+export const TODO_SECTIONS = ['Topics', 'Backlog', 'Today / In Progress', 'Blocked', 'Done'];
 
 /** 结构重建（B 档）：以标准分区表为准重排整个文件。
  *
@@ -673,4 +687,243 @@ export async function boardText(brainRoot, textOverride, { full = false } = {}) 
   const body = full ? text.trim() : collapseDone(text).text;
   const hint = full ? '' : '\n\n（Done 只给计数；看明细: abs todo --full）';
   return `${head}\n\n${body}${hint}`;
+}
+
+// ---------- 分区（话题树） ----------
+// 设计动机（2026-09-13 实测教训）：一轮长会话讨论了 14 条话题线，而看板只能反映 1 条
+// （记录率 7%）——因为「已结论/已证伪」的话题不该再占待办位，但也不该消失（否则下个
+// 会话重走死路）。故把「讨论轨道」独立成 `## 分区`：话题带状态，与「执行轨道」
+// （Backlog/Today）分层。讨论出话题 → 记分区；成熟到要动手 → 才落一行任务。
+
+/** 话题状态（与执行轨道共享的语义，但用于话题层面）。 */
+export const TOPIC_STATES = ['进行中', '已结论', '已否决', '待验证', '已落地', '未落地'];
+
+/** 终止态：这些话题**不该留在 Topics 区**（用户定：只放正在讨论的）。
+ * 理由：树的价值是「当前在哪」；死话题会把活话题淹掉。
+ * 归档去向：结论写进 sources/（abs note），那里可检索、不挤占 load 首屏。
+ *
+ * 2026-09-13 修正：`未落地`/`待验证` **也算离开 Topics**。
+ * 先前误把它们当“活跃”留在树上 → 结果 #8（方案已定、等客户端配合）/#3.4（等数据）
+ * 长期挂在“正在讨论”里变成僵尸。它们的真实语义是**暂停**（等人/等数据），
+ * 应落 Backlog/Blocked 当成任务追踪，而不是冒充“当前话题”。 */
+export const TOPIC_CLOSED_STATES = ['已结论', '已否决', '已落地', '待验证', '未落地'];
+
+/** 从 Topics 区移除一个话题（含其父指针行）。终止态话题用 —— 树只留活跃话题。 */
+export function removeTopicLine(text, id) {
+  const lines = String(text ?? '').split('\n');
+  const { at, lines: seg } = topicLines(lines.join('\n'));
+  if (at === -1) return text;
+  const rel = seg.findIndex((l) => {
+    const t = parseTopicLine(l);
+    return t && t.id === id;
+  });
+  if (rel === -1) return text;
+  const abs = at + 1 + rel;
+  const drop = 1 + (/^\s*└─\s*父:/.test(lines[abs + 1] || '') ? 1 : 0);
+  lines.splice(abs, drop);
+  return lines.join('\n');
+}
+
+/** 话题行格式（刻意做得极简、可手写可机器解析）：
+ *   - [ ] #12 [[name]] 减少决策步往返 [进行中] — 结论
+ *   - [x] #11 [[name]] 任务拆分       [已否决] — 子任务必 miss
+ *       └─ 父: #9
+ * 缩进 = 父子关系（纯缩进即树，不引入新语法）；[[name]] = 登记人（与 todo 行同约定）。
+ *
+ * 解析要点（2026-09-13 踩坑）：状态标记是**末尾** `[状态]`，不能用非贪婪匹配 ——
+ * 否则标题含 `[` 时会被第一个 `[` 截断。故：先切结论，再从剩余尾部抽状态。 */
+const TOPIC_RE = /^(\s*)- \[( |x)\]\s+(#[\w.]+)\s+(.*)$/;
+const TOPIC_STATE_TAIL = /\s*\[([^\]]+)\]\s*$/;
+const TOPIC_AUTHOR = /^\[\[([^\]]+)\]\]\s*/;
+
+/** 解析一行话题。返回 null 表示不是话题行（普通任务行/正文行）。 */
+export function parseTopicLine(line) {
+  const m = String(line).match(TOPIC_RE);
+  if (!m) return null;
+  const [, indent, box, id, rest] = m;
+  const body = rest.trim();
+  // 顺序很重要（2026-09-13 踩坑）：先切结论、再抽状态。
+  // 若颠倒，`… [已否决] — 结论` 的末尾是结论而非状态，会抽不到状态。
+  // 结论分隔：` — ` / ` -- `（全角/半角破折号、双连字符）
+  let head = body;
+  let conclusion = '';
+  const sep = body.match(/\s(?:—|--)\s/);
+  if (sep) {
+    head = body.slice(0, sep.index).trim();
+    conclusion = body.slice(sep.index + sep[0].length).trim();
+  }
+  // 抽作者标记（紧跟 id 后的 [[name]]）
+  let author = null;
+  const am = head.match(TOPIC_AUTHOR);
+  if (am) {
+    author = am[1];
+    head = head.slice(am[0].length).trim();
+  }
+  // 从 head 尾部抽 [状态]；只有识别为已知状态名才切除，否则归回标题
+  let state = null;
+  const st = head.match(TOPIC_STATE_TAIL);
+  if (st && TOPIC_STATES.includes(st[1])) {
+    state = st[1];
+    head = head.slice(0, st.index).trim();
+  }
+  return {
+    indent: indent.length,
+    done: box === 'x',
+    id,
+    author,
+    title: head,
+    state: state || (box === 'x' ? '已结论' : '进行中'),
+    conclusion,
+  };
+}
+
+/** 渲染一行话题（与 parseTopicLine 互逆，便于测试）。
+ * 结论用 ` — ` 分隔（与 parseTopicLine 的 sep 规则对称），否则回读时会把结论
+ * 误并回标题（先前实测：`#1 … [已否决] 六条…` → 标题被截断、状态被误读）。 */
+export function renderTopicLine(t) {
+  const ind = ' '.repeat(t.indent || 0);
+  const closed = ['已结论', '已否决', '已落地'].includes(t.state);
+  const b = closed ? 'x' : t.done ? 'x' : ' ';
+  const who = t.author ? ` ${`[[${t.author}]]`}` : '';
+  const head = `${ind}- [${b}] ${t.id}${who} ${t.title} [${t.state}]`;
+  return t.conclusion ? `${head} — ${t.conclusion}` : head;
+}
+
+/** 取 `## 分区` 区段的行（不含标题）。 */
+export function topicLines(text) {
+  const lines = String(text ?? '').split('\n');
+  const at = lines.findIndex((l) => l.trim() === `## ${SEC.topics}`);
+  if (at === -1) return { at: -1, lines: [] };
+  let end = at + 1;
+  while (end < lines.length && !/^## /.test(lines[end])) end++;
+  return { at, lines: lines.slice(at + 1, end) };
+}
+
+/** 幂等登记/更新一个话题。同 id 已存在则原位更新（标题/状态/结论），否则按缩进插入。 */
+export function upsertTopicLine(text, { id, title, state, conclusion, indent = 0, author = null }) {
+  const lines = String(text ?? '').split('\n');
+  const { at, lines: seg } = topicLines(lines.join('\n'));
+  const existing = seg.findIndex((l) => {
+    const t = parseTopicLine(l);
+    return t && t.id === id;
+  });
+  // 作者：优先新值，否则沿用已存在的行（“只改状态”不该把登记人抹掉）
+  const prev = existing === -1 ? null : parseTopicLine(seg[existing]);
+  const rendered = renderTopicLine({
+    id, title, state, conclusion, indent: prev ? prev.indent : indent,
+    author: author || prev?.author || null,
+  });
+  if (at === -1) {
+    // 无分区 → 补建在**最前**（Topics 是总览，必须先被看到）。
+    // 坑（2026-09-13 实测）：曾插到 `## Done` 之前 → 反而排在 Backlog/Today 之后，
+    // 与「置顶」意图相反。正确位置 = H1/前言之后的第一个分区位。
+    let insertAt = 0;
+    while (insertAt < lines.length && !/^## /.test(lines[insertAt])) insertAt++;
+    lines.splice(insertAt, 0, `## ${SEC.topics}`, rendered, '');
+    return { text: lines.join('\n'), changed: ['新增 Topics 区'] };
+  }
+  if (existing !== -1) {
+    const abs = at + 1 + existing;
+    if (lines[abs] === rendered) return { text, changed: [] };
+    lines[abs] = rendered;
+  } else {
+    let insertAt = at + 1;
+    while (insertAt < lines.length && !/^## /.test(lines[insertAt])) insertAt++;
+    // 插到该分区末尾（去掉尾部空行，保持紧凑）
+    while (insertAt - 1 > at && !lines[insertAt - 1].trim()) insertAt--;
+    lines.splice(insertAt, 0, rendered);
+  }
+  return { text: lines.join('\n'), changed: [`话题 ${id} → ${state}`] };
+}
+
+/** 把话题从 Topics 区**移进**指定分区（默认 Today），保留同一个 id。
+ *
+ * 模型根基（2026-09-13 用户定）：话题有生命周期，Topics 不是终点而是**入口**。
+ * 「讨论」与「执行」是**同一件事的两态**，不是两份记录——所以是**移动**（带同 id），
+ * 不是复制。这样 `#1.2` 从话题变成任务后，仍然能一路追到 Done。
+ *
+ * 落单格式用普通任务行（与 todo 同构），以便复用看板/归档/lint 全套；
+ * 原话题的**结论**捎带过去（丢了就没上下文）。
+ * 返回新文本；话题不存在则原样返回。 */
+export function promoteTopic(text, id, section = SEC.today) {
+  const src = String(text ?? '');
+  const nodes = topicTree(src);
+  const node = nodes.find((n) => n.id === id);
+  if (!node) return { text: src, changed: [] };
+  let out = removeTopicLine(src, id);
+  const lines = out.split('\n');
+  const at = lines.findIndex((l) => l.trim() === `## ${section}`);
+  if (at === -1) return { text: src, changed: [] };   // 目标分区不存在 → 不动（不猜）
+  let end = at + 1;
+  while (end < lines.length && !/^## /.test(lines[end])) end++;
+  while (end - 1 > at && !lines[end - 1].trim()) end--;
+  const who = node.author ? ` [[${node.author}]]` : '';
+  const tail = node.conclusion ? ` — ${node.conclusion}` : '';
+  lines.splice(end, 0, `- [ ] ${node.id}${who} ${node.title}${tail}`);
+  return { text: lines.join('\n'), changed: [`话题 ${id} → ${section}`] };
+}
+
+/** 取话题树（扁平列表 + 父指针）。父由 `└─ 父: #x` 行给出；未显式给出时
+ * 按 id 的层级默认（`#1.2` 的父是 `#1`）—— 否则 `abs topic new "#1.2 x"` 会白成一个孤根。
+ * 显式 `└─ 父:` 优先（允许手工把子话题挂到非 id 前缀的父上）。 */
+export function topicTree(text) {
+  const { lines: seg } = topicLines(text);
+  const out = [];
+  for (let i = 0; i < seg.length; i++) {
+    const t = parseTopicLine(seg[i]);
+    if (!t) continue;
+    const pm = seg[i + 1]?.match(/^\s*└─\s*父:\s*(#[\w.]+)/);
+    // 无显式父指针 → 从点分层级推（#a.b.c 的父 = #a.b）
+    const dot = t.id.lastIndexOf('.');
+    const implied = dot === -1 ? null : t.id.slice(0, dot);
+    out.push({ ...t, parent: pm ? pm[1] : implied });
+  }
+  return out;
+}
+
+/** 此刻正在推进的那条话题（供 load 首屏「当前话题」一行）。
+ * 判据：`进行中` 且是**叶子**（没有进行中的子话题）—— 最深的活话题才是当前在说的。
+ * 无活话题返回 null。
+ *
+ * 为什么不打印整棵树（2026-09-13 用户定）：整棵树会被 load 反复读取并**带偏后续会话**
+ * （跟刚删的 Roadmap 同一个病）。当前态要常驻眼前，全貌用 `abs topic` 主动查。 */
+export function currentTopic(text) {
+  const nodes = topicTree(text).filter((n) => n.state === '进行中');
+  if (!nodes.length) return null;
+  const hasActiveKid = new Set(
+    nodes.map((n) => n.parent).filter((p) => p && nodes.some((n) => n.id === p)),
+  );
+  return nodes.filter((n) => !hasActiveKid.has(n.id)).pop() || null;
+}
+
+/** 话题树的文本视图：**只输出话题行**，不写任何解释/统计标题。
+ * 理由（用户定）：这一段是状态数据，不是文档 —— 正文说明会被 load 反复打印、
+ * 挤占上下文，也让人分不清哪些是话题、哪些是说明。注释只留在源码里。
+ * 已证伪的用 ✘ 标出并在末尾单列一块（防下个会话重走死路）。 */
+export function topicTreeText(text) {
+  const nodes = topicTree(text);
+  if (!nodes.length) return '';
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const kids = new Map();
+  const roots = [];
+  for (const n of nodes) {
+    if (n.parent && byId.has(n.parent)) {
+      if (!kids.has(n.parent)) kids.set(n.parent, []);
+      kids.get(n.parent).push(n);
+    } else roots.push(n);
+  }
+  const icon = (s) => ({ 进行中: '▶', 已结论: '✔', 已否决: '✘', 待验证: '?', 已落地: '✓', 未落地: '·' }[s] || '·');
+  const out = [];
+  const draw = (n, depth) => {
+    // 格式与存储行一致（单层分隔，不用双空格夹状态），便于人眼与文件对照
+    out.push(`${'  '.repeat(depth)}${icon(n.state)} ${n.id} ${n.title} [${n.state}]${n.conclusion ? ' — ' + n.conclusion : ''}`);
+    for (const k of kids.get(n.id) || []) draw(k, depth + 1);
+  };
+  for (const r of roots) draw(r, 0);
+  const dead = nodes.filter((n) => n.state === '已否决' && !roots.includes(n) && !kids.has(n.parent));
+  if (dead.length) {
+    out.push('');
+    for (const d of dead) out.push(`✘ ${d.id} ${d.title}${d.conclusion ? ' — ' + d.conclusion : ''}`);
+  }
+  return out.join('\n');
 }

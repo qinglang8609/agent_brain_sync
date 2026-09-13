@@ -2,20 +2,6 @@
 
 本文件唯一入口。每新建/大改一个知识页，同步在此分类下加一行 `[[页面名]] — 一句话`。
 
-## Roadmap
-> **版本号与测试数不在此复述** —— 以 `abs --version` / npm registry 为准。
-> （曾写死过版本号与测试数，结果长期与实际不符 —— 复述第三方状态必然漂移。）
-> 本页只写**方向**。
-
-**已落地**：四宿主安装器 + hook→MCP→CLI 三层 + 收尾自动化（含 Stop hook 主动推）；
-日志增长治理（hooks.log / wrapup.log 轮转）；Done 区归档（`abs todo archive`，每天一文件、会话结束自动跑）；
-lint 兜底（SOURCES-PILED-UP / DONE-PILED-UP，均带测试）。
-
-**下一阶段候选**：
-- 图谱长期维护（sources 归档节奏、concepts 拆分时机）；
-- 收尾注入的"只推一次"是否会漏掉长会话中的多次阶段性收尾；
-- 若 `.brain` 涨到 MB 级或需要结构化查询，再评估索引层（见 [[perf-fixed-overhead]]；候选不是 SQLite）。
-
 ## Rules
 > 本项目已沉淀经验的硬摘要。违反过的代价各记在对应概念页，细节点进去看。
 
@@ -38,6 +24,7 @@ lint 兜底（SOURCES-PILED-UP / DONE-PILED-UP，均带测试）。
 - 不在子目录/非项目根跑（不向上搜索）。
 - 坏链 = 掰断接力棒；`abs lint` 必须 0 problem。
 - index 行不承载归因。[[index-row-not-attribution]]
+- hook 节流判据要看「真收尾」，不能只看「今天有无记录」——note 与 log 都写 log.md，混判会整天静默。
 
 ## Concepts
 - [[abs-install-layout]] — 全局安装形态: npm link 单一真源 + hook/MCP 烧绝对路径
@@ -57,6 +44,8 @@ lint 兜底（SOURCES-PILED-UP / DONE-PILED-UP，均带测试）。
 - [[symbol-reference-needs-real-run]] — 引用新符号/判"等价"/新功能测试, 验证必须真跑到: node --check 查不出未导入标识符; 判等价只测恒真式不算验证(删 resolveProjectDir 回退分支即此坑); 新测试要跑破坏验证, 不红=没盖到
 - [[guard-blocks-noninteractive-callers]] — 加前置守卫前先问「谁在非交互地调我」: hook/CI 调的内部命令一律放行, 否则守卫失效是静默的(报错被吞); 必配一条「hook 路径不被拦」的测试
 - [[index-row-not-attribution]] — index 行是指针不是记录: 塞作者名会从"创建者"漂成"最后改的人"; 归因只写页 frontmatter, 要在读取侧展示
+- [[topic-two-state-model]] — 话题树两态模型: Topics 是入口态, promote 移进 Today 同 id 追踪; 讨论与执行是同一件事的两态非两份记录
+- [[session-material-accumulation]] — 会话素材累积: hook 在 before_agent_start/turn_end 机械抓素材, 收尾拼进注入供归纳, 不落盘
 - [[read-side-output-must-not-scale]] — 读状态的入口不得打印无上限增长的数据: 同一根因连续踩三次(Done区 68.8% / log条目 / index清单 64%); 只给计数+逃生口, 判据是"会不会随规模增长"而非"现在是不是最大"
 - [[file-shape-check-on-load]] — load 顺手核对 index/log/todo 形状: 缺分区→自动补建(机械可判定); 无头(H1不符)→只提醒不自动改(结构可能整体脱轨, 机器猜错等于毁数据); 多分区→不管; 正常时零字节
 - [[agents-skills-not-ownerless]] — ~/.agents/skills/ 属 skills CLI(lockfile 所有者), 宿主 skills/ 只是其扇出目标; 判残留副本要三证据齐; 只读检测+告警, 绝不代写代删
@@ -70,6 +59,8 @@ lint 兜底（SOURCES-PILED-UP / DONE-PILED-UP，均带测试）。
 - [[2026-09-10-todo归档]] — Todo 归档：2026-09-10，共 30 条已完成任务
 - [[2026-09-13-sources-堆积收口-4-条无入链]] — sources 堆积收口：4 条无入链 source 全清——2 条成规律页(agents-skills-not-ownerless /…
 - [[2026-09-13-git-配了失效代理-192-168-0]] — git 配了失效代理(192.168.0.114:7890) → push 报 Failed to connect port 7890，但直连本就通。绕过:…
+- [[2026-09-13-话题树失效根因是触发频率而非ai偷懒-abs]] — 话题树失效根因是触发频率而非AI偷懒：abs 只有 agent_end 一个触发器(且被 loggedToday 整天闸死)…
+- [[2026-09-13-web-版方案评估结论-不开发]] — web 版方案评估结论：不开发。理由=价值不足——abs 的核心是 hook 自动触发+CLI 快，浏览器手动打开一个只读/编辑器页面，比直接编辑 .md…
 ## Syntheses
 
 ## Sessions

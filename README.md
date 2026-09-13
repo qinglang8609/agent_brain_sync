@@ -59,7 +59,7 @@ abs init          # 建 .brain/ 图谱，只需一次
 ### 日常命令
 
 ```bash
-abs load                       # 开机读状态（路线 + 看板 + 最近流水）
+abs load                       # 开机读状态（Rules + 图谱计数 + 看板 + 最近流水）
 abs todo                       # 看板 Today / In Progress / Blocked / Done
 
 abs todo add     TASK-1 --note "要做什么"
@@ -83,7 +83,7 @@ abs update                                # 升级到最新版并刷新四宿主
 > `abs todo start` 与 `abs todo add` 等价（都登记任务）。
 > 旧版 `abs task ...` / `abs board` 已改名，会报错并提示新写法。
 > `abs wrapup` / `abs teardown-check` 是 hook 内部命令，无需手动调用。
-> **升级后分区名自动归一**：`abs load` 每次都会顺手核对 `index/log/todo` 三文件结构，旧的英文/中文分区名（如 `## 当前路线 (Roadmap)` → `## Roadmap`、`# 🗂 图谱索引` → `# 🗂 Graph Index`）会被自动改回标准；缺分区自动补建，无头文件只提醒不自动改。
+> **升级后分区名自动归一**：`abs load` 每次都会顺手核对 `index/log/todo` 三文件结构，旧的分区名（如 `# 🗂 图谱索引` → `# 🗂 Graph Index`）会被自动改回标准；缺分区自动补建，无头文件只提醒不自动改。
 
 ### 工作流
 

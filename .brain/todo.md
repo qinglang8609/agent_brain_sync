@@ -1,10 +1,12 @@
 # 📋 Todo Board
+## Topics
 ## Backlog
 ## Today / In Progress
 ## Blocked
 ## Done
 
 ### 2026-09-13
+- [x] #1.1 [[fanchao]] abs task 调用不稳定 — 写代码时不登记，只有复盘/手工才更新 【落地】 (完成 2026-09-13)
 - [x] SKILL-DRIFT [[fanchao]] — skill 双份漂移：仓库 skill/SKILL.md（中文分区名）vs 安装版 ~/.claude/skills/abs-agent-brain-sync/SKILL.md（英文分区名）不一致。下次改 skill 极易改错一份。建议：安装器从仓库 skill/SKILL.md 单向覆盖，或文档化'安装版为准、仓库版只是模板'。 【落地】 (完成 2026-09-13)
 - [x] VERSION-DRIFT-1.7.6 [[fanchao]] — 版本号谎言：v1.7.5 打标后 c3c9974(英文分区名+checkBrainShape)落地但未 bump，全局装 1.7.5 实为旧码。已 npm version patch→1.7.6 发布+全局重装，abs load 实测 checkBrainShape 生效(todo.md 结构重排)。教训:代码前进了版本号没跟=发布流程断，npm view 有 cache 延迟需 --force clean 【落地】 (完成 2026-09-13)
 - [x] LOAD-SHAPE-CHECK [[fanchao]] — load 顺手核对 index/log/todo 形状(每次 load 都读这三个): 缺分区=最严重→自动补建(幂等,不覆盖已有内容); 无头(H1不符)→只提醒不自动改(结构可能整体脱轨); 多分区→不管; log 条目只判 '## [' 开头, 不判内容完整(LOG-BACKFILL-34 已定论不修)。正常时静默零字节。已实现+沙盒验证5场景, 未发版(等用户核对) 【落地】 (完成 2026-09-13)

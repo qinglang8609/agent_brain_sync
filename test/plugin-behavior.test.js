@@ -142,12 +142,69 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     assert.equal(injected.length, 1, '每会话最多一次');
   });
 
+  test('session_start 重置节流：同进程的第二个会话仍能注入', async () => {
+    // 回归 2026-09-13 实报：「web 版聊了一整轮，Topics 里一条没有」——
+    // teardownNudged 声明在 absPiHook 作用域且 session_start 不重置，
+    // 于是同一进程的第二个会话永久继承 true，后半场全部静默。
+    const logDir = join(sandbox, 'log');
+    const mod = await loadPi(logDir);
+    const { handlers, injected } = harness(mod.default);
+    const proj = await makeProject('pi-reset');
+    const msgs = [{ role: 'toolResult', toolName: 'edit' }];
+    await handlers.agent_end({ messages: msgs }, { cwd: proj });
+    assert.equal(injected.length, 1, '首会话应注入');
+    await handlers.session_start({}, { cwd: proj });
+    await handlers.agent_end({ messages: msgs }, { cwd: proj });
+    assert.equal(injected.length, 2, '新会话必须能再次注入（重置节流）');
+  });
+
+  test('收尾提示带本会话素材（hook 机械记的用户原话+改过的文件）', async () => {
+    const logDir = join(sandbox, 'log');
+    const mod = await loadPi(logDir);
+    const { handlers, injected } = harness(mod.default);
+    const proj = await makeProject('pi-notes');
+    await handlers.before_agent_start({ prompt: '话题为什么没进 Topics' }, { cwd: proj });
+    await handlers.turn_end({ toolResults: [{ toolName: 'edit', input: { file_path: 'src/todo.js' } }] }, { cwd: proj });
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
+    assert.equal(injected.length, 1);
+    assert.match(injected[0].text, /本会话素材/, `应带素材标题: ${injected[0].text.slice(-400)}`);
+    assert.match(injected[0].text, /user: 话题为什么没进 Topics/, '应带用户原话');
+    assert.match(injected[0].text, /tool: src\/todo\.js/, '应带改过的文件');
+    // 素材只能用一次：新会话重新累积（这里是刻意的：素材属于会话，不是全局）
+    await handlers.session_start({}, { cwd: proj });
+    await handlers.turn_end({ toolResults: [{ toolName: 'edit', input: { file_path: 'src/new.js' } }] }, { cwd: proj });
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
+    assert.match(injected[1].text, /tool: src\/new\.js/, '新会话素材应重新累积');
+    assert.ok(!injected[1].text.includes('src/todo.js'), '不得重复上一会话的旧料');
+  });
+
   test('今日已收尾的项目不注入', async () => {
     const mod = await loadPi(join(sandbox, 'log'));
     const { handlers, injected } = harness(mod.default);
     const proj = await makeProject('pi-done', true);
     await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
-    assert.equal(injected.length, 0, 'log.md 有今日记录则不再打扰');
+    assert.equal(injected.length, 0, 'log.md 有今日 dev 记录则不再打扰');
+  });
+
+  // ===== 回归 2026-09-13: 「话题还是没进 Topics」的真因是节流误判 =====
+  // abs note 也写 log.md（kind=note），旧判据 (^## [今天 HH:MM]) 把「沉淀了一条经验」
+  // 当成「今天已收尾」→ 整天不再提醒 → 新冒的话题全部漏登。只认 kind=dev。
+  test('今日只有 note（无 dev）→ 仍应注入（note 不是收尾）', async () => {
+    const mod = await loadPi(join(sandbox, 'log'));
+    const { handlers, injected } = harness(mod.default);
+    const proj = await makeProject('pi-noteonly');
+    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
+    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    await fs.writeFile(join(proj, '.brain', 'log.md'),
+      `# 🗒 Activity Log\n\n## [${today} 10:00] [[fanchao]] note | 只沉淀了经验\n`, 'utf8');
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
+    assert.equal(injected.length, 1, '只有 note 不得当已收尾');
+    // 有 dev 则真的不打扰
+    await fs.appendFile(join(proj, '.brain', 'log.md'),
+      `## [${today} 11:00] [[fanchao]] dev | 真收尾\n`, 'utf8');
+    await handlers.session_start({}, { cwd: proj });
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
+    assert.equal(injected.length, 1, '有 dev 记录后不再打扰');
   });
 
   // 守卫收紧: 曾用裸日期 substring(includes(today)) 判"今天收尾过",

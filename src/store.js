@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
 import { requireUser, atTag, getUser } from './userconfig.js';
-import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure } from './todo.js';
+import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure, topicTreeText, upsertTopicLine, TOPIC_STATES, TOPIC_CLOSED_STATES, parseTopicLine, topicTree, currentTopic, removeTopicLine, promoteTopic } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 
@@ -112,10 +112,12 @@ export function indexTemplate() {
   return rebuildStructure(
     ['# 🗂 Graph Index', '',
       '本文件唯一入口。每新建/大改一页，同步在此分类下加一行 [[页面名]] — 一句话。', '',
-      '## Roadmap', '## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'].join('\n'),
+      '## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'].join('\n'),
     {
       h1: '# 🗂 Graph Index',
-      order: ['## Roadmap', '## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'],
+      // 无 `## Roadmap`：它是 AI 自己写的方向总结，会被 load 反复读到并带偏后续会话
+      // （“看似是总结指引，其实是 AI 的总结指引” —— 2026-09-13 用户决策删除）。
+      order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'],
     },
   ).text;
 }
@@ -131,7 +133,10 @@ export function logTemplate() {
 export const BRAIN_SHAPE = {
   'todo.md': {
     h1: '# 📋 Todo Board',
-    order: ['## Backlog', '## Today / In Progress', '## Blocked', '## Done'],
+    // 分区（话题树）置顶：讨论轨道先于执行轨道（见 TODO_SECTIONS 注释）
+    order: ['## Topics', '## Backlog', '## Today / In Progress', '## Blocked', '## Done'],
+    // 旧文件标题归一（已在 todo.js 的 LEGACY_SECTION_RENAMES 里给出，这里引用以免双源漂移）
+    renames: [['## Topic', '## Topics'], ['## 话题', '## Topics'], ['## 话题树', '## Topics'], ['## 分区', '## Topics']],
   },
   'log.md': {
     h1: '# 🗒 Activity Log',
@@ -139,7 +144,7 @@ export const BRAIN_SHAPE = {
   },
   'index.md': {
     h1: '# 🗂 Graph Index',
-    order: ['## Roadmap', '## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'],
+    order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'],
   },
 };
 
@@ -151,7 +156,6 @@ export const LEGACY_MARKS = [
   ['# 操作日志', '# 🗒 Activity Log'],
   ['# 图谱索引', '# 🗂 Graph Index'],
   ['# Todo 看板', '# 📋 Todo Board'],
-  ['## 当前路线 (Roadmap)', '## Roadmap'],
   ['## Done（只留近期，旧的迁 log.md/快照）', '## Done'],
   ['### 归档', '### Archived'],
   ['### （未标日期）', '### Undated'],
@@ -248,6 +252,29 @@ async function listBrainFiles(root) {
 }
 
 // ---------- load: 开机读状态 ----------
+/// 从看板文本里剔掉 `## Topics` 区段（已由「当前话题」单独渲染）。
+/// 只删区标题到下一个 `## ` 之间；末尾多余空行一并收掉。
+export function stripTopics(text) {
+  const lines = String(text ?? '').split('\n');
+  const at = lines.findIndex((l) => l.trim() === `## ${SEC.topics}`);
+  if (at === -1) return text;
+  let end = at + 1;
+  while (end < lines.length && !/^## /.test(lines[end])) end++;
+  lines.splice(at, end - at);
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** 「当前话题」一行文本 —— load 首屏用。只给最深的活话题 + 它的父链，
+ * 让人（和 AI）一眼看到“此刻在哪条线上”，而不摄入整棵树。 */
+export function currentTopicText(text) {
+  const cur = currentTopic(text);
+  if (!cur) return '';
+  const byId = new Map(topicTree(text).map((n) => [n.id, n]));
+  const chain = [];
+  for (let n = cur; n; n = n.parent ? byId.get(n.parent) : null) chain.unshift(n);
+  return `⌖ ${chain.map((n) => `${n.id} ${n.title}`).join(' › ')}`;
+}
+
 export async function cmdLoad({ dir }) {
   const root = await requireBrain(dir || process.cwd());
   // 结构核对先跑：load 每回都要读这三个文件，顺手把它们形状摆正（缺分区）或提个醒（无头）。
@@ -281,11 +308,17 @@ export async function cmdLoad({ dir }) {
     // Rules 单独成段且放在最前（仅次于项目行/滞留）：它是硬规则，不是普通清单。
     // 坑: 曾在 index 段内与页面清单平铺 —— AI 会当普通清单划过，而它每条都是付过代价的。
     ...(rulesSection(index) ? [rulesSection(index), ''] : []),
-    '--- Roadmap (index.md) ---',
     collapseIndex(index) || '(index.md 为空)',
     '',
+    // 只打「当前话题」一行：整棵树会被 load 反复读并带偏会话（同 Roadmap 之病）。
+    // 全貌用 `abs topic` 主动查——它是查看命令，不进开机首屏。
+    ...(currentTopic(todo) ? ['--- 当前话题 (todo.md) ---', currentTopicText(todo), ''] : []),
+    // 开局三类（2026-09-13 用户澄清）：①正在讨论=上面 Topics ②待办/已开工/已收尾=
+    // 下面 Board（Done 区就是已结束，折叠只是显示形式——归档才管前几天）。
+    // 曾加过「今日已结束」单列段：多余，撤掉（Done 区已表达同一信息）。
     '--- Todo Board (todo.md) ---',
-    collapseDone(todo).text || '(todo.md 为空)',
+    // 看板里剔掉 Topics 区：它已在上面用树形打印过，原样再贴一遍是纯冗余。
+    stripTopics(collapseDone(todo).text) || '(todo.md 为空)',
     '\n（Done 已按日期折叠计数；明细: abs todo --full）',
     '',
     '--- 最近动作 (log.md, 最新 5 条) ---',
@@ -331,7 +364,7 @@ function rulesSection(indexText) {
   // 有引言句（> 开头）时一并带上，它解释了这个区是干什么的。
   const intro = body.split('\n').filter((l) => l.trim().startsWith('>')).join('\n');
   return [
-    `--- Rules (硬规则，先读) — ${items.length} 条 ---`,
+    `--- Rules (硬规则，先读, index.md) — ${items.length} 条 ---`,
     intro,
     ...items,
   ].filter((x) => x !== '').join('\n');
@@ -393,8 +426,7 @@ async function readFileOrNull(p) {
   try { return await fs.readFile(p, 'utf8'); } catch { return ''; }
 }
 
-/** index.md 在 `abs load` 里的折叠形态：保留「当前路线」（那是 load 要传达的状态，
- * 且有界），把页面清单各分区折成计数。
+/** index.md 在 `abs load` 里的折叠形态：把页面清单各分区折成计数。
  *
  * 坑: index 的 concept 清单带每一页的一句话描述，**隨图谱线性增长** —— 本仓库 17 条
  * 占 load 输出 2286/3571 tok（64%），另一台 40 条的项目约 2.3 倍。它刚成了 Done 之后
@@ -402,37 +434,38 @@ async function readFileOrNull(p) {
  *
  * 续接真正需要的只是「有哪些分区、各多少页」（据此知道去哪找），不需要每页写了什么 ——
  * 要那个用 `abs index`（或直接读 index.md / 按词 `abs query`）。
- * `## 当前路线` 不折（它是路线内容本身，非清单）。 */
+ *
+ * `## Rules` 也已不在本函数输出——它由 rulesSection 在**上方**单独成段（需要正文）；
+ * 这里再原样吐一遍 = 同一段硬规则在首屏出现两次（2026-09-13 实测发现）。
+ * 曾另有 `## Roadmap`：AI 自己写的方向总结，会被反复读到并带偏会话，已删。 */
 export function collapseIndex(text) {
   const s = String(text || '').trim();
   if (!s) return '';
   const out = [];
-  let mode = null;      // null=逐行透传（路线区/文件头）；字符串=当前在计数的分区名
+  let mode = null;      // null=逐行透传（文件头）；字符串=当前在计数的分区名
   let n = 0;            // mode 非 null 时的清单行计数
   const flush = () => {
     if (mode !== null) out.push(n ? `## ${mode}（${n} 页）` : `## ${mode}`);
     mode = null;
     n = 0;
   };
+  let skipping = false; // 跳过 Rules 正文（已在上方单独成段）
   for (const l of s.split('\n')) {
     const m = l.match(/^##\s+(.+?)\s*$/);
     if (m) {
       flush();
       const name = m[1].trim();
-      // 「Roadmap」与「Rules」都是**内容**不是清单：原样保留。
-      // Rules 区尤其不能折 —— 它的全部价值就是被读到；折成"（N 页）"等于把它静默删掉。
-      if (/路线|Roadmap|Rules?|规则/i.test(name)) {
-        out.push(l);
-        mode = null;
-      } else {
-        mode = name;   // 页面清单分区：只计数
-      }
+      skipping = /Rules?|规则/i.test(name);
+      if (skipping) continue;
+      mode = name;   // 页面清单分区：只计数
       continue;
     }
-    if (mode === null) out.push(l);      // 透传区（含文件头 H1、路线区正文）
+    if (skipping) continue;
+    if (mode === null) out.push(l);      // 透传区（含文件头 H1）
     else if (l.trim().startsWith('-')) n++;
   }
   flush();
+  // 文件头与首个分区之间可能因跳过 Rules 而留下多余空行
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
@@ -1138,4 +1171,75 @@ async function listPages(vault) {
     }
   }
   return pages;
+}
+
+/** abs topic —— 分区（话题树）读写。
+ * 两个关键修正（2026-09-13 实测踩坑）：
+ *  ① `id` 参数可能是“"#1" 标题”合一串 —— 必须切开，否则整串被当作 id，
+ *     upsert 找不到行 → 新插一行重复话题。
+ *  ② 未给标题时必须**保留现有标题**（不能回退成 id）：
+ *     `abs topic conclude "#1"` 曾把标题写成 `#1` 并丢掉结论。 */
+export async function cmdTopic({ dir, action, id, title, state, conclusion, full, clear }) {
+  const root = await requireBrain(dir || process.cwd());
+  const p = brainPath(root, 'todo.md');
+  if (!action || action === 'tree' || action === 'list') {
+    const text = await readTodo(root);
+    const t = topicTreeText(text);
+    return t || '（无话题。登记: abs topic new "#1 标题"）';
+  }
+  // 写操作：需姓名（与 todo 同守卫）；姓名同时写进话题行（[[name]]）
+  const who = await requireUser();
+  await ensureTodo(root);
+  // 拆 “#1 标题” → id / title（id 只取 # 开头的第一个 token）
+  let useId = id;
+  let useTitle = title;
+  if (useId && !/^#[\w.]+$/.test(useId)) {
+    const m = String(useId).match(/^(#[\w.]+)\s+(.*)$/);
+    if (m) { useId = m[1]; useTitle = (useTitle ? m[2] + ' ' + useTitle : m[2]).trim(); }
+  }
+  if (!useId) throw new Error(`✗ 缺 <id>\n  用法: abs topic ${action} "#1 标题" [--state 状态] [--note 结论]`);
+  if (!/^#[\w.]+$/.test(useId)) {
+    throw new Error(`✗ id 需以 # 开头（如 #1 / #2.1），收到 "${useId}"`);
+  }
+  const st = state || (action === 'reject' ? '已否决' : action === 'conclude' ? '已结论' : action === 'done' ? '已落地' : '进行中');
+  // `abs topic promote #N` —— 讨论成熟、要动手了 → 移进 Today（同 id 连续追踪）。
+  // 不是复制两份：话题变身任务，Topics 退位。
+  if (action === 'promote') {
+    if (!useId) throw new Error('✗ 缺 <id>\n  用法: abs topic promote "#1" [--to Today]');
+    const cur = await readTodo(root);
+    const section = state || SEC.today;   // --state 可指定目标分区（默认 Today）
+    const r = promoteTopic(cur, useId, section);
+    if (!r.changed.length) {
+      return `• 话题 ${useId} 未登记（或目标分区 ${section} 不存在），未动`;
+    }
+    await editFile(p, () => ({ text: r.text }));
+    return `✓ 话题 ${useId} 已移进 ${section}（同 id 连续追踪，不再是话题）`;
+  }
+  if (!TOPIC_STATES.includes(st)) {
+    throw new Error(`✗ --state 只接受: ${TOPIC_STATES.join(' | ')}（收到 "${st}"）`);
+  }
+  // 终止态不入 Topics 区（用户定：这里只放正在讨论的）。
+  // 不默默拒绝而是给明确出路：先把结论落 sources/，再从树上摘掉。
+  if (TOPIC_CLOSED_STATES.includes(st)) {
+    const cur = await readTodo(root);
+    const node = topicTree(cur).find((n) => n.id === useId);
+    if (node) {
+      await editFile(p, (c) => ({ text: removeTopicLine(c, useId) }));
+      return (
+        `✓ 话题 ${useId} [${st}] 已从 Topics 移出（终止态不留树上）\n` +
+        `  ⚠ 结论请用 \`abs note "..."\` 落 sources/，否则就丢了`
+      );
+    }
+    return `• 话题 ${useId} [${st}] 未登记（终止态不入 Topics 区）\n  ⚠ 结论请用 \`abs note "..."\` 落 sources/`;
+  }
+  const orig = await readTodo(root);
+  // 未给标题 → 沿用现有行（“只改状态”场景）
+  const existing = topicTree(orig).find((n) => n.id === useId);
+  const title2 = useTitle || existing?.title;
+  if (!title2) throw new Error(`✗ 话题 ${useId} 不存在，需给标题\n  用法: abs topic new "${useId} 标题"`);
+  const concl = conclusion !== undefined ? conclusion : existing?.conclusion;
+  const r = await editFile(p, (cur) => ({
+    text: upsertTopicLine(cur, { id: useId, title: title2, state: st, conclusion: concl, author: who }).text,
+  }));
+  return `✓ 话题 ${useId} [${st}] → ${p}\n  ${title2}${concl ? ' — ' + concl : ''}`;
 }

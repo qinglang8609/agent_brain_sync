@@ -626,8 +626,8 @@ describe('cli: 未设姓名时的主动提醒', () => {
     assert.ok(r.stdout.includes('尚未设置使用者姓名'), `load 应提醒: ${r.stdout.slice(0, 300)}`);
     // 提醒应在最前（开机第一屏）
     const warnIdx = r.stdout.indexOf('尚未设置使用者姓名');
-    const routeIdx = r.stdout.indexOf('Roadmap');
-    assert.ok(warnIdx < routeIdx, '提醒应出现在路线之前');
+    const boardIdx = r.stdout.indexOf('Concepts');
+    assert.ok(warnIdx < boardIdx, '提醒应出现在图谱计数之前');
   });
 
   test('已设姓名时 init/load 不啰嗦', async () => {
