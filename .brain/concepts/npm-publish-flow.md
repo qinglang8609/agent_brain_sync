@@ -58,12 +58,13 @@ npm install -g @fanchao8609/agent_brain_sync
 ## 关键点
 - **发布名与 bin 命令独立**：包名可 scoped（@user/pkg），bin 命令照旧（`abs`）。别被包名占位劝退，scoped 是 npm 官方给的解法。
 - **product 形态 = 发布包 vs 开发 repo 分离**：`which abs` 指向发布包，开发 repo 只是源码。详见 [[deploy-artifact-copies]]。
-- **不要给 npm 配 proxy**（2026-09-10 已移除）：曾致 `npm publish` 恒 `EHOSTUNREACH`，但 `nc`/`curl -x`/直连均通 —— 只有 npm 走不通。直连本就通，代理是多余的一跳。
+- **不要给 npm / git 配 proxy**（2026-09-10 npm 已移除；2026-09-13 git 又踩一次）：曾致 `npm publish` 恒 `EHOSTUNREACH`，但 `nc`/`curl -x`/直连均通 —— 只有 npm 走不通。git 同理：`git config http.proxy` 指向已失效的 `192.168.0.114:7890` → push 报 `Failed to connect to ... port 7890`，而**直连本就通**。临时绕过：`git -c http.proxy= -c https.proxy= push`。直连本就通，代理是多余的一跳。
 
 ## 验证命令（回归）
 ```bash
 npm whoami                     # @fanchao8609
 npm config get proxy           # 应为 null（勿配代理）
+git config --get http.proxy    # 应为空（勿配代理；失效代理会拦住 push）
 npm view @fanchao8609/agent_brain_sync version
 ```
 发布前必做：① 全量测试绿 ② `npm pack` 解包产物**直跑关键路径** ③ 发布后从 registry 全新安装再验一次。

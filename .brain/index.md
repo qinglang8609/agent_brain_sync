@@ -69,6 +69,7 @@ lint 兜底（SOURCES-PILED-UP / DONE-PILED-UP，均带测试）。
 ## Sources
 - [[2026-09-10-todo归档]] — Todo 归档：2026-09-10，共 30 条已完成任务
 - [[2026-09-13-sources-堆积收口-4-条无入链]] — sources 堆积收口：4 条无入链 source 全清——2 条成规律页(agents-skills-not-ownerless /…
+- [[2026-09-13-git-配了失效代理-192-168-0]] — git 配了失效代理(192.168.0.114:7890) → push 报 Failed to connect port 7890，但直连本就通。绕过:…
 ## Syntheses
 
 ## Sessions

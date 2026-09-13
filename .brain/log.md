@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-09-13 14:46] [[fanchao]] note | git 配了失效代理(192.168.0.114:7890) → push 报 Failed to connect port 7890，但直连本就通。绕过: git -c http.proxy= -c https.proxy= push。同 npm 那条教训，已并入 npm-publish-flow 坑。
 ## [2026-09-13 10:42] [[fanchao]] note | sources 堆积收口：4 条无入链 source 全清——2 条成规律页(agents-skills-not-ownerless / mcp-stale-paths-multi-store)，2 条并入既有页(版本号谎言→npm-publish-flow 坑7、skill双份漂移→deploy-artifact-copies 坑1)。护栏：删 source 前先 grep 入链，index/log 引用同步清。
 ## [2026-09-13 10:20] [[fanchao]] note | skill 双份漂移根因不是代码 bug 而是过程断：c3c9974 重写 skill/SKILL.md 后没重跑 abs install 扇出。改 skill 后必须 abs install --yes 重扇出（deploy-artifact-copies 坑1已写但没照做）。代码本身正确：.agents/skills 只读检测+告警已有 5 条测试钉着，不动。
 ## [2026-09-13 10:16] [[fanchao]] note | 版本号谎言：代码前进了版本号没跟，abs --version 会骗人。代码一变就 npm version patch，验证时 grep 新符号而非信版本号数字。见 [[npm-publish-flow]] 坑 7
