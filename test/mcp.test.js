@@ -18,6 +18,10 @@ let sandbox;
 let projA;
 let projB;
 let child = null;
+// 一个用例内可能多次 startServer(覆盖 child), 只 kill 最后一个会漏掉前一个 →
+// 泄漏的 mcp.js 留着 stdin 不放, node --test 等它退出 → 整个测试进程挂死。
+// 故全部登记, afterEach 统一收尸。
+let children = [];
 let nextId = 1;
 
 beforeEach(async () => {
@@ -29,7 +33,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  if (child) { try { child.kill(); } catch {} child = null; }
+  for (const c of children) { try { c.kill(); } catch {} }
+  children = [];
+  child = null;
   await fs.rm(sandbox, { recursive: true, force: true });
 });
 
@@ -41,6 +47,7 @@ async function startServer(cwd, envOverride = {}) {
   });
   // 丢弃 stderr(不干扰); 等待子进程起来
   child.stderr.on('data', () => {});
+  children.push(child);
   // MCP 无就绪信号, 用 initialize 握手兜底
 }
 
@@ -107,6 +114,7 @@ describe('mcp: 握手 + 工具清单', () => {
       assert.ok(names.includes(n), `缺工具 ${n}`);
     }
   });
+
 });
 
 // ---------- resolve_project 定位 ----------

@@ -60,11 +60,11 @@ abs init          # 建 .brain/ 图谱，只需一次
 
 ```bash
 abs load                       # 开机读状态（Rules + 图谱计数 + 看板 + 最近流水）
-abs todo                       # 看板 Today / In Progress / Blocked / Done
+abs todo                       # 看板 Todo / Done（行首带状态标记）
 
 abs todo add     TASK-1 --note "要做什么"
 abs todo note    TASK-1 --note "改到 X 文件 L40"   # 实时断点
-abs todo blocked TASK-1 --note "卡在哪"
+abs todo state   TASK-1 --note "进行中|讨论中|滞留中"   # 改行首状态标记
 abs todo done    TASK-1
 
 abs note "一句话经验" --tags 坑,docker    # 经验暂存 → sources/

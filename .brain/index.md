@@ -3,28 +3,18 @@
 本文件唯一入口。每新建/大改一个知识页，同步在此分类下加一行 `[[页面名]] — 一句话`。
 
 ## Rules
-> 本项目已沉淀经验的硬摘要。违反过的代价各记在对应概念页，细节点进去看。
-
-- **未经用户核对不准发版/推送** —— `git push`、`npm publish`、`npm version`、
-  改 package.json 版本号、刷新四宿主，**一律先给用户看 diff + 测试结果 + 影响范围，等确认**。
-  用户说「收尾」/「修复」不等于授权发布。尤其 npm publish **不可覆盖**，发错只能再发一版补。
-- 绝不通读 `.brain/` —— 全读塞满窗口；要状态用 `abs load`，要主题用 `abs query`。
-- 读取侧输出不得随规模增长 —— 只给计数/摘要 + 逃生口。[[read-side-output-must-not-scale]]
-- 多文件汇总在沙箱里处理后只打印结论，别把原文拉进上下文。
-- 改记录属内容决策，工具只报不改。[[todo-rewrite-not-map]]
-- 已存在的人工内容一律不覆盖，机器只补空位。
-- 并发锁只给「读改写」；append / 原子写不妄加锁。[[file-write-locking]]
-- 判「等价」/ 引用新符号/ 新测试，必须真跑到，且跑破坏验证。[[symbol-reference-needs-real-run]]
-- 证据到手前不给结论。[[silent-data-loss-diagnosis]]
-- 写入侧收口，别在下游救。[[summary-truncation-hidden-cause]]
-- 只写做过/跑过/测过的事实，禁止脑补。
-- Done 必须带结语 + 完成日期（缺日期会永远迁不出）。
-- 加前置守卫前先问「谁在非交互地调我」。[[guard-blocks-noninteractive-callers]]
-- 改一份不算改 —— 多副本要全改，已加载进程要重启。[[deploy-artifact-copies]]
-- 不在子目录/非项目根跑（不向上搜索）。
-- 坏链 = 掰断接力棒；`abs lint` 必须 0 problem。
-- index 行不承载归因。[[index-row-not-attribution]]
-- hook 节流判据要看「真收尾」，不能只看「今天有无记录」——note 与 log 都写 log.md，混判会整天静默。
+- 未经用户核对，不准发版、不准推送。
+- 只写做过、跑过、测过的事实。
+- 已存在的人工内容一律不覆盖。
+- 绝不通读 `.brain/`。
+- 读取侧输出不得随规模增长。
+- 记录属内容决策，工具只报不改。
+- 判「等价」必须真跑到，且跑破坏验证。
+- 证据到手前不给结论。
+- 写入侧收口，别在下游救。
+- 加守卫前先问谁在非交互地调我。
+- 改一份不算改，多副本全要改。
+- 靠提醒才能工作的功能，该删不该补。
 
 ## Concepts
 - [[abs-install-layout]] — 全局安装形态: npm link 单一真源 + hook/MCP 烧绝对路径
@@ -44,8 +34,7 @@
 - [[symbol-reference-needs-real-run]] — 引用新符号/判"等价"/新功能测试, 验证必须真跑到: node --check 查不出未导入标识符; 判等价只测恒真式不算验证(删 resolveProjectDir 回退分支即此坑); 新测试要跑破坏验证, 不红=没盖到
 - [[guard-blocks-noninteractive-callers]] — 加前置守卫前先问「谁在非交互地调我」: hook/CI 调的内部命令一律放行, 否则守卫失效是静默的(报错被吞); 必配一条「hook 路径不被拦」的测试
 - [[index-row-not-attribution]] — index 行是指针不是记录: 塞作者名会从"创建者"漂成"最后改的人"; 归因只写页 frontmatter, 要在读取侧展示
-- [[topic-two-state-model]] — 话题树两态模型: Topics 是入口态, promote 移进 Today 同 id 追踪; 讨论与执行是同一件事的两态非两份记录
-- [[session-material-accumulation]] — 会话素材累积: hook 在 before_agent_start/turn_end 机械抓素材, 收尾拼进注入供归纳, 不落盘
+- [[hook-throttle-alignment]] — hook 节流三种静默失效: 状态跨会话不重置 / 判据用代理信号(note 也写 log) / 素材不清空; 测试必须成对跑
 - [[read-side-output-must-not-scale]] — 读状态的入口不得打印无上限增长的数据: 同一根因连续踩三次(Done区 68.8% / log条目 / index清单 64%); 只给计数+逃生口, 判据是"会不会随规模增长"而非"现在是不是最大"
 - [[file-shape-check-on-load]] — load 顺手核对 index/log/todo 形状: 缺分区→自动补建(机械可判定); 无头(H1不符)→只提醒不自动改(结构可能整体脱轨, 机器猜错等于毁数据); 多分区→不管; 正常时零字节
 - [[agents-skills-not-ownerless]] — ~/.agents/skills/ 属 skills CLI(lockfile 所有者), 宿主 skills/ 只是其扇出目标; 判残留副本要三证据齐; 只读检测+告警, 绝不代写代删
@@ -61,6 +50,7 @@
 - [[2026-09-13-git-配了失效代理-192-168-0]] — git 配了失效代理(192.168.0.114:7890) → push 报 Failed to connect port 7890，但直连本就通。绕过:…
 - [[2026-09-13-话题树失效根因是触发频率而非ai偷懒-abs]] — 话题树失效根因是触发频率而非AI偷懒：abs 只有 agent_end 一个触发器(且被 loggedToday 整天闸死)…
 - [[2026-09-13-web-版方案评估结论-不开发]] — web 版方案评估结论：不开发。理由=价值不足——abs 的核心是 hook 自动触发+CLI 快，浏览器手动打开一个只读/编辑器页面，比直接编辑 .md…
+- [[2026-09-13-话题树-topics-整个删除-做错了一]] — 话题树(## Topics)整个删除——做错了一个抽象，药方是删不是补。①失败模式:…
 ## Syntheses
 
 ## Sessions

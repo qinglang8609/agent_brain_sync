@@ -12,7 +12,6 @@
  *     - before_agent_start (用户发话 = 天然话题边界) → 记用户原话
  *     - turn_end (每轮结束) → 记改过哪些文件
  *   累积在**内存**(下方 sessionNotes), 收尾时拼进注入提示 —— **不落盘**。
- *   用户明确不要新文件(曾做过 .brain/topics.log, 已拆)。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { appendFile, mkdir, readFile, stat } from "node:fs/promises"
@@ -41,22 +40,6 @@ function notesBlock(notes: string[]): string {
   if (!notes.length) return ""
   return "   本会话素材（hook 机械记录，供归纳）\n" +
     notes.map((n) => "     · " + n).join("\n") + "\n"
-}
-
-// ---- 决策点检测（用户选完即触发）----
-// 用户洞察（2026-09-13）：AI 让用户在 1/2/3/4 或 甲乙丙丁 里选、用户选完时，
-// **就是话题产生的瞬间**。这比 turn_end 强：纯讨论会话不改文件，turn_end 毫无信号；
-// 而这里的信号是**纯机械的**（不需要 LLM 理解语义）。
-const OPTION_RE = /^\s*(?:[-*]\s*)?(?:\d+[).、]|[甲乙丙丁]|[A-D])[).、：:\s]?/m
-/** 用户是否在“拍板”——纯选项符号，或认同/定案口吻。
- * 阈值刻意收紧：只认短的、干脆的，闲聊/质疑一律不中（否则每轮都触发=噪音）。 */
-function isDecisionAnswer(text: string): boolean {
-  const s = String(text ?? "").trim()
-  if (!s || s.length > 20) return false
-  // 前缀允许多个修饰词叠用（"那就乙吧"/"我选第 2 个"）。
-  // 坑（2026-09-13）：曾写成 (?:那|就|...) 只匹配一个，于是"那就乙吧"漏报。
-  if (/^(?:(?:那|就|我|选|要|用|第|还|是)\s*)*(?:\d+|一|二|三|四|五|甲|乙|丙|丁|[a-dA-D])\s*(?:个|条|种|项)?\s*(?:吧|了|的)?$/.test(s)) return true
-  return /^(?:就(?:这样|这么|按这个)?|行|好(?:的)?|ok|可以|同意|批准|就这样|没问题|按你说的|就这么办|开始吧|干吧|做吧)(?:做|办|来|吧|了)?[!！。~]*$/i.test(s)
 }
 
 async function logHook(evt: string): Promise<void> {
@@ -120,7 +103,7 @@ async function loggedToday(brain: string): Promise<boolean> {
     // 只认**工作成果**条目（kind=dev），不能只看“今天有没有行”。
     // 坑（2026-09-13 实测）：`abs note` 也写 log.md（kind=note），
     // 旧判据 (^## [今天 HH:MM]) 把“沉淀了一条经验”当成“今天已收尾”→
-    // 整天不再提醒 → 新冒的话题全部漏登（用户实报“话题还是没进 Topics”）。
+    // 整天不再提醒 → 会话后半场全部漏登。
     // 行格式: `## [YYYY-MM-DD HH:MM] [[name]] dev | 内容`。
     return new RegExp("^## \\[" + today + " \\d{2}:\\d{2}\\] (?:\\[\\[[^\\]]+\\]\\] )?dev \\|", "m").test(txt)
   } catch { return false }
@@ -132,46 +115,17 @@ export default function absPiHook(pi: ExtensionAPI): void {
   // （2026-09-13 实测：同一天多个会话时后半场全部静默）。
   let teardownNudged = false
   let agentEndSeen = false
-  // AI 上一轮是否抛出了选项（决策点检测的前提）。
-  let askedOptions = false
 
   pi.on("session_start", () => {
     teardownNudged = false
     agentEndSeen = false
-    askedOptions = false
     return logHook("session_start").catch(() => {})
   })
 
   // ---- 素材锚点（不烧上下文、不注入消息、不 spawn、不落盘）----
   // 用户发话 = 天然的话题边界。这是 C 路线：你说的每句话都是一个锚点。
-  // 额外：若上一轮 AI 给了选项、而你本轮在“拍板” → 这是**决策点**，
-  // 立刻提醒对账（不等会话末尾——进行中的会话根本没有“末尾”）。
   pi.on("before_agent_start", async (event: any, _ctx: any) => {
-    const prompt = String(event?.prompt || "")
-    addNote("user", prompt)
-    if (askedOptions && isDecisionAnswer(prompt)) {
-      addNote("decision", prompt)
-      await logHook("before_agent_start:decision-point").catch(() => {})
-      pi.sendUserMessage(
-        "[abs 话题对账] 你刚拍板了一个选项——这是话题产生的瞬间，现在就登记（不要等会话末尾）：\n" +
-        "· 新话题: abs topic new \"#N 标题\" --state 进行中\n" +
-        "· 要动手了: abs topic promote #N（移进 Today，同 id 追踪）\n" +
-        "· 否决掉的: abs topic new \"#N 标题\" --state 已否决 --note \"为何否决\"\n" +
-        "⚠ 终止态会离树，结论必须落 abs note。当前话题树: 见 `abs topic`。",
-        { deliverAs: "followUp" },
-      )
-    }
-    askedOptions = false   // 每轮重置：只在“AI 刚问、用户刚答”的相邻两轮触发
-  })
-
-  // AI 本轮是否抛出了选项列表 → 供下一轮判定“用户是否在拍板”。
-  pi.on("message_end", async (event: any, _ctx: any) => {
-    const m = event?.message
-    if (!m || m.role !== "assistant") return
-    const txt = typeof m.content === "string"
-      ? m.content
-      : (Array.isArray(m.content) ? m.content.map((c: any) => c?.text || "").join("\n") : "")
-    if (OPTION_RE.test(txt)) askedOptions = true
+    addNote("user", String(event?.prompt || ""))
   })
 
   // 每轮结束 = 这轮干了什么（改了哪些文件）。机械事实，供收尾时回忆。
@@ -205,8 +159,7 @@ export default function absPiHook(pi: ExtensionAPI): void {
     if (!brain) return // 无图谱=不在这项目沉淀, 不打扰
     if (!hasWriteWork(event?.messages ? collectToolResults(event.messages) : [])) return
     // 今日已收尾 → 只在**本会话还没真正干事**时才静默。
-    // 旧行为：今天 log 有一行就整天闭口 —— 于是「收尾过之后新冒的话题」全部没人提醒
-    // （2026-09-13 实报：web 版聊了一整轮，Topics 里一条没有）。
+    // 旧行为：今天 log 有一行就整天闭口 —— 于是收尾之后的产出全部没人提醒。
     // 注意不能用 sessionNotes.length 当判据：用户每说一句话就会 push 一条，
     // 那会让 nudge 每轮都触发（噪音）。判据保持「今天已收尾」但配合下面的笔记消费。
     if (await loggedToday(brain)) return
@@ -217,17 +170,10 @@ export default function absPiHook(pi: ExtensionAPI): void {
     try {
       pi.sendUserMessage(
         "[abs 收尾提醒] 本会话改过文件但 .brain/ 今天还没有记录。请立即走收尾循环：\n" +
-        "1) 跑 abs load 看 Today 还有哪些未完成；\n" +
+        "1) 跑 abs load 看 Todo 还有哪些未完成；\n" +
         "2) 实际做完漏登记的 abs todo done <id>，做到一半的 abs todo note <id> --note \"断点\"；\n" +
         "3) 值得留的经验 abs note \"...\"（宁少勿滥，能从代码 grep 到的不记）；\n" +
         "4) abs log \"完成 X：...\" 记一行工作成果，新页同步进 index。\n" +
-        // 话题对账：只放「正在讨论」的话题。终止态（含已否决/已结论/未落地/待验证）
-        // 一律不入树 —— 结论落 abs note，暂停的事落 Blocked 当任务追踪。
-        "5) 话题对账 abs topic：据下方素材归纳本会话讨论过什么→" +
-        "abs topic new \"#N 标题\" --state 进行中；" +
-        "已收尾的用 --state 已结论/已否决（会自动移出树），停下来的落 Blocked。\n" +
-        "   正在动手的话题: `abs topic promote #N` 移进 Today（同 id 连续追踪）。\n" +
-        "   ⚠ Topics 区只放正在讨论的话题；五态都会离开树，离开前先把结论写进 sources/（abs note）。\n" +
         notesBlock(notes) +
         "简洁执行，不要复述本条提醒。若本次确实没有可沉淀产出，直接回一句\"无可沉淀\"即可。",
         { deliverAs: "followUp" },

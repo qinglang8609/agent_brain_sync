@@ -73,6 +73,7 @@ op​encode 侧抄 pi 时漏了 `bash`，而该宿主大量改走 `bash`（hered
 ## 关联连接
 - [[opencode-inject-channel-verdict]] — op​encode 四通道唤醒判定表（含"零 nudge 真因是 gate 非通道"的反面教训）
 - [[self-triggering-hook-loop]] — 主动推类 hook 的死循环防护（stop_hook_active + 节流退化）
+- [[hook-throttle-alignment]] — 节流判据要对齐「真收尾」且跨会话重置（三种静默失效的叠加）
 - [[host-plugin-silent-failure]] — 插件三坑（可观测性/签名/导出）
 - [[abs-install-layout]] — 四宿主安装器与 hook 配置
 - [[hook-sh-not-bash]] — hook 脚本方言坑

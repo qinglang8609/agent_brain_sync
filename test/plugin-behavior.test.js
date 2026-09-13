@@ -143,7 +143,7 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
   });
 
   test('session_start 重置节流：同进程的第二个会话仍能注入', async () => {
-    // 回归 2026-09-13 实报：「web 版聊了一整轮，Topics 里一条没有」——
+    // 回归 2026-09-13 实报：同一天后续会话全部静默——
     // teardownNudged 声明在 absPiHook 作用域且 session_start 不重置，
     // 于是同一进程的第二个会话永久继承 true，后半场全部静默。
     const logDir = join(sandbox, 'log');
@@ -158,51 +158,17 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     assert.equal(injected.length, 2, '新会话必须能再次注入（重置节流）');
   });
 
-  // ===== 决策点触发（用户洞察 2026-09-13）=====
-  // 「AI 让用户在 1/2/3/4 或 甲乙丙丁 里选、用户选完」= 话题产生的瞬间。
-  // 这比 turn_end 强：纯讨论会话不改文件，turn_end 毫无信号；而这是纯机械信号。
-  test('决策点：AI 给选项 + 用户拍板 → 立即提醒对账', async () => {
-    const logDir = join(sandbox, 'log');
-    const mod = await loadPi(logDir);
-    const { handlers, injected } = harness(mod.default);
-    const proj = await makeProject('pi-decision');
-    await handlers.session_start({}, { cwd: proj });
-    await handlers.message_end(
-      { message: { role: 'assistant', content: '你要哪个？\n1) 只读\n2) 读写都要\n3) 不做' } }, { cwd: proj });
-    await handlers.before_agent_start({ prompt: '2' }, { cwd: proj });
-    assert.equal(injected.length, 1, '选完选项应触发对账');
-    assert.match(injected[0].text, /话题对账/, `应为对账提示: ${injected[0].text.slice(0, 200)}`);
-    assert.equal(injected[0].opts.deliverAs, 'followUp');
-  });
-
-  test('决策点：闲聊/质疑/未拍板 均不触发（不喧嘅）', async () => {
-    const logDir = join(sandbox, 'log');
-    const mod = await loadPi(logDir);
-    const { handlers, injected } = harness(mod.default);
-    const proj = await makeProject('pi-nochatter');
-    await handlers.session_start({}, { cwd: proj });
-    await handlers.message_end({ message: { role: 'assistant', content: '这是普通解释。' } }, { cwd: proj });
-    await handlers.before_agent_start({ prompt: '为什么' }, { cwd: proj });
-    assert.equal(injected.length, 0, '无选项时不该触发');
-    await handlers.message_end({ message: { role: 'assistant', content: '甲: 落盘\n乙: 内存' } }, { cwd: proj });
-    await handlers.before_agent_start({ prompt: '这个方案风险在哪' }, { cwd: proj });
-    assert.equal(injected.length, 0, '未拍板不该触发');
-    await handlers.message_end({ message: { role: 'assistant', content: '甲: 落盘\n乙: 内存' } }, { cwd: proj });
-    await handlers.before_agent_start({ prompt: '那就乙吧' }, { cwd: proj });
-    assert.equal(injected.length, 1, '拍板才触发');
-  });
-
   test('收尾提示带本会话素材（hook 机械记的用户原话+改过的文件）', async () => {
     const logDir = join(sandbox, 'log');
     const mod = await loadPi(logDir);
     const { handlers, injected } = harness(mod.default);
     const proj = await makeProject('pi-notes');
-    await handlers.before_agent_start({ prompt: '话题为什么没进 Topics' }, { cwd: proj });
+    await handlers.before_agent_start({ prompt: '这一轮的产出记一下' }, { cwd: proj });
     await handlers.turn_end({ toolResults: [{ toolName: 'edit', input: { file_path: 'src/todo.js' } }] }, { cwd: proj });
     await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
     assert.equal(injected.length, 1);
     assert.match(injected[0].text, /本会话素材/, `应带素材标题: ${injected[0].text.slice(-400)}`);
-    assert.match(injected[0].text, /user: 话题为什么没进 Topics/, '应带用户原话');
+    assert.match(injected[0].text, /user: 这一轮的产出记一下/, '应带用户原话');
     assert.match(injected[0].text, /tool: src\/todo\.js/, '应带改过的文件');
     // 素材只能用一次：新会话重新累积（这里是刻意的：素材属于会话，不是全局）
     await handlers.session_start({}, { cwd: proj });
@@ -220,7 +186,7 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     assert.equal(injected.length, 0, 'log.md 有今日 dev 记录则不再打扰');
   });
 
-  // ===== 回归 2026-09-13: 「话题还是没进 Topics」的真因是节流误判 =====
+  // ===== 回归 2026-09-13: 节流误判导致后续会话静默 =====
   // abs note 也写 log.md（kind=note），旧判据 (^## [今天 HH:MM]) 把「沉淀了一条经验」
   // 当成「今天已收尾」→ 整天不再提醒 → 新冒的话题全部漏登。只认 kind=dev。
   test('今日只有 note（无 dev）→ 仍应注入（note 不是收尾）', async () => {

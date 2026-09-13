@@ -25,7 +25,7 @@ abs lint                     # 图谱体检（死链/悬挂/超限/堆积/未提
 # 写
 abs todo add <id> --note "做什么"              # 登记任务（start 同义）
 abs todo note <id> --note "断点/进度"           # 实时落 ↳ 断点 行
-abs todo blocked <id> --note "卡点原因"         # 移入 Blocked
+abs todo state <id> --note "进行中|讨论中|滞留中"  # 改状态标记（原地）
 abs todo done <id> [--as 落地|否决|仅方案]      # 完成（默认 落地）
 abs log "完成 X：…"                            # 记一行工作成果（无参=查看）
 abs note "经验一句话" [--tags 坑,docker]        # 经验实时暂存 → sources/
@@ -105,9 +105,9 @@ abs config [set user <名字>]                   # 使用者姓名（写操作�
 | `## Concepts` `## Entities` `## Sources` `## Syntheses` `## Sessions` | 各类页的清单 | 每页一行 `- [[slug]] — 一句话`（`abs note`/建归档页会自动登记），load 里折成计数 |
 
 **`## Rules` 区**：铁律清单，`abs load` 每次都全量读（代码里明确不折它）。
-- 一句一条；有概念页就用 `[[链接]]` 指过去，**不在此展开**。
+- 一句一条，**不带链接**（链接去概念页自己的「## 关联连接」挂），不展开。
 - 只有「违反会丢数据 / 静默失效 / 白干活」级才进 —— 普通经验进 `concepts/`。
-- 读写：`abs rule` / `abs rule add "一句话"`（>120 字符被拒）；`abs lint` 超 30 条会报。
+- 读写：`abs rule` / `abs rule add "一句话"`（>42 字符被拒；也不接受 `[[链接]]`/URL）；`abs lint` 超 30 条会报。
 
 ### `log.md` —— 工作成果流水
 
@@ -116,12 +116,14 @@ load 只展示最新 5 条、每条按语义边界收口。
 
 ### `todo.md` —— 活看板（进度唯一真源）
 
+**只有两区**（2026-09-13 精简）：未完成的一切都进 `## Todo`，状态用**行首标记**表达。
+
 | 分区 | 放什么 |
 |---|---|
-| `## Backlog` | 想做但没开工 |
-| `## Today / In Progress` | 正在做 |
-| `## Blocked` | 卡住（附原因，`abs todo blocked`） |
+| `## Todo` | 未完成的一切。行首 `[进行中]` / `[讨论中]` / `[滞留中]`（`abs todo state`） |
 | `## Done` | 已完成，**必须带结语 `【落地/否决/仅方案】` + `(完成 YYYY-MM-DD)`** |
+
+行形态：`- [ ] [进行中] <id> [[name]] — 说明 (认领 YYYY-MM-DD)`
 
 `abs todo done <id>` 会勾选并归位到 Done 的日期组顶部，断点（`↳` 行）随迁；
 Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已完成」的组迁到 `sessions/<日期>-todo归档.md`
@@ -179,12 +181,24 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 
 **todo 不是收尾仪式，是随改随写的活看板。** 每个任务边界立即更新，与 git commit 同反射。
 
-| 时机 | 动作 |
-|---|---|
-| 认领新任务 | `abs todo add <id> --note "做什么"` |
-| 子任务做完 | `abs todo done <id>` |
-| 碰壁/阻塞 | `abs todo blocked <id> --note "卡点原因"` |
-| 被打断/干到一半 | `abs todo note <id> --note "改到哪个文件/到哪步"` |
+**看板只有两区**：`## Todo`（未完成的一切）+ `## Done`（已完成）。
+未完成的状态用**行首标记**表达：`[进行中]` `[讨论中]` `[滞留中]`。
+
+| 时机 | 动作 | 落到哪 |
+|---|---|---|
+| 认领新任务 / 聊出一个话题 | `abs_task {action:start, id:"T-1", note:"做什么"}` | Todo `[进行中]` |
+| 只在讨论、还没动手 | `abs_task {action:state, id:"T-1", note:"讨论中"}` | 原地改标记 |
+| 卡住了/等人等数据 | `abs_task {action:state, id:"T-1", note:"滞留中"}` | 原地改标记 |
+| 被打断/干到一半 | `abs_task {action:note, id:"T-1", note:"改到哪个文件/到哪步"}` | 原地 ↳断点 |
+| 子任务做完 | `abs_task {action:done, id:"T-1", note:"结语"}` | Done |
+| 总结出经验/坑/规律 | `abs_note {text:"一句话", tags:"坑,docker"}` | sources/ |
+
+> **为什么只有两区**（2026-09-13 实测）：跨 4 个项目，Backlog/Today 常年 **0 条**，而 log.md
+> 有 120 条。根因是 AI 的工作方式「一口气做完」——任务从开始到完成都在同一会话内走完，
+> 中间那个「挂到进行时分区」的动作既来不及也不需要。**进行时分区是符合直觉但不符合实际
+> 工作流的抽象**，故删掉，状态改用行首标记。
+
+**核心：事件发生的那一刻就落，别攒到收尾。** 动作一变，扫一眼属于哪行，调对应工具。
 
 **经验刚冒出来就落**：`abs note "一句话经验" --tags 坑,docker` → 暂存 `sources/`（幂等去重）。宁少勿滥。
 
@@ -208,15 +222,15 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 
 收到 Stop / "结束/先这样/切别的事" / 长任务告一段落，立即执行：
 
-1. **读 todo** → `abs load`，看 Today 还有哪些没完成。
+1. **读 todo** → `abs load`，看 Todo 还有哪些没完成。
 2. **判有没有做完没登记** → 实际完成了漏登记的 `abs todo done <id>`；做到一半补
-   `abs todo note <id> --note 断点`；碰壁 `abs todo blocked`。别让干完的事还停 Today。
+   `abs todo note <id> --note 断点`；卡住的 `abs todo state <id> --note 滞留中`。别让干完的事还留在 Todo。
 3. **沉淀经验（该沉淀才沉淀）** → 踩了值得记的坑/有可复用技巧/跨会话判断 → `abs note`
    暂存；值得深提炼的（规律/坑/决策）按 Teardown 走完整流程。
 4. **更新 index/log/todo** → 新页同步进 index；`log.md` 倒序记一行**工作成果**摘要
    （`abs log "完成 X：..."`，不是工具动作）；todo 对账。
    **新规律是「违反会丢数据/静默失效/白干活」级别 → 往 index 的 `## Rules` 加一行**
-   （短句 + `[[概念页]]`，不展开）。普通经验不进 Rules —— 否则会长成第二份概念库。
+   （短句，不带链接；链接去概念页挂）。普通经验不进 Rules —— 否则会长成第二份概念库。
    跑 `abs lint` 确认自洽。
 
 **完成标准**：看板反映真实状态（Done 无滞留半成品）、该沉淀已落、index/log/todo 与事实一致。
@@ -228,7 +242,7 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 1. **暂存线索**：`abs note`（或建 `sources/YYYY-MM-DD-slug.md`）记做了什么、改哪些文件、验证命令。
 2. **抽规律**：值得留的 → `concepts/<kebab-slug>.md`：触发场景/❌表现/🛠根因+解法+验证。挂双链。
 3. **沉淀实体**：碰了重要未记录的事物 → `entities/<TitleCase>.md`。
-4. **对账 todo**：滞留 Today 归位（Done 标日期 / Backlog 补断点）；遗留 bug 写 Backlog/Blocked。
+4. **对账 todo**：做完的归位 Done（标结语+日期），做一半的补断点，卡住的改 `[滞留中]`。
 5. **综合(可选)**：推进了选型/取舍 → `syntheses/`。
 6. **收拢 sources**：提炼成规律的删 source，**同步清指向它的引用**（防死链）。
 7. **修 index + 记 log**：新页同步 index；**过 Rules 门槛的规律加一行到 `## Rules`**；

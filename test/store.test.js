@@ -6,8 +6,8 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive, cmdTopic, clip, collapseIndex, indexTemplate, checkBrainShape, currentTopicText } from '../src/store.js';
-import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage, doneDateOf, doneKindOf, withDoneKind, upsertTopicLine, topicTree, promoteTopic } from '../src/todo.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS } from '../src/store.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
 
@@ -113,10 +113,12 @@ describe('cmdInit', () => {
 
 // ---------- todo 层 ----------
 describe('todo 层', () => {
-  test('todoTemplate 含两级分区与断点标记', () => {
+  test('todoTemplate 只有两区（Todo/Done）', () => {
     const t = todoTemplate();
-    for (const seg of ['## Backlog', '## Today / In Progress', '## Blocked', '## Done']) {
-      assert.ok(t.includes(seg), `缺分区 ${seg}`);
+    for (const seg of ['## Todo', '## Done']) assert.ok(t.includes(seg), `缺分区 ${seg}`);
+    // 精简后不该再有进行时分区（2026-09-13）
+    for (const gone of ['## Backlog', '## Today / In Progress', '## Blocked']) {
+      assert.ok(!t.includes(gone), `不该再有 ${gone}: ${t}`);
     }
   });
 
@@ -130,16 +132,16 @@ describe('todo 层', () => {
   // 回归: id 定位曾用 l.includes(id) 子串匹配, 导致前缀相同的 id 互相覆盖 ——
   // 先建 T11 再建 T1 时, T1 误命中 T11 那一行并原地改写, T11 静默消失。
   test('前缀相同的 id 不互相覆盖 (T11 vs T1)', async () => {
-    await upsertTask(projectA, { section: 'Today / In Progress', text: 'T11 — 第十一' });
-    await upsertTask(projectA, { section: 'Today / In Progress', text: 'T1 — 第一个' });
+    await upsertTask(projectA, { section: 'Todo', text: 'T11 — 第十一' });
+    await upsertTask(projectA, { section: 'Todo', text: 'T1 — 第一个' });
     const t = await readTodo(projectA);
     assert.ok(t.includes('T11 — 第十一'), 'T11 必须还在(修前被 T1 覆盖而消失)');
     assert.ok(t.includes('T1 — 第一个'), 'T1 必须新增为独立一行');
-    assert.equal((t.match(/^- \[ \] T\d+/gm) || []).length, 2, '应有 2 条独立任务');
+    assert.equal((t.match(/^- \[ \] .*?T\d+/gm) || []).length, 2, `应有 2 条独立任务: ${t}`);
   });
 
   test('findTaskLine 全等比对, 不被前缀/子串误命中', () => {
-    const lines = ['- [ ] T11 — a', '- [ ] T1 — b', '- [ ] TASK-10 — c'];
+    const lines = ['- [ ] [进行中] T11 — a', '- [ ] [进行中] T1 — b', '- [ ] TASK-10 — c'];
     assert.equal(findTaskLine(lines, 'T1'), 1, 'T1 应命中第 2 行而非 T11');
     assert.equal(findTaskLine(lines, 'T11'), 0);
     assert.equal(findTaskLine(lines, 'TASK-1'), -1, 'TASK-1 不应命中 TASK-10');
@@ -169,19 +171,126 @@ describe('normalizeTodo 老格式迁移', () => {
     '',
   ].join('\n');
 
-  test('老格式 → B4 定稿: In Progress→Today, Todo→Backlog, 内容不丢', () => {
+  test('老格式 → 两区制：未完成一律进 Todo，内容不丢，状态转行首标记', () => {
     const out = normalizeTodo(OLD);
-    assert.ok(out.includes('## Backlog'), out);
-    assert.ok(out.includes('## Today / In Progress'), out);
-    assert.ok(out.includes('- [ ] 正在做的事 (认领 2026-09-08)'), 'In Progress 内容应进 Today 区');
-    assert.ok(out.includes('- [ ] 老待办A') && out.includes('- [ ] 老待办B'), 'Todo 内容应进 Backlog');
-    const backlog = out.split('## Today')[0];
-    assert.ok(backlog.includes('老待办A'), '老 Todo 应在 Backlog 区');
-    assert.ok(out.includes('## Blocked') && out.includes('卡住的事'));
+    assert.ok(out.includes('## Todo'), out);
+    assert.ok(!out.includes('## Backlog') && !out.includes('## Today') && !out.includes('## Blocked'),
+      `四区应归一为 Todo: ${out}`);
+    // 未完成的内容全部保留（不论原来在哪个区）
+    for (const frag of ['正在做的事', '老待办A', '老待办B', '卡住的事']) {
+      assert.ok(out.includes(frag), `内容应保留 ${frag}: ${out}`);
+    }
+    // 状态信息由行首标记承接：原 Blocked → [滞留中]，其余 → [进行中]
+    assert.ok(/- \[ \] \[进行中\] 老待办A/.test(out), `老待办应带[进行中]: ${out}`);
+    assert.ok(/- \[ \] \[滞留中\] 卡住的事/.test(out), `原 Blocked 应带[滞留中]: ${out}`);
     assert.ok(out.includes('老完成'));
+    // done 内容留在 Done 区
+    assert.ok(out.split('## Done')[1].includes('老完成'), '已完成应留 Done 区');
   });
 
-  test('新格式幂等: 已有 Backlog/Today 区原样返回', () => {
+  test('两张迁移表互锁：LEGACY_MARKS 必须覆盖 LEGACY_SECTION_RENAMES', () => {
+    // 两个迁移路径用两张独立表（todo.js 给 normalizeTodo，store.js 给 rebuildStructure）。
+    // 历史上只改一张导致另一条路径认不出旧名（未完成任务被当非标准分区留末尾）。
+    // 这条测试把"共享键必须两边一致"钉住，防单边改名。
+    const marks = new Map(LEGACY_MARKS);
+    const missing = LEGACY_SECTION_RENAMES.filter(([o]) => !marks.has(o));
+    assert.deepEqual(missing, [], `LEGACY_MARKS 缺这些旧名（单边改名会静默回归）: ${JSON.stringify(missing)}`);
+    const conflicts = LEGACY_SECTION_RENAMES.filter(([o, n]) => marks.has(o) && marks.get(o) !== n);
+    assert.deepEqual(conflicts, [], `两表对同一旧名给出了不同新名: ${JSON.stringify(conflicts)}`);
+  });
+
+  test('wrapup body 状态无关：任务状态改了，跨会话滞留仍能认出', async () => {
+    // 回归 2026-09-13（评审 P1）：状态标记曾被算进 body，而 strandedFor 用 body 精确比对
+    // → abs todo state 一改，滞留提醒静默消失。body 必须剥掉行首状态标记。
+    const { appendWrapup, strandedFor } = await import('../src/wrapup.js');
+    const env = { ...process.env, ABS_LOG_DIR: join(sandbox, 'wu-log') };
+    const prev = process.env.ABS_LOG_DIR;
+    process.env.ABS_LOG_DIR = env.ABS_LOG_DIR;
+    try {
+      await cmdTask({ dir: projectA, action: 'start', id: 'WP-1', note: '做 W' });
+      await appendWrapup(projectA);                       // 快照时是 [进行中]
+      await cmdTask({ dir: projectA, action: 'state', id: 'WP-1', note: '滞留中' });
+      const s1 = await strandedFor(projectA);
+      assert.equal(s1.length, 1, `状态改过后仍应认出滞留: ${JSON.stringify(s1)}`);
+      assert.ok(s1[0].body.includes('WP-1'), s1[0].body);
+      assert.ok(!/\[(进行中|讨论中|滞留中)\]/.test(s1[0].body), `body 不该含状态标记: ${s1[0].body}`);
+    } finally {
+      if (prev === undefined) delete process.env.ABS_LOG_DIR; else process.env.ABS_LOG_DIR = prev;
+    }
+  });
+
+  test('两种状态标记的覆盖 + state 空操作不写盘', async () => {
+    // 评审 P2：[讨论中] 从未被任何测试用过；setStateMark 的 no-op 分支也没断言。
+    for (const st of ['进行中', '讨论中', '滞留中']) {
+      await cmdTask({ dir: projectA, action: 'start', id: 'ST-1', note: 'x' });
+      await cmdTask({ dir: projectA, action: 'state', id: 'ST-1', note: st });
+      const t = await readTodo(projectA);
+      assert.ok(t.includes(`- [ ] [${st}] ST-1`), `状态应为 ${st}: ${t}`);
+    }
+    // no-op：同状态再设一次 → 文件字节不变
+    const before = await readTodo(projectA);
+    const r = await cmdTask({ dir: projectA, action: 'state', id: 'ST-1', note: '滞留中' });
+    assert.match(r, /未找到|状态未变/, `同状态应报无变化: ${r}`);
+    assert.equal(await readTodo(projectA), before, 'no-op 不该改盘');
+  });
+
+  test('upsertTask 保留已有状态标记（再 start 不重置状态）', async () => {
+    // 评审 P2：只有默认状态的 re-start 被测过，状态保留分支未钉。
+    await cmdTask({ dir: projectA, action: 'start', id: 'UP-1', note: 'x' });
+    await cmdTask({ dir: projectA, action: 'state', id: 'UP-1', note: '讨论中' });
+    await cmdTask({ dir: projectA, action: 'start', id: 'UP-1', note: '改了说明' });
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('- [ ] [讨论中] UP-1'), `再 start 不该重置状态: ${t}`);
+    assert.ok(t.includes('改了说明'), '说明应更新');
+    assert.equal((t.match(/UP-1/g) || []).length, 1, `不该重复登记: ${t}`);
+  });
+
+  test('非默认状态的任务 done 后进 Done 且无状态残留', async () => {
+    // 评审 P2：stripStateMark 从未在任何非默认状态下被跑到。
+    await cmdTask({ dir: projectA, action: 'start', id: 'DN-1', note: 'x' });
+    await cmdTask({ dir: projectA, action: 'state', id: 'DN-1', note: '讨论中' });
+    await cmdTask({ dir: projectA, action: 'done', id: 'DN-1' });
+    const t = await readTodo(projectA);
+    const doneSec = t.split('## Done')[1] || '';
+    assert.ok(doneSec.includes('DN-1'), `应归位 Done: ${t}`);
+    const dnLine = doneSec.split('\n').find((l) => l.includes('DN-1'));
+    assert.ok(!/\[(进行中|讨论中|滞留中)\]/.test(dnLine), `Done 行不该带状态标记: ${dnLine}`);
+  });
+
+  test('四区制存量文件：load 时的 rebuildStructure 也要能迁移（不只是 normalizeTodo）', async () => {
+    // 回归 2026-09-13：normalizeTodo 与 rebuildStructure 是两条不同的迁移路径。
+    // 只改 normalizeTodo 时，load（走 rebuildStructure/renames）仍认不出 Backlog/Blocked，
+    // 会把它们当"非标准分区"原样留末尾 —— 未完成任务留在文件里但不再被当 TODO，
+    // 或整段错位。本测试钉住 renames 里有这三条。
+    const legacy = [
+      '# 📋 Todo Board',
+      '## Backlog', '- [ ] L-1 — 想做',
+      '## Today / In Progress', '- [ ] L-2 [[tester]] — 在做 (认领 2026-09-10)',
+      '  ↳ 断点: 改到 L40',
+      '## Blocked', '- [ ] L-3 — 卡住',
+      '## Done', '- [x] L-0 — 完了 (完成 2026-09-01)',
+      '',
+    ].join('\n');
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'), legacy, 'utf8');
+    await checkBrainShape(projectA);            // load 走的就是这条
+    const t = await fs.readFile(join(projectA, '.brain', 'todo.md'), 'utf8');
+    // 只剩两区
+    assert.ok(t.includes('## Todo') && t.includes('## Done'), `应归一为两区: ${t}`);
+    for (const gone of ['## Backlog', '## Today / In Progress', '## Blocked']) {
+      assert.ok(!t.includes(gone), `不该再有 ${gone}: ${t}`);
+    }
+    // 内容零丢失
+    for (const frag of ['L-1 — 想做', 'L-2 [[tester]] — 在做', 'L-3 — 卡住', 'L-0 — 完了']) {
+      assert.ok(t.includes(frag), `内容应保留 ${frag}: ${t}`);
+    }
+    // 断点随迁
+    assert.ok(t.includes('↳ 断点: 改到 L40'), `断点应保留: ${t}`);
+    // 幂等：再跑一次零变化
+    const r2 = await checkBrainShape(projectA);
+    assert.equal(r2.fixed.length, 0, `再跑应幂等: ${JSON.stringify(r2)}`);
+  });
+
+  test('新格式幂等: 已有 Todo/Done 区原样返回', () => {
     const t = todoTemplate();
     assert.equal(normalizeTodo(t), t);
   });
@@ -191,7 +300,7 @@ describe('normalizeTodo 老格式迁移', () => {
     const r = await cmdTask({ dir: projectA, action: 'start', id: 'MIG-1', note: '迁移后登记' });
     assert.ok(r.includes('登记'), r);
     const t = await readTodo(projectA);
-    assert.ok(!t.includes('## In Progress\n') || t.includes('## Today / In Progress'), `应已归一:\n${t}`);
+    assert.ok(t.includes('## Todo'), `应已归一为两区制:\n${t}`);
     assert.ok(t.includes('MIG-1'));
     const r2 = await cmdTask({ dir: projectA, action: 'done', id: 'MIG-1' });
     assert.ok(r2.includes('✓'), r2);
@@ -276,7 +385,7 @@ describe('cmdTask', () => {
     // upsertTask 重建整行时把作者静默抹掉。两种形态必须都认。
     const todoPath = join(projectA, '.brain', 'todo.md');
     let t = await fs.readFile(todoPath, 'utf8');
-    t = t.replace('## Today / In Progress', '## Today / In Progress\n- [ ] T-OLD @legacy — 老行');
+    t = t.replace('## Todo', '## Todo\n- [ ] [进行中] T-OLD @legacy — 老行');
     await fs.writeFile(todoPath, t, 'utf8');
     await cmdTask({ dir: projectA, action: 'start', id: 'T-OLD', note: '新说明' });
     const after = await readTodo(projectA);
@@ -396,66 +505,8 @@ describe('board/load/status', () => {
     assert.equal(collapseIndex(''), '');
   });
 
-  test('load 只打印「当前话题」一行，不打印整棵树', async () => {
-    await cmdTopic({ dir: projectA, action: 'new', id: '#1 根话题' });
-    await cmdTopic({ dir: projectA, action: 'new', id: '#1.1 子话题' });
-    const out = await cmdLoad({ dir: projectA });
-    assert.ok(out.includes('当前话题'), `应有当前话题段: ${out}`);
-    assert.ok(out.includes('⌖ #1 根话题 › #1.1 子话题'), `应给父链: ${out}`);
-    // 关键：整棵树不得进首屏（它会被反复读并带偏后续会话）
-    assert.ok(!/--- Topics \(todo\.md\) ---/.test(out), '不得再打印整棵树');
-  });
 
-  // 回归 2026-09-13 实报：Topics 空时 load 全篇不提话题，
-  // 于是「树是空的」与「树没被读回」无法区分（写了没人看 / 没写也看不出）。
-  test('Topics 为空时 load 也必须提一行（空态可见，不静默）', async () => {
-    // 先确保是空态
-    const todoP = join(projectA, '.brain', 'todo.md');
-    const t = await fs.readFile(todoP, 'utf8');
-    const cleared = t.replace(/^## Topics\n(?:(?!^## ).*\n?)*/m, '## Topics\n');
-    await fs.writeFile(todoP, cleared, 'utf8');
-    const out2 = await cmdLoad({ dir: projectA });
-    assert.ok(out2.includes('当前话题'), `空态仍应有段头: ${out2.slice(0, 900)}`);
-    assert.ok(/无进行中的话题/.test(out2), `空态应明说无话题: ${out2.slice(0, 900)}`);
-  });
 
-  test('currentTopic: 最深活话题才算当前（父已让位给子）', () => {
-    const base = '# 📋 Todo Board\n\n## Topics\n';
-    let t = upsertTopicLine(base, { id: '#1', title: '根', state: '进行中' }).text;
-    assert.ok(currentTopicText(t).includes('#1 根'), `单根即当前: ${t}`);
-    t = upsertTopicLine(t, { id: '#1.1', title: '子', state: '进行中' }).text;
-    assert.ok(currentTopicText(t).includes('#1 根 › #1.1 子'), `有活子时当前=子: ${currentTopicText(t)}`);
-    // 子结案 → 当前回到父；全结案 → 无当前
-    t = upsertTopicLine(t, { id: '#1.1', title: '子', state: '已结论' }).text;
-    assert.ok(currentTopicText(t).includes('#1 根') && !currentTopicText(t).includes('子'), `子结案回父: ${currentTopicText(t)}`);
-    t = upsertTopicLine(t, { id: '#1', title: '根', state: '已否决' }).text;
-    assert.equal(currentTopicText(t), '', '无活话题则无当前行');
-  });
-
-  test('话题 id 点分层级自动成父子（不用手写 └─ 父）', () => {
-    const base = '# 📋 Todo Board\n\n## Topics\n';
-    const a = upsertTopicLine(base, { id: '#1', title: '根', state: '进行中' }).text;
-    const b = upsertTopicLine(a, { id: '#1.1', title: '子', state: '进行中' }).text;
-    const tree = topicTree(b);
-    assert.equal(tree.find((n) => n.id === '#1.1').parent, '#1', '点分 id 应自动推父');
-    assert.equal(tree.find((n) => n.id === '#1').parent, null, '根无父');
-  });
-
-  test('promoteTopic: 话题移进 Today，同 id 不留 Topics（移动不是复制）', () => {
-    let t = '# 📋 Todo Board\n\n## Topics\n\n## Today / In Progress\n';
-    t = upsertTopicLine(t, { id: '#1', title: '根', state: '进行中', conclusion: '定案了' }).text;
-    t = upsertTopicLine(t, { id: '#1.1', title: '要动手', state: '进行中', conclusion: '方案已定' }).text;
-    const r = promoteTopic(t, '#1.1');
-    assert.deepEqual(r.changed, ['话题 #1.1 → Today / In Progress']);
-    // 同 id 仍可追（一条命，不是两份记录）
-    assert.ok(topicTree(r.text).find((n) => n.id === '#1.1') === undefined, '不再在 Topics');
-    assert.ok(r.text.includes('- [ ] #1.1'), `Today 应有同 id 任务: ${r.text}`);
-    assert.ok(r.text.includes('方案已定'), '结论应捎过去（丢了就没上下文）');
-    const todaySeg = r.text.split('## Today / In Progress')[1].split('## ')[0];
-    assert.ok(todaySeg.includes('#1.1'), `应在 Today 区内: ${todaySeg}`);
-    // 不存在的话题不动
-    assert.deepEqual(promoteTopic(r.text, '#999').changed, []);
-  });
 
   test('indexTemplate 不含 Roadmap（旧项目的 Roadmap 会被归为非标准分区留末尾）', async () => {
     const t = indexTemplate();
@@ -468,6 +519,25 @@ describe('board/load/status', () => {
     const after = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
     assert.ok(after.includes('**已落地**：X。'), `旧 Roadmap 正文不得丢: ${after}`);
     assert.ok(after.includes('## Rules'), `标准分区保留: ${after}`);
+  });
+
+  test('rule add 门槛：纪律不是记事本（长度≤42 且不带链接）', async () => {
+    // 2026-09-13 用户定：Rules 是最前面的项目纪律，每条一眼扫完；
+    // 细节/出处/例子进 concepts/，Rules 不带 [[链接]]（它会被反复全量打印）。
+    const long = '规'.repeat(43);
+    const r1 = await cmdRule({ dir: projectA, action: 'add', text: long });
+    assert.match(r1, /太长/, `超 42 应被拒: ${r1}`);
+    const r2 = await cmdRule({ dir: projectA, action: 'add', text: '带链接的规则 [[some-page]]' });
+    assert.match(r2, /不带链接/, `带链接应被拒: ${r2}`);
+    const r3 = await cmdRule({ dir: projectA, action: 'add', text: '短纪律能加。' });
+    assert.match(r3, /✓/, `短句应通过: ${r3}`);
+    // 42 是边界内
+    const r4 = await cmdRule({ dir: projectA, action: 'add', text: '边'.repeat(42) });
+    assert.match(r4, /✓/, `42 字符应通过: ${r4}`);
+    // hmm 43 已拒，故加不进两个
+    const idx = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(idx.includes('短纪律能加。'), '应落盘');
+    assert.ok(!idx.includes('some-page'), '带链接的不得落盘');
   });
 
   test('status 报告项目 + 各类页数', async () => {
@@ -567,14 +637,16 @@ describe('cmdQuery', () => {
 
 // ---------- 实时化: blocked / note / 进度断点 (TASK-RT) ----------
 describe('cmdTask blocked + note (实时断点)', () => {
-  test('blocked: 任务行移入 Blocked 区并附原因', async () => {
+  test('state: 改行首状态标记（原地，不搬区）', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'TB-1', note: '做 W' });
-    const r = await cmdTask({ dir: projectA, action: 'blocked', id: 'TB-1', note: '端口被占' });
-    assert.ok(r.includes('Blocked') || r.includes('✓'), r);
+    const r = await cmdTask({ dir: projectA, action: 'state', id: 'TB-1', note: '滞留中' });
+    assert.ok(r.includes('滞留中'), r);
     const t = await readTodo(projectA);
-    const blocked = t.split('## Blocked')[1]?.split('## ')[0] || '';
-    assert.ok(/- \[ \].*TB-1/.test(blocked), `TB-1 应在 Blocked 区:\n${t}`);
-    assert.ok(blocked.includes('端口被占'), '应附原因');
+    assert.ok(t.includes('- [ ] [滞留中] TB-1'), `应在原行改标记:\n${t}`);
+    assert.ok(!t.includes('## Blocked'), '不该再有 Blocked 区');
+    assert.ok(t.includes('做 W'), '说明不应丢');
+    // 非法状态被拒
+    await assert.rejects(() => cmdTask({ dir: projectA, action: 'state', id: 'TB-1', note: '莫名其妙' }));
   });
 
   test('note: 半成品断点原位补 ↳ 断点 行，不挪任务位置', async () => {
@@ -582,8 +654,8 @@ describe('cmdTask blocked + note (实时断点)', () => {
     const r = await cmdTask({ dir: projectA, action: 'note', id: 'TN-1', note: '改到 store.js L40，卡在 markDone' });
     assert.ok(r.includes('✓') || r.includes('断点'), r);
     const t = await readTodo(projectA);
-    const today = t.split('## Today')[1]?.split('## ')[0] || '';
-    assert.ok(today.includes('↳ 断点: 改到 store.js L40'), `断点行应在任务下:\n${t}`);
+    const todoSec = t.split('## Todo')[1]?.split('## ')[0] || '';
+    assert.ok(todoSec.includes('↳ 断点: 改到 store.js L40'), `断点行应在任务下:\n${t}`);
   });
 
   test('note 幂等: 同任务再补断点更新原行不叠加', async () => {
@@ -599,9 +671,9 @@ describe('cmdTask blocked + note (实时断点)', () => {
     assert.ok(!forTask[idx + 1].includes('断点A'), '旧断点不残留');
   });
 
-  test('blocked 未找到 id 时明确提示', async () => {
-    const r = await cmdTask({ dir: projectA, action: 'blocked', id: 'NOPE2' });
-    assert.ok(r.includes('NOPE2'));
+  test('state 未找到 id 时明确提示', async () => {
+    const r = await cmdTask({ dir: projectA, action: 'state', id: 'NOPE2', note: '滞留中' });
+    assert.ok(r.includes('NOPE2'), r);
   });
 });
 
@@ -1123,8 +1195,9 @@ describe('Done 按日期分组 + 老格式兼容', () => {
     await fs.writeFile(join(projectA, '.brain', 'todo.md'), flat, 'utf8');
     const txt = await readTodo(projectA);
     assert.ok(txt.includes('### 2026-09-07'), '读后应已分组');
-    // 未完成任务仍留在 Today
-    assert.ok(txt.includes('- [ ] W-任务'), '未完成任务不受影响');
+    assert.ok(txt.includes('## Todo'), `应归一为两区制: ${txt}`);
+    // 未完成任务仍在 Todo（且带状态标记）
+    assert.ok(txt.includes('- [ ] [进行中] W-任务'), `未完成任务不受影响: ${txt}`);
   });
 
   test('markDone 归位到对应日期组且新完成项在该组顶部', async () => {
@@ -1324,7 +1397,7 @@ describe('Done 结语契约', () => {
       /--as 只接受/,
     );
     const t = await readTodo(projectA);
-    assert.ok(t.includes('- [ ] K-4'), '非法 as 时任务应保持未完成');
+    assert.ok(t.includes('- [ ] [进行中] K-4'), `非法 as 时任务应保持未完成: ${t}`);
   });
 
   test('withDoneKind 幂等: 重复调用不叠标记', () => {

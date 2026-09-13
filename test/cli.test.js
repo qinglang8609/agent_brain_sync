@@ -93,7 +93,7 @@ describe('cli: todo', () => {
     const r = await run(['todo', 'frobnicate', 'T1']);
     assert.notEqual(r.code, 0, '未知子命令必须非零退出');
     assert.ok(/未知子命令/.test(r.stderr), r.stderr);
-    assert.ok(/add \/ start \/ note \/ blocked \/ done/.test(r.stderr), '应列出可用子命令');
+    assert.ok(/add \/ start \/ note \/ state \/ done/.test(r.stderr), '应列出可用子命令');
   });
 
   test('add 与 start 等价', async () => {
@@ -124,15 +124,17 @@ describe('cli: todo', () => {
     }
   });
 
-  test('blocked / note 断点实时落盘', async () => {
+  test('state / note 断点实时落盘（两区制：状态用行首标记，不搬区）', async () => {
     await run(['todo', 'start', 'TB', '--note', 'x']);
     const n = await run(['todo', 'note', 'TB', '--note', '改到 L40']);
     assert.equal(n.code, 0, n.stderr);
     assert.ok(n.stdout.includes('断点'), n.stdout);
-    const b = await run(['todo', 'blocked', 'TB', '--note', '端口占用']);
-    assert.equal(b.code, 0, b.stderr);
+    const st = await run(['todo', 'state', 'TB', '--note', '滞留中']);
+    assert.equal(st.code, 0, st.stderr);
     const t = await run(['todo']);
-    assert.ok(t.stdout.includes('端口占用'));
+    assert.ok(t.stdout.includes('[滞留中] TB'), `应改行首标记: ${t.stdout}`);
+    // 不搬区：仍是 ## Todo 下的行
+    assert.ok(!/## Blocked/.test(t.stdout), '不该再有 Blocked 区');
   });
 
   test('start 幂等: 同 id 不重复登记', async () => {
@@ -553,8 +555,8 @@ describe('cli: 使用者姓名与作者标记', () => {
     const r = await run(['todo', 'add', 'T1', '--note', '做点事', '--dir', proj], { env });
     assert.equal(r.code, 0, r.stderr);
     const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.ok(/- \[ \] T1 \[\[fanchao\]\] — 做点事 \(认领 \d{4}-\d{2}-\d{2}\)/.test(todo),
-      `todo 行应为 'ID [[name]] — 说明 (认领 date)': ${todo}`);
+    assert.ok(/- \[ \] \[进行中\] T1 \[\[fanchao\]\] — 做点事 \(认领 \d{4}-\d{2}-\d{2}\)/.test(todo),
+      `todo 行应为 '[状态] ID [[name]] — 说明 (认领 date)': ${todo}`);
     // 人页随之建立并登记 index（否则 [[fanchao]] 是死链）
     const person = await fs.readFile(join(proj, '.brain', 'entities', 'fanchao.md'), 'utf8');
     assert.ok(person.includes('# fanchao'), `人页应有 H1: ${person}`);

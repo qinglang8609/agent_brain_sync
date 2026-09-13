@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
 import { requireUser, atTag, getUser } from './userconfig.js';
-import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure, topicTreeText, upsertTopicLine, TOPIC_STATES, TOPIC_CLOSED_STATES, parseTopicLine, topicTree, currentTopic, removeTopicLine, promoteTopic } from './todo.js';
+import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 
@@ -133,10 +133,7 @@ export function logTemplate() {
 export const BRAIN_SHAPE = {
   'todo.md': {
     h1: '# 📋 Todo Board',
-    // 分区（话题树）置顶：讨论轨道先于执行轨道（见 TODO_SECTIONS 注释）
-    order: ['## Topics', '## Backlog', '## Today / In Progress', '## Blocked', '## Done'],
-    // 旧文件标题归一（已在 todo.js 的 LEGACY_SECTION_RENAMES 里给出，这里引用以免双源漂移）
-    renames: [['## Topic', '## Topics'], ['## 话题', '## Topics'], ['## 话题树', '## Topics'], ['## 分区', '## Topics']],
+    order: ['## Todo', '## Done'],
   },
   'log.md': {
     h1: '# 🗒 Activity Log',
@@ -156,6 +153,13 @@ export const LEGACY_MARKS = [
   ['# 操作日志', '# 🗒 Activity Log'],
   ['# 图谱索引', '# 🗂 Graph Index'],
   ['# Todo 看板', '# 📋 Todo Board'],
+  // 四区 → 两区（2026-09-13 用户定）。**这条路径是 load 走的**（rebuildStructure），
+  // 与 todo.js 的 LEGACY_SECTION_RENAMES（normalizeTodo 用）是两条独立迁移路径 ——
+  // 只改一处会导致另一条认不出旧区名，把它们当"非标准分区"原样留末尾（未完成任务
+  // 留在文件里但不再被当 TODO）。测试 'load 也要能迁移' 钉住这一点。
+  ['## Backlog', '## Todo'],
+  ['## Today / In Progress', '## Todo'],
+  ['## Blocked', '## Todo'],
   ['## Done（只留近期，旧的迁 log.md/快照）', '## Done'],
   ['### 归档', '### Archived'],
   ['### （未标日期）', '### Undated'],
@@ -207,9 +211,24 @@ export async function checkBrainShape(root) {
     let changed = [];
     await editFile(p, (cur) => {
       if (cur === null) return SKIP;
-      const r = spec.order.length
-        ? rebuildStructure(cur, { ...spec, renames: LEGACY_MARKS.filter(([o]) => o.startsWith('## ') || o.startsWith('### ')) })
-        : fixMarks(cur, spec);
+      let next2 = cur;
+      if (spec.order.length) {
+        // todo.md 的四区 → 两区迁移**必须先走 normalizeTodo**：只有它知道
+        // `## Blocked` 区的任务该标 [滞留中]（语义信息），而 rebuildStructure 只按
+        // renames 改标题、看不到来源分区，只能一律给 [进行中]。
+        // 2026-09-13 实测坑：cmdLoad 先跑 checkBrainShape、后跑 readTodo，于是
+        // normalizeTodo 的 [滞留中] 映射在 load 路径上永远走不到 → 卡住的任务
+        // 被静默标成进行中，两条路径语义不一致。
+        const srcText = file === 'todo.md' ? normalizeTodo(cur) : cur;
+        const r0 = rebuildStructure(srcText, { ...spec, renames: LEGACY_MARKS.filter(([o]) => o.startsWith('## ') || o.startsWith('### ')) });
+        // 兜底：仍无状态标记的未完成任务补默认值（新格式文件本就有标记，此处不触发）。
+        next2 = file === 'todo.md'
+          ? r0.text.split('\n').map((l) => (l.startsWith('- [ ] ') ? ensureStateMark(l, '进行中') : l)).join('\n')
+          : r0.text;
+      } else {
+        next2 = fixMarks(cur, spec).text;
+      }
+      const r = { text: next2, changed: next2 === cur ? [] : ['结构按标准重排'] };
       if (!r.changed.length) return SKIP;
       changed = r.changed;
       return { text: r.text };
@@ -252,29 +271,6 @@ async function listBrainFiles(root) {
 }
 
 // ---------- load: 开机读状态 ----------
-/// 从看板文本里剔掉 `## Topics` 区段（已由「当前话题」单独渲染）。
-/// 只删区标题到下一个 `## ` 之间；末尾多余空行一并收掉。
-export function stripTopics(text) {
-  const lines = String(text ?? '').split('\n');
-  const at = lines.findIndex((l) => l.trim() === `## ${SEC.topics}`);
-  if (at === -1) return text;
-  let end = at + 1;
-  while (end < lines.length && !/^## /.test(lines[end])) end++;
-  lines.splice(at, end - at);
-  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-}
-
-/** 「当前话题」一行文本 —— load 首屏用。只给最深的活话题 + 它的父链，
- * 让人（和 AI）一眼看到“此刻在哪条线上”，而不摄入整棵树。 */
-export function currentTopicText(text) {
-  const cur = currentTopic(text);
-  if (!cur) return '';
-  const byId = new Map(topicTree(text).map((n) => [n.id, n]));
-  const chain = [];
-  for (let n = cur; n; n = n.parent ? byId.get(n.parent) : null) chain.unshift(n);
-  return `⌖ ${chain.map((n) => `${n.id} ${n.title}`).join(' › ')}`;
-}
-
 export async function cmdLoad({ dir }) {
   const root = await requireBrain(dir || process.cwd());
   // 结构核对先跑：load 每回都要读这三个文件，顺手把它们形状摆正（缺分区）或提个醒（无头）。
@@ -310,19 +306,9 @@ export async function cmdLoad({ dir }) {
     ...(rulesSection(index) ? [rulesSection(index), ''] : []),
     collapseIndex(index) || '(index.md 为空)',
     '',
-    // 「当前话题」永远占一行（含空态）—— 话题树是**一等状态**，
-    // 空态静默会让「树是空的」与「树没被读回」无法区分。
-    // 2026-09-13 实报：Topics 空时 load 全篇不提话题，于是登记了没人看、没登记也看不出。
-    // 仍只打一行（不打整棵树）：整棵树会被反复读并带偏会话（同 Roadmap 之病）。
-    '--- 当前话题 (todo.md) ---',
-    currentTopicText(todo) || '（无进行中的话题。登记: abs topic new "#1 标题"）',
-    '',
-    // 开局三类（2026-09-13 用户澄清）：①正在讨论=上面 Topics ②待办/已开工/已收尾=
-    // 下面 Board（Done 区就是已结束，折叠只是显示形式——归档才管前几天）。
-    // 曾加过「今日已结束」单列段：多余，撤掉（Done 区已表达同一信息）。
+    // 两区制：Todo（未完成，行首带状态标记）+ Done。
     '--- Todo Board (todo.md) ---',
-    // 看板里剔掉 Topics 区：它已在上面用树形打印过，原样再贴一遍是纯冗余。
-    stripTopics(collapseDone(todo).text) || '(todo.md 为空)',
+    collapseDone(todo).text || '(todo.md 为空)',
     '\n（Done 已按日期折叠计数；明细: abs todo --full）',
     '',
     '--- 最近动作 (log.md, 最新 5 条) ---',
@@ -397,9 +383,16 @@ export async function cmdRule({ dir, action, text }) {
   }
   const clean = String(text || '').replace(/\s+/g, ' ').trim();
   if (!clean) return '用法: abs rule add "一句话硬规则"';
-  // 门槛：一句话说完。太长说明该写概念页，Rules 只放指针。
-  if (clean.length > 120) {
-    return `✗ 太长（${clean.length} 字符 > 120）—— Rules 只放一句话摘要，展开写成概念页，\n  这里改成短句 + [[页面名]] 链接。`;
+  // 门槛：**纪律不是记事本**。Rules 是最前面的项目铁律，每条必须一眼扫完。
+  // 2026-09-13 用户定：不带链接、不带解释、不写细节 —— 细节进概念页，Rules 只留结论。
+  // 宽严：中文一字信息量大，按 40 字算（≈ 英文 80 字符的量）。实测现有 12 条最长 56 字符。
+  if (clean.length > 42) {
+    return `✗ 太长（${clean.length} > 42）—— Rules 是纪律不是记事本：\n`
+      + `  每条要一眼扫完。细节/出处/例子 → 写进 concepts/ 概念页，这里只留一句话结论。`;
+  }
+  if (/\[\[|\]\]|https?:\/\//.test(clean)) {
+    return '✗ 不带链接 —— Rules 区会被反复全量打印，链接占位且让纪律读起来像索引。\n'
+      + '  要挂概念页，去概念页自己的「## 关联连接」里挂。';
   }
   let added = null;
   await editFile(p, (cur) => {
@@ -609,7 +602,7 @@ export async function cmdTeardownCheck({ dir, payload }) {
       '0) 本机尚未设置使用者姓名 —— 先跑 abs config set user <你的名字>，否则下面 2/3/4 都会被拦下；',
     ]),
     '[abs 收尾提醒] 本会话改过文件但 .brain/ 今天还没有记录。请立即走收尾循环：',
-      '1) 跑 abs load 看 Today 还有哪些未完成；',
+      '1) 跑 abs load 看 Todo 还有哪些未完成；',
       '2) 实际做完漏登记的 abs todo done <id>，做到一半的 abs todo note <id> --note "断点"；',
       '3) 值得留的经验 abs note "..."（宁少勿滥，能从代码 grep 到的不记）；',
       '4) abs log "完成 X：..." 记一行工作成果，新页同步进 index。',
@@ -706,15 +699,29 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
   const who = await requireUser();
   await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
   if (action === 'start') {
+    // 两区制：未完成一律进 Todo，行首带状态标记（默认 进行中）。
+    const st = section && TASK_STATES.includes(section) ? section : '进行中';
     const r = await upsertTask(root, {
-      section: section || 'Today / In Progress',
-      text: `${id} ${atTag(who)}${note ? ' — ' + note : ''} (认领 ${today()})`,
+      section: SEC.todo,
+      text: `[${st}] ${id} ${atTag(who)}${note ? ' — ' + note : ''} (认领 ${today()})`,
     });
-    return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  ${id} ${atTag(who)}${note ? ' — ' + note : ''}`;
+    return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  [${st}] ${id} ${atTag(who)}${note ? ' — ' + note : ''}`;
   }
-  if (action === 'blocked') {
-    const r = await moveBlocked(root, { id, reason: note });
-    return r.msg;
+  if (action === 'state') {
+    // 改状态标记（原地，不搬区）：进行中 / 讨论中 / 滞留中
+    if (!note) throw new Error(`✗ 用法: abs todo state <id> --note "${TASK_STATES.join('|')}"`);
+    if (!TASK_STATES.includes(note)) {
+      throw new Error(`✗ 状态只接受: ${TASK_STATES.join(' | ')}（收到 "${note}"）`);
+    }
+    const f = brainPath(root, 'todo.md');
+    let cc = [];
+    await editFile(f, (cur) => {
+      if (cur === null) return SKIP;
+      const r = setStateMark(cur, id, note);
+      cc = r.changed;
+      return r.changed.length ? { text: r.text } : SKIP;
+    });
+    return cc.length ? `✓ ${id} 状态 → [${note}]` : `(未找到含 "${id}" 的未完成任务行，或状态未变)`;
   }
   if (action === 'note') {
     if (!note) return '用法: abs todo note <id> --note "断点/进度"（实时落 ↳ 断点 行）';
@@ -745,7 +752,7 @@ async function markDone(file, id, kind = '落地') {
       if (!moved && idOfTaskLine(l) === wantId) {
         changed = true;
         const head = withDoneKind(
-          l.replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + ` (完成 ${today()})`,
+          stripStateMark(l).replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + ` (完成 ${today()})`,
           kind,
         );
         const bp = [];
@@ -1063,12 +1070,12 @@ export async function cmdLint({ dir }) {
     const idxTxt = await readFileOrNull(join(vault, 'index.md'));
     const { items, found } = readRules(idxTxt);
     if (found && items.length > RULES_MAX) {
-      issues.push(`RULES-PILED-UP: Rules 区 ${items.length} 条 > ${RULES_MAX}；把长条目提炼成概念页，这里只留一句 + 链接`);
+      issues.push(`RULES-PILED-UP: Rules 区 ${items.length} 条 > ${RULES_MAX}；把长条目提炼成概念页，这里只留一句话`);
     }
     // 该区是 load 必读的硬规则清单，条目却写得像段落 → 提醒改短句。
     const longOnes = items.filter((l) => l.trim().length > 160);
     if (longOnes.length) {
-      issues.push(`RULES-TOO-LONG: Rules 区 ${longOnes.length} 条超 160 字符（如 "${clip(longOnes[0].trim(), 40)}"）；展开写进概念页，这里只留短句 + [[链接]]`);
+      issues.push(`RULES-TOO-LONG: Rules 区 ${longOnes.length} 条超 160 字符（如 "${clip(longOnes[0].trim(), 40)}"）；展开写进概念页，这里只留一句话（不带链接）`);
     }
   }
 
@@ -1175,75 +1182,4 @@ async function listPages(vault) {
     }
   }
   return pages;
-}
-
-/** abs topic —— 分区（话题树）读写。
- * 两个关键修正（2026-09-13 实测踩坑）：
- *  ① `id` 参数可能是“"#1" 标题”合一串 —— 必须切开，否则整串被当作 id，
- *     upsert 找不到行 → 新插一行重复话题。
- *  ② 未给标题时必须**保留现有标题**（不能回退成 id）：
- *     `abs topic conclude "#1"` 曾把标题写成 `#1` 并丢掉结论。 */
-export async function cmdTopic({ dir, action, id, title, state, conclusion, full, clear }) {
-  const root = await requireBrain(dir || process.cwd());
-  const p = brainPath(root, 'todo.md');
-  if (!action || action === 'tree' || action === 'list') {
-    const text = await readTodo(root);
-    const t = topicTreeText(text);
-    return t || '（无话题。登记: abs topic new "#1 标题"）';
-  }
-  // 写操作：需姓名（与 todo 同守卫）；姓名同时写进话题行（[[name]]）
-  const who = await requireUser();
-  await ensureTodo(root);
-  // 拆 “#1 标题” → id / title（id 只取 # 开头的第一个 token）
-  let useId = id;
-  let useTitle = title;
-  if (useId && !/^#[\w.]+$/.test(useId)) {
-    const m = String(useId).match(/^(#[\w.]+)\s+(.*)$/);
-    if (m) { useId = m[1]; useTitle = (useTitle ? m[2] + ' ' + useTitle : m[2]).trim(); }
-  }
-  if (!useId) throw new Error(`✗ 缺 <id>\n  用法: abs topic ${action} "#1 标题" [--state 状态] [--note 结论]`);
-  if (!/^#[\w.]+$/.test(useId)) {
-    throw new Error(`✗ id 需以 # 开头（如 #1 / #2.1），收到 "${useId}"`);
-  }
-  const st = state || (action === 'reject' ? '已否决' : action === 'conclude' ? '已结论' : action === 'done' ? '已落地' : '进行中');
-  // `abs topic promote #N` —— 讨论成熟、要动手了 → 移进 Today（同 id 连续追踪）。
-  // 不是复制两份：话题变身任务，Topics 退位。
-  if (action === 'promote') {
-    if (!useId) throw new Error('✗ 缺 <id>\n  用法: abs topic promote "#1" [--to Today]');
-    const cur = await readTodo(root);
-    const section = state || SEC.today;   // --state 可指定目标分区（默认 Today）
-    const r = promoteTopic(cur, useId, section);
-    if (!r.changed.length) {
-      return `• 话题 ${useId} 未登记（或目标分区 ${section} 不存在），未动`;
-    }
-    await editFile(p, () => ({ text: r.text }));
-    return `✓ 话题 ${useId} 已移进 ${section}（同 id 连续追踪，不再是话题）`;
-  }
-  if (!TOPIC_STATES.includes(st)) {
-    throw new Error(`✗ --state 只接受: ${TOPIC_STATES.join(' | ')}（收到 "${st}"）`);
-  }
-  // 终止态不入 Topics 区（用户定：这里只放正在讨论的）。
-  // 不默默拒绝而是给明确出路：先把结论落 sources/，再从树上摘掉。
-  if (TOPIC_CLOSED_STATES.includes(st)) {
-    const cur = await readTodo(root);
-    const node = topicTree(cur).find((n) => n.id === useId);
-    if (node) {
-      await editFile(p, (c) => ({ text: removeTopicLine(c, useId) }));
-      return (
-        `✓ 话题 ${useId} [${st}] 已从 Topics 移出（终止态不留树上）\n` +
-        `  ⚠ 结论请用 \`abs note "..."\` 落 sources/，否则就丢了`
-      );
-    }
-    return `• 话题 ${useId} [${st}] 未登记（终止态不入 Topics 区）\n  ⚠ 结论请用 \`abs note "..."\` 落 sources/`;
-  }
-  const orig = await readTodo(root);
-  // 未给标题 → 沿用现有行（“只改状态”场景）
-  const existing = topicTree(orig).find((n) => n.id === useId);
-  const title2 = useTitle || existing?.title;
-  if (!title2) throw new Error(`✗ 话题 ${useId} 不存在，需给标题\n  用法: abs topic new "${useId} 标题"`);
-  const concl = conclusion !== undefined ? conclusion : existing?.conclusion;
-  const r = await editFile(p, (cur) => ({
-    text: upsertTopicLine(cur, { id: useId, title: title2, state: st, conclusion: concl, author: who }).text,
-  }));
-  return `✓ 话题 ${useId} [${st}] → ${p}\n  ${title2}${concl ? ' — ' + concl : ''}`;
 }

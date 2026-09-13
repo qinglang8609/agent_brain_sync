@@ -51,6 +51,10 @@ export function extractOpenTasks(todoText) {
     const m = l.match(/^\s*- \[ \]\s*(.*)$/);
     if (m) {
       const taskBody = m[1]
+        // 先剥行首状态标记（`[进行中] <id> …`）—— 它是**易变**的：任务状态一改
+        // （abs todo state）body 就变，而 strandedFor 用 body 精确比对 →
+        // 跨会话滞留提醒会静默消失（2026-09-13 实测复现）。body 必须状态无关。
+        .replace(/^\[[^\]]+\]\s+/, '')
         .replace(/\s*\(认领[^)]*\)\s*$/, '')
         .replace(/\s*\(完成[^)]*\)\s*$/, '')
         .trim();

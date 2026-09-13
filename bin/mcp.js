@@ -104,12 +104,12 @@ tool(
 
 tool(
   'abs_task',
-  '任务实时落盘（幂等键 = id）。add/start 登记 / note 补断点(改到哪个文件哪行) / blocked 碰壁 / done 完成归位。',
+  '任务实时落盘（幂等键 = id）。start 登记进 Todo / note 补断点(改到哪文件哪行) / state 改状态 / done 完成归位 Done。',
   {
-    action: z.enum(['add', 'start', 'done', 'note', 'blocked']),
+    action: z.enum(['add', 'start', 'done', 'note', 'state']),
     id: z.string().describe('任务幂等键，如 TASK-xxx 或子任务名'),
     cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
-    note: z.string().optional().describe('add/start=做什么; note=断点(文件/到哪步); blocked=卡点原因'),
+    note: z.string().optional().describe('add/start=做什么; note=断点(文件/到哪步); state=进行中|讨论中|滞留中'),
   },
   async ({ action, id, cwd, note }) => {
     const root = await findBrainRoot(cwd || process.cwd());
@@ -144,7 +144,7 @@ tool(
 
 tool(
   'abs_rule',
-  '读/写 index.md 的 ## Rules 硬规则区。action=list 列出；action=add 追加一条（只放一句话 + [[链接]]，展开写概念页）。',
+  '读/写 index.md 的 ## Rules 硬规则区。action=list 列出；action=add 追加一条（只放一句话，≤42 字符、不带链接；展开写概念页）。',
   {
     cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
     action: z.enum(['list', 'add']).optional().describe('list=列出(默认)；add=追加一条'),
