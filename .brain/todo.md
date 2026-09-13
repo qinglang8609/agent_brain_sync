@@ -1,16 +1,14 @@
 # 📋 Todo Board
 ## Backlog
-
 ## Today / In Progress
 ## Blocked
 ## Done
-### 2026-09-13
 
+### 2026-09-13
 - [x] LOAD-SHAPE-CHECK [[fanchao]] — load 顺手核对 index/log/todo 形状(每次 load 都读这三个): 缺分区=最严重→自动补建(幂等,不覆盖已有内容); 无头(H1不符)→只提醒不自动改(结构可能整体脱轨); 多分区→不管; log 条目只判 '## [' 开头, 不判内容完整(LOG-BACKFILL-34 已定论不修)。正常时静默零字节。已实现+沙盒验证5场景, 未发版(等用户核对) 【落地】 (完成 2026-09-13)
 - [x] STRUCT-EN-AND-RULE [[fanchao]] — ①分区名/H1 全改英文(Roadmap/Rules/Graph Index/Activity Log/Todo Board/Done/Archived/Undated) ②load 结构核对: 不符就按标准重建(B档, 自加分区留末尾, 内容零丢失, 幂等) ③新增 abs rule 命令+MCP abs_rule+lint 两项检查(RULES-PILED-UP/TOO-LONG) ④skill 按文件结构重写+精简(342→272行, -32%) ⑤5 个真实项目已迁移(内容零丢失) (完成 2026-09-13) 【落地】 (完成 2026-09-13)
 
 ### 2026-09-12
-
 - [x] OPTS-DOUBLE-KEYS @fanchao — parseArgv 返回的 opts 同时带 raw 与 normalized 两份 key(keep-days/keepDays, no-mcp/mcp...), 后者才是读者。审查建议收成显式白名单映射。收益=形状整洁, 风险=再碰刚修好的解析路径(现有 9 条测试钉着)。低优先。 【落地】 (完成 2026-09-12)
 - [x] ENTITY-LINK-USER @fanchao — 作者标记 @name → [[name]] wiki 链接格式; 用户独立实体页 entities/<user>.md (含技术栈/特点, config set user 或首次写操作时创建); extractAuthor 兼容旧 @name 与新 [[name]]; index.md 不塞作者, 改 query/load 输出附带页 author; lint 加 [[人名]] 有人页存在校验 【落地】 (完成 2026-09-12)
 - [x] USER-ATTRIBUTION @fanchao — abs 增加用户姓名设置: 未设则写操作报错要求设置; todo/log/生成的文档标记 @name。方案已过目, 待用户确认三个歧义点(检查放哪层/配置存哪/标记格式与位置)后开工 【落地】 (完成 2026-09-12)
