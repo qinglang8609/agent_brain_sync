@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
 import { requireUser, atTag, getUser } from './userconfig.js';
-import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf, collapseDone } from './todo.js';
+import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 
@@ -823,6 +823,19 @@ export async function cmdLint({ dir }) {
       issues.push(
         `DONE-NO-KIND: Done 区 ${noKind.length} 条缺结语（如 ${sample}）。` +
         `逐条补 \`--as 落地|否决|仅方案\`（新条目：abs todo done <id> --as …）`,
+      );
+    }
+    // 完成日期同理必须由工具盖：手写 [x] 时人会抄语义部分（结语）而漏掉机械部分（日期）。
+    // 后果不只是排版不齐 —— 无日期行归入 `### （未标日期）` 尾组，而归档靠日期判天数，
+    // 故这些行**永远无法被 abs todo archive 迁出**（todo.js:300 保守跳过）。
+    // 即：漏一个日期 = 一条永久钉住 Done 区、拖大 load 输出的行。
+    // 两处在同一处校验（同一份契约的两半），别只查一半给假信心。
+    const noDate = doneBody.filter((l) => /^\s*- \[x\]/.test(l) && !doneDateOf(l));
+    if (noDate.length) {
+      const sample = (noDate[0].match(/- \[x\] (\S+)/) || [, '?'])[1];
+      issues.push(
+        `DONE-NO-DATE: Done 区 ${noDate.length} 条缺 \`(完成 YYYY-MM-DD)\`（如 ${sample}）。` +
+        `手写的 [x] 不会自动盖日期 —— 补上后重跑；新条目一律走 \`abs todo done <id>\`。`,
       );
     }
   }

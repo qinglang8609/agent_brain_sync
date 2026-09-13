@@ -1112,8 +1112,11 @@ describe('Done 归档', () => {
   });
 
   test('无可归档时明确说明（不静默）', async () => {
+    // 坑: 曾用写死的 '2026-09-10' 配 keepDays:3 —— 它在写下的那天算"近期"，
+    // 自然日一过 cutoff 就不成立了（实际在 09-13 午夜后开始失败），变成定时炸弹。
+    // 日期必须相对 today() 算，否则这个测试会随真实时间自己烂掉。
     await fs.writeFile(join(projectA, '.brain', 'todo.md'),
-      mk(['### 2026-09-10', '', '- [x] NEW  (完成 2026-09-10)', '']), 'utf8');
+      mk(['### ' + today(), '', `- [x] NEW  (完成 ${today()})`, '']), 'utf8');
     const out = await cmdTodoArchive({ dir: projectA, keepDays: 3 });
     assert.ok(out.includes('无可归档'), out);
   });
@@ -1190,5 +1193,32 @@ describe('Done 结语契约', () => {
        ...['落地', '否决', '仅方案'].map((k, i) => `- [x] OK-${i} — n 【${k}】 (完成 2026-09-11)`), ''].join('\n'), 'utf8');
     const out = await cmdLint({ dir: projectA });
     assert.ok(!out.includes('DONE-NO-KIND'), out);
+  });
+
+  // 回归(日期契约): 结语是人抄的、日期是工具盖的 —— 人替工具代笔时只抄语义部分。
+  // 后果不只是排版：无日期行归 `### （未标日期）` 尾组，而归档靠日期判天数
+  // → 这些行**永远无法被 abs todo archive 迁出**（todo.js:300 保守跳过），
+  // 即一条漏日期 = 一条永久钉住 Done 区、拖大 abs load 输出的行。
+  test('lint 抓出任写的 [x] 缺 (完成 日期)（结语抄了、日期没抄）', async () => {
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo 看板', '## Backlog', '', '## Today / In Progress', '', '## Blocked',
+       '## Done（只留近期，旧的迁 log.md/快照）', '', '### 2026-09-11', '',
+       '- [x] NO-DATE — 手写漏日期 【落地】', '',
+       '- [x] HAS-DATE — 走工具盖了 【落地】 (完成 2026-09-11)', ''].join('\n'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('DONE-NO-DATE'), out);
+    assert.ok(out.includes('1 条'), `应只报 1 条(有日期的不算): ${out}`);
+    assert.ok(!out.includes('DONE-NO-KIND'), '本条都带结语，不应报缺结语');
+  });
+
+  test('lint: Done 条目日期齐全时不报 DONE-NO-DATE', async () => {
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo 看板', '## Backlog', '', '## Today / In Progress', '', '## Blocked',
+       '## Done（只留近期，旧的迁 log.md/快照）', '', '### 2026-09-11', '',
+       '- [x] D1 【落地】 (完成 2026-09-11)', ''].join('\n'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!out.includes('DONE-NO-DATE'), `日期齐全不应报: ${out}`);
   });
 });
