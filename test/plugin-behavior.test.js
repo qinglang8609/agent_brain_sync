@@ -158,6 +158,40 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     assert.equal(injected.length, 2, '新会话必须能再次注入（重置节流）');
   });
 
+  // ===== 决策点触发（用户洞察 2026-09-13）=====
+  // 「AI 让用户在 1/2/3/4 或 甲乙丙丁 里选、用户选完」= 话题产生的瞬间。
+  // 这比 turn_end 强：纯讨论会话不改文件，turn_end 毫无信号；而这是纯机械信号。
+  test('决策点：AI 给选项 + 用户拍板 → 立即提醒对账', async () => {
+    const logDir = join(sandbox, 'log');
+    const mod = await loadPi(logDir);
+    const { handlers, injected } = harness(mod.default);
+    const proj = await makeProject('pi-decision');
+    await handlers.session_start({}, { cwd: proj });
+    await handlers.message_end(
+      { message: { role: 'assistant', content: '你要哪个？\n1) 只读\n2) 读写都要\n3) 不做' } }, { cwd: proj });
+    await handlers.before_agent_start({ prompt: '2' }, { cwd: proj });
+    assert.equal(injected.length, 1, '选完选项应触发对账');
+    assert.match(injected[0].text, /话题对账/, `应为对账提示: ${injected[0].text.slice(0, 200)}`);
+    assert.equal(injected[0].opts.deliverAs, 'followUp');
+  });
+
+  test('决策点：闲聊/质疑/未拍板 均不触发（不喧嘅）', async () => {
+    const logDir = join(sandbox, 'log');
+    const mod = await loadPi(logDir);
+    const { handlers, injected } = harness(mod.default);
+    const proj = await makeProject('pi-nochatter');
+    await handlers.session_start({}, { cwd: proj });
+    await handlers.message_end({ message: { role: 'assistant', content: '这是普通解释。' } }, { cwd: proj });
+    await handlers.before_agent_start({ prompt: '为什么' }, { cwd: proj });
+    assert.equal(injected.length, 0, '无选项时不该触发');
+    await handlers.message_end({ message: { role: 'assistant', content: '甲: 落盘\n乙: 内存' } }, { cwd: proj });
+    await handlers.before_agent_start({ prompt: '这个方案风险在哪' }, { cwd: proj });
+    assert.equal(injected.length, 0, '未拍板不该触发');
+    await handlers.message_end({ message: { role: 'assistant', content: '甲: 落盘\n乙: 内存' } }, { cwd: proj });
+    await handlers.before_agent_start({ prompt: '那就乙吧' }, { cwd: proj });
+    assert.equal(injected.length, 1, '拍板才触发');
+  });
+
   test('收尾提示带本会话素材（hook 机械记的用户原话+改过的文件）', async () => {
     const logDir = join(sandbox, 'log');
     const mod = await loadPi(logDir);

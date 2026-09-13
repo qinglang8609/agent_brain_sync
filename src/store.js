@@ -310,9 +310,13 @@ export async function cmdLoad({ dir }) {
     ...(rulesSection(index) ? [rulesSection(index), ''] : []),
     collapseIndex(index) || '(index.md 为空)',
     '',
-    // 只打「当前话题」一行：整棵树会被 load 反复读并带偏会话（同 Roadmap 之病）。
-    // 全貌用 `abs topic` 主动查——它是查看命令，不进开机首屏。
-    ...(currentTopic(todo) ? ['--- 当前话题 (todo.md) ---', currentTopicText(todo), ''] : []),
+    // 「当前话题」永远占一行（含空态）—— 话题树是**一等状态**，
+    // 空态静默会让「树是空的」与「树没被读回」无法区分。
+    // 2026-09-13 实报：Topics 空时 load 全篇不提话题，于是登记了没人看、没登记也看不出。
+    // 仍只打一行（不打整棵树）：整棵树会被反复读并带偏会话（同 Roadmap 之病）。
+    '--- 当前话题 (todo.md) ---',
+    currentTopicText(todo) || '（无进行中的话题。登记: abs topic new "#1 标题"）',
+    '',
     // 开局三类（2026-09-13 用户澄清）：①正在讨论=上面 Topics ②待办/已开工/已收尾=
     // 下面 Board（Done 区就是已结束，折叠只是显示形式——归档才管前几天）。
     // 曾加过「今日已结束」单列段：多余，撤掉（Done 区已表达同一信息）。

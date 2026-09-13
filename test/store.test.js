@@ -406,6 +406,19 @@ describe('board/load/status', () => {
     assert.ok(!/--- Topics \(todo\.md\) ---/.test(out), '不得再打印整棵树');
   });
 
+  // 回归 2026-09-13 实报：Topics 空时 load 全篇不提话题，
+  // 于是「树是空的」与「树没被读回」无法区分（写了没人看 / 没写也看不出）。
+  test('Topics 为空时 load 也必须提一行（空态可见，不静默）', async () => {
+    // 先确保是空态
+    const todoP = join(projectA, '.brain', 'todo.md');
+    const t = await fs.readFile(todoP, 'utf8');
+    const cleared = t.replace(/^## Topics\n(?:(?!^## ).*\n?)*/m, '## Topics\n');
+    await fs.writeFile(todoP, cleared, 'utf8');
+    const out2 = await cmdLoad({ dir: projectA });
+    assert.ok(out2.includes('当前话题'), `空态仍应有段头: ${out2.slice(0, 900)}`);
+    assert.ok(/无进行中的话题/.test(out2), `空态应明说无话题: ${out2.slice(0, 900)}`);
+  });
+
   test('currentTopic: 最深活话题才算当前（父已让位给子）', () => {
     const base = '# 📋 Todo Board\n\n## Topics\n';
     let t = upsertTopicLine(base, { id: '#1', title: '根', state: '进行中' }).text;

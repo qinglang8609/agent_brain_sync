@@ -43,6 +43,22 @@ function notesBlock(notes: string[]): string {
     notes.map((n) => "     · " + n).join("\n") + "\n"
 }
 
+// ---- 决策点检测（用户选完即触发）----
+// 用户洞察（2026-09-13）：AI 让用户在 1/2/3/4 或 甲乙丙丁 里选、用户选完时，
+// **就是话题产生的瞬间**。这比 turn_end 强：纯讨论会话不改文件，turn_end 毫无信号；
+// 而这里的信号是**纯机械的**（不需要 LLM 理解语义）。
+const OPTION_RE = /^\s*(?:[-*]\s*)?(?:\d+[).、]|[甲乙丙丁]|[A-D])[).、：:\s]?/m
+/** 用户是否在“拍板”——纯选项符号，或认同/定案口吻。
+ * 阈值刻意收紧：只认短的、干脆的，闲聊/质疑一律不中（否则每轮都触发=噪音）。 */
+function isDecisionAnswer(text: string): boolean {
+  const s = String(text ?? "").trim()
+  if (!s || s.length > 20) return false
+  // 前缀允许多个修饰词叠用（"那就乙吧"/"我选第 2 个"）。
+  // 坑（2026-09-13）：曾写成 (?:那|就|...) 只匹配一个，于是"那就乙吧"漏报。
+  if (/^(?:(?:那|就|我|选|要|用|第|还|是)\s*)*(?:\d+|一|二|三|四|五|甲|乙|丙|丁|[a-dA-D])\s*(?:个|条|种|项)?\s*(?:吧|了|的)?$/.test(s)) return true
+  return /^(?:就(?:这样|这么|按这个)?|行|好(?:的)?|ok|可以|同意|批准|就这样|没问题|按你说的|就这么办|开始吧|干吧|做吧)(?:做|办|来|吧|了)?[!！。~]*$/i.test(s)
+}
+
 async function logHook(evt: string): Promise<void> {
   const dir = process.env.ABS_LOG_DIR || join(homedir(), ".abs", "log")
   const d = new Date()
@@ -116,17 +132,46 @@ export default function absPiHook(pi: ExtensionAPI): void {
   // （2026-09-13 实测：同一天多个会话时后半场全部静默）。
   let teardownNudged = false
   let agentEndSeen = false
+  // AI 上一轮是否抛出了选项（决策点检测的前提）。
+  let askedOptions = false
 
   pi.on("session_start", () => {
     teardownNudged = false
     agentEndSeen = false
+    askedOptions = false
     return logHook("session_start").catch(() => {})
   })
 
   // ---- 素材锚点（不烧上下文、不注入消息、不 spawn、不落盘）----
   // 用户发话 = 天然的话题边界。这是 C 路线：你说的每句话都是一个锚点。
+  // 额外：若上一轮 AI 给了选项、而你本轮在“拍板” → 这是**决策点**，
+  // 立刻提醒对账（不等会话末尾——进行中的会话根本没有“末尾”）。
   pi.on("before_agent_start", async (event: any, _ctx: any) => {
-    addNote("user", String(event?.prompt || ""))
+    const prompt = String(event?.prompt || "")
+    addNote("user", prompt)
+    if (askedOptions && isDecisionAnswer(prompt)) {
+      addNote("decision", prompt)
+      await logHook("before_agent_start:decision-point").catch(() => {})
+      pi.sendUserMessage(
+        "[abs 话题对账] 你刚拍板了一个选项——这是话题产生的瞬间，现在就登记（不要等会话末尾）：\n" +
+        "· 新话题: abs topic new \"#N 标题\" --state 进行中\n" +
+        "· 要动手了: abs topic promote #N（移进 Today，同 id 追踪）\n" +
+        "· 否决掉的: abs topic new \"#N 标题\" --state 已否决 --note \"为何否决\"\n" +
+        "⚠ 终止态会离树，结论必须落 abs note。当前话题树: 见 `abs topic`。",
+        { deliverAs: "followUp" },
+      )
+    }
+    askedOptions = false   // 每轮重置：只在“AI 刚问、用户刚答”的相邻两轮触发
+  })
+
+  // AI 本轮是否抛出了选项列表 → 供下一轮判定“用户是否在拍板”。
+  pi.on("message_end", async (event: any, _ctx: any) => {
+    const m = event?.message
+    if (!m || m.role !== "assistant") return
+    const txt = typeof m.content === "string"
+      ? m.content
+      : (Array.isArray(m.content) ? m.content.map((c: any) => c?.text || "").join("\n") : "")
+    if (OPTION_RE.test(txt)) askedOptions = true
   })
 
   // 每轮结束 = 这轮干了什么（改了哪些文件）。机械事实，供收尾时回忆。
