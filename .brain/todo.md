@@ -1,8 +1,14 @@
-# 📋 Todo 看板
+# 📋 Todo Board
 ## Backlog
+
 ## Today / In Progress
+- [ ] LOAD-SHAPE-CHECK [[fanchao]] — load 顺手核对 index/log/todo 形状(每次 load 都读这三个): 缺分区=最严重→自动补建(幂等,不覆盖已有内容); 无头(H1不符)→只提醒不自动改(结构可能整体脱轨); 多分区→不管; log 条目只判 '## [' 开头, 不判内容完整(LOG-BACKFILL-34 已定论不修)。正常时静默零字节。已实现+沙盒验证5场景, 未发版(等用户核对) (认领 2026-09-13)
 ## Blocked
-## Done（只留近期，旧的迁 log.md/快照）
+## Done
+### 2026-09-13
+
+- [x] STRUCT-EN-AND-RULE [[fanchao]] — ①分区名/H1 全改英文(Roadmap/Rules/Graph Index/Activity Log/Todo Board/Done/Archived/Undated) ②load 结构核对: 不符就按标准重建(B档, 自加分区留末尾, 内容零丢失, 幂等) ③新增 abs rule 命令+MCP abs_rule+lint 两项检查(RULES-PILED-UP/TOO-LONG) ④skill 按文件结构重写+精简(342→272行, -32%) ⑤5 个真实项目已迁移(内容零丢失) (完成 2026-09-13) 【落地】 (完成 2026-09-13)
+
 ### 2026-09-12
 
 - [x] OPTS-DOUBLE-KEYS @fanchao — parseArgv 返回的 opts 同时带 raw 与 normalized 两份 key(keep-days/keepDays, no-mcp/mcp...), 后者才是读者。审查建议收成显式白名单映射。收益=形状整洁, 风险=再碰刚修好的解析路径(现有 9 条测试钉着)。低优先。 【落地】 (完成 2026-09-12)
@@ -20,7 +26,7 @@
   ↳ 断点: 已定位扩大: 同一段文字在 cmdNote 里被截 6 次(store.js:355 log / 490 query / 520 slug=文件名 / 529 H1 / 546 index描述 / 557+558 转发与回显), 截断值还各不相同(24/40/60/100)。所以 note 落盘是 slug、标题、index 描述三重残句 —— 例: 文件名 ...-decision-blo, index 描述 'promptAsync 对 '。修法建议: 只在一处收口(引入 clip(text, n, boundary) 按标点/词边界收尾), slug 从完整文本取前 24 字后仍保留完整 TITLE 字段。落点见 src/store.js。
 - [x] PI-MCP-NOOP — 已修并发布 1.5.3。installPi 的 withMcp 分支只打印「MCP → Pi 走 extension 内桥接」却无任何桥接代码 —— 生成的 abs.ts 只 spawn abs wrapup + 挂 3 个 pi.on()，从不碰 bin/mcp.js。本机靠 mcp-adapter 的 hostConfigDiscovery=on 间接读到 ~/.claude/settings.json 的注册才侥幸可用，无 claude 宿主的机器上 abs MCP 完全缺失（用户在另一台机器复现）。修法：真写 ~/.pi/agent/mcp.json 的 mcpServers.abs={type:stdio,command:node,args:[mcpEntryPath()]}，路径走 mcpEntryPath 解析包稳定安装位置而非 ABS_DIR；uninstallPi 同步只删 abs 条目不误删他人 MCP。验证：+4 回归测试（真注册 / 幂等重装保留既有 mcpServers+settings+imports / 卸载只删自己），全量 193 pass；npm pack 解包产物在干净沙盒（无 claude/codex/opencode）直跑装 pi 成功注册；端到端拉起 serverInfo abs 1.5.3 + 9 tools；已发 registry latest + 本机全局升级 + 四宿主刷新。  【落地】 (完成 2026-09-12)
 
-### 归档
+### Archived
 - [[2026-09-10-todo归档]] 完成任务 30 条
 - [[2026-09-09-todo归档]] 完成任务 6 条
 - [[2026-09-08-todo归档]] 完成任务 22 条

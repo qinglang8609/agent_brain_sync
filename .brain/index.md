@@ -1,9 +1,8 @@
-# 🗂 图谱索引
+# 🗂 Graph Index
 
 本文件唯一入口。每新建/大改一个知识页，同步在此分类下加一行 `[[页面名]] — 一句话`。
 
-## 当前路线 (Roadmap)
-
+## Roadmap
 > **版本号与测试数不在此复述** —— 以 `abs --version` / npm registry 为准。
 > （曾写死过版本号与测试数，结果长期与实际不符 —— 复述第三方状态必然漂移。）
 > 本页只写**方向**。
@@ -16,6 +15,29 @@ lint 兜底（SOURCES-PILED-UP / DONE-PILED-UP，均带测试）。
 - 图谱长期维护（sources 归档节奏、concepts 拆分时机）；
 - 收尾注入的"只推一次"是否会漏掉长会话中的多次阶段性收尾；
 - 若 `.brain` 涨到 MB 级或需要结构化查询，再评估索引层（见 [[perf-fixed-overhead]]；候选不是 SQLite）。
+
+## Rules
+> 本项目已沉淀经验的硬摘要。违反过的代价各记在对应概念页，细节点进去看。
+
+- **未经用户核对不准发版/推送** —— `git push`、`npm publish`、`npm version`、
+  改 package.json 版本号、刷新四宿主，**一律先给用户看 diff + 测试结果 + 影响范围，等确认**。
+  用户说「收尾」/「修复」不等于授权发布。尤其 npm publish **不可覆盖**，发错只能再发一版补。
+- 绝不通读 `.brain/` —— 全读塞满窗口；要状态用 `abs load`，要主题用 `abs query`。
+- 读取侧输出不得随规模增长 —— 只给计数/摘要 + 逃生口。[[read-side-output-must-not-scale]]
+- 多文件汇总在沙箱里处理后只打印结论，别把原文拉进上下文。
+- 改记录属内容决策，工具只报不改。[[todo-rewrite-not-map]]
+- 已存在的人工内容一律不覆盖，机器只补空位。
+- 并发锁只给「读改写」；append / 原子写不妄加锁。[[file-write-locking]]
+- 判「等价」/ 引用新符号/ 新测试，必须真跑到，且跑破坏验证。[[symbol-reference-needs-real-run]]
+- 证据到手前不给结论。[[silent-data-loss-diagnosis]]
+- 写入侧收口，别在下游救。[[summary-truncation-hidden-cause]]
+- 只写做过/跑过/测过的事实，禁止脑补。
+- Done 必须带结语 + 完成日期（缺日期会永远迁不出）。
+- 加前置守卫前先问「谁在非交互地调我」。[[guard-blocks-noninteractive-callers]]
+- 改一份不算改 —— 多副本要全改，已加载进程要重启。[[deploy-artifact-copies]]
+- 不在子目录/非项目根跑（不向上搜索）。
+- 坏链 = 掰断接力棒；`abs lint` 必须 0 problem。
+- index 行不承载归因。[[index-row-not-attribution]]
 
 ## Concepts
 - [[abs-install-layout]] — 全局安装形态: npm link 单一真源 + hook/MCP 烧绝对路径
@@ -36,14 +58,18 @@ lint 兜底（SOURCES-PILED-UP / DONE-PILED-UP，均带测试）。
 - [[guard-blocks-noninteractive-callers]] — 加前置守卫前先问「谁在非交互地调我」: hook/CI 调的内部命令一律放行, 否则守卫失效是静默的(报错被吞); 必配一条「hook 路径不被拦」的测试
 - [[index-row-not-attribution]] — index 行是指针不是记录: 塞作者名会从"创建者"漂成"最后改的人"; 归因只写页 frontmatter, 要在读取侧展示
 - [[read-side-output-must-not-scale]] — 读状态的入口不得打印无上限增长的数据: 同一根因连续踩三次(Done区 68.8% / log条目 / index清单 64%); 只给计数+逃生口, 判据是"会不会随规模增长"而非"现在是不是最大"
+- [[file-shape-check-on-load]] — load 顺手核对 index/log/todo 形状: 缺分区→自动补建(机械可判定); 无头(H1不符)→只提醒不自动改(结构可能整体脱轨, 机器猜错等于毁数据); 多分区→不管; 正常时零字节
+
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 - [[fanchao]] — 使用者；技术栈 / 特点·工作习惯 / 名下踩过的坑
+
 ## Sources
 - [[2026-09-12-mcp-陈旧路径不只在一个文件]] — MCP 陈旧路径不只在一个文件: pi-mcp-adapter 的 hostConfigDiscovery 把 9 个外部 store…
 - [[2026-09-12-agents-skills]] — ~/.agents/skills/ 不是无主目录, 是 skills CLI(npx skills, ~/.agents/.skill-lock.json…
 - [[2026-09-10-todo归档]] — Todo 归档：2026-09-10，共 30 条已完成任务
 ## Syntheses
+
 ## Sessions
 - [[log-2026-09-10]] — 修 Co​dex 安装崩溃(对象 vs 扁平数组) + 补收尾自动化(pi agent_end 注入) + lint 反向死引用检查; 含自动化形同虚设的根因剖析
 - [[2026-09-08-todo归档]] — Todo 归档：2026-09-08，共 22 条已完成任务
