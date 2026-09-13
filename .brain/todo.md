@@ -1,6 +1,7 @@
 # 📋 Todo Board
 ## Backlog
 ## Today / In Progress
+- [ ] SKILL-DRIFT [[fanchao]] — skill 双份漂移：仓库 skill/SKILL.md（中文分区名）vs 安装版 ~/.claude/skills/abs-agent-brain-sync/SKILL.md（英文分区名）不一致。下次改 skill 极易改错一份。建议：安装器从仓库 skill/SKILL.md 单向覆盖，或文档化'安装版为准、仓库版只是模板'。 (认领 2026-09-13)
 ## Blocked
 ## Done
 ### 2026-09-13
