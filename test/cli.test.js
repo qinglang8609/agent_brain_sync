@@ -85,7 +85,7 @@ describe('cli: todo', () => {
   test('无子命令 = 看板, 零退出', async () => {
     const r = await run(['todo']);
     assert.equal(r.code, 0, r.stderr);
-    assert.ok(/Todo 看板|Today \/ In Progress/.test(r.stdout), r.stdout);
+    assert.ok(/Todo Board|Today \/ In Progress/.test(r.stdout), r.stdout);
   });
 
   // 回归: 曾经 `abs todo add x` 静默打印看板、exit 0、不写盘(用户以为成功)
@@ -626,7 +626,7 @@ describe('cli: 未设姓名时的主动提醒', () => {
     assert.ok(r.stdout.includes('尚未设置使用者姓名'), `load 应提醒: ${r.stdout.slice(0, 300)}`);
     // 提醒应在最前（开机第一屏）
     const warnIdx = r.stdout.indexOf('尚未设置使用者姓名');
-    const routeIdx = r.stdout.indexOf('当前路线');
+    const routeIdx = r.stdout.indexOf('Roadmap');
     assert.ok(warnIdx < routeIdx, '提醒应出现在路线之前');
   });
 

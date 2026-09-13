@@ -45,28 +45,135 @@ export async function ensureTodo(brainRoot) {
   return p;
 }
 
+/** 分区名常量（单一真源）。改名时只改这里 —— 之前散在 20+ 处，一改就漏。
+ * 旧名（中文）留在 LEGACY_SECTION_RENAMES 作迁移用。 */
+export const SEC = {
+  backlog: 'Backlog',
+  today: 'Today / In Progress',
+  blocked: 'Blocked',
+  done: 'Done',
+  archived: 'Archived',   // Done 区内部的归档标记区（原 '### 归档'）
+  undated: 'Undated',     // Done 区内部无完成日期的尾组（原 '### （未标日期）'）
+};
+
+/** 旧名 → 新名。供 `abs init --repair` 一次性迁移（幂等）。
+ * 只改匹配整行的标题，不动正文；不做模糊替换（防误改正文里提到的旧名）。 */
+export const LEGACY_SECTION_RENAMES = [
+  // H1（文件标题）
+  ['# 🗂 图谱索引', '# 🗂 Graph Index'],
+  ['# 🗒 操作日志', '# 🗒 Activity Log'],
+  ['# 📋 Todo 看板', '# 📋 Todo Board'],
+  // ## 分区
+  ['## 当前路线 (Roadmap)', '## Roadmap'],
+  ['## Done（只留近期，旧的迁 log.md/快照）', '## Done'],
+  // ### 区内分组标题
+  ['### 归档', '### Archived'],
+  ['### （未标日期）', '### Undated'],
+];
+
+/** 把文件里的旧分区名就地改成新名（只改匹配整行的标题，不动正文）。
+ * 返回 { text, changed:[旧名→新名] }。幂等：已改过的再跑 changed 为空。 */
+export function renameLegacySections(text) {
+  const lines = String(text ?? '').split('\n');
+  const changed = [];
+  const out = lines.map((l) => {
+    const t = l.trim();
+    for (const [oldN, newN] of LEGACY_SECTION_RENAMES) {
+      if (t === oldN) { changed.push(`${oldN} → ${newN}`); return newN; }
+    }
+    return l;
+  });
+  return { text: out.join('\n'), changed };
+}
+
 export function todoTemplate() {
-  return [
-    '# 📋 Todo 看板',
-    '## Backlog',
-    '- [ ] 待办任务',
-    '## Today / In Progress',
-    '## Blocked',
-    '## Done（只留近期，旧的迁 log.md/快照）',
-    '',
-  ].join('\n');
+  // 由 rebuildStructure 生成，保证“模板”与“重排结果”逐字节一致
+  // （否则 load 会把新建的模板又重排一次 = 无意义的写盘）。
+  return rebuildStructure(
+    ['# 📋 Todo Board', '## Backlog', '- [ ] 待办任务', '## Today / In Progress', '## Blocked', '## Done'].join('\n'),
+    { h1: '# 📋 Todo Board', order: ['## Backlog', '## Today / In Progress', '## Blocked', '## Done'] },
+  ).text;
 }
 
 /** 归一化 todo.md 分区：老格式（In Progress/Todo）迁移为 B4 定稿格式（Backlog→Today / In Progress→Blocked→Done）。
  * 幂等：已是新格式则原样返回。迁移原则——老 "In Progress" 内容进 "Today / In Progress"，老 "Todo" 内容进 "Backlog"。 */
 export const TODO_SECTIONS = ['Backlog', 'Today / In Progress', 'Blocked', 'Done'];
 
+/** 结构重建（B 档）：以标准分区表为准重排整个文件。
+ *
+ * 规则（保证内容不丢、不挪错）：
+ *   1. 按 spec.order 顺序输出标准分区，每个分区下放**归属于它**的内容行；
+ *   2. 归属判定：按行所处的原分区归入对应标准分区；旧名先按 spec.renames 归一；
+ *   3. **非标准分区**（人自加的，如 `## 备忘`）→ 内容连同它自己的标题一起**原样保留在末尾**，
+ *      绝不合入已有标准分区（机器不知道它的语义，猜错就是挪错内容）；
+ *   4. 自由正文（不属于任何分区的行，如 H1 后的说明句）保留在 H1 之后；
+ *   5. 幂等：已是标准结构 → 输出逐字节相同。
+ *
+ * 返回 { text, changed }；changed 为空的描述列表（空=无需改盘）。 */
+export function rebuildStructure(text, spec) {
+  const s = String(text ?? '');
+  const lines = s.split('\n');
+  const h1At = lines.findIndex((l) => l.trim().startsWith('# '));
+  const bodyStart = h1At === -1 ? 0 : h1At + 1;
+  const bucket = new Map();   // 标准分区名 -> 内容行
+  const extras = [];          // [{ title, lines }] 非标准分区，原样保留到末尾
+  const preamble = [];        // H1 与第一个 ## 之间的自由正文
+  let curStd = null;          // 当前在的标准分区名（null = 前言）
+  let curExtra = null;        // 当前在的额外分区对象
+  for (let i = bodyStart; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^#{2,3}\s/.test(l)) {
+      const t = l.trim();
+      const renamed = (spec.renames?.find(([o]) => o === t) || [, t])[1];
+      if (spec.order.includes(renamed)) {
+        curStd = renamed;
+        curExtra = null;
+        if (!bucket.has(curStd)) bucket.set(curStd, []);
+      } else {
+        curExtra = { title: renamed, lines: [] };
+        extras.push(curExtra);
+        curStd = null;
+      }
+      continue;
+    }
+    if (curExtra) curExtra.lines.push(l);
+    else if (curStd) bucket.get(curStd).push(l);
+    else preamble.push(l);
+  }
+  const out = [spec.h1];
+  const pre = trimBlank(preamble);
+  if (pre.length) out.push('', ...pre);
+  // 空分区之间不插空行（否则每次首跑都会“把空行加进去”而写盘一次，
+  // 而 load 是好读命令 —— 不该因纯排版差异去改文件）。
+  // 有内容的第一个分区与前言之间保留一个空行（排版），其余紧凑。
+  for (const [idx, name] of spec.order.entries()) {
+    const body = trimBlank(bucket.get(name) || []);
+    if (body.length || (idx === 0 && pre.length)) out.push('', name, ...body);
+    else out.push(name);
+  }
+  for (const e of extras) {
+    const body = trimBlank(e.lines);
+    out.push('', e.title);
+    if (body.length) out.push(...body);
+  }
+  const next = out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '') + '\n';
+  return { text: next, changed: next === s ? [] : ['结构按标准重排'] };
+}
+
+/** 去掉首尾空行，不动中间（保留用户的分段）。 */
+function trimBlank(arr) {
+  const a = [...arr];
+  while (a.length && !a[0].trim()) a.shift();
+  while (a.length && !a[a.length - 1].trim()) a.pop();
+  return a;
+}
+
 export function normalizeTodo(text) {
   const lines = text.split('\n');
   const has = (name) => lines.some((l) => l.trim() === `## ${name}`);
   if (has('Backlog') || has('Today / In Progress')) return text; // 已是新格式
   if (!has('In Progress') && !has('Todo')) return text;          // 不是老格式，不动
-  const out = ['# 📋 Todo 看板'];
+  const out = ['# 📋 Todo Board'];
   const grab = (name) => {
     const items = [];
     let inSec = false;
@@ -83,7 +190,7 @@ export function normalizeTodo(text) {
   out.push('## Backlog', ...todo.length ? todo : []);
   out.push('## Today / In Progress', ...inprog.length ? inprog : []);
   out.push('## Blocked', ...blocked.length ? blocked : []);
-  out.push('## Done（只留近期，旧的迁 log.md/快照）', ...done.length ? done : []);
+  out.push('## Done', ...done.length ? done : []);
   return out.join('\n');
 }
 
@@ -156,7 +263,7 @@ function renderDoneGroups(units) {
   const dates = [...byDate.keys()].sort().reverse(); // 新日期在前
   const out = [];
   for (const d of dates) out.push(`### ${d}`, '', ...byDate.get(d).flatMap((u) => u.lines), '');
-  if (undated.length) out.push('### （未标日期）', '', ...undated.flatMap((u) => u.lines), '');
+  if (undated.length) out.push(`### ${SEC.undated}`, '', ...undated.flatMap((u) => u.lines), '');
   return out;
 }
 
@@ -206,11 +313,11 @@ export function collapseDone(text) {
 }
 
 /** 归档标记区标题。它在 Done 区内部、日期分组之后，形如：
- *   ### 归档
+ *   ### Archived
  *   - [[2026-09-10-todo归档]] 完成任务 10 条
  * 这区不是任务行，不能被 parseDoneUnits 吃挂，否则 markDone 重建 Done 时会把它丢掉。
  * 故先切出去当"不透明区域"原样保留。 */
-const ARCHIVE_HEADING = '### 归档';
+const ARCHIVE_HEADING = `### ${SEC.archived}`;
 
 /** 把 Done 主体行切成 { groupLines, archiveLines }：把 `### 归档` 区当"不透明块"原样保留。
  * 注意不能简单"从标题切到文件尾" —— 否则一旦有日期组落在归档区之后（手改/旧数据），

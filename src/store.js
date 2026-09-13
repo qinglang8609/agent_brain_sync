@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
 import { requireUser, atTag, getUser } from './userconfig.js';
-import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone } from './todo.js';
+import { addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, moveBlocked, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 
@@ -108,23 +108,112 @@ function resolveProjectDir(dir) {
 }
 
 export function indexTemplate() {
-  return [
-    '# 🗂 图谱索引',
-    '',
-    '本文件唯一入口。每新建/大改一页，同步在此分类下加一行 [[页面名]] — 一句话。',
-    '',
-    '## 当前路线 (Roadmap)',
-    '## Concepts',
-    '## Entities',
-    '## Sources',
-    '## Syntheses',
-    '## Sessions',
-    '',
-  ].join('\n');
+  // 同 todoTemplate：由 rebuildStructure 生成，模板 = 重排结果，不会来回抖。
+  return rebuildStructure(
+    ['# 🗂 Graph Index', '',
+      '本文件唯一入口。每新建/大改一页，同步在此分类下加一行 [[页面名]] — 一句话。', '',
+      '## Roadmap', '## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'].join('\n'),
+    {
+      h1: '# 🗂 Graph Index',
+      order: ['## Roadmap', '## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'],
+    },
+  ).text;
 }
 
 export function logTemplate() {
-  return ['# 🗒 操作日志', '', '## [YYYY-MM-DD] ingest | 沉淀 <slug>', ''].join('\n');
+  return ['# 🗒 Activity Log', '', '## [YYYY-MM-DD] ingest | 沉淀 <slug>', ''].join('\n');
+}
+
+// ---------- 结构核对: load 每次都读 index/log/todo，顺手核形状 ----------
+/** 标准形状表（与 indexTemplate/logTemplate/todoTemplate 同源）。
+ * 标记不一致 = 直接改成标准（“能自己处理的先处理”）。
+ * 只按**整行精确匹配**改标题，绝不动正文 —— 不做模糊替换，否则正文里提到的旧名会被误改。 */
+export const BRAIN_SHAPE = {
+  'todo.md': {
+    h1: '# 📋 Todo Board',
+    order: ['## Backlog', '## Today / In Progress', '## Blocked', '## Done'],
+  },
+  'log.md': {
+    h1: '# 🗒 Activity Log',
+    order: [],   // log 无固定分区（条目行自带时间，倒序）
+  },
+  'index.md': {
+    h1: '# 🗂 Graph Index',
+    order: ['## Roadmap', '## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'],
+  },
+};
+
+/** 旧标记 → 标准标记。load 发现就改（幂等）。含 H1 与分区/分组标题的旧名。 */
+export const LEGACY_MARKS = [
+  ['# 🗂 图谱索引', '# 🗂 Graph Index'],
+  ['# 🗒 操作日志', '# 🗒 Activity Log'],
+  ['# 📋 Todo 看板', '# 📋 Todo Board'],
+  ['# 操作日志', '# 🗒 Activity Log'],
+  ['# 图谱索引', '# 🗂 Graph Index'],
+  ['# Todo 看板', '# 📋 Todo Board'],
+  ['## 当前路线 (Roadmap)', '## Roadmap'],
+  ['## Done（只留近期，旧的迁 log.md/快照）', '## Done'],
+  ['### 归档', '### Archived'],
+  ['### （未标日期）', '### Undated'],
+];
+
+/** 把不符标准的标记改成标准（按整行精确匹配，不碰正文）。
+ * log.md 特殊：它没有固定分区，只有条目行 —— 不做结构重排，只改 H1。
+ * 返回 { text, changed }；无不一致时 changed 为空。 */
+export function fixMarks(text, spec) {
+  const lines = String(text ?? '').split('\n');
+  const changed = [];
+  const h1At = lines.findIndex((l) => l.trim().startsWith('# '));
+  if (h1At !== -1 && lines[h1At].trim() !== spec.h1) {
+    const cur = lines[h1At].trim();
+    const hit = LEGACY_MARKS.find(([o]) => o === cur && o.startsWith('# '));
+    if (hit) { lines[h1At] = spec.h1; changed.push(`${cur} → ${spec.h1}`); }
+  }
+  for (let i = 0; i < lines.length; i++) {
+    if (i === h1At) continue;
+    const t = lines[i].trim();
+    const hit = LEGACY_MARKS.find(([o]) => o === t && !o.startsWith('# '));
+    if (hit) { lines[i] = hit[1]; changed.push(`${hit[0]} → ${hit[1]}`); }
+  }
+  return { text: lines.join('\n'), changed };
+}
+
+/**
+ * 核对 index/log/todo 的结构，不符就按标准重建（B 档：重排分区 + 内容按归属回填）。
+ * 它每次 load 都跑，所以改动立即生效，不必等额外命令。
+ *
+ * 边界（内容安全）：
+ *   - 只动**标题行位置**与缺失分区的空位，已有内容行按原归属搬运，不改写；
+ *   - **非标准分区原样留在末尾**（人自加的区不合入，机器不猜语义）；
+ *   - log.md 不做重排（无固定分区，条目自带时间倒序）；
+ *   - 锁内重算 + “改了才写盘”，幂等。
+ *
+ * 不抛错（load 不能因核对失败而挂）。返回 { fixed:[描述], warn:[描述] }。
+ */
+export async function checkBrainShape(root) {
+  const fixed = [];
+  const warn = [];
+  for (const [file, spec] of Object.entries(BRAIN_SHAPE)) {
+    const p = brainPath(root, file);
+    let text;
+    try { text = await fs.readFile(p, 'utf8'); } catch { continue; }
+    if (!text.trim()) continue;
+    const l1 = (text.split('\n')[0] || '').trim();
+    const knownH1 = l1 === spec.h1 || LEGACY_MARKS.some(([o]) => o === l1 && o.startsWith('# '));
+    let changed = [];
+    await editFile(p, (cur) => {
+      if (cur === null) return SKIP;
+      const r = spec.order.length
+        ? rebuildStructure(cur, { ...spec, renames: LEGACY_MARKS.filter(([o]) => o.startsWith('## ') || o.startsWith('### ')) })
+        : fixMarks(cur, spec);
+      if (!r.changed.length) return SKIP;
+      changed = r.changed;
+      return { text: r.text };
+    }).catch(() => {});
+    if (changed.length) fixed.push(`${file}: ${changed.join('; ')}`);
+    if (!knownH1) warn.push(`${file}: 标题非标准（读到 "${clip(l1, 24) || '(空)'}"）`);
+  }
+  return { fixed, warn };
 }
 
 // ---------- board: 看板 ----------
@@ -161,6 +250,9 @@ async function listBrainFiles(root) {
 // ---------- load: 开机读状态 ----------
 export async function cmdLoad({ dir }) {
   const root = await requireBrain(dir || process.cwd());
+  // 结构核对先跑：load 每回都要读这三个文件，顺手把它们形状摆正（缺分区）或提个醒（无头）。
+  // 正常时完全静默、零字节，不增加 load 体积（load 已被压缩到 ~1.8k token）。
+  const shape = await checkBrainShape(root).catch(() => ({ fixed: [], warn: [] }));
   const todo = await readTodo(root);
   const index = await readIfExists(brainPath(root, 'index.md'));
   const log = await readIfExists(brainPath(root, 'log.md'));
@@ -168,6 +260,14 @@ export async function cmdLoad({ dir }) {
   const sections = [
     `📂 abs → 项目: ${root}`,
   ];
+  if (shape.fixed.length || shape.warn.length) {
+    const rows = [
+      ...shape.fixed.map((a) => `  ✓ 已补: ${a}`),
+      ...shape.warn.map((a) => `  ⚠ ${a}`),
+    ];
+    if (shape.warn.length) rows.push('  （无头文件不自动改：结构可能整体脱轨，请手工对齐 .brain/ 模板）');
+    sections.push('--- 文件形状核对 ---', ...rows, '');
+  }
   // 未设姓名时开场就提醒 —— load 是开机第一屏，不在这里提，
   // 用户要撞到第一次写操作才知道（init/load 一路沉默）。
   if (!(await getUser())) {
@@ -178,10 +278,13 @@ export async function cmdLoad({ dir }) {
     );
   }
   sections.push(
-    '--- 当前路线 (index.md) ---',
+    // Rules 单独成段且放在最前（仅次于项目行/滞留）：它是硬规则，不是普通清单。
+    // 坑: 曾在 index 段内与页面清单平铺 —— AI 会当普通清单划过，而它每条都是付过代价的。
+    ...(rulesSection(index) ? [rulesSection(index), ''] : []),
+    '--- Roadmap (index.md) ---',
     collapseIndex(index) || '(index.md 为空)',
     '',
-    '--- Todo 看板 (todo.md) ---',
+    '--- Todo Board (todo.md) ---',
     collapseDone(todo).text || '(todo.md 为空)',
     '\n（Done 已按日期折叠计数；明细: abs todo --full）',
     '',
@@ -203,6 +306,91 @@ export async function cmdLoad({ dir }) {
     );
   }
   return sections.join('\n');
+}
+
+// ---------- Rules: index.md 里的硬规则区 ----------
+/** index.md 的 `## Rules` 区名与上限。 */
+export const RULES_HEADING = '## Rules';
+export const RULES_MAX = 30; // 超过就 lint 报：它属于“被读到才有价值”的区，不能无界增长
+
+/** 提取 index.md 里的 Rules 区条目（不含标题）。返回 { items:[行], body, found }。 */
+export function readRules(indexText) {
+  const lines = String(indexText || '').split('\n');
+  const i = lines.findIndex((l) => l.trim() === RULES_HEADING);
+  if (i === -1) return { items: [], body: '', found: false };
+  const rest = lines.slice(i + 1);
+  const j = rest.findIndex((l) => /^##\s/.test(l));
+  const body = rest.slice(0, j === -1 ? rest.length : j);
+  return { items: body.filter((l) => l.trim().startsWith('- ')), body: body.join('\n').trim(), found: true };
+}
+
+/** load 里 Rules 的呈现：带独立段头，条目原样（不折、不截）。无条目则不占字节。 */
+function rulesSection(indexText) {
+  const { items, body, found } = readRules(indexText);
+  if (!found || !body) return '';
+  // 有引言句（> 开头）时一并带上，它解释了这个区是干什么的。
+  const intro = body.split('\n').filter((l) => l.trim().startsWith('>')).join('\n');
+  return [
+    `--- Rules (硬规则，先读) — ${items.length} 条 ---`,
+    intro,
+    ...items,
+  ].filter((x) => x !== '').join('\n');
+}
+
+/**
+ * `abs rule` —— 读写 index.md 的 Rules 区。
+ * 无参 = 列出（只给规则，不被 load 的其它内容占上下文）。
+ * add <一句话> = 追加一条（走锁写、幂等去重）。
+ * 门槛：只该放“违反会丢数据/静默失效/白干活”级规律；长句会被拒并指向概念页。
+ */
+export async function cmdRule({ dir, action, text }) {
+  let root;
+  try { root = await requireBrain(dir || process.cwd()); } catch {
+    return '未找到 .brain/ 图谱。先在项目根运行: abs init';
+  }
+  const p = brainPath(root, 'index.md');
+  if (!action || action === 'list' || action === 'show') {
+    const { items, found } = readRules(await readFileOrNull(p));
+    if (!found) return `index.md 无 \`${RULES_HEADING}\` 区（跑 abs load 会自动补位）`;
+    if (!items.length) return `${RULES_HEADING} 区为空（add "一句话" 追加）`;
+    return [`${RULES_HEADING} — ${items.length} 条:`, ...items].join('\n');
+  }
+  if (action !== 'add') {
+    return `用法: abs rule            列出硬规则\n      abs rule add "一句话" [--note "补充"]`;
+  }
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '用法: abs rule add "一句话硬规则"';
+  // 门槛：一句话说完。太长说明该写概念页，Rules 只放指针。
+  if (clean.length > 120) {
+    return `✗ 太长（${clean.length} 字符 > 120）—— Rules 只放一句话摘要，展开写成概念页，\n  这里改成短句 + [[页面名]] 链接。`;
+  }
+  let added = null;
+  await editFile(p, (cur) => {
+    if (cur === null) return SKIP;
+    const lines = cur.split('\n');
+    const i = lines.findIndex((l) => l.trim() === RULES_HEADING);
+    if (i === -1) return SKIP; // 无该区不擅自建（load 会补位）
+    if (lines.some((l) => l.trim() === `- ${clean}`)) return SKIP; // 幂等：同句不重复
+    // 插在该区最后一条条目之后（保序、不搅动其它条目）
+    let at = i + 1;
+    for (let k = i + 1; k < lines.length; k++) {
+      if (/^##\s/.test(lines[k])) break;
+      if (lines[k].trim().startsWith('- ')) at = k + 1;
+    }
+    lines.splice(at, 0, `- ${clean}`);
+    added = clean;
+    return { text: lines.join('\n') };
+  });
+  if (added === null) return `• 已有同句或 index.md 无 ${RULES_HEADING} 区（跳过）`;
+  const { items } = readRules(await readFileOrNull(p));
+  const warn = items.length > RULES_MAX
+    ? `\n⚠ Rules 已 ${items.length} 条 > ${RULES_MAX}：考虑把其中几条提炼成概念页（跑 abs lint 会报）`
+    : '';
+  return `✓ 已加硬规则（共 ${items.length} 条）\n  - ${clean}${warn}`;
+}
+
+async function readFileOrNull(p) {
+  try { return await fs.readFile(p, 'utf8'); } catch { return ''; }
 }
 
 /** index.md 在 `abs load` 里的折叠形态：保留「当前路线」（那是 load 要传达的状态，
@@ -231,8 +419,10 @@ export function collapseIndex(text) {
     if (m) {
       flush();
       const name = m[1].trim();
-      if (/路线|Roadmap/i.test(name)) {
-        out.push(l);   // 「当前路线」是内容不是清单：原样保留
+      // 「Roadmap」与「Rules」都是**内容**不是清单：原样保留。
+      // Rules 区尤其不能折 —— 它的全部价值就是被读到；折成"（N 页）"等于把它静默删掉。
+      if (/路线|Roadmap|Rules?|规则/i.test(name)) {
+        out.push(l);
         mode = null;
       } else {
         mode = name;   // 页面清单分区：只计数
@@ -460,7 +650,7 @@ export async function cmdLog({ dir, title, kind = 'dev' }) {
   // 一眼先看到谁做的（与 todo 行 `ID @name — 说明` 排版对齐）。
   const line = `## [${stamp}] ${atTag(who)} ${kind} | ${clean}`;
   await editFile(p, (cur) => {
-    const text = cur ?? '# 🗒 操作日志\n';
+    const text = cur ?? '# 🗒 Activity Log\n';
     // 倒序：新行插在标题后（若已是模板占位行则替换它）
     const lines = text.split('\n');
     const headerIdx = lines.findIndex((l) => l.startsWith('#'));
@@ -541,7 +731,7 @@ async function markDone(file, id, kind = '落地') {
 export async function cmdShow({ dir, view, full }) {
   const v = String(view || '').toLowerCase();
   if (!['todo', 'index', 'log'].includes(v)) {
-    return '用法: abs <todo|index|log>  — todo=看板(原 board), index=图谱索引, log=操作流水';
+    return '用法: abs <todo|index|log>  — todo=看板(原 board), index=Graph Index, log=操作流水';
   }
   const root = await requireBrain(dir || process.cwd());
   const p = brainPath(root, `${v === 'todo' ? 'todo' : v}.md`);
@@ -804,6 +994,21 @@ export async function cmdLint({ dir }) {
 
   const nsrc = pages.filter((p) => p.dir === 'sources').length;
   if (nsrc > 10) issues.push(`SOURCES-PILED-UP: sources/ has ${nsrc} files > 10; 提炼归档旧 source`);
+
+  // Rules 区：它的价值在“少而重”，且不被折叠（load 每次都全量读）。
+  // 无上限增长 = 把 load 又撑回去（同 Done / index 清单的膨胀根因）。
+  {
+    const idxTxt = await readFileOrNull(join(vault, 'index.md'));
+    const { items, found } = readRules(idxTxt);
+    if (found && items.length > RULES_MAX) {
+      issues.push(`RULES-PILED-UP: Rules 区 ${items.length} 条 > ${RULES_MAX}；把长条目提炼成概念页，这里只留一句 + 链接`);
+    }
+    // 该区是 load 必读的硬规则清单，条目却写得像段落 → 提醒改短句。
+    const longOnes = items.filter((l) => l.trim().length > 160);
+    if (longOnes.length) {
+      issues.push(`RULES-TOO-LONG: Rules 区 ${longOnes.length} 条超 160 字符（如 "${clip(longOnes[0].trim(), 40)}"）；展开写进概念页，这里只留短句 + [[链接]]`);
+    }
+  }
 
   // Done 区堆积：它无上限增长，且 `abs todo`/`abs load` 每次全量打印 → 越积越难用。
   // （与 hooks.log/wrapup.log 同类问题；那两处有轮转，这里靠 `abs todo archive`。）

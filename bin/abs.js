@@ -2,7 +2,7 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdTeardownCheck, cmdTodoArchive } from '../src/store.js';
+import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive } from '../src/store.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
@@ -186,6 +186,8 @@ const usage = `abs — agent-brain-sync 记忆工具
                             归档 Done 区旧日期组 → sessions/<日期>-todo归档.md
                             (默认保留近 3 天; 任一天有未完成则整天不归档)
   abs lint                   图谱体检 (死链/孤岛/超尺寸/堆积)
+  abs rule                   列出 index.md 的 ## Rules 硬规则
+  abs rule add "一句话"      追加一条硬规则 (只放违反会丢数据/静默失效级的；展开写概念页)
   abs config [show]          查看使用者姓名 (标记作者用)
   abs config set user <名字> 设置使用者姓名 → ~/.abs/config.json
                              未设置时写操作(todo/log/note)会报错要求先设置
@@ -384,6 +386,15 @@ async function main() {
       }
       case 'config': {
         console.log(await cmdConfig({ sub: opts._[0], value: opts._.slice(1).join(' ') }));
+        break;
+      }
+      case 'rule': {
+        // abs rule            列出
+        // abs rule add "..."  追加一条
+        const [sub, ...rest3] = opts._;
+        const isAdd = sub === 'add';
+        if (!isAdd && sub) throw new Error(`✗ 未知子命令 "${sub}"\n  用法: abs rule / abs rule add "一句话"`);
+        console.log(await cmdRule({ dir: opts.dir, action: isAdd ? 'add' : 'list', text: rest3.join(' ') }));
         break;
       }
       case 'query': {

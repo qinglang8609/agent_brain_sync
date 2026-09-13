@@ -11,6 +11,36 @@ Obsidian 可直接打开的 Markdown 图谱（`.brain/`）做统一落点。
 **骨架/任务/暂存/检索/体检走 abs 工具（不手工建骨架、不手工登记任务）；深提炼（把暂存经验
 写成 concept/entity 页）必须手工——那是判断力，abs 不替你判断什么值得沉淀。**
 
+## CLI 命令速查（`abs`，完整帮助：`abs help`）
+
+```bash
+# 读
+abs load                     # 开机读状态（Roadmap + Rules + todo + 最新 log）
+abs todo                     # 看板（Done 折成计数；明细 abs todo --full）
+abs index / abs log          # 完整 index.md / log.md
+abs status                   # 当前项目 + 图谱概要
+abs query <词1> [词2 …]      # 检索 .brain/ 知识页（多词 OR）
+abs lint                     # 图谱体检（死链/孤岛/超限/堆积/Rules 超限）
+
+# 写
+abs todo add <id> --note "做什么"              # 登记任务（start 同义）
+abs todo note <id> --note "断点/进度"           # 实时落 ↳ 断点 行
+abs todo blocked <id> --note "卡点原因"         # 移入 Blocked
+abs todo done <id> [--as 落地|否决|仅方案]      # 完成（默认 落地）
+abs log "完成 X：…"                            # 记一行工作成果（无参=查看）
+abs note "经验一句话" [--tags 坑,docker]        # 经验实时暂存 → sources/
+abs rule [add "一句话"]                        # 读写 index.md 的 ## Rules 硬规则
+
+# 维护
+abs todo archive [--keep-days N] [--dry-run]   # 归档 Done 旧日期组 → sessions/
+abs init [--repair]                            # 建图谱；--repair 只补缺不覆盖
+abs config [set user <名字>]                   # 使用者姓名（写操作需先设）
+```
+
+> **agent 读写优先走 MCP**（`abs_load`/`abs_task`/`abs_note`/`abs_query`/`abs_lint`/
+> `abs_rule`）—— 常驻 ~2ms，比 bash 跑 CLI（每次起 node 进程 27ms）快一个量级。
+> CLI 留给「人手动查看」。`abs wrapup` / `abs teardown-check` 是 hook 内部命令，不需手动调。
+
 ## 触发总入口（每次命中技能，第一步先走这里）
 
 技能被触发（用户问话、开新会话、或说 `abs ...`）时，**第一步永远是下面这条链**，
@@ -57,100 +87,82 @@ Obsidian 可直接打开的 Markdown 图谱（`.brain/`）做统一落点。
 
 > 为什么：方案先过目能省掉整轮返工；登记让跨会话可续；"问开工"把决定权留在用户手里。
 > **这不是拖延** —— 总结方案本身就是工作，做完再问。
+## 图谱定位
 
-## 使用者姓名（作者标记）
+`.brain/` 放**项目根**，一个项目一份。所有命令只认**当前目录**的 `.brain/`（在项目根运行，不传路径）。
+**不向子目录归属，也不向上搜索**（上爬会命中 `~/.brain`，把无关项目静默挂错）。宁可报错也不猜。
+`abs status` 显示当前定位。
 
-图谱需要知道「谁登记的」。写操作（`todo add/note/blocked/done`、`log`、`note`）会检查：
-**未设置姓名则报错并给设置命令**，不默默落盘无名条目。
+## `.brain/` 怎么组织（每个文件/分区做什么、怎么用）
 
-```bash
-abs config set user <你的名字>     # 写入 ~/.abs/config.json，一次即可
-abs config                        # 查看当前姓名
-ABS_USER=<名字> abs todo add ...   # 临时覆盖（CI/多身份），不改落盘配置
-```
+骨架由 `abs init` 生成（`--repair` 只补缺不覆盖）。
 
-设置后自动标记（**作者是人页的 wikilink，点得进去看技术栈/特点**）：
-- `todo.md`：`- [ ] TASK-ID [[fanchao]] — 说明 (认领 2026-09-12)`（作者紧跟 id，扫板先看到人）
-- `log.md`：`## [2026-09-12 13:17] [[fanchao]] dev | 完成 X`（作者前置于 kind）
-- `sources/`：frontmatter `author: fanchao`
+### `index.md` —— 图谱入口
 
-同时自动建人页 `.brain/entities/<name>.md`（含「技术栈 / 特点·工作习惯 / 名下踩过的坑」三个空槽），
-并登记进 `index.md` 的 Entities 区。**已存在则一律不动** —— 里面的内容是人工沉淀的，机器不许覆盖。
+| 分区 | 放什么 | 怎么用 |
+|---|---|---|
+| `## Roadmap` | 方向：已落地 / 下一阶段候选 | **写方向不写版本号**（复述第三方状态必然漂移）。有界的，load 原样展示 |
+| `## Rules` | 本项目铁律 | 见下 |
+| `## Concepts` `## Entities` `## Sources` `## Syntheses` `## Sessions` | 各类页的清单 | 每页一行 `- [[slug]] — 一句话`（`abs note`/建归档页会自动登记），load 里折成计数 |
 
-> **沉淀时顺手填人页**：经验提炼进 concepts/ 时，若观察到工程师的技术栈或判断倾向，
-> 写进 `entities/<name>.md`。这页是可积累的画像，不是一次性标签。
+**`## Rules` 区**：铁律清单，`abs load` 每次都全量读（代码里明确不折它）。
+- 一句一条；有概念页就用 `[[链接]]` 指过去，**不在此展开**。
+- 只有「违反会丢数据 / 静默失效 / 白干活」级才进 —— 普通经验进 `concepts/`。
+- 读写：`abs rule` / `abs rule add "一句话"`（>120 字符被拒）；`abs lint` 超 30 条会报。
 
-**只读命令不检查**（`load`/`todo`/`status`/`lint`/`query`/`index`/`log` 无参）——
-hook 在会话结束时非交互调 `abs wrapup`/`abs teardown-check`，那儿拦人会卡断收尾。
+### `log.md` —— 工作成果流水
 
-> `index.md` 的**经验行不加作者**：index 行是覆盖式更新的，作者会从"创建者"漂成"最后改的人"，
-> 语义不固定。要查谁写的，看该页自己的 `author`，或 `abs query` 输出（带每页 author）。
-> 历史条目**不回填**：旧行的裸 `@name` 只在原位更新时按原形态保留，不批量改写（原文/现场已不在，
-> 回填等于编造）。
+倒序一行摘要（`abs log "完成 X：…"`）。**只记成果，不收工具动作流水**（那在 `~/.abs/log/`）。
+load 只展示最新 5 条、每条按语义边界收口。
 
-## 图谱定位（一个项目一个 `.brain/`，abs 自动定位不用手工指定路径）
+### `todo.md` —— 活看板（进度唯一真源）
 
-`.brain/` 放项目根，一个项目只建一份。所有 `abs` 命令（`abs load/todo/note/task/query/lint...`）
-**只认当前目录的 `.brain/`**——必须在项目根目录（即 `.brain/` 所在处）运行，
-不用传路径。
+| 分区 | 放什么 |
+|---|---|
+| `## Backlog` | 想做但没开工 |
+| `## Today / In Progress` | 正在做 |
+| `## Blocked` | 卡住（附原因，`abs todo blocked`） |
+| `## Done` | 已完成，**必须带结语 `【落地/否决/仅方案】` + `(完成 YYYY-MM-DD)`** |
 
-**不在子目录自动归属，也不向上搜索**。原因是上爬会命中家目录 `~/.brain`
-（vault / 临时目录 / 任意路径都可能爬到），把无关项目静默挂到别人图谱上。
-宁可报错也不猜。多项目各自独立，各自 `cd` 到自己的根再跑。
+`abs todo done <id>` 会勾选并归位到 Done 的日期组顶部，断点（`↳` 行）随迁；
+Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已完成」的组迁到 `sessions/<日期>-todo归档.md`
+（任一天有未完成则整天不迁）。**什么时候动它见「进行中」一节。**
 
-monorepo 若多个子包各自独立交付，可各建一份 `.brain/`。`abs status` 显示当前定位到哪个项目。
+### `entities/` `concepts/` `sources/` `syntheses/` `sessions/`
 
-## 图谱长什么样（都在 `.brain/` 下）
+| 目录 | 放什么 | 命名 |
+|---|---|---|
+| `entities/` | 具名的**事物**（能说"它是什么"） | `Docker.md` |
+| `concepts/` | 可复用的**规律/坑**（能说"这么做就避坑"） | `docker-prisma-429.md` |
+| `sources/` | 实时经验**暂存**（`abs note` 自动落） | `YYYY-MM-DD-slug.md` |
+| `syntheses/` | **横向**选型/架构取舍（跨多个 entity/concept 的判断） | `synthesis-slug.md` |
+| `sessions/` | 会话快照 + `## 🪝 Next Session Hook`、todo 归档页 | `log-YYYY-MM-DD.md` |
 
-```
-.brain/
-├── index.md        # 总索引 + 当前路线(Roadmap)。入口。
-├── log.md          # 工作成果流水：完成 X 的一行摘要，倒序。不写工具动作。
-├── todo.md         # 动态看板：进行中/待办/阻塞/已完成。进度唯一真源。
-├── entities/       # 实体页：一个"具名事物"一页。
-├── concepts/       # 概念页：一个"可复用规律/坑"一页。
-├── sources/        # 暂存页：实时经验(abs note)落点。提炼完即归档/删。
-├── syntheses/      # 综合页：跨实体横向判断/选型/路线。
-└── sessions/       # 会话快照 + Next Session Hook。
-```
+归类拿不准时**默认 `concepts/`**。
 
-**骨架由 `abs init` 生成，不手工建。** 每个 `.brain/` 建一份，不逐子目录乱建。结构不完整时
-`abs init --repair` 只补缺、不覆盖已有文件。
+### 容量纪律（写任何页之前过四关）
 
-### 归类规则（新知识进哪类——判断力）
+图谱贵在**精**不在全，不过关就不写或压缩：
+1. **再命中**：下会话不知道这条会踩同坑/重做同决定？会→存，不会→不存。代码能 grep 到的一律不记。
+2. **单页上限**：`entities/concepts/syntheses` 单页 <150 行且 <8KB，超了拆或外链。
+3. **sources 是暂存**：提炼成规律后删/归档，并清掉指向它的引用（防死链）。
+4. **能不能用一行链接代替新增整页**？
 
-| 类别 | 放什么 | 命名 |
-|------|--------|------|
-| `entities/` | 具名的**事物**：`docker`、`auth-module` | TitleCase：`Docker.md` |
-| `concepts/` | 可复用的**规律/坑**：`docker-prisma-429` | kebab-case |
-| `sources/` | 实时经验**暂存**（`abs note` 自动落这里） | `YYYY-MM-DD-slug.md` |
-| `syntheses/` | **横向综合**：选型、架构取舍 | `synthesis-slug.md` |
-
-判断一问：能说"它是什么"→ entities；能说"这么做就避坑"→ concepts；卡住默认 concepts。
-
-## 容量纪律（最重要的节——别什么都往里扔）
-
-图谱贵在**精**不在全。写页前过四关，不过就不写或压缩：
-
-1. **再命中测试**：下个会话不知道这条，会不会踩同坑/重做同决定？会→存；不会→不存。
-   能从代码 grep 读出的细节一律不记。
-2. **单页硬上限**：`entities/ concepts/ syntheses/` 单页 <150 行/<5KB。超了拆或外链。
-3. **sources 是暂存不是存档**：提炼成规律后删/归档 source（同步清引用，防死链）。
-4. **写前压缩三问**：规律还是噪音？不记会怎样？能不能用一行链接已有页代替新增整页？
-
-`abs lint` 检查单页超限、sources 堆积、死链、index 漏列。
-
+`abs lint` 兜底：死链/孤岛/缺 frontmatter/超限/sources 堆积/index 漏列/Rules 超限。
 ## 开场：Init Sync（开工 / 默认续 todo）
 
 图谱已存在；收到第一个核心开发指令**之前**走这条链载入上下文：
 
-1. **读状态**：`abs load`（或 MCP `abs_load`）读 index 路线 + todo 看板 + 最近 log。
+1. **读状态**：`abs load`（或 MCP `abs_load`）读 index 路线 + Rules + todo 看板 + 最近 log。
+   > **开工前先看 `## Rules`** —— 那是本项目踩过坑后定下的硬规则，每条都是曾经付过代价的。
+   > 违反的代价一般是丢数据/静默失效/白干活，而它就在 load 输出里，没有理由不看。
+   >
    > **load 输出是折叠过的，不是全量。** 两个无上限增长的区块在读取侧收口：
    > - **Done 区** → 按日期计数（曾占 load 输出 68.8%，长历史项目上单次 load 吃掉 40% 上下文）
    > - **index 页面清单** → 各分区只给页数（concept 清单占 load 输出 64%，隨图谱线性增长）
    > - 「最近动作」每条按语义边界收口到 220 字符
    >
-   > **路线（Roadmap）区原样保留** —— 那是 load 要传达的状态本身。
+   > **路线(Roadmap) 与 Rules 两区原样保留** —— 那是 load 要传达的状态本身（代码里明确不折）。
    > 要全量明细：`abs todo --full` / `abs index`，或直接读 `.brain/` 文件、
    > `.brain/sessions/<日期>-todo归档.md`。
 2. **对账滞留（强制，别跳过）**：若 `abs load` 顶部出现 `⏳ 上会话滞留`，说明上会话有任务做完/做到一半就断了。**先收尾再开工**：
@@ -158,68 +170,44 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`。`abs st
    - 还没做完 → `abs todo note <id> --note "接到哪/改到哪个文件"` 补断点（别空手续接）。
    滞留没清完就不算接上了状态——这是「任务做完没进 Done」的根治动作。
 3. **读命中页**：按关键词在 index 定位 → 读对应 concepts/entities 全文。
-   > ⚠️ **绝不通读 `.brain/`**。它是一个不断长大的知识图谱，当前仓库 29 页就约 11 万 token
-   > （单页最大 16KB）—— 全读会把窗口直接塞满。正确姿势：
-   > - 要状态 → `abs load`｜要主题 → `abs query <词>`（只回命中几页）
-   > - 要某页 → 只读那一页；页太长则只取相关小节
-   > - 需要汇总多页/多命令时，用 context-mode 的 `ctx_execute` 类工具在沙箱里处理后
-   >   **只打印结论**，别把原始文件内容拉进上下文。
+   > ⚠️ **绝不通读 `.brain/`**（29 页就约 11 万 token，全读塞满窗口）。
+   > 要状态→`abs load`；要主题→`abs query <词>`（只回命中几页）；要某页→只读那页。
+   > 汇总多文件时用 `ctx_execute` 类工具在沙箱里处理，**只打印结论**。
 4. **续 todo**：默认续 todo 分支 → 把顶部未完成项当当前任务开做。
-5. **登记新任务**：有明确新任务而 todo 没有 → `abs todo add <id> --note 做什么` 登记
-   再动工。不登记，会话一切断就丢。
+5. **登记新任务**：有明确新任务而 todo 没有 → `abs todo add <id> --note 做什么` 再动工。
 
-## 进行中：todo 是活看板 + 经验实时落（最重要的纪律）
+## 进行中：什么时候动它（最重要的节）
 
-**todo 不是收尾仪式，是干活中随改随写的活看板。** 每个任务边界立即更新，和 git commit
-同一个反射，别等收尾。用工具（MCP `abs_task` / CLI `abs todo`）：
-
-> **写操作优先 MCP，不要用 `bash` 跑 `abs`。** 实测：MCP 单次 ~2ms（server 常驻），
-> CLI 单次 27ms（其中 20ms 是每次起 node 进程的固定开销，读写本身仅 3ms）。
-> 一轮发多条命令时差距明显。CLI 留给「人手动查看看板」，agent 读写走 MCP。
-> 详见 [[perf-fixed-overhead]]。
+**todo 不是收尾仪式，是随改随写的活看板。** 每个任务边界立即更新，与 git commit 同反射。
 
 | 时机 | 动作 |
 |---|---|
 | 认领新任务 | `abs todo add <id> --note "做什么"` |
-| 子任务做完 | `abs todo done <id>`（自动归位 Done 对应 `### YYYY-MM-DD` 分组顶部，新完成在前；断点随迁） |
-| 碰壁/阻塞 | `abs todo blocked <id> --note "卡点原因"`（移 Blocked） |
-| 被打断/改向/干到一半停 | `abs todo note <id> --note "改到哪个文件/到哪步"`（补 ↳ 断点 行） |
+| 子任务做完 | `abs todo done <id>` |
+| 碰壁/阻塞 | `abs todo blocked <id> --note "卡点原因"` |
+| 被打断/干到一半 | `abs todo note <id> --note "改到哪个文件/到哪步"` |
 
-**Done 区会自动收口**：会话结束时 hook 调 `abs wrapup`，顺手把「超过 3 天 且 整天都已完成」
-的日期组迁到 `.brain/sessions/<日期>-todo归档.md`，并在 Done 区尾部留一行
-`### 归档` → `- [[<日期>-todo归档]] 完成任务 N 条`。
-**任一天只要还有未完成任务（`- [ ]`），整天都不归档** —— 不会把半成品扫走。
-手动跑：`abs todo archive [--keep-days N] [--dry-run]`。
+**经验刚冒出来就落**：`abs note "一句话经验" --tags 坑,docker` → 暂存 `sources/`（幂等去重）。宁少勿滥。
 
-> `abs todo start` 与 `abs todo add` 等价（老写法仍可用）。
-> 旧版 `abs task ...` / `abs board` 已改名，会报错并提示新写法。
-> 只读命令（`todo`/`status`/`lint`/`load`/`index`）遇多余参数会报错 —— 不再静默吞掉。
-
-> **跨会话任务只用 abs todo，别用宿主原生 todo。** Cl​aude TodoWrite/Task、co​dex todo-list、
-> Op​enCode todowrite、pi `/list`/goal 各有各的原生任务——但**多是会话内临时**，不会写进
-> `.brain/todo.md`。若用原生 todo 建了跨会话任务，它就会「只在界面 0/N 里、abs 看不到」，
-> 下会话接不上、收尾没影。**分工**：跨会话/会被打断的任务 → `abs todo add`（唯一真源）；
-> 原生 todo 顶多记「本会话内不跨断点的临时拆解草稿」。
-
-**经验/坑刚冒出来就落**：`abs note "一句话经验" --tags 坑,docker`（MCP `abs_note`）——
-暂存进 sources/（幂等去重、自动进 index/log），防 context 爆/截断流失。宁少勿滥。
-
-## 每轮结束：收尾循环（Stop/告一段落后必做）
-
-**每个任务边界、每轮被 Stop/打断、告一段落时，别停半空——走收尾循环。**
-这是"开场接上状态、结束落回状态"的闭环，否则下会话接不上、经验流失。
-
-> 触发信号：Stop/会话结束 时 hook 会把「当前项目仍未完成任务 + 断点」快照进 `~/.abs/log/wrapup.log`
-> （经 `abs wrapup`，机械、幂等去重，不替你做判断）。**下会话 `abs load` 会自动把滞留顶到顶部**
-> （`⏳ 上会话滞留`），所以收尾不是靠自觉记日志，而是开场被强制接上。要不要把某个任务标 done，
-> 仍由你判断（快照只记录「哪些还开着」，不猜完成）。
+> **写操作走 MCP（`abs_task`/`abs_note`），别用 bash 跑 CLI** —— MCP 常驻 ~2ms，
+> CLI 每次起 node 进程 27ms。（[[perf-fixed-overhead]]）
 >
-> **主动注入（pi 已实现，别等它、也别嫌它吵）**：pi 扩展在 `agent_end` 检测「本会话真改过文件
-> （write/edit/非只读 bash）」且「`.brain/log.md` 今日无记录」时，会注入一条 `[abs 收尾提醒]` 消息
-> 逼你走本循环（每会话最多一次，已收尾/无图谱则不打扰）。**收到就照做，别复述提醒、别解释为什么在收尾**；
-> 确无可沉淀产出回一句「无可沉淀」即可。Cl​aude/Co​dex 侧靠 `Stop` 事件（见 event.sh）达成同样效果。
+> **跨会话任务只用 abs todo，别用宿主原生 todo**（Cl​aude TodoWrite / co​dex todo-list /
+> Op​enCode todowrite / pi `/list`）—— 那些多是会话内临时，不写 `.brain/todo.md`，
+> 下会话接不上、收尾没影。原生 todo 顶多记“本会话不跨断点的临时拆解”。
 
-收到 Stop / "结束/先这样/切别的事" / 长任务告一段落，立即执行（快、准、不啰嗦）：
+## 每轮结束：收尾循环（Stop / 告一段落后必做）
+
+**每个任务边界、被 Stop/打断、告一段落时，别停半空。** 这是“开场接上状态、结束落回状态”的闭环。
+
+> Stop 时 hook 把「未完成任务 + 断点」快照进 `~/.abs/log/wrapup.log`（`abs wrapup`，机械幂等），
+> 下会话 `abs load` 会自动把滞留顶到顶部（`⏳ 上会话滞留`）—— 所以收尾不靠自觉，是开场被强制接上。
+>
+> **主动注入**：pi 扩展在 `agent_end` 检测「本会话真改过文件」且「log.md 今日无记录」时注入
+> `[abs 收尾提醒]`（每会话最多一次）。**收到就照做，别复述提醒**；确无可沉淀回一句「无可沉淀」。
+> Cl​aude/Co​dex 靠 `Stop` 事件达成同样效果。
+
+收到 Stop / "结束/先这样/切别的事" / 长任务告一段落，立即执行：
 
 1. **读 todo** → `abs load`，看 Today 还有哪些没完成。
 2. **判有没有做完没登记** → 实际完成了漏登记的 `abs todo done <id>`；做到一半补
@@ -227,7 +215,10 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`。`abs st
 3. **沉淀经验（该沉淀才沉淀）** → 踩了值得记的坑/有可复用技巧/跨会话判断 → `abs note`
    暂存；值得深提炼的（规律/坑/决策）按 Teardown 走完整流程。
 4. **更新 index/log/todo** → 新页同步进 index；`log.md` 倒序记一行**工作成果**摘要
-   （`abs log "完成 X：..."`，不是工具动作）；todo 对账。跑 `abs lint` 确认自洽。
+   （`abs log "完成 X：..."`，不是工具动作）；todo 对账。
+   **新规律是「违反会丢数据/静默失效/白干活」级别 → 往 index 的 `## Rules` 加一行**
+   （短句 + `[[概念页]]`，不展开）。普通经验不进 Rules —— 否则会长成第二份概念库。
+   跑 `abs lint` 确认自洽。
 
 **完成标准**：看板反映真实状态（Done 无滞留半成品）、该沉淀已落、index/log/todo 与事实一致。
 
@@ -241,53 +232,40 @@ monorepo 若多个子包各自独立交付，可各建一份 `.brain/`。`abs st
 4. **对账 todo**：滞留 Today 归位（Done 标日期 / Backlog 补断点）；遗留 bug 写 Backlog/Blocked。
 5. **综合(可选)**：推进了选型/取舍 → `syntheses/`。
 6. **收拢 sources**：提炼成规律的删 source，**同步清指向它的引用**（防死链）。
-7. **修 index + 记 log**：新页同步 index；`log.md` 倒序记一行摘要。
+7. **修 index + 记 log**：新页同步 index；**过 Rules 门槛的规律加一行到 `## Rules`**；
+   `log.md` 倒序记一行摘要。
 8. **留接力棒**：`sessions/log-YYYY-MM-DD.md`，强制写 `## 🪝 Next Session Hook`。
 
 **完成标准**：每条过了容量纪律的知识一处落点；index 与事实一致；sessions 有带 Hook 快照。
 
-## 知识页格式（concepts/entities/syntheses）
+## 知识页格式
 
-所有页统一 frontmatter：`tags / author / updated / status`。
+统一 frontmatter：`tags / author / updated / status`（`status: draft`，或 `reviewed` = 冲突已裁决）。
+`tags` 首标签 ∈ `entity|concept|source|synthesis|session-log`。`author` 与 `entities/<name>.md` 同名。
 
-```markdown
----
-tags: [concept, 领域]   # 首标签 ∈ entity|concept|source|synthesis|session-log
-author: fanchao         # 作者（abs note 自动写；手写页也须填，且与 entities/<name>.md 同名）
-updated: YYYY-MM-DD
-status: draft           # 或 reviewed（仅指知识冲突裁决结案）
----
-```
-
-作者名同时是**人页 slug**：`[[fanchao]]` → `entities/fanchao.md`（技术栈 / 特点 / 名下踩过的坑）。
-
-- **关联连接区**：每页必须有 `## 关联连接`，用 `[[页面名]]` 链相关页。严禁孤岛页。
-- **知识冲突**：与旧页矛盾不静默覆盖。加 `## 知识冲突` 两版都留、标来源时间，交人工裁决。
-- **命名即链接**：`[[Docker]]` 落 entities/Docker.md；`[[docker-prisma-429]]` 落 concepts/。别建别名层。
-
-概念页核心结构（坑）：`触发场景 / ❌表现(贴报错) / 🛠解法(根因+修复+验证命令) / 关联连接`。
+- **每页必须有 `## 关联连接`**，用 `[[页面名]]` 链相关页 —— 严禁孤岛页。
+- **命名即链接**：`[[Docker]]` → `entities/Docker.md`；`[[docker-prisma-429]]` → `concepts/`。不建别名层。
+- **知识冲突**：不静默覆盖，加 `## 知识冲突` 两版都留、标来源时间，交人工裁决。
+- 概念页骨架：`触发场景 / ❌表现(贴报错) / 🛠解法(根因+修复+验证命令) / 关联连接`。
 
 ## 维护：query / lint
 
-- **query（检索）**：`abs query <词>`（或先读 index 定位）→ 读命中页 → 答用 `[[页面名]]` 标来源。
-  **代码问题（符号在哪/谁调用）答案不在 .brain，直接读源码**；.brain 只答"踩过什么坑/上次做到哪"。
-- **lint（体检）**：`abs lint`。查死链/孤岛/缺 frontmatter/模板残留/未决冲突/超尺寸/sources 堆积/
-  index 漏列。按报告修（死链→补链；孤岛→补关联；超大→拆；sources 积压→提炼归档）。
+- `abs query <词>` 检索（多词 OR）→ 读命中页 → 答用 `[[页面名]]` 标来源。
+  **代码问题（符号在哪/谁调用）不在 .brain，直接读源码**；.brain 只答"踩过什么坑/上次做到哪"。
+- `abs lint` 体检：死链/孤岛/缺 frontmatter/模板残留/超尺寸/sources 堆积/index 漏列/Rules 超限。
 
-## 分工：hook 机械记 / 工具实时落 / skill 深提炼（装了 abs 的项目）
+## 三层分工
 
-| 层 | 干什么 | 靠什么 |
-|---|---|---|
-| **hook（机械）** | SessionStart/UserPromptSubmit/Stop/SessionEnd 自动记**技术日志**（~/.abs/log/） | 宿主 hook 配置。你不写技术日志。 |
-| **CLI/MCP（实时）** | 任务/经验**实时落盘**：`abs todo add/note/blocked/done`、`abs note` | 每个任务边界立即调；经验随时 abs note。 |
-| **skill（自觉）** | **深提炼**（sources→concepts）+ 收尾循环 + 修 index | 判断什么值得沉淀，工具不替你判断。 |
+| 层 | 干什么 |
+|---|---|
+| **hook（机械）** | 自动记技术日志到 `~/.abs/log/`，你不用管 |
+| **CLI/MCP（实时）** | 任务/经验实时落盘：`abs todo …`、`abs note` |
+| **skill（自觉）** | **深提炼**（sources→concepts）+ 收尾 + 修 index —— 工具不替你判断 |
 
-实时层解决"断了就丢"；自觉层解决"噪音污染"。分工明确：骨架/任务/暂存/检索/体检走 abs 工具
-（`abs init`/`abs_task`/`abs note`/`abs query`/`abs lint`）；**深提炼（sources→concept/entity 页）
-手工写**——那是判断力，工具不替。改完 `abs lint` 确认自洽。
+骨架/任务/暂存/检索/体检走工具；**深提炼手工写**（那是判断力）。改完跑 `abs lint`。
 
 ## 自我约束
 
-- 只读写 `.brain/` 与目标代码，不动全局配置（一次性接入安装除外）。
-- 内容基于真实发生的事实；遵守容量纪律宁缺毋滥。
-- 双链/frontmatter/index 必须自洽——图谱给下个会话读，坏链=掰断接力棒。
+- 只读写 `.brain/` 与目标代码，不动全局配置（一次性接入除外）。
+- 只写真实发生的事实；遵守容量纪律，宁缺毋滥。
+- 双链/frontmatter/index 必须自洽 —— 坏链 = 掰断接力棒。

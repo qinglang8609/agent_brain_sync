@@ -158,7 +158,7 @@ describe('mcp: 工具调用', () => {
 
   test('abs_load 返回 index+todo+log 三段', async () => {
     const r = await tool('abs_load', { cwd: projA });
-    assert.ok(textOf(r).includes('图谱索引') && textOf(r).includes('Todo'), textOf(r));
+    assert.ok(textOf(r).includes('Graph Index') && textOf(r).includes('Todo'), textOf(r));
   });
 
   test('abs_task 未知 action → isError', async () => {

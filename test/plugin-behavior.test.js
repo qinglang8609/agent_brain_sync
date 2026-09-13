@@ -65,7 +65,7 @@ async function makeProject(name, logHasToday = false) {
   const d = new Date(), pad = (n) => String(n).padStart(2, '0');
   const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const line = logHasToday ? `## [${today} 10:00] dev | 已收尾\n` : '## [2020-01-01 00:00] dev | 旧\n';
-  await fs.writeFile(join(proj, '.brain', 'log.md'), '# 操作日志\n' + line, 'utf8');
+  await fs.writeFile(join(proj, '.brain', 'log.md'), '# Activity Log\n' + line, 'utf8');
   return proj;
 }
 
@@ -163,7 +163,7 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     // 无任何 '## [today HH:MM]' 条目头, 但正文里出现了今天的日期
     await fs.writeFile(
       join(proj, '.brain', 'log.md'),
-      `# 操作日志\n\n> 目标: ${today} 前完成迁移\n## [2020-01-01 00:00] dev | 旧\n`,
+      `# Activity Log\n\n> 目标: ${today} 前完成迁移\n## [2020-01-01 00:00] dev | 旧\n`,
       'utf8',
     );
     await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });

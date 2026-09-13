@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findBrainRoot, absLogDir } from '../src/index.js';
-import { cmdBoard, cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdWrapup } from '../src/store.js';
+import { cmdBoard, cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdWrapup, cmdRule } from '../src/store.js';
 
 // ---------- 技术日志: MCP 请求跟踪（调试用, 与图谱 log.md 完全分开） ----------
 // 落 ~/.abs/log/mcp.log: 每次工具调用一行 [时间] tool cwd 参数摘要 → 耗时/结果摘要。
@@ -139,6 +139,21 @@ tool(
     const root = await findBrainRoot(cwd || process.cwd());
     if (!root) return err('未找到 .brain/，先 abs init');
     return { content: [{ type: 'text', text: await cmdQuery({ dir: root, terms }) }] };
+  }
+);
+
+tool(
+  'abs_rule',
+  '读/写 index.md 的 ## Rules 硬规则区。action=list 列出；action=add 追加一条（只放一句话 + [[链接]]，展开写概念页）。',
+  {
+    cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
+    action: z.enum(['list', 'add']).optional().describe('list=列出(默认)；add=追加一条'),
+    text: z.string().optional().describe('action=add 时的一句话硬规则'),
+  },
+  async ({ cwd, action, text }) => {
+    const root = await findBrainRoot(cwd || process.cwd());
+    if (!root) return err('未找到 .brain/，先 abs init');
+    return { content: [{ type: 'text', text: await cmdRule({ dir: root, action: action || 'list', text }) }] };
   }
 );
 
