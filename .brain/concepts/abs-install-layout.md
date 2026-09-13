@@ -51,3 +51,5 @@ Co​dex 的 `~/.co​dex/hooks.json` 真实形态是**对象**：`{hooks: {Even
 ## 关联连接
 - [[AgentBrainSync]] — 安装器实现（src/install.js）
 - [[npm-publish-flow]] — 产品模式发布全流程（scoped 改名/2FA/link 清理）
+- [[agents-skills-not-ownerless]] — skill 落点归属：~/.agents/skills/ 属 skills CLI，只读检测
+- [[mcp-stale-paths-multi-store]] — MCP 注册的陈旧路径校正（外部 store 会盖过）

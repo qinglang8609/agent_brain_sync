@@ -65,6 +65,8 @@ status: reviewed
 
 ## 关联连接
 - [[abs-install-layout]] — 四宿主安装器与各落点路径
+- [[agents-skills-not-ownerless]] — skill 扇出的落点归属（别写 ~/.agents/skills/）
+- [[mcp-stale-paths-multi-store]] — MCP 注册会被多个外部 store 盖过
 - [[host-plugin-silent-failure]] — 装上≠加载≠触发（本页是它的"部署侧"兄弟）
 - [[silent-data-loss-diagnosis]] — 同族：先确认事实，再推理
 - [[opencode-inject-channel-verdict]] — 本次 probe 污染就是在该实验中被发现的

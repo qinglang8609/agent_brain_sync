@@ -59,17 +59,15 @@ lint 兜底（SOURCES-PILED-UP / DONE-PILED-UP，均带测试）。
 - [[index-row-not-attribution]] — index 行是指针不是记录: 塞作者名会从"创建者"漂成"最后改的人"; 归因只写页 frontmatter, 要在读取侧展示
 - [[read-side-output-must-not-scale]] — 读状态的入口不得打印无上限增长的数据: 同一根因连续踩三次(Done区 68.8% / log条目 / index清单 64%); 只给计数+逃生口, 判据是"会不会随规模增长"而非"现在是不是最大"
 - [[file-shape-check-on-load]] — load 顺手核对 index/log/todo 形状: 缺分区→自动补建(机械可判定); 无头(H1不符)→只提醒不自动改(结构可能整体脱轨, 机器猜错等于毁数据); 多分区→不管; 正常时零字节
+- [[agents-skills-not-ownerless]] — ~/.agents/skills/ 属 skills CLI(lockfile 所有者), 宿主 skills/ 只是其扇出目标; 判残留副本要三证据齐; 只读检测+告警, 绝不代写代删
+- [[mcp-stale-paths-multi-store]] — MCP 陈旧路径: 适配器把 9 个外部 store 当权威读, 任一处的旧条目会盖过自己写对的那份; 校正须挂 runInstall/runUninstall 层, 并逐处核对宿主实际读到的值
 
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 - [[fanchao]] — 使用者；技术栈 / 特点·工作习惯 / 名下踩过的坑
 
 ## Sources
-- [[2026-09-12-mcp-陈旧路径不只在一个文件]] — MCP 陈旧路径不只在一个文件: pi-mcp-adapter 的 hostConfigDiscovery 把 9 个外部 store…
-- [[2026-09-12-agents-skills]] — ~/.agents/skills/ 不是无主目录, 是 skills CLI(npx skills, ~/.agents/.skill-lock.json…
 - [[2026-09-10-todo归档]] — Todo 归档：2026-09-10，共 30 条已完成任务
-- [[2026-09-13-版本号谎言-代码前进了版本号没跟-abs]] — 版本号谎言：代码前进了版本号没跟，abs --version 会骗人。代码一变就 npm version patch，验证时 grep 新符号而非信版本号数字…
-- [[2026-09-13-skill-双份漂移根因不是代码-bug]] — skill 双份漂移根因不是代码 bug 而是过程断：c3c9974 重写 skill/SKILL.md 后没重跑 abs install 扇出。改…
 ## Syntheses
 
 ## Sessions
