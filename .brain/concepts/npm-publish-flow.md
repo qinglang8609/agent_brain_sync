@@ -1,6 +1,6 @@
 ---
 tags: [concept, npm, publish, 发布]
-updated: 2026-09-09
+updated: 2026-09-13
 status: reviewed
 ---
 
@@ -46,6 +46,10 @@ npm rm -g abs            # 清残留全局
 npm install -g @fanchao8609/agent_brain_sync
 ```
 装完 `which abs` 应指向 `~/.nvm/.../node_modules/@fanchao8609/...`（发布包），**不是**开发目录链接。
+
+### 坑 7：代码前进了版本号没跟 → 版本号撒谎（2026-09-13）
+打标 `v1.7.5`（09:18）后，又落地了 c3c9974（英文分区名 + checkBrainShape）却**没 bump**，于是 `abs --version` 报 1.7.5、registry 也是 1.7.5，但**全局装的是旧码**（`grep checkBrainShape` = 0 命中）。
+🛠 解法：**代码一变就 `npm version patch`**（顺带打 tag），别手改 package.json；发布前 `npm pack --dry-run` + 装到临时 prefix 实测一次；验证时**别信 `abs --version` 的数字**，直接 `grep` 新符号确认实际跑的是哪份码。
 
 ### 坑 6：`abs install --agent <宿主>` 报 "未知 agent"
 宿主 agent 键 `cl​aude-code / co​dex / op​encode / pi` 含**零宽空格**（品牌名防误触），手打或经某些 shell 会带/漏这个不可见字符导致匹配不上。pi/co​dex 是纯 ASCII 没这问题，cl​aude-code/op​encode 有。
