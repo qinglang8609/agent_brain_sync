@@ -133,7 +133,7 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     await handlers.agent_end({ messages: msgs }, { cwd: proj });
     assert.equal(injected.length, 1, '写后应注入一次');
     assert.equal(injected[0].opts.deliverAs, 'followUp', '流式中注入须用 followUp');
-    assert.match(injected[0].text, /abs 收尾提醒/, '注入文本应是收尾提醒');
+    assert.match(injected[0].text, /\[abs\] 本会话改过文件/, '注入文本应是 abs 事实提示');
     assert.ok(!injected[0].text.includes('\\n'), '注入文本不应残留转义 \\n');
     const log = await hooksLog(logDir);
     assert.match(log, /pi:agent_end:teardown-nudge/, '必须有真实落痕(证伪静默失效)');
@@ -303,7 +303,7 @@ describe('op​encode 插件 行为级 (session.idle 收尾注入)', () => {
     await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
     assert.equal(injected.length, 1, '写后应注入一次');
     assert.equal(injected[0].path.id, 's1', '注入须指向当前 session');
-    assert.match(injected[0].body.parts[0].text, /abs 收尾提醒/);
+    assert.match(injected[0].body.parts[0].text, /\[abs\] 本会话改过文件/);
     assert.ok(!injected[0].body.parts[0].text.includes('\\n'), '注入文本不应残留转义');
     const log = await hooksLog(logDir);
     assert.match(log, /opencode:session\.created/, 'session.created 应落痕');
@@ -413,13 +413,13 @@ describe('CC/Co​dex Stop hook 收尾注入 (decision:block)', () => {
     return { proj, payload: JSON.stringify({ session_id: session, cwd: proj, transcript_path: trans }) };
   }
 
-  test('条件全过 → echo decision:block 且 reason 含收尾指令 (合法 JSON)', async () => {
+  test('条件全过 → echo decision:block 且 reason 含 abs 提示 (合法 JSON)', async () => {
     const h = await renderHook('Stop');
     const { payload } = await makeStopCtx('cc-push');
     const out = await invoke(h, payload, { ABS_MARK_DIR: join(sandbox, 'marks') });
     const j = JSON.parse(out); // 不合法宿主会告警
     assert.equal(j.decision, 'block', '必须 block 才能把 agent 拉回一轮');
-    assert.match(j.reason, /abs 收尾提醒/, 'reason 应是收尾指令');
+    assert.match(j.reason, /\[abs\] 本会话改过文件/, 'reason 应是 abs 事实提示');
   });
 
   test('非 Stop 事件 → 放行 {}', async () => {

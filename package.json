@@ -1,6 +1,6 @@
 {
   "name": "@fanchao8609/agent_brain_sync",
-  "version": "1.8.7",
+  "version": "1.8.8",
   "description": "agent-brain-sync: 跨会话 AI 编码记忆 — hook 纯触发 + CLI/MCP 读写 .brain markdown 图谱, 防并发写保护。",
   "type": "module",
   "license": "MIT",
@@ -34,7 +34,7 @@
   "scripts": {
     "abs": "node bin/abs.js",
     "mcp": "node bin/mcp.js",
-    "test": "node --test 'test/*.test.js'",
+    "test": "node --test 'test/*.test.js' 'skill/**/*.test.js'",
     "prepack": "node -e \"require('fs').chmodSync('bin/abs.js',0o755);require('fs').chmodSync('bin/mcp.js',0o755)\"",
     "pack:check": "npm pack --dry-run"
   }

@@ -1229,8 +1229,9 @@ describe('安装树一致性守卫: 包内无 skill 时显式报错', () => {
     // 把新布局压成旧布局: skill/abs-agent-brain-sync/SKILL.md → skill/SKILL.md
     const main = join(dir, 'skill', 'abs-agent-brain-sync', 'SKILL.md');
     await fs.copyFile(main, join(dir, 'skill', 'SKILL.md'));
-    await fs.rm(join(dir, 'skill', 'abs-agent-brain-sync'), { recursive: true });
-    await fs.rm(join(dir, 'skill', 'abs-bug-hunter'), { recursive: true });
+    // 清空所有子目录, 不枚举名称 —— 枚举会在新增 skill 时假红
+    for (const e of await fs.readdir(join(dir, 'skill'), { withFileTypes: true }))
+      if (e.isDirectory()) await fs.rm(join(dir, 'skill', e.name), { recursive: true });
     assert.ok(existsSync(join(dir, 'skill', 'SKILL.md')), '前置: 旧扁平布局已就位');
 
     const out = await probe(dir);

@@ -778,17 +778,13 @@ export async function cmdTeardownCheck({ dir, payload }) {
     await fs.writeFile(mark, stamp).catch(() => {});
 
     const msg = [
-      // 未设姓名时把设置指令插到第0条 —— 否则后续 todo add/log/note 全会被守卫拦下，
-    // 而收尾提醒本身不提这事，使用者只会看到一连串报错。
+      // 未设姓名时把设置指令插到第0条 —— 否则后续 todo add/log/note 全会被守卫拦下。
     (await getUser() ? [] : [
-      '0) 本机尚未设置使用者姓名 —— 先跑 abs config set user <你的名字>，否则下面 2/3/4 都会被拦下；',
+      '0) 本机尚未设置使用者姓名 —— 先跑 abs config set user <你的名字>，否则 todo/log/note 都会被拦下；',
     ]),
-    '[abs 收尾提醒] 本会话改过文件但 .brain/ 今天还没有记录。请立即走收尾循环：',
-      '1) 跑 abs load 看 Todo 还有哪些未完成；',
-      '2) 实际做完漏登记的 abs todo done <id>，做到一半的 abs todo note <id> --note "断点"；',
-      '3) 值得留的经验 abs note "..."（宁少勿滥，能从代码 grep 到的不记）；',
-      '4) abs log "完成 X：..." 记一行工作成果，新页同步进 index。',
-      '简洁执行，不要复述本条提醒。若本次确实没有可沉淀产出，直接回一句"无可沉淀"即可。',
+    '[abs] 本会话改过文件，.brain/ 今日无记录。',
+      '这条是信息不是命令：该沉淀就沉淀，没有可沉淀的直接回一句「无可沉淀」，不用凑。',
+      '需要时：abs todo / abs todo done <id> / abs note "..." / abs log "..."',
     ].join('\n');
 
     // Cl​aude Code Stop hook 契约: {"decision":"block","reason":"..."} = 阻止结束并把 reason 回灌给 agent
