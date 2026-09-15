@@ -426,13 +426,13 @@ function isUndoneLine(l) {
  * 规则（用户定）：
  *   ① 只保留近 keepDays 天（含今天）；更早的才归档。
  *   ② 某一天只要还有未完成（- [ ]）任务，**整天都不归档**（不拆半天）。
- *   ③ 每**天**归一个文件，slug 为 `<日期>-todo归档`（由 slugFor 给），本函数只负责
- *      从 todo 文本里移除 + 在 Done 区尾部的 `### 归档` 区**每天记一行**
- *      `- [[<日期>-todo归档]] 完成任务 N 条`。
+ *   ③ 每**天**一个文件，slug 为 `log-<日期>`（由 slugFor 给）—— 即**归进那天的会话快照**
+ *      （同一天的东西放一处，别为归档另建文件）。本函数只负责从 todo 文本里移除
+ *      + 在 Done 区尾部的 `### 归档` 区**每天记一行** `- [[log-<日期>]] 完成任务 N 条`。
  * 无日期组（### （未标日期））无法判天数，**保守不归档**。
  * @returns {{text:string, archived:{date:string,lines:string[],slug:string,count:number}[], skipped:{date:string,reason:string}[], count:number}}
  */
-export function archiveDoneInText(text, { keepDays = 3, from = today(), slugFor = (d) => `${d}-todo归档` } = {}) {
+export function archiveDoneInText(text, { keepDays = 3, from = today(), slugFor = (d) => `log-${d}` } = {}) {
   const lines = String(text || '').split('\n');
   const di = lines.findIndex((l) => l.startsWith('## Done'));
   if (di === -1) return { text, archived: [], skipped: [], count: 0 };
@@ -484,31 +484,69 @@ export function archiveDoneInText(text, { keepDays = 3, from = today(), slugFor 
   return { text: rebuilt.join('\n').replace(/\n+$/, '\n'), archived, skipped, count };
 }
 
-/** 归档页正文（按日期分组，原文保留）。供首次建页与同日追写复用。 */
+/** 归档页正文（按日期分组，原文保留）。供同日追写复用。 */
 export function renderArchiveBody(groups) {
   const out = [];
   for (const g of groups) out.push(`### ${g.date}`, '', ...g.lines, '');
   return out.join('\n').replace(/\n+$/, '\n');
 }
 
-/** 归档页全文（带 frontmatter）。**每天一个文件**，故只收一组。 */
-export function renderArchivePage({ group }) {
-  const { date, lines } = group;
-  const n = lines.filter((l) => /^\s*- \[x\]/.test(l)).length;
-  const head = [
-    '---',
-    'tags: [todo-archive, 历史]',
-    `updated: ${date}`,
-    'status: reviewed',
-    '---',
-    '',
-    `# Todo 归档 — ${date}`,
-    '',
-    `> 从 \`.brain/todo.md\` 的 Done 区迁出（该区只保留近期）。本页含 ${date} 的 ${n} 条已完成任务。`,
-    '> 原文完整保留（含 `↳ 断点/卡点`），查"某任务当时做到哪"看这里。',
-    '',
-  ];
-  return head.join('\n') + '\n' + renderArchiveBody([group]) + '\n';
+/** 归档区标题。归档内容全部落在这个二级标题下，**与 AI 手写的会话快照共存**：
+ *  同一天的记录（快照 + 任务明细）放一个文件里，而不是分两个文件。
+ *  写入侧只动这一段：标题之前的内容原样保留（已存在的人工内容一律不覆盖）。 */
+export const ARCHIVE_SECTION = '## 📦 任务归档';
+
+/** 把「任务归档」段合并进已有正文。**纯函数**（不碰磁盘）。
+ *
+ * 为何不再「每天一个文件」（2026-09-15 用户定）：
+ *   归档页与 `log-<日期>.md` 会话快照是**同一天的记录**，分两处查着要开两个文件。
+ *   改为：归档写进当天快照的 `ARCHIVE_SECTION` 段。
+ *
+ * 两个边界（都有测试钉住）：
+ *   ① 文件不存在 → 建一个**只有归档段**的页（那天可能没写快照，仍只落这一个文件）。
+ *   ② 文件已存在（含 AI 手写的快照）→ **只替换归档段**，段外内容逐字保留。
+ *      同日重复归档（罕见）则把新日期组接在段内已有内容之后，不重复建段。
+ *
+ * @param body   现有全文（null = 文件不存在）
+ * @param group  { date, lines, count }
+ */
+export function upsertArchiveSection(body, group) {
+  const chunk = renderArchiveBody([group]);
+  if (body == null) {
+    // ① 新文件：只有归档段（无手写快照也合法 —— 那天本来就只有任务记录）
+    const fm = [
+      '---',
+      'tags: [session-log, todo-archive, 历史]',
+      `updated: ${group.date}`,
+      'status: reviewed',
+      '---',
+      '',
+      `# ${group.date} 记录`,
+      '',
+      '> 本页 = 该日的会话快照（若有）+ 从 `todo.md` Done 区迁出的任务明细。',
+      '',
+      ARCHIVE_SECTION,
+      '',
+      chunk.trimEnd(),
+      '',
+    ];
+    return fm.join('\n');
+  }
+  // ② 已存在：只动归档段，段外原样
+  const lines = body.split('\n');
+  const i = lines.findIndex((l) => l.trim() === ARCHIVE_SECTION);
+  if (i === -1) {
+    // 有文件但还没归档段 → 追加到末尾（不搅动已有内容）
+    return `${body.replace(/\s*$/, '')}\n\n${ARCHIVE_SECTION}\n\n${chunk.trimEnd()}\n`;
+  }
+  // 找到本段结束（下一个同级或更高级标题）
+  let j = i + 1;
+  while (j < lines.length && !/^#{1,2} \S/.test(lines[j].trim())) j++;
+  const head = lines.slice(0, i + 1);
+  const tailPart = lines.slice(j);
+  const existingInner = lines.slice(i + 1, j).join('\n').trim();
+  const merged = existingInner ? `${existingInner}\n\n${chunk.trimEnd()}` : chunk.trimEnd();
+  return [...head, '', merged, '', ...tailPart].join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
 /** 幂等：把 todo 全文里平铺的旧 Done 区按日期分组（新日期在前，未标日期归尾）。

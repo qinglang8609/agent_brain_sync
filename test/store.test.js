@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS } from '../src/store.js';
-import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, upsertArchiveSection, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
 
@@ -917,6 +917,42 @@ describe('cmdLint', () => {
     assert.ok(!/NO-TAIL[^\n]*skel-empty\.md/.test(out), `填好后不该再报: ${out}`);
   });
 
+  // sessions/ 命名契约：一天一个文件（实测 codebuddy 一天曾出现 5 个文件、5 种 tags）。
+  test('SESSIONS-SPLIT: 同一天多个文件会被报出', async () => {
+    for (const n of ['log-2026-09-07', '2026-09-07-ui-fixes', '2026-09-07-todo归档']) {
+      await fs.writeFile(join(projectA, '.brain', 'sessions', `${n}.md`),
+        '---\ntags: [session-log]\nupdated: 2026-09-07\nstatus: active\n---\n# X\n\n## 验证\n跑 test\n', 'utf8');
+    }
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/SESSIONS-SPLIT[^\n]*2026-09-07/.test(out), `应报同天多文件: ${out}`);
+    assert.ok(/SESSIONS-SPLIT[^\n]*3 个文件/.test(out), `应给文件数: ${out}`);
+  });
+
+  test('SESSIONS-SPLIT 不误报: 一天一个文件就放行', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-08.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-08\nstatus: active\n---\n# X\n\n## 验证\n跑 test\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SESSIONS-SPLIT[^\n]*2026-09-08/.test(out), `单文件不该报: ${out}`);
+  });
+
+  // 实例: codebuddy 的 2026-09-07-ui-fixes.md（tags: [source]）等页错位在 sessions/。
+  test('SESSIONS-MISPLACED: sessions/ 里放 source 页会被报出', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-09-exhaust.md'),
+      '---\ntags: [source]\nupdated: 2026-09-09\nstatus: draft\n---\n# 来源：X\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/SESSIONS-MISPLACED[^\n]*2026-09-09-exhaust/.test(out), `应报错位页: ${out}`);
+  });
+
+  // 归档页（旧命名 todo-archive tag）与快照（session-log）都必须放行 —— 否则全局误报。
+  test('SESSIONS-MISPLACED 不误报: session-log 与 todo-archive 都放行', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-10-todo归档.md'),
+      '---\ntags: [todo-archive, 历史]\nupdated: 2026-09-10\nstatus: reviewed\n---\n# Todo 归档\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-10.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-10\nstatus: active\n---\n# X\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SESSIONS-MISPLACED[^\n]*2026-09-10/.test(out), `两种合法 tag 都不该报: ${out}`);
+  });
+
   test('lint 提示的路径带 .brain/ 前缀（可直接去项目里找）', async () => {
     await fs.writeFile(join(projectA, '.brain', 'concepts', 'over.md'),
       PAGE('# 概念：超长\n' + Array.from({ length: 160 }, (_, i) => `行 ${i}`).join('\n')), 'utf8');
@@ -1421,7 +1457,7 @@ describe('Done 归档', () => {
     const t = mk(['### 2026-09-06', '', '- [x] X  (完成 2026-09-06)', '- [x] Y  (完成 2026-09-06)', '']);
     const r = archiveDoneInText(t, { keepDays: 3, from: '2026-09-10' });
     assert.ok(r.text.includes('### Archived'), '应有 ### Archived 区');
-    assert.ok(r.text.includes('- [[2026-09-06-todo归档]] 完成任务 2 条'), r.text);
+    assert.ok(r.text.includes('- [[log-2026-09-06]] 完成任务 2 条'), r.text);
   });
 
   test('未标日期组保守不归档', () => {
@@ -1437,10 +1473,10 @@ describe('Done 归档', () => {
   test('归档标记行按日期倒序排列', () => {
     const t = mk([
       '### 2026-09-07', '', '- [x] C  (完成 2026-09-07)', '',
-      '### Archived', '- [[2026-09-08-todo归档]] 完成任务 22 条', '- [[2026-09-09-todo归档]] 完成任务 6 条', '',
+      '### Archived', '- [[log-2026-09-08]] 完成任务 22 条', '- [[log-2026-09-09]] 完成任务 6 条', '',
     ]);
     const r = archiveDoneInText(t, { keepDays: 1, from: '2026-09-10' });
-    const order = [...r.text.matchAll(/\[\[(\d{4}-\d{2}-\d{2})-todo归档\]\]/g)].map((m) => m[1]);
+    const order = [...r.text.matchAll(/\[\[log-(\d{4}-\d{2}-\d{2})\]\]/g)].map((m) => m[1]);
     assert.deepEqual(order, ['2026-09-09', '2026-09-08', '2026-09-07'], `应倒序: ${order}`);
   });
 
@@ -1457,12 +1493,12 @@ describe('Done 归档', () => {
   test('多天归档: 每天一行标记（计数各自独立、不重复）', () => {
     const t = mk(['### 2026-09-06', '', '- [x] X  (完成 2026-09-06)', '']);
     const once = archiveDoneInText(t, { keepDays: 1, from: '2026-09-10' });
-    assert.ok(once.text.includes('- [[2026-09-06-todo归档]] 完成任务 1 条'), once.text);
+    assert.ok(once.text.includes('- [[log-2026-09-06]] 完成任务 1 条'), once.text);
     const withSecond = once.text + '### 2026-09-05\n\n- [x] Y  (完成 2026-09-05)\n- [x] Z  (完成 2026-09-05)\n';
     const twice = archiveDoneInText(withSecond, { keepDays: 1, from: '2026-09-10' });
-    assert.ok(twice.text.includes('- [[2026-09-06-todo归档]] 完成任务 1 条'), '旧天标记应保留');
-    assert.ok(twice.text.includes('- [[2026-09-05-todo归档]] 完成任务 2 条'), twice.text);
-    assert.equal((twice.text.match(/\[\[2026-09-06-todo归档\]\]/g) || []).length, 1, '同 slug 只一行');
+    assert.ok(twice.text.includes('- [[log-2026-09-06]] 完成任务 1 条'), '旧天标记应保留');
+    assert.ok(twice.text.includes('- [[log-2026-09-05]] 完成任务 2 条'), twice.text);
+    assert.equal((twice.text.match(/\[\[log-2026-09-06\]\]/g) || []).length, 1, '同 slug 只一行');
   });
 
   test('cmdTodoArchive 端到端: 建归档页 + 改 todo + 登记 index', async () => {
@@ -1476,10 +1512,10 @@ describe('Done 归档', () => {
     const todo = await fs.readFile(todoP, 'utf8');
     assert.ok(!todo.includes('OLD-A'), '旧任务应已迁出 todo');
     assert.ok(todo.includes('### Archived') && todo.includes('完成任务 1 条'), todo);
-    const page = await fs.readFile(join(projectA, '.brain', 'sessions', '2026-09-04-todo归档.md'), 'utf8');
+    const page = await fs.readFile(join(projectA, '.brain', 'sessions', 'log-2026-09-04.md'), 'utf8');
     assert.ok(page.includes('OLD-A') && page.includes('当时的细节'), '归档页应保留原文含断点');
     const idx = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
-    assert.ok(idx.includes('[[2026-09-04-todo归档]]'), 'index 应登记归档页');
+    assert.ok(idx.includes('[[log-2026-09-04]]'), 'index 应登记归档页');
   });
 
   // 回归: 归档页是新生成页，若无双链会被 lint 判 ORPHAN（曾如此）。
@@ -1492,8 +1528,8 @@ describe('Done 归档', () => {
     ]), 'utf8');
     await cmdTodoArchive({ dir: projectA, keepDays: 3 });
     const out = await cmdLint({ dir: projectA });
-    assert.ok(!/ORPHAN-PAGE: \.brain\/sessions\/.*todo归档/.test(out), `归档页不该是孤儿: ${out}`);
-    assert.ok(!/INDEX-MISSING: \.brain\/sessions\/.*todo归档/.test(out), `归档页应已登记 index: ${out}`);
+    assert.ok(!/ORPHAN-PAGE: \.brain\/sessions\/.*log-/.test(out), `归档页不该是孤儿: ${out}`);
+    assert.ok(!/INDEX-MISSING: \.brain\/sessions\/.*log-/.test(out), `归档页应已登记 index: ${out}`);
   });
 
   test('dry-run 不动文件', async () => {

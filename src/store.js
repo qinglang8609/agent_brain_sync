@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
 import { requireUser, atTag, getUser } from './userconfig.js';
-import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, renderArchivePage, renderArchiveBody, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure } from './todo.js';
+import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 
@@ -685,16 +685,17 @@ export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {})
     return `[dry-run] 将归档 ${plan.archived.length} 天 / ${plan.count} 条（每天一个文件）\n  ${brief}${why}`;
   }
 
-  // 1) 归档页：**每天一个文件**，文件名用被归档那天的日期（便于按天回溯）。
-  //    同一天再次归档（罕见：该日组已被移走，除非有人重新补当天任务）则追写正文。
+  // 1) 归档目标 = 当天的会话快照文件（log-<日期>.md），写进其「任务归档」段。
+  //    为何合一（2026-09-15 用户定）: 归档与会话快照是**同一天的记录**，分两个文件查着要开两处。
+  //    边界: ① 文件不存在→建只有归档段的页（那天可能没写快照）
+  //          ② 文件已存在（含 AI 手写快照）→ 只替换归档段，段外逐字保留
+  //    （硬规则「已存在的人工内容一律不覆盖」由 upsertArchiveSection 保证）。
   const sessDir = brainPath(root, 'sessions');
   for (const g of plan.archived) {
     const pageP = join(sessDir, `${g.slug}.md`);
     let page = null;
     try { page = await fs.readFile(pageP, 'utf8'); } catch { /* 首次 */ }
-    const nextPage = page == null
-      ? renderArchivePage({ group: g })
-      : page.replace(/\s*$/, '') + '\n\n' + renderArchiveBody([g]) + '\n';
+    const nextPage = upsertArchiveSection(page, g);
     const tmp = join(sessDir, `.${g.slug}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
     await fs.writeFile(tmp, nextPage, 'utf8');
     await fs.rename(tmp, pageP);
@@ -707,15 +708,17 @@ export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {})
   });
 
   // 3) index 登记（每个日期页一行，幂等）
+  // 坑（2026-09-15 修）: 原先把归档页登记到 `## Sources` 区 —— 但它们在 sessions/ 里，
+  // 旧数据实测就是错位的（09-10/09-12 两条曾键在 Sources 段，人工才发现）。现改登 `## Sessions`。
   const iP = brainPath(root, 'index.md');
   await editFile(iP, (index) => {
     if (!index) return SKIP;
     const missing = plan.archived.filter((g) => !index.includes(`[[${g.slug}]]`));
     if (!missing.length) return SKIP;
-    const sIdx = index.indexOf('## Sources');
+    const sIdx = index.indexOf('## Sessions');
     if (sIdx === -1) return SKIP;
     const after = index.indexOf('\n## ', sIdx + 1);
-    const add = missing.map((g) => `- [[${g.slug}]] — Todo 归档：${g.date}，共 ${g.count} 条已完成任务`).join('\n');
+    const add = missing.map((g) => `- [[${g.slug}]] — ${g.date}（会话快照 + 任务归档）`).join('\n');
     const next = after === -1
       ? `${index.replace(/\s*$/, '')}\n${add}\n`
       : index.slice(0, after) + `\n${add}` + index.slice(after);
@@ -1355,9 +1358,13 @@ export async function cmdLint({ dir }) {
         issues.push(`DEAD-LINK: ${pg.rel} -> [[${ln}]]`);
       }
     }
-    // ORPHAN: sources/ 暂存页与 todo 归档页豁免。前者是暂存线索（提炼成 concept 前天然孤立），
-    // 后者是历史数据倾倒（已登记在 index.md，就是图谱入口，无需再制造双链）。
-    const isTerminal = pg.dir === 'sources' || /todo归档$/.test(pg.slug);
+    // ORPHAN: sources/ 暂存页与会话/归档页豁免。前者是暂存线索（提炼成 concept 前天然孤立），
+    // 后者是历史记录（已登记在 index.md，就是图谱入口，无需再制造双链）。
+    // 豁免名单含两种归档命名：旧 `*-todo归档`（存量页仍在）+ 新 `log-*`
+    //（2026-09-15 起归档并入当天快照，见 todo.js 的 upsertArchiveSection）。
+    const isTerminal = pg.dir === 'sources'
+      || /todo归档$/.test(pg.slug)
+      || (pg.dir === 'sessions' && /^log-/.test(pg.slug));
     if (!isTerminal && !pg.links.length && !linkedNames.has(pg.slug)) {
       issues.push(`ORPHAN-PAGE: ${pg.rel} (no links out, no links in)`);
     }
@@ -1416,6 +1423,39 @@ export async function cmdLint({ dir }) {
     try { ageMs = Date.now() - (await fs.stat(join(root, pg.rel))).mtimeMs; } catch { continue; }
     if (ageMs > staleMs) {
       issues.push(`SOURCE-UNDISTILLED: ${pg.rel}（${SOURCE_STALE_DAYS} 天未提炼成 concept；提炼后删 source 并清引用）`);
+    }
+  }
+
+  // SESSIONS-NAMING: sessions/ 的一天一文件契约（见 skill 的「sessions/ 命名契约」）。
+  // 实测 codebuddy 乱局（2026-09-15）：一天最多出现 5 个文件、5 种 tags、同天两个快照。
+  // 判据纯机械：按“日期前缀”归组，同一天有 >1 个文件就报（旧命名 `*-todo归档` 与
+  // 新归档段已并入 log-，均不再放行）。只看日期前缀，不猜内容。
+  const sessByDate = new Map();
+  for (const pg of pages) {
+    if (pg.dir !== 'sessions') continue;
+    // 同时认两种写法：规范名 `log-<日期>` 与旧/杂命名 `<日期>-…`。
+    // 坑（写测试时抓到的）: 首版只写 `^(\d{4}-…)` → **匹配不上规范名 `log-2026-09-07`**，
+    // 于是「一个 log- + 一个旧杂文件」被数成 1 个而非 2 个，漏报。
+    const m = pg.slug.match(/^(?:log-)?(\d{4}-\d{2}-\d{2})/);
+    if (!m) continue;
+    if (!sessByDate.has(m[1])) sessByDate.set(m[1], []);
+    sessByDate.get(m[1]).push(pg.slug);
+  }
+  for (const [date, slugs] of sessByDate) {
+    if (slugs.length > 1) {
+      issues.push(`SESSIONS-SPLIT: ${date} 在 sessions/ 有 ${slugs.length} 个文件（${slugs.join('、')}）；` +
+        `一天只应有一个 \`log-${date}.md\`：归档写进其「## 📦 任务归档」段，多主题写成多个 ## 子段`);
+    }
+  }
+  // SESSIONS-MISPLACED: sessions/ 里放了 tags 既非 session-log 也非 todo-archive 的页。
+  // 实例：codebuddy 的 `2026-09-07-ui-fixes.md`（tags: [source,session-log]）等 5 页 ——
+  // 当时做的一组工作不是「暂存线索」，而就是当天的快照正文。
+  for (const pg of pages) {
+    if (pg.dir !== 'sessions') continue;
+    const tags = String(pg.frontmatter).match(/^tags:\s*(.+)$/m)?.[1] || '';
+    if (!/session-log|todo-archive/.test(tags)) {
+      issues.push(`SESSIONS-MISPLACED: ${pg.rel}（tags: ${tags.trim()} 不属 sessions/；` +
+        `当天工作写进 \`log-<日期>.md\` 正文，暂存线索用 \`abs note\` 落 sources/）`);
     }
   }
 

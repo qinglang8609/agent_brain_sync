@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-09-15 18:40] [[fanchao]] dev | sessions/ 命名契约落地：①skill 定死「一天一个文件、只叫 log-<日期>.md，归档并入其 ## 📦 任务归档 段」，附四条禁令（不另建归档文件/不放 source 页/不拆多快照/不手工倒大文件）；②lint 加 SESSIONS-SPLIT（同天多文件）+ SESSIONS-MISPLACED（tags 不属 sessions）两条机械检查。341 测试全绿；破坏验证 3 轮全红。实测 codebuddy：报出 4 天分裂（09-07 达 5 个文件）+ 4 页错位。
 ## [2026-09-15 18:28] [[fanchao]] dev | 收尾：把「进化」聊到底+交付三版。①实证 Rules 不积累（13/14 条来自人工注入）→ 缺的不是机制是「判据」，判断必须留给人；②定位 concepts/ 页无代码写入路径是「文档没尾巴」的根因，对照 sources/ 页因模板在代码里而整齐；③交付 abs concept（写入侧定结构，只给结构不给内容）+ NO-TAIL 判据（放宽认动作词，因 ##✅处置 17次>##🛠解法；收紧要求段内有真内容）+ 补 2 页真缺尾（本仓 NO-TAIL 归零）；④发 1.8.5→1.8.6（先发版后改文档的顺序错误，已记入 npm-publish-flow）。337 测试全绿。
 ## [2026-09-15 18:08] [[fanchao]] dev | 新增 abs concept 命令：概念页脚手架（只给结构不给内容）。解决 concepts/ 页无代码写入路径→11/26 缺尾巴。同时把 NO-TAIL 判据放宽为「动作词」集合并要求段内有真内容（能识破未填的 ## 验证 占位）。337 测试全绿(+9)；破坏验证 2 轮全红。
 ## [2026-09-15 17:00] [[fanchao]] dev | 消化 sources 14→0：新建 2 概念页(feature-delete-not-patch 四例实证「功能该删不该补」/ borrowed-protocol-designs 抄协议不抄依赖)、补 2 处已有页(HTTP/1.1 降级解 push SSL、read-side 补链)，lint 4→3。并落地「待消化」送达机制：复用滞留同构通道，load 顶部在 sources>10 时提示（提炼仍手工，不替判断）。

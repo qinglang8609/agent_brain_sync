@@ -139,9 +139,35 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 | `concepts/` | 可复用的**规律/坑**（能说"这么做就避坑"） | `docker-prisma-429.md` |
 | `sources/` | 实时经验**暂存**（`abs note` 自动落） | `YYYY-MM-DD-slug.md` |
 | `syntheses/` | **横向**选型/架构取舍（跨多个 entity/concept 的判断） | `synthesis-slug.md` |
-| `sessions/` | 会话快照 + `## 🪝 Next Session Hook`、todo 归档页 | `log-YYYY-MM-DD.md` |
+| `sessions/` | 会话快照（含 `## 🪝 Next Session Hook`）+ 当日任务归档段 | **`log-YYYY-MM-DD.md`** |
 
 归类拿不准时**默认 `concepts/`**。
+
+### `sessions/` 命名契约：一天一个文件（硬规则）
+
+**一天只允许一个文件，且只能叫 `log-<日期>.md`。** 该日的一切都放进它：
+
+```
+log-2026-09-08.md
+  ├─ 会话快照正文（AI 手写：做了什么/怎么定位/结论）
+  ├─ ## 关联连接
+  ├─ ## 🪝 Next Session Hook（强制）
+  └─ ## 📦 任务归档（`abs todo archive` 自动写，机器生成勿手改）
+```
+
+**为什么定死**（实测 codebuddy 项目乱成这样，2026-09-15）：同一天曾出现 **5 个文件**：
+`2026-09-07-init-brain.md` / `-todo-md-archive.md` / `-todo归档.md` / `-ui-fixes.md` / `log-2026-09-07.md`，
+且五份的 `tags` 各不相同（`source` / `source,archive` / `todo-archive` / `source,session-log` / `session-log`）。
+同一天的记录散在多处，查一次要开五个文件。
+
+**四条禁令**（每条都有实测反例）：
+1. **不要**再把归档单独建文件（`<日期>-todo归档.md`）——归档已有专门的坑位段，`abs todo archive` 会写进去。
+   存量旧页不必手改（lint 不报），但新归档不再产生它。
+2. **不要**在 `sessions/` 放 `tags: [source]` 的页——暂存页属 `sources/`。
+   当天做的一组工作不是「暂存线索」，而是**当天的快照正文**：直接写进 `log-<日期>.md`。
+3. **不要**一天拆多个快照（`log-<日期>-<主题>.md`）——多主题就多写几个 `##` 段。
+4. **不要**手工搬大文件进来当归档（如把仓库根 `todo.md` 全文倒进 `sessions/`）——
+   那要么进 `sources/`，要么摘出规律进 `concepts/`；全文属外部产物，用指针就行。
 
 ### 容量纪律（写任何页之前过四关）
 
