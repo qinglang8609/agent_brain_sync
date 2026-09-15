@@ -1,8 +1,10 @@
 # 📋 Todo Board
 ## Todo
+- [ ] [进行中] INSTALL-TREE-GUARD [[fanchao]] — 安装树与代码版本不一致的显式守卫：包内一个 skill 都找不到时不再静默装 0 个，改报版本+布局+修复命令。触发源=fnos 半升级实测（旧代码1.8.2 + 新布局1.8.3 → 甩一个当前版本不存在的路径 ENOENT skill/SKILL.md）。 (认领 2026-09-15)
+  ↳ 断点: 待你核对后决定是否发版（Rules: 未经用户核对不准发版/推送）。未 bump 版本号。改动: src/install.js ALL_SKILLS IIFE 尾部加空数组守卫(+14行); test/install.test.js 新增 3 例(扁平旧布局/skill缺失/正常不误伤, +63行)。验证: 全量 321 测试全绿; 真实代码三场景实测(扁平→报错点名'扁平布局'; 缺失→报错点名'缺失'; 正常→不误伤)。}
 ## Done
-### 2026-09-15
 
+### 2026-09-15
 - [x] AUTO-REG [[fanchao]] — 写文件即自动登记(hook 端)：写项目文件→hook 直接 spawn abs autotask 建/追加 [待归类] 条目，不再只弹提醒。幂等键=会话(同会话只一条)。待发版(1.8.0 已发布版不含此功能，故本地实测走仓库 bin) 【落地】 (完成 2026-09-15)
   ↳ 断点: 完成：新增 cmdAutoTask + abs autotask 内部命令 + 两宿主 hook 调用。332 测试全绿(+7)，破坏验证2轮全红(幂等键失效/无图谱误写)。踩坑记录：①opencode 模板加了 @@ABS_BIN@@ 但安装器没替换→产物坏 TS(31个测试炸)；②我的 node 脚本写文件名时多插了一个零宽空格(16 vs 15 字符)，导致 ENOENT；③实测发现 1.8.0 已发布版不含 autotask，hook spawn 全局 bin 会静默失败(stdio:ignore 吞掉'未知命令')——这不是 bug 是未发版，但暴露了一个真问题：hook 调全局 bin 时，若全局版本落后就会静默失效。
 - [x] AUTO-OCSESS [[fanchao]] — [待归类] 改了 src/oc-test.js 【否决】 (完成 2026-09-15)
@@ -15,7 +17,6 @@
   ↳ 断点: 完成：①status 三值定死(active/superseded/draft，缺字段=active 存量零迁移) ②abs supersede <页> --by <新页>(不删文件、幂等、拒悬空 --by、可反悔) ③note 默认 draft ④query 默认隐藏 superseded(--all 可看+告知隐藏数) ⑤lint 加 SUPERSEDED-DANGLING/DRAFT-STALE。CLI+MCP(abs_supersede, 12工具)。315 测试全绿(新增 9 例)，两轮破坏验证(store.js statusOfPage→6红、query隐藏逻辑→1红)。已 install --yes 扇出宿主。
 
 ### 2026-09-13
-
 - [x] #1.1 [[fanchao]] abs task 调用不稳定 — 写代码时不登记，只有复盘/手工才更新 【落地】 (完成 2026-09-13)
 - [x] SKILL-DRIFT [[fanchao]] — skill 双份漂移：仓库 skill/SKILL.md（中文分区名）vs 安装版 ~/.claude/skills/abs-agent-brain-sync/SKILL.md（英文分区名）不一致。下次改 skill 极易改错一份。建议：安装器从仓库 skill/SKILL.md 单向覆盖，或文档化'安装版为准、仓库版只是模板'。 【落地】 (完成 2026-09-13)
 - [x] VERSION-DRIFT-1.7.6 [[fanchao]] — 版本号谎言：v1.7.5 打标后 c3c9974(英文分区名+checkBrainShape)落地但未 bump，全局装 1.7.5 实为旧码。已 npm version patch→1.7.6 发布+全局重装，abs load 实测 checkBrainShape 生效(todo.md 结构重排)。教训:代码前进了版本号没跟=发布流程断，npm view 有 cache 延迟需 --force clean 【落地】 (完成 2026-09-13)

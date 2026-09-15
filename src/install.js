@@ -39,6 +39,20 @@ const ALL_SKILLS = (() => {
     if (!fsSync.existsSync(src)) continue; // 只认含 SKILL.md 的子目录
     out.push({ name: e.name, src });
   }
+  if (!out.length) {
+    // 包内一个 skill 都没找到 = 安装树与代码版本不一致（半升级 / 旧布局 / 打包漏文件）。
+    // 不静默装 0 个: 曾实测新版代码遇扁平旧布局 → out=[] → 一句不说就什么都不装,
+    // 而旧版代码遇新布局只报一个当前版本根本不存在的路径(E​NOENT skill/SKILL.md), 把人引去查源码。
+    const v = (() => { try { return JSON.parse(fsSync.readFileSync(join(ABS_DIR, 'package.json'), 'utf8')).version; } catch { return 'unknown'; } })();
+    const flat = fsSync.existsSync(join(SKILL_ROOT, 'SKILL.md'));
+    throw new Error(
+      `本包内没有可安装的 skill（${SKILL_ROOT}），安装树与代码版本不一致（当前 ${v}）。\n` +
+      (flat
+        ? '  检测到旧版扁平布局 skill/SKILL.md，本版要求 skill/<名称>/SKILL.md。\n'
+        : '  skill/ 目录缺失或不含任何 <名称>/SKILL.md。\n') +
+      '  修复: npm i -g @fanchao8609/agent_brain_sync@latest && abs install（幂等，可安全重跑）',
+    );
+  }
   return out;
 })();
 // 主 skill（会话开场加载的那个）。它也只是 ALL_SKILLS 的一员，此处仅用于告警比对。

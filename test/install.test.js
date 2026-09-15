@@ -1191,3 +1191,66 @@ describe('安装健壮性', () => {
     assert.ok(after.length >= 2, '仍应保留最近几份');
   }, { timeout: 60000 });
 });
+
+// ---------- 安装树与代码版本一致性守卫 ----------
+// 实测坑(fnos 2026-09-15): 半升级(旧代码 + 新布局)时, 旧版只甩一个当前版本根本不存在
+// 的路径 ENOENT .../skill/SKILL.md, 把人引去查源码; 而新版代码遇扁平旧布局会
+// 静默装 0 个 skill —— 一句不说。故包内一个 skill 都找不到时必须显式报错。
+describe('安装树一致性守卫: 包内无 skill 时显式报错', () => {
+  /** 把包拷到临时目录(不含 node_modules), 便于破坏 skill/ 后单独 import。 */
+  async function scratchPkg() {
+    const dir = join(sandbox, 'pkg');
+    await fs.mkdir(dir, { recursive: true });
+    for (const f of ['src', 'skill', 'hooks']) {
+      await fs.cp(join(REPO, f), join(dir, f), { recursive: true });
+    }
+    await fs.copyFile(join(REPO, 'package.json'), join(dir, 'package.json'));
+    return dir;
+  }
+
+  /** 在 scratch 包里 import src/install.js, 返回 {ok, msg}。 */
+  function probe(dir) {
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e',
+        `try { await import(${JSON.stringify('file://' + join(dir, 'src', 'install.js'))}); console.log('LOADED_OK'); } catch (e) { console.log('LOADED_ERR: ' + e.message); }`,
+      ], {
+        cwd: dir,
+        env: { ...process.env, HOME: dir },
+      });
+      let out = '';
+      child.stdout.on('data', (d) => (out += d));
+      child.stderr.on('data', (d) => (out += d));
+      child.on('close', () => resolve(out));
+    });
+  }
+
+  test('扁平旧布局 → 报错并指出「本版要求 skill/<名称>/SKILL.md」', async () => {
+    const dir = await scratchPkg();
+    // 把新布局压成旧布局: skill/abs-agent-brain-sync/SKILL.md → skill/SKILL.md
+    const main = join(dir, 'skill', 'abs-agent-brain-sync', 'SKILL.md');
+    await fs.copyFile(main, join(dir, 'skill', 'SKILL.md'));
+    await fs.rm(join(dir, 'skill', 'abs-agent-brain-sync'), { recursive: true });
+    await fs.rm(join(dir, 'skill', 'abs-bug-hunter'), { recursive: true });
+    assert.ok(existsSync(join(dir, 'skill', 'SKILL.md')), '前置: 旧扁平布局已就位');
+
+    const out = await probe(dir);
+    assert.match(out, /没有可安装的 skill/, '应显式报错，而非静默装 0 个: ' + out);
+    assert.match(out, /扁平布局/, '应点名检测到旧扁平布局: ' + out);
+    assert.match(out, /npm i -g/, '应给出可复制的修复命令: ' + out);
+  }, { timeout: 30000 });
+
+  test('skill/ 目录整体缺失 → 同样报错(非静默)', async () => {
+    const dir = await scratchPkg();
+    await fs.rm(join(dir, 'skill'), { recursive: true });
+
+    const out = await probe(dir);
+    assert.match(out, /没有可安装的 skill/, '应显式报错: ' + out);
+    assert.match(out, /缺失|不含任何/, '应说明目录缺失: ' + out);
+  }, { timeout: 30000 });
+
+  test('正常布局 → 不报错(守卫不误伤)', async () => {
+    const dir = await scratchPkg();
+    const out = await probe(dir);
+    assert.ok(!/没有可安装的 skill/.test(out), '正常包不该触发守卫: ' + out);
+  }, { timeout: 30000 });
+});
