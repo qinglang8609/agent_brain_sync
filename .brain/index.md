@@ -19,7 +19,7 @@
 - 结论要明确：给结论+依据+下一步；不定位要说清缺什么。
 
 ## Concepts
-- [[abs-install-layout]] — 全局安装形态: npm link 单一真源 + hook/MCP 烧绝对路径
+- [[abs-install-layout]] — 全局安装形态: npm link 单一真源 + hook/MCP 烧绝对路径 + skill 布局须与代码同版本（半升级两头都坑）
 - [[todo-rewrite-not-map]] — todo 行操作必须整文件重写保序，map 改不了分区结构
 - [[hook-sh-not-bash]] — hook 脚本 shebang 与语法必须同方言（POSIX sh 无子串扩展）
 - [[skill-rewrite-residual-old-methods]] — skill 以旧文档为基底重写时, 旧方法(bootstrap/.sh)残留成悬空引用; 须对照实际工具清单逐条核对
@@ -65,7 +65,6 @@
 - [[2026-09-15-git-push-撞-ssl_error_sys]] — git push 撞 SSL_ERROR_SYSCALL 时先降级 HTTP/1.1，不是清代理：本次发布实测——①.ipconfig…
 - [[2026-09-15-每次写文件就弹-follow-up]] — 每次写文件就弹 Follow-up 的功能整个删掉了——触发频率是设计错误不是实现错误。①症状：pi 里满屏 Follow-up，用户第一反应就是「去掉」…
 - [[2026-09-15-自造证据的识别与防治-用户2026-09-15提]] — 自造证据的识别与防治（用户2026-09-15提出）：单假设是造假的动机——只有一个假设时它必须被证实否则思路断，于是自己编输入去测（app…
-- [[2026-09-15-半升级的安装树会两头都坑-旧代码-1-8]] — 半升级的安装树会两头都坑：旧代码(1.8.2只有写死的 skill/SKILL.md 扁平路径)遇到新布局(1.8.3 改成 skill/<名称>/SKILL…
 ## Syntheses
 
 ## Sessions

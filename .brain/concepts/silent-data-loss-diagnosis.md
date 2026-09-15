@@ -72,4 +72,5 @@ WRITE 50d73b1 19 -> a55bfc4 19     ← ⚠ 19 → 19, 条数没增长！
 - [[file-shape-check-on-load]] — 同族：结构被改坏时 load 仍"成功"但读到错内容 = 静默失效
 - [[host-plugin-silent-failure]] — 同属"静默失效"家族（不报错、无痕、靠猜必错）
 - [[self-triggering-hook-loop]] — 同为"守卫写错导致行为静默异常"
+- [[self-authored-evidence]] — 同族方法论：排查时不能用自己造的输入当证据（单假设→编输入→"实测"出假结论）
 - [[AgentBrainSync]] — 项目实体页
