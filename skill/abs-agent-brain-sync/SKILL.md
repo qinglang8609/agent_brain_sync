@@ -30,6 +30,7 @@ abs todo state <id> --note "进行中|讨论中|滞留中"  # 改状态标记（
 abs todo done <id> [--as 落地|否决|仅方案]      # 完成（默认 落地）
 abs log "完成 X：…"                            # 记一行工作成果（无参=查看）
 abs note "经验一句话" [--tags 坑,docker]        # 经验实时暂存 → sources/
+abs concept <slug> --title "标题" [--tags a,b]  # 建概念页骨架（头/中/尾，只给结构不给内容）
 abs rule [add "一句话"]                        # 读写 index.md 的 ## Rules 硬规则
 
 # 维护
@@ -150,7 +151,7 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 3. **sources 是暂存**：提炼成规律后删/归档，并清掉指向它的引用（防死链）。
 4. **能不能用一行链接代替新增整页**？
 
-`abs lint` 兜底：死链/孤岛/**悬挂页(NO-INBOUND)**/缺 frontmatter/超限/sources 堆积/**超龄未提炼(SOURCE-UNDISTILLED)**/index 漏列/Rules 超限。
+`abs lint` 兜底：死链/孤岛/**悬挂页(NO-INBOUND)**/缺 frontmatter/超限/sources 堆积/**超龄未提炼(SOURCE-UNDISTILLED)**/index 漏列/Rules 超限/**缺尾(NO-TAIL，concept 页没有「做完怎么确认」)**。
 ## 开场：Init Sync（开工 / 默认续 todo）
 
 图谱已存在；收到第一个核心开发指令**之前**走这条链载入上下文：
@@ -253,7 +254,10 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 任务告一段落/结束前，把**真实发生**写回图谱。只写做过/跑过/测过的事实，禁止脑补。按序：
 
 1. **暂存线索**：`abs note`（或建 `sources/YYYY-MM-DD-slug.md`）记做了什么、改哪些文件、验证命令。
-2. **抽规律**：值得留的 → `concepts/<kebab-slug>.md`：触发场景/❌表现/🛠根因+解法+验证。挂双链。
+2. **抽规律**：值得留的 → **用 `abs concept <slug> --title "…"` 建页**（自动带好四段骨架
+   并登记 index），再填内容。手写也行，但**四段位置别缺** —— 尤其末尾的「验证」段：
+   **没尾巴的经验只能被「相信」，不能被「验证」**（`abs lint` 会报 NO-TAIL）。
+   **判断仍归你**：这条值不值得留、该新建还是并入已有页 —— `abs concept` 只给结构，不替判断。
    **同时检查：旧页里有没有被本次推翻的说法？** 有 → `abs supersede <旧页> --by <新页>`
    （别删页；删了会让下个会话重踩同一个坑、重新记一遍）。核实过的新页把 `status` 改成 `active`
    （`abs note` 落的页默认是 `draft`）。

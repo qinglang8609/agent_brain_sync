@@ -74,6 +74,16 @@ npm view @fanchao8609/agent_brain_sync version
 ```
 发布前必做：① 全量测试绿 ② `npm pack` 解包产物**直跑关键路径** ③ 发布后从 registry 全新安装再验一次。
 
+### 顺序坑：文档改动必须在 publish **之前**（实测 1.8.5）
+
+新功能发版时若先 `npm publish` 再改 skill/README → **发布产物里的文档不含新功能**。
+症状：命令存在但没人知道（下个会话的 AI 不读源码，只读 skill）。
+1.8.5 实测：`abs concept` 代码在，但产物 skill 提及该命令 **0 次**；且用户下次
+`npm i -g` 会被**旧 skill 覆盖宿主副本**（文档回退）—— 只能再发一版补（1.8.6）。
+
+**判据**：`npm pack` 解包后，grep 产物里的 skill/README 有没有新功能的名字。
+**只要文档和代码在同一个 tarball 里，就得分同一批改完再发。**
+
 ## 关联连接
 - [[abs-install-layout]] — 全局安装形态
 - [[deploy-artifact-copies]] — 发布包/宿主落点/进程内存三份副本
