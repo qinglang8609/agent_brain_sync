@@ -108,5 +108,6 @@ ls .brain/concepts/ | grep -iE "silent|drift|stale"
 - [[silent-data-loss-diagnosis]] — 复发最多的一族（5 次），本页判据的主要证据来源
 - [[read-side-output-must-not-scale]] — 「强制送达通道」的另一面：通道容量必须可控
 - [[abs-install-layout]] — 本次触发评估的坑（半升级），且是「改布局须同 commit」规则的来源
+- [[naming-contract-and-judge-precision]] — 本规律在目录层的应用：命名契约 + 判据精度
 - [[teardown-automation]] — 采集环节的机制设计；消化/生效环节缺它那种机械性
 - [[AgentBrainSync]] — 项目实体页

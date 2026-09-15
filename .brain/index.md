@@ -20,6 +20,7 @@
 - 改布局/签名/协议必须与读它的一方同一个 commit；分开就是静默失效
 
 ## Concepts
+- [[naming-contract-and-judge-precision]] — 目录契约(一天一文件)+判据精度(看结构不看关键词/正则词边界陷阱)+存量迁移方法
 - [[feature-delete-not-patch]] — 触发频率错是设计错误不是实现错误：功能该删不该补（4 例实证 + YAGNI 判据）
 - [[borrowed-protocol-designs]] — 抄协议不抄依赖：manifest 分层/fallback 自救/id 抗改名（含不抄 uuid/哈希的理由）
 - [[learning-loop-collect-distill-deliver]] — 规律进化三环节(采集/消化/生效)：只有前两环在工作，生效环缺失 = 同类坑反复(git 实证 Rules 不积累)
