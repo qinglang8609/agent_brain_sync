@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-09-15 23:40] [[fanchao]] dev | 收尾：本会话 4 项主要工作登记进看板（SESSIONS-CONTRACT / CONCEPT-CMD / NO-TAIL-44 / SOURCES-DIGEST-DH 全部落地）。Hook 更新为 8 条（补 NO-TAIL 补验证段的经验：别写套话，要给该页自己的检查手段）。1.8.7 已发布，三处版本对齐（local=registry=installed）。6 图谱 lint 全零，349 测试全绿。
 ## [2026-09-15 19:07] [[fanchao]] dev | 收尾完成：新增概念页 naming-contract-and-judge-precision（目录契约 + 判据精度 + 迁移方法）；会话快照续写第七节（6 项目治理 + 3 个工具缺陷）；Hook 刷新为 7 条真交接。本仓 lint 0，349 测试全绿。
 ## [2026-09-15 19:06] [[fanchao]] dev | sessions 检查补漏（在 ~/Docker 实测抓到两个 bug）：①旧命名单独存在时漏报——4 个日期各只有一份 <日期>-todo归档.md（无对应 log）→ 首版只看「同天 >1 个」一个都不报；现加 SESSIONS-NAMING（单个但非规范名即报）。②豁免判据过宽——\barchive\b 会匹配 todo-archive（- 与 a 之间也是词边界）→ 老式归档页全被豁免；改为只认独立 archive 标签。并补扫出 2 个漏网项目（~/Docker、~/.brain 家目录图谱）。现 6 个项目 SESSIONS 报警全归零，349 测试全绿。
 ## [2026-09-15 18:59] [[fanchao]] dev | 把 todo 归档的正规做法写进 skill（用户定为标准）：跑 abs todo archive 即可，它自动写进 sessions/log-<那天>.md 的「## 📦 任务归档」段（已有快照只替换该段、没有则建；手写内容不覆盖）。禁令改为「给手写用的」——归档本身不需要方法，只需要跑命令。顺带修 skill 里 2 处仍在说旧命名 <日期>-todo归档.md 的陈述。
