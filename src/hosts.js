@@ -18,7 +18,6 @@ export const HOSTS = [
     // 配置文件: ~/.claude/settings.json 的 hooks 对象（config 根可经 env 覆盖，用于测试/自定义）
     configRoot: () => process.env.CLAUDE_CONFIG_DIR || join(HOME, '.claude'),
     skillSub: 'skills', // 相对 configRoot 的 skill 目录
-    skillOwner: 'self', // skill 扇出归本工具
     // 事件 → 我们的 shell hook 脚本（从 hooks/ 拷到 .claude 侧后执行）
     events: ['SessionStart', 'UserPromptSubmit', 'Stop', 'SessionEnd'],
   },
@@ -28,7 +27,6 @@ export const HOSTS = [
     // 配置: ~/.codex/hooks.json: { hooks: [...] }
     configRoot: () => process.env.CODEX_HOME || join(HOME, '.codex'),
     skillSub: 'skills', // 相对 configRoot 的 skill 目录
-    skillOwner: 'self', // skill 扇出归本工具
     events: ['SessionStart', 'UserPromptSubmit', 'Stop'],
   },
   {
@@ -37,7 +35,6 @@ export const HOSTS = [
     // 只吃 TS plugin：<configRoot>/plugins/abs.ts（config 根可经 env 覆盖，用于测试）
     configRoot: () => process.env.ABS_OPENCODE_HOME || join(HOME, '.config', 'opencode'),
     skillSub: 'skills', // 相对 configRoot 的 skill 目录
-    skillOwner: 'self', // skill 扇出归本工具
     events: ['SessionStart', 'UserPromptSubmit', 'Stop'],
   },
   {
@@ -46,12 +43,6 @@ export const HOSTS = [
     // 落盘: <configRoot>/agent/extensions/abs.ts
     configRoot: () => process.env.ABS_PI_HOME || join(HOME, '.pi'),
     skillSub: join('agent', 'skills'), // pi 用户级 skill 在 ~/.pi/agent/skills (非 ~/.pi/skills)
-    // skill 扇出交给 CC Switch —— 常驻自动同步器(~/.cc-switch/skills/,
-    // skillSyncMethod=auto), 会把 skill 推到各宿主。abs 再写同一批路径
-    // 就是两个写入者互相覆盖; 且 pi 同时扫 ~/.pi/agent/skills 与
-    // ~/.agents/skills, 同名实体两份 → pi 报 skill 冲突(实测)。
-    // 故 abs 对 pi 只装 hook/MCP, 不碰 skill。
-    skillOwner: 'cc-switch',
     events: ['SessionStart', 'UserPromptSubmit', 'Stop'],
   },
 ];

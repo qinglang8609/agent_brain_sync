@@ -48,11 +48,6 @@ const SKILL_SOURCE = join(SKILL_ROOT, 'abs-agent-brain-sync', 'SKILL.md');
  *  skill/ 目录，本函数与调用方都不动（避免「改一份不算改」）。返回步骤行。 */
 async function installSkills(agentKey) {
   const steps = [];
-  const owner = hostByKey(agentKey).skillOwner;
-  if (owner && owner !== 'self') {
-    steps.push(`• skill  → 交给 ${owner} 管（本工具不写，避免两个写入者覆盖）`);
-    return steps;
-  }
   const root = join(hostSkillDir(agentKey), '..');
   for (const s of ALL_SKILLS) {
     const t = join(root, s.name, 'SKILL.md');
@@ -64,10 +59,6 @@ async function installSkills(agentKey) {
 
 /** 卸载该宿主的全部 skill（主 + 附带）。与 installSkills 同源同规则。
  *  曾经的坑: 只有 claude-code 删了附带 skill，其余三宿主留下 abs-bug-hunter/ 残留。
- *
- * 注意: 这里**不看 skillOwner** —— 即使该宿主的 skill 已交给外部工具管，
- * 本工具历史上可能往那儿写过（如 pi 交给 CC Switch 之前），卸载要还这笔账，
- * 否则留下没人更新的副本。
  */
 async function uninstallSkills(agentKey) {
   const steps = [];

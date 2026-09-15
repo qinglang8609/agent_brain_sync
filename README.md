@@ -32,14 +32,11 @@ abs install --agent pi --no-mcp   # 只装 hook + skill，不要 MCP
 | claude-code | `~/.claude/settings.json` hooks | `mcpServers.abs` (stdio) | `~/.claude/skills/abs-agent-brain-sync/` |
 | codex | `~/.codex/hooks.json` | config.toml `[mcp_servers.abs]` | `~/.codex/skills/` |
 | opencode | `~/.config/opencode/plugins/abs.ts` | opencode.json mcp.abs | skills/ |
-| pi | `~/.pi/agent/extensions/abs.ts` | `~/.pi/agent/mcp.json` `mcpServers.abs` | 交给 CC Switch 管（不写） |
+| pi | `~/.pi/agent/extensions/abs.ts` | `~/.pi/agent/mcp.json` `mcpServers.abs` | `~/.pi/agent/skills/` |
 
-> **skill 归属**：`skill/` 下每个含 `SKILL.md` 的子目录 = 一个 skill，目录名即安装名。
-> 默认由 abs 装到各宿主 `skills/`；但 pi 的 `skillOwner` 是 `cc-switch` ——
-> CC Switch 是常驻自动同步器（`~/.cc-switch/skills/`），会把 skill 推到各宿主。
-> 两个写入者写同一批路径会互相覆盖；且 pi 同时扫 `~/.pi/agent/skills/` 与
-> `~/.agents/skills/`，同名实体两份会被判成 skill 冲突。故 abs 对 pi 只装 hook/MCP。
-> 卸载不受此影响 —— 历史上装过的副本仍会清掉（欠账要还）。
+> **skill 规则**：`skill/` 下每个含 `SKILL.md` 的子目录 = 一个 skill，
+> **目录名即安装名**（须与 frontmatter `name` 一致，否则 pi 会告警）。
+> 新增 skill 只需建目录，无需改代码。
 
 - **幂等**：重复安装 = 更新，写入前自动备份
 - **共存**：追加式合并，不会顶掉你这个事件上的其它 hook
