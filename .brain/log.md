@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-09-15 17:00] [[fanchao]] dev | 消化 sources 14→0：新建 2 概念页(feature-delete-not-patch 四例实证「功能该删不该补」/ borrowed-protocol-designs 抄协议不抄依赖)、补 2 处已有页(HTTP/1.1 降级解 push SSL、read-side 补链)，lint 4→3。并落地「待消化」送达机制：复用滞留同构通道，load 顶部在 sources>10 时提示（提炼仍手工，不替判断）。
 ## [2026-09-15 16:48] [[fanchao]] dev | 收尾循环补上「生效环」：第 4 步单列出 Rules 判定（原先是第 4 步里的附属从句，长期 0 新增的根因）。判据从『够格就加』改成『够格却不加 = 下次不会送达』；采用提议制(AI 提议→用户拍板)，不直写。已扇出四宿主并逐副本 diff 核对一致。
 ## [2026-09-15 16:47] [[fanchao]] dev | 评估「图谱能否让 AI 进化」：git 实证 Rules 不积累——14 条里 13 条来自 09-13/09-15 两次人工注入，09-13 前根本没有 Rules 区（经验全进 concepts）。定性: 采集环（hook）机械可靠、消化环（提炼）靠自觉、【生效环根本不存在】——所以同类坑反复（静默失效 5 次、版本漂移 3 次）却没被拦住。核心矛盾: 能生长的 concepts 读不到，读得到的 Rules 不生长。已加规则「改布局/签名/协议必须与读它的一方同一个 commit」+ 新建 concepts/learning-loop-collect-distill-deliver.md 记录评估。
 ## [2026-09-15 15:54] [[fanchao]] dev | 完成 1.8.4 发布：安装树与代码版本不一致时显式报错（不再静默装 0 个 skill）。改动 src/install.js ALL_SKILLS 构建后判空(+14行) + test 3 例。验证: 321 测试全绿；registry tarball 实测(正常布局 OK / 压成扁平必报错)；全局装 1.8.4 后 abs install 四宿主全成功。已 push c8bbb0e。

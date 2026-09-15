@@ -130,6 +130,10 @@ export function logTemplate() {
 /** 标准形状表（与 indexTemplate/logTemplate/todoTemplate 同源）。
  * 标记不一致 = 直接改成标准（“能自己处理的先处理”）。
  * 只按**整行精确匹配**改标题，绝不动正文 —— 不做模糊替换，否则正文里提到的旧名会被误改。 */
+// sources/ 堆积阀值：超过就是「采了没消化」。lint 报 SOURCES-PILED-UP，load 顶部同步提示。
+// 两处共用同一常量 —— 阀值只有一个真源。
+const SOURCES_MAX = 10;
+
 export const BRAIN_SHAPE = {
   'todo.md': {
     h1: '# 📋 Todo Board',
@@ -328,13 +332,35 @@ export async function cmdLoad({ dir }) {
       ''
     );
   }
+  // sources 堆积提醒：与「滞留」同构 —— 放在每次开工必经的顶部，而不是等人跑 lint。
+  // 只数目录条目（不读文件），零成本。提炼仍手工：这里只负责送达，不替判断。
+  const nsrc = await countSources(root);
+  if (nsrc > SOURCES_MAX) {
+    // 插在滞留之后 / Rules 之前：滞留更紧急（卡住当前工作），消化其次。
+    const at = sections.findIndex((s) => String(s).startsWith('--- Rules')) ;
+    sections.splice(at === -1 ? 1 : at, 0,
+      `♻ 待消化: sources/ 有 ${nsrc} 条 > ${SOURCES_MAX}（采集了没提炼）`,
+      '→ abs lint 看明细；提炼成 concepts/ 后删 source 并清引用',
+      '');
+  }
   return sections.join('\n');
+}
+
+/** 数 sources/ 下的 .md 文件数（只读目录，不解析内容）—— load 顶部提醒用。
+ *  坑: root 是【项目根】，图谱在 root/.brain/ 下 —— 必须走 brainPath，
+ *  直接用 join(root,'sources') 会 ENOENT 被 catch 吞成 0，成为又一个静默失效。 */
+async function countSources(root) {
+  try {
+    const files = await fs.readdir(brainPath(root, 'sources'));
+    return files.filter((f) => f.endsWith('.md') && !f.startsWith('_')).length;
+  } catch { return 0; }
 }
 
 // ---------- Rules: index.md 里的硬规则区 ----------
 /** index.md 的 `## Rules` 区名与上限。 */
 export const RULES_HEADING = '## Rules';
 export const RULES_MAX = 30; // 超过就 lint 报：它属于“被读到才有价值”的区，不能无界增长
+
 
 /** 提取 index.md 里的 Rules 区条目（不含标题）。返回 { items:[行], body, found }。 */
 export function readRules(indexText) {
@@ -1237,7 +1263,7 @@ export async function cmdLint({ dir }) {
   }
 
   const nsrc = pages.filter((p) => p.dir === 'sources').length;
-  if (nsrc > 10) issues.push(`SOURCES-PILED-UP: sources/ has ${nsrc} files > 10; 提炼归档旧 source`);
+  if (nsrc > SOURCES_MAX) issues.push(`SOURCES-PILED-UP: sources/ has ${nsrc} files > ${SOURCES_MAX}; 提炼归档旧 source`);
 
   // SOURCE-UNDISTILLED: source 页超过 SOURCE_STALE_DAYS 天仍没链到任何 concept 页 = 暂存了没归位。
   // 只数总量（SOURCES-PILED-UP）抓不到"4 个 source 里 3 个没提炼"——实测本仓即如此。

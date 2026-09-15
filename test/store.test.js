@@ -1623,3 +1623,41 @@ describe('page status (abs supersede)', () => {
     assert.ok(/^status: draft$/m.test(body), `新经验应为 draft: ${body.slice(0, 300)}`);
   });
 });
+describe('load 顶部「待消化」提示（与滞留同构的送达机制）', () => {
+  /** 往 sources/ 放 n 条占位 source。 */
+  async function fillSources(n) {
+    const d = join(projectA, '.brain', 'sources');
+    await fs.rm(d, { recursive: true, force: true });
+    await fs.mkdir(d, { recursive: true });
+    for (let i = 1; i <= n; i++) {
+      await fs.writeFile(join(d, `2026-09-15-fake-${i}.md`),
+        `---\ntags: [source]\nupdated: 2026-09-15\n---\n# 占位${i}\n\n## 关联连接\n`, 'utf8');
+    }
+  }
+
+  // 坑（实现时踩到）: root 是【项目根】，图谱在 root/.brain/ 下。首版忘走 brainPath
+  // 直接用 join(root,'sources') → ENOENT 被 catch 吞成 0 → 提示永不出现（又一个静默失效）。
+  // 故此处必须断言"真会提示"，只测"不报错"是测不出这个 bug 的。
+  test('sources 超阈值时在 Rules 之前提示；未超则不提', async () => {
+    await fillSources(11);
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(out.includes('待消化'), `11 条应提示: ${out}`);
+    const iRemind = out.indexOf('待消化');
+    const iRules = out.indexOf('--- Rules');
+    assert.ok(iRules === -1 || iRemind < iRules, '提示应在 Rules 之前（开工必经的顶部）');
+  });
+
+  test('边界: 恰好 10 条不提示（阈值是 >，不是 >=）', async () => {
+    await fillSources(10);
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(!out.includes('待消化'), `10 条不该提示: ${out}`);
+  });
+
+  test('下划线开头的文件（模板）不计入', async () => {
+    await fillSources(11);
+    await fs.writeFile(join(projectA, '.brain', 'sources', '_template.md'),
+      '---\ntags: [source]\n---\n# 模板\n', 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(out.includes('有 11 条'), `模板不该被计数（应仍为 11）: ${out}`);
+  });
+});

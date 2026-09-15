@@ -59,6 +59,11 @@ npm install -g @fanchao8609/agent_brain_sync
 - **发布名与 bin 命令独立**：包名可 scoped（@user/pkg），bin 命令照旧（`abs`）。别被包名占位劝退，scoped 是 npm 官方给的解法。
 - **product 形态 = 发布包 vs 开发 repo 分离**：`which abs` 指向发布包，开发 repo 只是源码。详见 [[deploy-artifact-copies]]。
 - **不要给 npm / git 配 proxy**（2026-09-10 npm 已移除；2026-09-13 git 又踩一次）：曾致 `npm publish` 恒 `EHOSTUNREACH`，但 `nc`/`curl -x`/直连均通 —— 只有 npm 走不通。git 同理：`git config http.proxy` 指向已失效的 `192.168.0.114:7890` → push 报 `Failed to connect to ... port 7890`，而**直连本就通**。临时绕过：`git -c http.proxy= -c https.proxy= push`。直连本就通，代理是多余的一跳。
+- **push 撞 `SSL_ERROR_SYSCALL` → 先降级 HTTP/1.1，不是清代理**（2026-09-15 实测）：清掉 `.git/config` 代理、改用 `HTTPS_PROXY` 环境变量后能 `ls-remote` 但 push 仍报错。真解是**强制 HTTP/1.1**（绕过 HTTP/2 的 TLS 复用问题）：
+  ```bash
+  git -c http.proxy= -c https.proxy= -c http.version=HTTP/1.1 push
+  ```
+  排查顺序：① `.git/config` 里有没有失效 `http.proxy`（如 `192.168.0.114:7890` 属另一台机器）② 清后用环境变量代理能否 `ls-remote` ③ 能 ls-remote 但 push 仍失败 → 降 HTTP/1.1。
 
 ## 验证命令（回归）
 ```bash

@@ -60,3 +60,4 @@ node -e "...写入大量数据..." && node bin/abs.js load | wc -c
 - [[AgentBrainSync]] — 本规律的来源项目（abs load 三次膨胀）
 - [[summary-truncation-hidden-cause]] — 写入侧收口的同类纪律
 - [[fanchao]] — 由用户实测"另一台机器 40%"报出
+- [[borrowed-protocol-designs]] — 本规律是「抄协议不抄依赖」三项之首的产物
