@@ -1904,3 +1904,39 @@ describe('UNRESOLVED-CONFLICT 判据', () => {
       `只是提到不该报: ${out}`);
   });
 });
+
+// 旧命名单独存在也要报（2026-09-15 在 ~/Docker 实测抓到的漏报）:
+// 4 个日期各只有一份 `<日期>-todo归档.md`（无对应 log-）→ 首版只看「同天 >1」一个都不报。
+describe('SESSIONS-NAMING: 旧命名单独存在', () => {
+  test('单个 <日期>-todo归档.md（无 log-）→ 报 NAMING', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-25-todo归档.md'),
+      '---\ntags: [todo-archive, 历史]\nupdated: 2026-09-25\nstatus: reviewed\n---\n# 归档\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/SESSIONS-NAMING[^\n]*2026-09-25/.test(out), `旧命名单独存留应报: ${out}`);
+  });
+
+  // 反向钉住 1: 规范名单独存在不报。
+  test('单个 log-<日期>.md → 不报', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-26.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-26\nstatus: active\n---\n# X\n\n## 验证\n跑 test\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SESSIONS-NAMING[^\n]*2026-09-26/.test(out), `规范名不该报: ${out}`);
+  });
+
+  // 反向钉住 2: 豁免只认独立 `archive` 标签，不认 `todo-archive`。
+  // 坑: 首版用 /\barchive\b/ —— `todo-archive` 里 '-' 与 'a' 之间也是词边界 → 全被豁免。
+  test('todo-archive 标签不享受 archive 豁免', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-27-todo归档.md'),
+      '---\ntags: [todo-archive]\nupdated: 2026-09-27\nstatus: reviewed\n---\n# 归档\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/SESSIONS-NAMING[^\n]*2026-09-27/.test(out),
+      `todo-archive 不该被豁免: ${out}`);
+  });
+
+  test('独立 archive 标签仍豁免（可与 log- 共存）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-28-full-archive.md'),
+      '---\ntags: [session-log, archive]\nupdated: 2026-09-28\nstatus: reviewed\n---\n# 全文归档\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SESSIONS-(NAMING|SPLIT)[^\n]*2026-09-28/.test(out), `archive 应豁免: ${out}`);
+  });
+});

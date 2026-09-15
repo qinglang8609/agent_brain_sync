@@ -1433,8 +1433,8 @@ export async function cmdLint({ dir }) {
 
   // SESSIONS-NAMING: sessions/ 的一天一文件契约（见 skill 的「sessions/ 命名契约」）。
   // 实测 codebuddy 乱局（2026-09-15）：一天最多出现 5 个文件、5 种 tags、同天两个快照。
-  // 判据纯机械：按“日期前缀”归组，同一天有 >1 个文件就报（旧命名 `*-todo归档` 与
-  // 新归档段已并入 log-，均不再放行）。只看日期前缀，不猜内容。
+  // 判据纯机械：按“日期前缀”归组——同天 >1 个文件报 SPLIT；单个但非规范名报 NAMING。
+  // 只看文件名，不猜内容。
   const sessByDate = new Map();
   for (const pg of pages) {
     if (pg.dir !== 'sessions') continue;
@@ -1443,12 +1443,14 @@ export async function cmdLint({ dir }) {
     // 于是「一个 log- + 一个旧杂文件」被数成 1 个而非 2 个，漏报。
     const m = pg.slug.match(/^(?:log-)?(\d{4}-\d{2}-\d{2})/);
     if (!m) continue;
-    // 长期存续的归档页（tags 含 archive）豁免：它不是「当天记录」，而是外部产物的全文归档。
-    // 实测 codebuddy 的 `2026-09-07-todo-md-archive.md`（495行/33KB，仓库根 todo.md 全文，
-    // 被 10 个页引用）—— 它永远无法「并入当天 log」（体积与性质都不对）。
-    // 不豁免就会永久挂一条报警，而永久报警会训练人忽略报警（比误报更贵）。
+    // 长期存续的归档页豁免：**只认独立的 `archive` 标签**（如 `tags: [session-log, archive]`），
+    // 不认 `todo-archive`（那是旧归档页的标签，它正是要迁移的对象）。
+    // 坑（2026-09-15 在 ~/Docker 实测抓到）: 首版用 `\barchive\b` —— 而 `todo-archive`
+    // 里 `-` 与 `a` 之间也是词边界 → **老式归档页全被豁免**，一个都不报（漏报四天）。
+    // 豁免是为「外部产物全文归档」（如仓库 todo.md 全文）设的，不是为旧命名归档页。
     const tags = String(pg.frontmatter).match(/^tags:\s*(.+)$/m)?.[1] || '';
-    if (/\barchive\b/.test(tags)) continue;
+    const tagList = tags.replace(/^\[|\]$/g, '').split(',').map((t) => t.trim());
+    if (tagList.includes('archive')) continue;
     if (!sessByDate.has(m[1])) sessByDate.set(m[1], []);
     sessByDate.get(m[1]).push(pg.slug);
   }
@@ -1456,6 +1458,13 @@ export async function cmdLint({ dir }) {
     if (slugs.length > 1) {
       issues.push(`SESSIONS-SPLIT: ${date} 在 sessions/ 有 ${slugs.length} 个文件（${slugs.join('、')}）；` +
         `一天只应有一个 \`log-${date}.md\`：归档写进其「## 📦 任务归档」段，多主题写成多个 ## 子段`);
+    } else if (!slugs[0].startsWith('log-')) {
+      // 单个文件但**不是规范名** —— 旧命名（`<日期>-todo归档.md` 等）单独存留。
+      // 坑（2026-09-15 在 ~/Docker 实测抓到）: 首版只看“同天 >1 个” → 4 个日期
+      // 各只有一份 `<日期>-todo归档.md` → 一个都不报（漏报）。
+      // 旧命名的页无论是否孤单都该改：跑 `abs todo archive` 后并入 `log-<日期>.md`。
+      issues.push(`SESSIONS-NAMING: ${date} 的文件 \`${slugs[0]}.md\` 不是规范名；` +
+        `应为 \`log-${date}.md\`（跑 abs todo archive 会并入；旧归档页可删）`);
     }
   }
   // SESSIONS-MISPLACED: sessions/ 里放了 tags 既非 session-log / todo-archive / archive 的页。
