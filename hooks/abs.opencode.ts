@@ -15,17 +15,13 @@
 import { appendFile, mkdir, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join, dirname } from "node:path"
-
 const server = async ({ client, directory }) => {
   // 本会话是否真改过文件 (由 tool.execute.after 观测)
   let wroteFiles = false
   let nudged = false
   let idleSeen = false
-  // 登记提醒计数：只为日志/诊断，不做去重 —— 用户要「频繁一点」，每次写文件都提醒。
-  let registerNudged = 0
-  // 当前 session id（由事件里拿），tool.execute.after 没带 sessionID 时靠它补。
+  // 当前 session id（由事件里拿）—— 收尾注入需要它找到会话。
   let currentSessionID = ""
-
   async function logHook(evt) {
     try {
       const dir = process.env.ABS_LOG_DIR || join(homedir(), ".abs", "log")
@@ -56,21 +52,6 @@ const server = async ({ client, directory }) => {
     } catch { return false }
   }
 
-  // 登记提醒：注入失败不阻塞宿主。每次写文件都提醒（用户明确要「频繁一点」）。
-  async function registerNudge(files) {
-    registerNudged++
-    await logHook(`tool.execute.after:register-nudge #${registerNudged} files=${files.length}`)
-    if (!currentSessionID) return // 拿不到 session 就无法注入，静默跳过（不抛）
-    const cwd = directory || process.cwd()
-    if (!(await findBrain(cwd))) return // 无图谱 = 不在这项目沉淀，不打扰
-    try {
-      await client.session.promptAsync({
-        path: { id: currentSessionID },
-        query: { directory: cwd },
-        body: { parts: [{ type: "text", text: REGISTER_MSG(files) }] },
-      })
-    } catch {}
-  }
 
   const TEARDOWN_MSG =
     "[abs 收尾提醒] 本会话改过文件但 .brain/ 今天还没有记录。请立即走收尾循环：\n" +
@@ -83,23 +64,8 @@ const server = async ({ client, directory }) => {
   // bash 里只跑查询类命令不算改文件 (与 pi 侧 READONLY_CMD 同义, 但生成代码里要写进模板串)
   const READONLY_CMD = /^\s*(ls|cat|grep|rg|find|head|tail|wc|git\s+(status|log|diff|show|branch)|pwd|which|echo|node\s+-v|npm\s+(ls|view)|curl)\b/
 
-  // 写文件 = 任务开始的机械信号。排除 .brain/ 自身（`abs note`/`abs log` 也写文件，
-  // 但那是记录行为不是任务 —— 不排除则每落一条经验都弹登记提醒，纯噪音）。
-  const BRAIN_PATH = /\.brain[\\/]/
-  function isProjectWrite(p, cmd) {
-    if (cmd !== undefined) return !!cmd && !READONLY_CMD.test(cmd)
-    if (!p) return false
-    return !BRAIN_PATH.test(String(p))
-  }
 
-  const REGISTER_MSG = (files) =>
-    "[abs 登记提醒] 本轮改了项目文件，说明有任务在进行。\n" +
-    "改了：" + files.slice(0, 6).join(", ") + (files.length > 6 ? ` 等 ${files.length} 个` : "") + "\n" +
-    "若这属于某个任务，立刻登记（别等到会话结束才回忆——那时必漏）：\n" +
-    "  · 新任务: abs todo add <id> --note \"做什么\"\n" +
-    "  · 已有任务: abs todo note <id> --note \"改到哪/下一步\"\n" +
-    "  · 纯讨论/调研/改图谱自身 → 无需登记，回「跳过」即可。\n" +
-    "简洁执行，不要复述本条提醒。"
+
 
   return {
     // 观测真实写操作: write/edit/patch 类工具成功即标记。
@@ -108,20 +74,14 @@ const server = async ({ client, directory }) => {
     "tool.execute.after": async ({ tool, args }) => {
       const t = String(tool || "").toLowerCase()
       const a = args || {}
-      const fp = a.file_path || a.filePath || a.path || a.filename
       if (["write", "edit", "patch", "multiedit", "apply_patch"].includes(t)) {
         wroteFiles = true
-        // 登记提醒：项目文件被写 = 任务已开始，立刻推（不等 idle）
-        if (isProjectWrite(fp)) await registerNudge([String(fp)])
         return
       }
       // bash 里只有非只读命令算改文件(ls/cat/git status 之类不算)
       if (t === "bash") {
         const cmd = String(a.command || a.cmd || "")
-        if (isProjectWrite(undefined, cmd)) {
-          wroteFiles = true
-          await registerNudge(["bash: " + cmd.slice(0, 60)])
-        }
+        if (cmd && !READONLY_CMD.test(cmd)) wroteFiles = true
       }
     },
 

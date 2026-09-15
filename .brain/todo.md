@@ -3,6 +3,12 @@
 ## Done
 ### 2026-09-15
 
+- [x] AUTO-REG [[fanchao]] — 写文件即自动登记(hook 端)：写项目文件→hook 直接 spawn abs autotask 建/追加 [待归类] 条目，不再只弹提醒。幂等键=会话(同会话只一条)。待发版(1.8.0 已发布版不含此功能，故本地实测走仓库 bin) 【落地】 (完成 2026-09-15)
+  ↳ 断点: 完成：新增 cmdAutoTask + abs autotask 内部命令 + 两宿主 hook 调用。332 测试全绿(+7)，破坏验证2轮全红(幂等键失效/无图谱误写)。踩坑记录：①opencode 模板加了 @@ABS_BIN@@ 但安装器没替换→产物坏 TS(31个测试炸)；②我的 node 脚本写文件名时多插了一个零宽空格(16 vs 15 字符)，导致 ENOENT；③实测发现 1.8.0 已发布版不含 autotask，hook spawn 全局 bin 会静默失败(stdio:ignore 吞掉'未知命令')——这不是 bug 是未发版，但暴露了一个真问题：hook 调全局 bin 时，若全局版本落后就会静默失效。
+- [x] AUTO-OCSESS [[fanchao]] — [待归类] 改了 src/oc-test.js 【否决】 (完成 2026-09-15)
+  ↳ 改了 1 个文件：src/oc-test.js
+- [x] AUTO-TESTSESS [[fanchao]] — [待归类] 改了 src/x.js 【否决】 (完成 2026-09-15)
+  ↳ 改了 1 个文件：src/x.js
 - [x] TODO-AUTO [[fanchao]] — 写文件即任务开始：turn_end 检测到写文件→立刻注入登记提示(每会话每次写文件都提醒，频繁没关系)；判据=整个项目排除.brain自身；文案明说'纯讨论可跳过'；配套 reviewed→active 迁移 + SKILL.md 约束文档更新 【落地】 (完成 2026-09-15)
   ↳ 断点: 完成：写文件即任务开始。pi(turn_end)/opencode(tool.execute.after) 检测项目文件写入→当场注入[abs 登记提醒](不等 agent_end)，文案含改过的文件+三选一(新任务add/已有note/纯讨论跳过)。判据=整个项目但排除 .brain/ 自身(note/log 也写文件但是记录行为非任务)。频繁是故意的：每轮写文件都提醒，同文件再改也提醒。另:reviewed→active 迁移20页(字段值归一到三值)，SKILL.md 新增该节。325测试全绿(+5 pi +5 oc)，破坏验证2轮。
 - [x] EXP-LIFECYCLE [[fanchao]] — 经验/知识页生命周期：①status 三值定死语义(active/superseded/draft) ②abs supersede <页> --by <页> 标记推翻 ③abs note 落页默认 draft ④query/load 默认不展示 superseded ⑤lint 查 superseded-by 指向是否存在 + 查 draft 超龄未核实。不含 todo 自动化(用户明确排除) 【落地】 (完成 2026-09-15)
