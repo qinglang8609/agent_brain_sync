@@ -16,6 +16,28 @@ const ABS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HOOK_TEMPLATE = join(ABS_DIR, 'hooks', 'event.sh');
 const SKILL_SOURCE = join(ABS_DIR, 'skill', 'SKILL.md');
 
+// 随 abs 一并安装的附带 skill（agent 排查 bug 时挂载）。
+// 必须放在本包内随包发布 —— 不能假设宿主已装：实测 co​dex 只有 abs 自己装的 skill，
+// 若引用外部 skill 会成悬空。ponytail: 只加这一个，需要更多时改成扫 skill/ 子目录。
+const BUNDLED_SKILLS = [
+  { name: 'bug-hunter', src: join(ABS_DIR, 'skill', 'bug-hunter', 'SKILL.md') },
+];
+
+/** 安装主 skill + 全部附带 skill 到该宿主。收口在此：四处安装点共用，
+ *  新增附带 skill 时只改本函数（避免「改一份不算改」）。返回步骤行。 */
+async function installSkills(agentKey) {
+  const steps = [];
+  const base = hostSkillDir(agentKey);
+  await atomicWrite(join(base, 'SKILL.md'), await fs.readFile(SKILL_SOURCE, 'utf8'));
+  steps.push(`✓ skill  → ${join(base, 'SKILL.md')}`);
+  for (const b of BUNDLED_SKILLS) {
+    const t = join(base, '..', b.name, 'SKILL.md');
+    await atomicWrite(t, await fs.readFile(b.src, 'utf8'));
+    steps.push(`✓ skill  → ${t}`);
+  }
+  return steps;
+}
+
 /**
  * 本包的稳定入口路径解析（mcp.js / abs.js 通用）。
  *
@@ -455,9 +477,7 @@ async function installClaudeCode({ withMcp, withSkill, log }) {
 
   // 3) skill → <configRoot>/skills/abs-agent-brain-sync/SKILL.md (config 根 = CLAUDE_CONFIG_DIR)
   if (withSkill) {
-    const target = join(hostSkillDir('claude-code'), 'SKILL.md');
-    await atomicWrite(target, await fs.readFile(SKILL_SOURCE, 'utf8'));
-    steps.push(`✓ skill  → ${target}`);
+    steps.push(...await installSkills('claude-code'));
   }
   return steps;
 }
@@ -494,7 +514,8 @@ async function uninstallClaudeCode() {
   // skill
   const skillDir = hostSkillDir('claude-code');
   await fs.rm(skillDir, { recursive: true, force: true });
-  steps.push(`✓ skill 已删除`);
+  for (const b of BUNDLED_SKILLS) await fs.rm(join(skillDir, '..', b.name), { recursive: true, force: true });
+  steps.push(`✓ skill 已删除（含附带: ${BUNDLED_SKILLS.map((x) => x.name).join(", ")}）`);
   return steps;
 }
 
@@ -574,9 +595,7 @@ async function installCodex({ withMcp, withSkill, log }) {
     }
   }
   if (withSkill) {
-    const target = join(hostSkillDir('codex'), 'SKILL.md');
-    await atomicWrite(target, await fs.readFile(SKILL_SOURCE, 'utf8'));
-    steps.push(`✓ skill  → ${target}`);
+    steps.push(...await installSkills('codex'));
   }
   return steps;
 }
@@ -726,9 +745,7 @@ async function installOpenCode({ withMcp, withSkill, log }) {
     steps.push(`✓ MCP → ${mcpP} (mcp.abs local)`);
   }
   if (withSkill) {
-    const target = join(hostSkillDir('opencode'), 'SKILL.md');
-    await atomicWrite(target, await fs.readFile(SKILL_SOURCE, 'utf8'));
-    steps.push(`✓ skill → ${target}`);
+    steps.push(...await installSkills('opencode'));
   }
   return steps;
 }
@@ -775,9 +792,7 @@ async function installPi({ withMcp, withSkill, log }) {
     steps.push(`✓ MCP    → ${mcpP} (mcpServers.abs, stdio)`);
   }
   if (withSkill) {
-    const target = join(hostSkillDir('pi'), 'SKILL.md');
-    await atomicWrite(target, await fs.readFile(SKILL_SOURCE, 'utf8'));
-    steps.push(`✓ skill → ${target}`);
+    steps.push(...await installSkills('pi'));
   }
   return steps;
 }
