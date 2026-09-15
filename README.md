@@ -32,7 +32,14 @@ abs install --agent pi --no-mcp   # 只装 hook + skill，不要 MCP
 | claude-code | `~/.claude/settings.json` hooks | `mcpServers.abs` (stdio) | `~/.claude/skills/abs-agent-brain-sync/` |
 | codex | `~/.codex/hooks.json` | config.toml `[mcp_servers.abs]` | `~/.codex/skills/` |
 | opencode | `~/.config/opencode/plugins/abs.ts` | opencode.json mcp.abs | skills/ |
-| pi | `~/.pi/agent/extensions/abs.ts` | extension 内桥接 | skills/ |
+| pi | `~/.pi/agent/extensions/abs.ts` | `~/.pi/agent/mcp.json` `mcpServers.abs` | 交给 CC Switch 管（不写） |
+
+> **skill 归属**：`skill/` 下每个含 `SKILL.md` 的子目录 = 一个 skill，目录名即安装名。
+> 默认由 abs 装到各宿主 `skills/`；但 pi 的 `skillOwner` 是 `cc-switch` ——
+> CC Switch 是常驻自动同步器（`~/.cc-switch/skills/`），会把 skill 推到各宿主。
+> 两个写入者写同一批路径会互相覆盖；且 pi 同时扫 `~/.pi/agent/skills/` 与
+> `~/.agents/skills/`，同名实体两份会被判成 skill 冲突。故 abs 对 pi 只装 hook/MCP。
+> 卸载不受此影响 —— 历史上装过的副本仍会清掉（欠账要还）。
 
 - **幂等**：重复安装 = 更新，写入前自动备份
 - **共存**：追加式合并，不会顶掉你这个事件上的其它 hook
@@ -110,7 +117,7 @@ npm i -g @fanchao8609/agent_brain_sync@latest
 abs install    # 重新刷 hook/skill
 ```
 
-> ⚠️ 改完源码（尤其 `skill/SKILL.md`、`src/`）后**必须 `abs install --yes` 重扇出**，否则宿主还在跑旧副本 —— 版本号与代码会脱节。发布用 `npm version patch`（自动打 tag），别手改 `package.json` 的 version；发布后 `npm view` 有缓存延迟，必要时 `npm cache clean --force` 再验。
+> ⚠️ 改完源码（尤其 `skill/*/SKILL.md`、`src/`）后**必须 `abs install --yes` 重扇出**，否则宿主还在跑旧副本 —— 版本号与代码会脱节。发布用 `npm version patch`（自动打 tag），别手改 `package.json` 的 version；发布后 `npm view` 有缓存延迟，必要时 `npm cache clean --force` 再验。
 
 ---
 
@@ -150,7 +157,7 @@ agent_brain_sync/
 ├── src/userconfig.js  使用者姓名配置（作者标记）
 ├── src/wrapup.js   Stop 收尾快照/归档
 ├── hooks/event.sh  hook 模板
-├── skill/SKILL.md  技能（装到各智能体）
+├── skill/<名称>/SKILL.md  技能（每个子目录 = 一个 skill，装到各智能体）
 └── test/           单测
 ```
 

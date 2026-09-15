@@ -1,5 +1,5 @@
 ---
-name: bug-hunter
+name: abs-bug-hunter
 description: 按流程论排查 bug，先定位改动 → 日志打印 → 顺藤摸瓜逐层排查
 ---
 

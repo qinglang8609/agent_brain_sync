@@ -14,29 +14,72 @@ import { HOSTS, hostByKey } from './hosts.js';
 
 const ABS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HOOK_TEMPLATE = join(ABS_DIR, 'hooks', 'event.sh');
-const SKILL_SOURCE = join(ABS_DIR, 'skill', 'SKILL.md');
 
-// 随 abs 一并安装的附带 skill（agent 排查 bug 时挂载）。
-// 必须放在本包内随包发布 —— 不能假设宿主已装：实测 co​dex 只有 abs 自己装的 skill，
-// 若引用外部 skill 会成悬空。ponytail: 只加这一个，需要更多时改成扫 skill/ 子目录。
-const BUNDLED_SKILLS = [
-  { name: 'bug-hunter', src: join(ABS_DIR, 'skill', 'bug-hunter', 'SKILL.md') },
-];
+// ---- skill 包规则（单一规则，无特例）----
+// skill/ 下**每个含 SKILL.md 的子目录**就是一个 skill，随包发布。
+// 目录名 = 宿主 skills/ 下的安装目录名 = frontmatter 的 name（三者必须一致：
+// pi 在目录名与 name 不一致时会告警）。
+//
+// 为什么全带 abs- 前缀:
+//   1. 归属可辨 —— 带前缀才敢判「这是 abs 装的、可随 install 更新/卸载」；
+//      不带前缀的副本可能是用户自己放的，卸载时不敢动。
+//   2. 避开同名冲突 —— pi 同时扫 ~/.pi/agent/skills 与 ~/.agents/skills
+//      （pi 文档 Locations 一节），后者常有同名副本。两份同名实文件 → pi 报
+//      skill 冲突（实测: 曾装成 bug-hunter，与 ~/.agents/skills/bug-hunter 相撞）。
+//
+// 新增 skill: 建 skill/<名称>/SKILL.md 即可，无需改代码（原先写死一条，见旧注释 ponytail）。
+const SKILL_ROOT = join(ABS_DIR, 'skill');
+const ALL_SKILLS = (() => {
+  const out = [];
+  let entries = [];
+  try { entries = fsSync.readdirSync(SKILL_ROOT, { withFileTypes: true }); } catch { /* 无 skill/ 目录: 无 skill 可装 */ }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const src = join(SKILL_ROOT, e.name, 'SKILL.md');
+    if (!fsSync.existsSync(src)) continue; // 只认含 SKILL.md 的子目录
+    out.push({ name: e.name, src });
+  }
+  return out;
+})();
+// 主 skill（会话开场加载的那个）。它也只是 ALL_SKILLS 的一员，此处仅用于告警比对。
+const SKILL_SOURCE = join(SKILL_ROOT, 'abs-agent-brain-sync', 'SKILL.md');
 
-/** 安装主 skill + 全部附带 skill 到该宿主。收口在此：四处安装点共用，
- *  新增附带 skill 时只改本函数（避免「改一份不算改」）。返回步骤行。 */
+/** 安装全部 skill 到该宿主。收口在此：四处安装点共用 —— 新增 skill 只改
+ *  skill/ 目录，本函数与调用方都不动（避免「改一份不算改」）。返回步骤行。 */
 async function installSkills(agentKey) {
   const steps = [];
-  const base = hostSkillDir(agentKey);
-  await atomicWrite(join(base, 'SKILL.md'), await fs.readFile(SKILL_SOURCE, 'utf8'));
-  steps.push(`✓ skill  → ${join(base, 'SKILL.md')}`);
-  for (const b of BUNDLED_SKILLS) {
-    const t = join(base, '..', b.name, 'SKILL.md');
-    await atomicWrite(t, await fs.readFile(b.src, 'utf8'));
+  const owner = hostByKey(agentKey).skillOwner;
+  if (owner && owner !== 'self') {
+    steps.push(`• skill  → 交给 ${owner} 管（本工具不写，避免两个写入者覆盖）`);
+    return steps;
+  }
+  const root = join(hostSkillDir(agentKey), '..');
+  for (const s of ALL_SKILLS) {
+    const t = join(root, s.name, 'SKILL.md');
+    await atomicWrite(t, await fs.readFile(s.src, 'utf8'));
     steps.push(`✓ skill  → ${t}`);
   }
   return steps;
 }
+
+/** 卸载该宿主的全部 skill（主 + 附带）。与 installSkills 同源同规则。
+ *  曾经的坑: 只有 claude-code 删了附带 skill，其余三宿主留下 abs-bug-hunter/ 残留。
+ *
+ * 注意: 这里**不看 skillOwner** —— 即使该宿主的 skill 已交给外部工具管，
+ * 本工具历史上可能往那儿写过（如 pi 交给 CC Switch 之前），卸载要还这笔账，
+ * 否则留下没人更新的副本。
+ */
+async function uninstallSkills(agentKey) {
+  const steps = [];
+  const root = join(hostSkillDir(agentKey), '..');
+  for (const s of ALL_SKILLS) {
+    const d = join(root, s.name);
+    await fs.rm(d, { recursive: true, force: true });
+    steps.push(`✓ skill 已删除 → ${d}`);
+  }
+  return steps;
+}
+
 
 /**
  * 本包的稳定入口路径解析（mcp.js / abs.js 通用）。
@@ -512,10 +555,7 @@ async function uninstallClaudeCode() {
   await fs.rm(join(homedir(), '.abs', 'hooks', 'claude-code'), { recursive: true, force: true });
   steps.push(`✓ ~/.abs/hooks/claude-code/ (本 agent hook 脚本) 已删除`);
   // skill
-  const skillDir = hostSkillDir('claude-code');
-  await fs.rm(skillDir, { recursive: true, force: true });
-  for (const b of BUNDLED_SKILLS) await fs.rm(join(skillDir, '..', b.name), { recursive: true, force: true });
-  steps.push(`✓ skill 已删除（含附带: ${BUNDLED_SKILLS.map((x) => x.name).join(", ")}）`);
+  steps.push(...await uninstallSkills('claude-code'));
   return steps;
 }
 
@@ -640,8 +680,7 @@ async function uninstallCodex() {
       steps.push(`✓ MCP 已从 ${mcpP} 移除`);
     }
   } catch {}
-  await fs.rm(hostSkillDir('codex'), { recursive: true, force: true });
-  steps.push(`✓ skill 已删除`);
+  steps.push(...await uninstallSkills('codex'));
   return steps;
 }
 
@@ -768,8 +807,7 @@ async function uninstallOpenCode() {
     await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
     steps.push(`✓ MCP 已从 ${mcpP} 移除`);
   }
-  await fs.rm(hostSkillDir('opencode'), { recursive: true, force: true });
-  steps.push(`✓ skill 已删除`);
+  steps.push(...await uninstallSkills('opencode'));
   return steps;
 }
 
@@ -801,8 +839,7 @@ async function uninstallPi() {
   const steps = [];
   await fs.rm(join(hostConfigRoot('pi'), 'agent', 'extensions', 'abs.ts'), { force: true });
   steps.push(`✓ extension 已删除`);
-  await fs.rm(hostSkillDir('pi'), { recursive: true, force: true });
-  steps.push(`✓ skill 已删除`);
+  steps.push(...await uninstallSkills('pi'));
   const mcpP = join(hostConfigRoot('pi'), 'agent', 'mcp.json');
   const cfg = await readJson(mcpP, { strict: false });
   if (cfg === null) {

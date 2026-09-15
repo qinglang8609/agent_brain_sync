@@ -261,11 +261,76 @@ describe('install opencode / pi', () => {
     await fs.access(join(sandbox, 'opencode', 'skills', 'abs-agent-brain-sync', 'SKILL.md'));
   });
 
-  test('pi ts extension + skill 落 config 根', async () => {
+  // pi 的 skill 扇出交给 CC Switch（常驻自动同步器, skillOwner: 'cc-switch'）——
+  // abs 再写同一批路径就是两个写入者互相覆盖; 且 pi 同时扫 ~/.pi/agent/skills
+  // 与 ~/.agents/skills, 同名实体两份会被判成 skill 冲突。
+  test('pi: 只装 hook/MCP, 不碰 skill（skillOwner=cc-switch 时让路）', async () => {
     const r = await run(['install', '--agent', 'pi', '--yes']);
     assert.equal(r.code, 0, r.stderr);
     await fs.access(join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'));
-    await fs.access(join(sandbox, 'pi', 'agent', 'skills', 'abs-agent-brain-sync', 'SKILL.md'));
+    assert.ok(r.stdout.includes('交给 cc-switch 管'), '应说明让路: ' + r.stdout);
+    assert.ok(!existsSync(join(sandbox, 'pi', 'agent', 'skills')), 'pi 不该写入任何 skill');
+  });
+
+  // ---------- skill 包规则: skill/ 下每个含 SKILL.md 的子目录 = 一个 skill ----------
+  // 目录名 = 宿主安装目录名 = frontmatter name（三者必须一致，否则 pi 告警）。
+  // 坑: 曾把附带 skill 装成不带前缀的 bug-hunter，与 ~/.agents/skills/bug-hunter
+  //   （pi 也扫那个目录）同名 —— 两份同名实文件 → pi 报 skill 冲突。现全带 abs- 前缀。
+  test('skill/ 下每个子目录都装进宿主，源与目标逐字节一致', async () => {
+    const r = await run(['install', '--agent', 'claude-code', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    const root = join(CC_CFG, 'skills');
+    const want = (await fs.readdir(join(REPO, 'skill'), { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+    assert.ok(want.length >= 2, '至少应有主 skill + 附带 skill: ' + want);
+    for (const name of want) {
+      const got = await fs.readFile(join(root, name, 'SKILL.md'), 'utf8');
+      const src = await fs.readFile(join(REPO, 'skill', name, 'SKILL.md'), 'utf8');
+      assert.equal(got, src, `${name}: 副本漂移`);
+    }
+    // 反面: 不带 abs- 前缀的名字不该出现
+    assert.ok(!existsSync(join(root, 'bug-hunter')), '不该装出不带前缀的副本');
+  });
+
+  test('abs 自管的宿主都装全部 skill', async () => {
+    const want = (await fs.readdir(join(REPO, 'skill'), { withFileTypes: true }))
+      .filter((e) => e.isDirectory()).map((e) => e.name);
+    for (const [agent, root] of [
+      ['claude-code', CC_CFG],
+      ['codex', CODEX_CFG],
+      ['opencode', join(sandbox, 'opencode')],
+    ]) {
+      const r = await run(['install', '--agent', agent, '--yes']);
+      assert.equal(r.code, 0, `${agent}: ${r.stderr}`);
+      for (const name of want) await fs.access(join(root, 'skills', name, 'SKILL.md'));
+    }
+  });
+
+  // 卸载残留: 曾经只有 claude-code 删附带 skill，其余三宿主留下 abs-bug-hunter/
+  test('卸载清理全部 skill，不留残留', async () => {
+    for (const [agent, root] of [
+      ['claude-code', CC_CFG],
+      ['codex', CODEX_CFG],
+      ['opencode', join(sandbox, 'opencode')],
+    ]) {
+      await run(['install', '--agent', agent, '--yes']);
+      await fs.access(join(root, 'skills', 'abs-bug-hunter', 'SKILL.md'));
+      const r = await run(['uninstall', '--agent', agent, '--yes']);
+      assert.equal(r.code, 0, `${agent}: ${r.stderr}`);
+      assert.ok(!existsSync(join(root, 'skills', 'abs-bug-hunter')), `${agent}: 卸载后不应留 abs-bug-hunter/`);
+      assert.ok(!existsSync(join(root, 'skills', 'abs-agent-brain-sync')), `${agent}: 卸载后不应留主 skill`);
+    }
+  });
+
+  // pi 已交给 CC Switch, 但历史上 abs 往那儿写过 —— 卸载要还这笔账
+  test('卸载仍清理 pi 的历史 skill 副本（欠账要还）', async () => {
+    const root = join(sandbox, 'pi', 'agent', 'skills');
+    await fs.mkdir(join(root, 'abs-bug-hunter'), { recursive: true });
+    await fs.writeFile(join(root, 'abs-bug-hunter', 'SKILL.md'), 'stale', 'utf8');
+    const r = await run(['uninstall', '--agent', 'pi', '--yes']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!existsSync(join(root, 'abs-bug-hunter')), '卸载后不应留历史副本');
   });
 
   // 回归: 曾经 withMcp 只打印「走 extension 内桥接」而没有任何桥接代码 ——
@@ -980,7 +1045,7 @@ describe('~/.agents/skills/ 只读检测', () => {
 
   test('内容与当前版本一致时不告警', async () => {
     await fs.mkdir(dirname(AG_SKILL()), { recursive: true });
-    await fs.copyFile(join(REPO, 'skill', 'SKILL.md'), AG_SKILL());
+    await fs.copyFile(join(REPO, 'skill', 'abs-agent-brain-sync', 'SKILL.md'), AG_SKILL());
     const r = await run(['install', '--agent', 'claude-code', '--yes']);
     assert.equal(r.code, 0, r.stderr);
     assert.ok(!r.stdout.includes('不一致的副本'), '一致时不该告警: ' + r.stdout);
