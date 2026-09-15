@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-09-15 16:48] [[fanchao]] dev | 收尾循环补上「生效环」：第 4 步单列出 Rules 判定（原先是第 4 步里的附属从句，长期 0 新增的根因）。判据从『够格就加』改成『够格却不加 = 下次不会送达』；采用提议制(AI 提议→用户拍板)，不直写。已扇出四宿主并逐副本 diff 核对一致。
 ## [2026-09-15 16:47] [[fanchao]] dev | 评估「图谱能否让 AI 进化」：git 实证 Rules 不积累——14 条里 13 条来自 09-13/09-15 两次人工注入，09-13 前根本没有 Rules 区（经验全进 concepts）。定性: 采集环（hook）机械可靠、消化环（提炼）靠自觉、【生效环根本不存在】——所以同类坑反复（静默失效 5 次、版本漂移 3 次）却没被拦住。核心矛盾: 能生长的 concepts 读不到，读得到的 Rules 不生长。已加规则「改布局/签名/协议必须与读它的一方同一个 commit」+ 新建 concepts/learning-loop-collect-distill-deliver.md 记录评估。
 ## [2026-09-15 15:54] [[fanchao]] dev | 完成 1.8.4 发布：安装树与代码版本不一致时显式报错（不再静默装 0 个 skill）。改动 src/install.js ALL_SKILLS 构建后判空(+14行) + test 3 例。验证: 321 测试全绿；registry tarball 实测(正常布局 OK / 压成扁平必报错)；全局装 1.8.4 后 abs install 四宿主全成功。已 push c8bbb0e。
 ## [2026-09-15 15:36] [[fanchao]] note | 半升级的安装树会两头都坑：旧代码(1.8.2只有写死的 skill/SKILL.md 扁平路径)遇到新布局(1.8.3 改成 skill/<名称>/SKILL.md)只甩一个当前版本根本不存在的路径 ENOENT，把人引去查源码白跑一轮；反过来新代码遇到扁平旧布局则 readdirSync 只看 isDirectory、SKILL.md 是文件被跳过 → ALL_SKILLS=[] → 静默装 0 个 skill、一句不说。根治是在构建 ALL_SKILLS 后判空并显式报错(带包版本+检测到的布局+修复命令)，因为『包内一个 skill 都没有』永远不是正常态。判据: 改目录布局与改读取代码必须同一个 commit，否则任何中间态都是静默失效。
