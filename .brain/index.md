@@ -17,8 +17,10 @@
 - 靠提醒才能工作的功能，该删不该补。
 - 先列≥2假设+反证条件；自造输入测出的结果不算证据。
 - 结论要明确：给结论+依据+下一步；不定位要说清缺什么。
+- 改布局/签名/协议必须与读它的一方同一个 commit；分开就是静默失效
 
 ## Concepts
+- [[learning-loop-collect-distill-deliver]] — 规律进化三环节(采集/消化/生效)：只有前两环在工作，生效环缺失 = 同类坑反复(git 实证 Rules 不积累)
 - [[abs-install-layout]] — 全局安装形态: npm link 单一真源 + hook/MCP 烧绝对路径 + skill 布局须与代码同版本（半升级两头都坑）
 - [[todo-rewrite-not-map]] — todo 行操作必须整文件重写保序，map 改不了分区结构
 - [[hook-sh-not-bash]] — hook 脚本 shebang 与语法必须同方言（POSIX sh 无子串扩展）

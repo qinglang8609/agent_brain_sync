@@ -77,4 +77,5 @@ op​encode 侧抄 pi 时漏了 `bash`，而该宿主大量改走 `bash`（hered
 - [[host-plugin-silent-failure]] — 插件三坑（可观测性/签名/导出）
 - [[abs-install-layout]] — 四宿主安装器与 hook 配置
 - [[hook-sh-not-bash]] — hook 脚本方言坑
+- [[learning-loop-collect-distill-deliver]] — 本页只解决「采集」环；另外两环（消化/生效）缺失才是坑反复发作的根因
 - [[AgentBrainSync]] — 项目实体页
