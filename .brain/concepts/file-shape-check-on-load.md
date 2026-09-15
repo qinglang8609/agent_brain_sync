@@ -2,7 +2,7 @@
 tags: [concept, 图谱纪律]
 author: fanchao
 updated: 2026-09-13
-status: reviewed
+status: active
 ---
 
 # 文件形状核对（load 顺手做）

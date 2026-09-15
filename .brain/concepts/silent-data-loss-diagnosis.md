@@ -1,7 +1,7 @@
 ---
 tags: [concept, 排查, 方法论, 丢数据, 并发]
 updated: 2026-09-10
-status: reviewed
+status: active
 ---
 
 # 静默丢数据的排查顺序：先拿证据，再谈机制

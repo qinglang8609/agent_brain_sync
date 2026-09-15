@@ -2,7 +2,7 @@
 tags: [concept, 图谱纪律]
 author: fanchao
 updated: 2026-09-12
-status: reviewed
+status: active
 ---
 
 # index 行不承载"谁写的"

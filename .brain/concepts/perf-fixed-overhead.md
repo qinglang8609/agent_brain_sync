@@ -1,7 +1,7 @@
 ---
 tags: [concept, 性能, 开销分解, 决策, daemon]
 updated: 2026-09-10
-status: reviewed
+status: active
 ---
 
 # 性能优化：先分解固定开销，再决定优化哪一段

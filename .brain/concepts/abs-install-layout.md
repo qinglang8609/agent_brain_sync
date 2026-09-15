@@ -1,7 +1,7 @@
 ---
 tags: [concept, install]
 updated: 2026-09-09
-status: reviewed
+status: active
 ---
 
 # 概念：abs 全局安装形态 = npm link 单一真源

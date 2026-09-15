@@ -2,7 +2,7 @@
 tags: [concept, 上下文纪律]
 author: fanchao
 updated: 2026-09-12
-status: reviewed
+status: active
 ---
 
 # 读取侧输出不得随规模增长

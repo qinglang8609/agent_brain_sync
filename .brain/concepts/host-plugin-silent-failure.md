@@ -1,7 +1,7 @@
 ---
 tags: [concept, 宿主插件, 坑, 可观测性]
 updated: 2026-09-10
-status: reviewed
+status: active
 ---
 
 # 宿主插件"静默失效"三坑（装上了≠加载了≠触发了）

@@ -1,7 +1,7 @@
 ---
 tags: [concept, 部署, 插件, hook, 双副本, 重启]
 updated: 2026-09-10
-status: reviewed
+status: active
 ---
 
 # hook/插件的部署产物：有三份，改一份不算改

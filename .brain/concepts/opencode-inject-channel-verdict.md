@@ -1,7 +1,7 @@
 ---
 tags: [concept, opencode, 注入通道, promptAsync, session.command, teardown]
 updated: 2026-09-10
-status: reviewed
+status: active
 ---
 
 # op​encode 注入通道：能唤醒 idle session 的只有 session 级 prompt，TUI 级无效

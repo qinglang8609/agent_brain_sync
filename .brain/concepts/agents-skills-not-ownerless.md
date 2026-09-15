@@ -2,7 +2,7 @@
 tags: [concept, skill, 部署, 所有权, install]
 author: fanchao
 updated: 2026-09-13
-status: reviewed
+status: active
 ---
 
 # 别写 ~/.agents/skills/：它不是无主目录，是 skills CLI 的规范存储

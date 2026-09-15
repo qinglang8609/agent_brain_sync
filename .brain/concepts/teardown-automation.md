@@ -1,7 +1,7 @@
 ---
 tags: [concept, hook, 自动化, 宿主插件]
 updated: 2026-09-10
-status: reviewed
+status: active
 ---
 
 # 收尾自动化：hook 必须主动推，不能只被动记日志

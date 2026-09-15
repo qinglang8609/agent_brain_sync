@@ -2,7 +2,7 @@
 tags: [concept, mcp, install, 陈旧路径, 部署]
 author: fanchao
 updated: 2026-09-13
-status: reviewed
+status: active
 ---
 
 # MCP 陈旧路径：只改自己写的那个文件不够

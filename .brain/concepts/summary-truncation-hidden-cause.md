@@ -1,7 +1,7 @@
 ---
 tags: [concept, 摘要, 写入口, 截断, 方法论]
 updated: 2026-09-12
-status: reviewed
+status: active
 ---
 
 # 散文截断：「摘要读起来抽象」的隐形根因，且它自我掩盖
