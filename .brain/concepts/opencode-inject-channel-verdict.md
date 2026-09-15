@@ -48,6 +48,39 @@ abs 插件的 `wroteFiles` 守卫要求本会话真的调过写入类工具；
 - 复现方法：让 agent 真跑一次 write 工具（`gate.txt`）→ 立刻落 `session.idle:teardown-nudge` 痕，
   且注入的 `[abs 收尾提醒]` 生效。**先证明 gate 满足，再怀疑通道。**
 
+## 验证（判定结论复跑，或怀疑通道时先做这一步）
+
+**核心判据**：看 **assistant 消息计数**有没有涨。HTTP 状态码不能当证据 ——
+`append-prompt` 返 200 却是"假成功"，`promptAsync` 返 204 却真起了一轮。
+
+```bash
+# 1. 起隔离实例（不碰真实环境）
+opencode serve --pure &
+SID=<你的 session id>
+
+# 2. 调用前记下 assistant 条数
+curl -s localhost:PORT/session/$SID | grep -c '"role":"assistant"'   # 记作 N
+
+# 3. 发一次待测调用，等 2-5 秒
+curl -s -X POST localhost:PORT/session/$SID/prompt_async -d '{"parts":[{"type":"text","text":"AUDIT-ASYNC"}]}'
+
+# 4. 再数一次
+curl -s localhost:PORT/session/$SID | grep -c '"role":"assistant"'   # N+1 = 真唤醒；N = 没起 turn
+```
+
+**三态判读**：
+
+| 计数 | 含义 |
+|---|---|
+| N+1 | ✅ 真唤醒（不管 HTTP 返 204 还是 200） |
+| N | ❌ 未唤醒（只入 buffer / 只 dispatch UI 命令） |
+
+**验证 gate 而不是通道**（本次踩坑的正确顺序）：
+让 agent 真跑一次写入工具 → 看 `~/.abs/log/hooks.log` 是否落 `session.idle:teardown-nudge`。
+`seen` 有痕但零 `nudge` = **gate 没满足**，不是通道坏。
+
+**回归**：`node --test test/plugin-behavior.test.js`（含 `WRITE_TOOLS` 覆盖 bash 的用例）。
+
 ## 关联连接
 - [[teardown-automation]] — 收尾自动化总则（各宿主每轮结束事件 + 注入手段）
 - [[host-plugin-silent-failure]] — 插件三坑

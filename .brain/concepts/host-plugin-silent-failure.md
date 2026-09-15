@@ -49,6 +49,32 @@ export default { id: "abs", server }
 4. **证伪方式**：`grep -c "opencode:" ~/.abs/log/hooks.log` 曾两次为 0 ——
    "装上了"必须用日志落痕来证，不能靠"我觉得应该能跑"。
 
+## 验证（改完插件/hook 后逐条跑）
+
+```bash
+# ① 文件在：产物已落盘
+ls -la ~/.config/open/plugins/abs.ts
+
+# ② default 能 import 出 server（坑 2 的坑位）—— 只看语法/契约检查会放过它
+node -e "import('file://' + process.env.HOME + '/.../abs.ts').then(m => console.log('default.server:', typeof m.default?.server))"
+# 期望: function；得到 undefined 就是导出方式错
+
+# ③ 日志有落痕（唯一能证「真触发」的证据）
+grep -c 'seen'  ~/.abs/log/hooks.log    # =0 → 未触发；>0 → 插件已加载
+grep -c 'nudge' ~/.abs/log/hooks.log    # >0 → 真生效
+```
+
+**三态判读**（对应坑 0 的修法）：
+
+| seen | nudge | 含义 |
+|---|---|---|
+| 0 | 0 | 插件未加载（查导出方式 / 路径） |
+| >0 | 0 | 已加载但被守卫拦下（查守卫判据） |
+| >0 | >0 | 真生效 |
+
+**行为级回归**：`node --test test/plugin-behavior.test.js` ——
+字符串断言（grep 源码）曾让坑 1/2 两次全绿，必须真 import 产物 + 驱动真实事件。
+
 ## 关联连接
 - [[teardown-automation]] — 收尾自动化的注入机制（本坑的发现场景）
 - [[abs-install-layout]] — 四宿主安装器与 hook 配置
