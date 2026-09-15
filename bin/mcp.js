@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findBrainRoot, absLogDir } from '../src/index.js';
-import { cmdBoard, cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdWrapup, cmdRule, cmdResolve, cmdSupersede } from '../src/store.js';
+import { cmdBoard, cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdWrapup, cmdRule, cmdResolve, cmdSupersede } from '../src/store.js';
 
 // ---------- 技术日志: MCP 请求跟踪（调试用, 与图谱 log.md 完全分开） ----------
 // 落 ~/.abs/log/mcp.log: 每次工具调用一行 [时间] tool cwd 参数摘要 → 耗时/结果摘要。
@@ -242,6 +242,23 @@ tool(
     const root = await findBrainRoot(cwd || process.cwd());
     if (!root) return errNoBrain(cwd || process.cwd());
     return { content: [{ type: 'text', text: await cmdNote({ dir: root, text, tags }) }] };
+  }
+);
+
+tool(
+  'abs_concept',
+  '建概念页骨架（给写入定结构：触发场景/表现/解法/验证）。只给结构不给内容 —— 值不值得留、归哪页仍靠人判断。',
+  {
+    cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
+    slug: z.string().min(1).describe('文件名/slug，如 "docker-prisma-429"（命名即链接）'),
+    title: z.string().optional().describe('页面标题（省略则用 slug）'),
+    tags: z.string().optional().describe('逗号分隔标签，如 "docker,坑"'),
+    desc: z.string().optional().describe('index.md 里那一行的一句话描述'),
+  },
+  async ({ cwd, slug, title, tags, desc }) => {
+    const root = await findBrainRoot(cwd || process.cwd());
+    if (!root) return errNoBrain(cwd || process.cwd());
+    return { content: [{ type: 'text', text: await cmdConcept({ dir: root, slug, title, tags, desc }) }] };
   }
 );
 

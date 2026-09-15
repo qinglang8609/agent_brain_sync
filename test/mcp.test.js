@@ -105,14 +105,28 @@ async function initBrain(proj) {
 
 // ---------- 握手 + 工具清单 ----------
 describe('mcp: 握手 + 工具清单', () => {
-  test('initialize + tools/list 返回 8 个工具', async () => {
+  test('initialize + tools/list 暴露核心工具（含 abs_concept）', async () => {
     await startServer();
     await initHandshake();
     const r = await call('tools/list', {});
     const names = (r.result?.tools || []).map((t) => t.name);
-    for (const n of ['abs_board', 'abs_load', 'abs_status', 'abs_task', 'abs_query', 'abs_lint', 'abs_note', 'abs_resolve_project']) {
+    for (const n of ['abs_board', 'abs_load', 'abs_status', 'abs_task', 'abs_query', 'abs_lint', 'abs_note', 'abs_concept', 'abs_resolve_project']) {
       assert.ok(names.includes(n), `缺工具 ${n}`);
     }
+  });
+
+  // abs_concept: 只给结构不给内容（判断不自动化）。
+  test('abs_concept 建出带「验证」段的骨架并登记 index', async () => {
+    await initBrain(projA);
+    await startServer();
+    await initHandshake();
+    const r = await tool('abs_concept', { slug: 'mcp-concepted', title: 'MCP 建的页', cwd: projA });
+    assert.ok(textOf(r).includes('mcp-concepted'), textOf(r));
+    const body = await fs.readFile(join(projA, '.brain', 'concepts', 'mcp-concepted.md'), 'utf8');
+    assert.ok(body.includes('## 验证'), `骨架该有验证段: ${body}`);
+    assert.ok(body.includes('## 触发场景'), `骨架该有触发场景: ${body}`);
+    const idx = await fs.readFile(join(projA, '.brain', 'index.md'), 'utf8');
+    assert.ok(idx.includes('[[mcp-concepted]]'), `应登记进 index: ${idx}`);
   });
 
 });

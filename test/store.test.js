@@ -6,7 +6,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
@@ -624,6 +624,62 @@ describe('cmdQuery', () => {
     assert.ok(out.includes('a-page'), out);
   });
 
+  // 基线（2026-09-15 实测 296 条片段）: 25% 是非内容行（tags:/H1/段落标题）。
+  // 典型症状: 查「发布」时页面返回 `tags: [concept, npm, publish, 发布]` —— frontmatter
+  // 在第 3 行，跑在正文前，「含关键词的第一行」永远先命中它。故必须跳过非内容行。
+  test('片段跳过 frontmatter/tags 行（不得返回元数据当答案）', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'meta-page.md'),
+      '---\ntags: [concept, 专属标签词]\nupdated: 2026-09-08\nstatus: draft\n---\n' +
+      '# 概念：专属标签词\n\n## 触发场景\n真正的内容在这里 专属标签词\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['专属标签词'] });
+    assert.ok(!/^\s*tags:/m.test(out.split('\n').filter((l) => l.startsWith('    ')).join('\n')),
+      `片段不该是 tags 行: ${out}`);
+    assert.ok(out.includes('真正的内容在这里'), `应返回正文行: ${out}`);
+  });
+
+  test('片段跳过 H1/段落标题行（标题不是内容）', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'head-page.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n' +
+      '# 概念：独有词标题\n\n## 独有词小节\n\n正文里提到 独有词\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['独有词'] });
+    const snippetLines = out.split('\n').filter((l) => l.startsWith('    '));
+    assert.ok(snippetLines.some((l) => l.includes('正文里提到')),
+      `应给正文行而非标题: ${out}`);
+    assert.ok(!snippetLines.some((l) => /^\s*#{1,6}\s/.test(l)),
+      `片段不该是标题行: ${out}`);
+  });
+
+  test('片段优先取「解法/验证」这类答案段的行', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'answer-page.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n' +
+      '# 概念\n\n## 触发场景\n开场先提一次 答案词\n\n## 🛠 解法\n真正的解法针对 答案词\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['答案词'] });
+    assert.ok(out.includes('真正的解法'), `应优先给答案段的行: ${out}`);
+  });
+
+  // 坑: 引号包起来的 "发布 流程" 曾整体当一个短语 → 全图无命中（静默失效）。
+  test('引号包住的多词等价于分开传（词内再按空白拆）', async () => {
+    // 自带 fixture：不依赖前面测试留下的页面（测试顺序不该影响结果）
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'quote-page.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n引号词 空格词\n',
+      'utf8'
+    );
+    const quoted = await cmdQuery({ dir: projectA, terms: ['引号词 空格词'] });
+    const split = await cmdQuery({ dir: projectA, terms: ['引号词', '空格词'] });
+    assert.ok(quoted.includes('quote-page'), `引号写法应命中: ${quoted}`);
+    assert.equal(quoted.split('\n')[0], split.split('\n')[0], '两种写法结果应一致');
+  });
+
   test('无命中时明确提示并建议 abs init', async () => {
     const out = await cmdQuery({ dir: projectB, terms: ['x'] });
     assert.ok(out.includes('abs init'), out);
@@ -632,6 +688,50 @@ describe('cmdQuery', () => {
   test('无 terms 时给用法提示', async () => {
     const out = await cmdQuery({ dir: projectA, terms: [] });
     assert.ok(out.includes('用法') || out.toLowerCase().includes('usage'), out);
+  });
+});
+
+// ---------- abs concept: 概念页脚手架（给写入定结构，不替判断） ----------
+describe('cmdConcept', () => {
+  test('生成带四段骨架的页，并登记进 index', async () => {
+    const r = await cmdConcept({ dir: projectA, slug: 'docker-oom', title: 'Docker 内存超限', tags: 'docker,坑' });
+    assert.ok(r.includes('docker-oom'), r);
+    const p = join(projectA, '.brain', 'concepts', 'docker-oom.md');
+    const body = await fs.readFile(p, 'utf8');
+    // 骨架该有的位置都在（内容仍由人填）
+    for (const sec of ['## 触发场景', '## ❌ 表现', '## 🛠 解法', '## 验证', '## 关联连接']) {
+      assert.ok(body.includes(sec), `缺段 ${sec}: ${body}`);
+    }
+    assert.ok(body.includes('tags: [concept, docker, 坑]'), `tags 未生效: ${body}`);
+    assert.ok(body.includes('id: docker-oom'), `id 未冻结: ${body}`);
+    const idx = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(idx.includes('[[docker-oom]]'), `应登记进 index: ${idx}`);
+  });
+
+  // 硬规则「已存在的人工内容一律不覆盖」—— 重复建必须拒绝，不能清掉别人写的正文。
+  test('已存在时不覆盖（保留人工内容）', async () => {
+    const p = join(projectA, '.brain', 'concepts', 'keepme.md');
+    await fs.writeFile(p,
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: active\n---\n' +
+      '# 概念：人工写的重要内容\n\n## 触发场景\nX\n\n## 验证\n跑 test\n', 'utf8');
+    const r = await cmdConcept({ dir: projectA, slug: 'keepme', title: '试图覆盖' });
+    assert.ok(r.includes('不覆盖'), `应拒绝覆盖: ${r}`);
+    const body = await fs.readFile(p, 'utf8');
+    assert.ok(body.includes('人工写的重要内容'), '原内容不该被改');
+    assert.ok(!body.includes('试图覆盖'), '不该写入新标题');
+  });
+
+  // slug 即文件名 —— 必须挡住路径分隔符，否则能写到 concepts/ 之外。
+  test('slug 清洗：路径分隔符不能逃出 concepts/', async () => {
+    const r = await cmdConcept({ dir: projectA, slug: '../../evil', title: '越界' });
+    assert.ok(!/[/\\]/.test(r.replace(/^.*→\s*/, '').split('\n')[0].split('.brain/concepts/')[1] || ''),
+      `生成的路径不该含分隔符: ${r}`);
+    await assert.rejects(() => fs.access(join(projectA, 'evil.md')), '不该写到项目根');
+  });
+
+  test('无 slug 时给用法', async () => {
+    const r = await cmdConcept({ dir: projectA });
+    assert.ok(r.includes('用法'), r);
   });
 });
 
@@ -760,6 +860,63 @@ describe('cmdLint', () => {
 
   // 回归: lint 提示里的路径带 .brain/ 前缀。
   // 曾经只给 vault 相对路径（concepts/x.md）→ 用户到项目根找 concepts/ 找不到（真实踩过）。
+  // NO-TAIL: concept 只有「头」（触发场景/表现）没「尾」（可执行的东西）→ 只能信，不能验。
+  // 判据刻意宽松: 尾巴的本质不是「叫验证」，而是给出可执行的东西。
+  // 实测依据: 本仓 26 页段名高度分散（`## ✅ 处置` 出现 17 次 > `## 🛠 解法`），
+  // 首版只认「验证」二字误报 7/11（64%）→ 噪音 → 规则会被忽略。
+  test('NO-TAIL: 只有头、无任何可执行尾巴的页要被报出来', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'headonly.md'),
+      PAGE('# 概念：只有头\n\n## 触发场景\n遇到了某问题\n\n## ❌ 表现\n报错了\n'),
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/NO-TAIL[^\n]*headonly\.md/.test(out), `应报 NO-TAIL: ${out}`);
+  });
+
+  // 宽松判据的核心：这些「不叫验证」的段名都算有尾 —— 一个都不该报。
+  // 每一条都来自本仓真实页面的段名（不是编的）。
+  test('NO-TAIL 宽松判据: 处置/做法/步骤/清单/判据/测试要点 都算有尾', async () => {
+    const tails = {
+      dispose: '## ✅ 处置\n按这个来\n',        // agents-skills-not-ownerless
+      howto: '## 做法\n这样修\n',              // self-authored-evidence
+      order: '## ✅ 正确顺序\n1. 先取证\n',     // silent-data-loss-diagnosis
+      checklist: '## ✅ 部署检查清单\n- 查副本\n', // deploy-artifact-copies
+      criteria: '## 判据（可量化）\n先统计\n',   // summary-truncation-hidden-cause
+      testpoints: '## 测试要点\n靠回归测试守住\n', // self-triggering-hook-loop
+      steps: '## ✅ 分析步骤（可复用）\n分解开销\n', // perf-fixed-overhead
+      itemform: '## 🛠 解法\n3. 验证命令：`npm test`\n', // hook-sh-not-bash 的写法
+    };
+    for (const [n, tail] of Object.entries(tails)) {
+      await fs.writeFile(join(projectA, '.brain', 'concepts', `${n}.md`),
+        PAGE(`# 概念\n\n## 触发场景\nX\n\n${tail}`), 'utf8');
+    }
+    const out = await cmdLint({ dir: projectA });
+    for (const n of Object.keys(tails)) {
+      assert.ok(!new RegExp(`NO-TAIL[^\\n]*${n}\\.md`).test(out), `${n} 有尾，不该被误报: ${out}`);
+    }
+  });
+
+  // 防判据退化成「什么都算」: 正文随口提「验证」但没有可执行内容 → 仍须报。
+  test('NO-TAIL: 正文提了「验证」但没有可执行尾巴，仍要报（防判据放宽过头）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'proseonly.md'),
+      PAGE('# 概念：只在正文提到验证\n\n## 触发场景\n这个坑要在验证环境里复现\n\n## ❌ 表现\n报错了\n'),
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/NO-TAIL[^\n]*proseonly\.md/.test(out), `只在正文提「验证」不算有尾，应报: ${out}`);
+  });
+
+  // 骨架自带 `## 验证` 占位；判据必须能识破「只有占位注释的空段」，
+  // 否则 abs concept 建完就自动"合格"，永远没人填尾巴（假阴性）。
+  test('NO-TAIL: abs concept 的未填骨架要被报出（占位注释不算内容）', async () => {
+    await cmdConcept({ dir: projectA, slug: 'skel-empty', title: '未填骨架' });
+    let out = await cmdLint({ dir: projectA });
+    assert.ok(/NO-TAIL[^\n]*skel-empty\.md/.test(out), `未填骨架应报 NO-TAIL: ${out}`);
+    // 填上真内容后不该再报
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'skel-empty.md'),
+      PAGE('# 概念：填好了\n\n## 触发场景\nX\n\n## 验证\n跑 `npm test` 全绿\n'), 'utf8');
+    out = await cmdLint({ dir: projectA });
+    assert.ok(!/NO-TAIL[^\n]*skel-empty\.md/.test(out), `填好后不该再报: ${out}`);
+  });
+
   test('lint 提示的路径带 .brain/ 前缀（可直接去项目里找）', async () => {
     await fs.writeFile(join(projectA, '.brain', 'concepts', 'over.md'),
       PAGE('# 概念：超长\n' + Array.from({ length: 160 }, (_, i) => `行 ${i}`).join('\n')), 'utf8');
@@ -803,15 +960,17 @@ describe('cmdLint', () => {
   });
 
   test('健康图谱: 0 问题', async () => {
-    // 挂到 index 且互相链接的规范页
+    // 挂到 index 且互相链接的规范页。
+    // 含「## 验证命令」：NO-TAIL 规则要求 concept 给得出可跑的检查 ——
+    // 一个只有头没有尾的页不算「健康」（判据见 cmdLint 里 NO-TAIL 的注释）。
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'good.md'),
-      PAGE('# 概念：好页\n[[good-2]]'),
+      PAGE('# 概念：好页\n[[good-2]]\n\n## 验证命令\n跑 `npm test`\n'),
       'utf8'
     );
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'good-2.md'),
-      PAGE('# 概念：好页二\n关联 [[good]]'),
+      PAGE('# 概念：好页二\n关联 [[good]]\n\n## 验证命令\n看 `abs lint` 输出\n'),
       'utf8'
     );
     let index = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');

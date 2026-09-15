@@ -2,7 +2,7 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede } from '../src/store.js';
+import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede } from '../src/store.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
@@ -73,6 +73,10 @@ const FLAG_SPEC = {
   'as': { type: 'string' },
   'payload': { type: 'string' },
   'tags': { type: 'string' },
+  // concept 骨架用: 不在 FLAG_SPEC 里的 `--title` 会被静默当布尔 true（见 parseArgv 注释），
+  // 于是 `--title "一句话"` 的正文会进位置参数 → 必须在这声明。
+  'title': { type: 'string' },
+  'desc': { type: 'string' },
   'state': { type: 'string' },
   'by': { type: 'string' },
   'all': { type: 'boolean' },
@@ -150,6 +154,8 @@ function parseArgv(args) {
     all: !!values.all,
     payload: values.payload,
     tags: values.tags,
+    title: values.title,
+    desc: values.desc,
     help: !!values.help,
     yes: !!values.yes,
     repair: !!values.repair,
@@ -185,6 +191,8 @@ const usage = `abs — agent-brain-sync 记忆工具
                                不加结语或结语失真会让下一个会话把"想过"当成"做完了"。
   abs log "完成 X：…"         记一行工作成果 (无参=查看)
   abs note "经验一句话" [--tags 坑,docker]    经验实时暂存 → sources/
+  abs concept <slug> --title "标题" [--tags a,b] [--desc "index 描述"]
+                            建概念页骨架（头/中/尾四段位置）。只给结构不给内容
 
 维护:
   abs query <词1> [词2 …] [--all]
@@ -379,6 +387,17 @@ async function main() {
       }
       case 'note': {
         console.log(await cmdNote({ dir: opts.dir, text: opts._.join(' '), tags: opts.tags }));
+        break;
+      }
+      case 'concept': {
+        // 建概念页骨架（只给结构，不给内容 —— 判断不自动化）。
+        console.log(await cmdConcept({
+          dir: opts.dir,
+          slug: opts._.join('-'),
+          title: opts.title,
+          tags: opts.tags,
+          desc: opts.desc,
+        }));
         break;
       }
       case 'install':

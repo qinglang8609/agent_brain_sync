@@ -974,9 +974,14 @@ export async function cmdShow({ dir, view, full }) {
 const KNOWN_SLUG_HINT = /模板残留|\[\[slug\]\]/;
 
 export async function cmdQuery({ dir, terms, includeSuperseded }) {
-  const words = (terms || []).map((w) => String(w).trim()).filter(Boolean);
+  // 每个 term 内部再按空白拆 —— 让 `abs query "发布 流程"` 与 `abs query 发布 流程` 等价。
+  // 坑: 曾经引号包起来的 "发布 流程" 被当成一个完整短语 → 全图无命中。
+  // 用户看到「无命中」会以为图谱里没这条经验，实际只是词没被拆开（静默失效）。
+  const words = [...new Set(
+    (terms || []).flatMap((w) => String(w).trim().split(/\s+/)).filter(Boolean)
+  )];
   if (!words.length) {
-    return '用法: abs query <词1> [词2 …]  — 多词 OR 检索 .brain/ 全部知识页';
+    return '用法: abs query <词1> [词2 …]  — 多词检索 .brain/ 全部知识页';
   }
   let root;
   try {
@@ -1023,7 +1028,13 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
     }
   }
   const hidden = hits.filter((h) => h.hidden).length;
-  const shown = hits.filter((h) => !h.hidden);
+  // 相关性排序：命中词多的排前面。
+  // 为什么不是严格 AND：26 页的量级下，「全词必须命中」经常直接归零（静默变成"查不到"）。
+  // 故先用命中数排序，让「全命中」自然浮顶；命中太稀（只 1 页）时才提示可加词。
+  // 实测痛点（2026-09-15）: 多词 OR 下查「安装 skill 报错」出 24/26 页（几乎全图）→ 相关性被稀释。
+  const shown = hits.filter((h) => !h.hidden)
+    .map((h) => ({ ...h, score: h.matched.length }))
+    .sort((a, b) => b.score - a.score);
   if (!shown.length) {
     const extra = hidden ? `（另外 ${hidden} 页已标记 superseded，用 abs query ${words.join(' ')} --all 查看）` : '';
     return `query [${words.join(', ')}]: 无命中。${extra}用 abs lint 看图谱健康；首次使用先 abs init。`;
@@ -1035,21 +1046,48 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
     const id = h.id && h.id !== h.slug ? `  [id: ${h.id}]` : '';
     // draft = 未经核实。不拦使用，但必须让 AI 知道这是它自己没验证过的。
     const st = h.status === 'draft' ? '  [draft 未核实]' : '';
-    return `📄 ${h.slug}${by}${id}${st}  (命中: ${h.matched.join(', ')})\n    ${h.snippet}`;
+    const full = words.length > 1 && h.score === words.length ? ' ★全命中' : '';
+    return `📄 ${h.slug}${by}${id}${st}  (命中: ${h.matched.join(', ')}${full})\n    ${h.snippet}`;
   });
-  const tail = hidden ? [``, `（${hidden} 页 superseded 已隐藏；--all 可看）`] : [];
+  // 多词且无全命中时告知降级了 —— 不静默给一堆弱相关结果。
+  const anyFull = shown.some((h) => h.score === words.length);
+  const tail = [];
+  if (words.length > 1 && !anyFull) tail.push('', `（无页同时命中全部 ${words.length} 个词，以下按命中数排序）`);
+  if (hidden) tail.push(``, `（${hidden} 页 superseded 已隐藏；--all 可看）`);
   return [`query [${words.join(', ')}] → ${shown.length} 页:`, '', ...lines, ...tail].join('\n');
 }
 
+/** 从页面正文取一段「像答案」的片段。
+ *  基线（2026-09-15 实测 296 条片段）: 25% 是非内容行（tags:/H1/段落标题）。
+ *  典型症状: 查「发布」时 npm-publish-flow 返回 `tags: [concept, npm, publish, 发布]`
+ *  —— frontmatter 在第 3 行，跑在正文前，于是「含关键词的第一行」永远先命中它。
+ *  所以必须：(1) 跳过 frontmatter/标题这类非内容行；(2) 优先从「答案段」里找。
+ *  只做机械判断：行首标记 + 所属小节标题，不猜语义。 */
+const ANSWER_SECTION_RE = /解法|根因|修复|验证|流程|标准|判据|处置|怎么办|🛠/;
+
 function firstHitLine(body, words) {
-  const lower = body.toLowerCase();
-  for (const line of body.split('\n')) {
-    const l = line.toLowerCase();
-    if (words.some((w) => l.includes(w.toLowerCase())) && line.trim() && !KNOWN_SLUG_HINT.test(line)) {
-      return clip(line.trim(), 160);
+  const lines = body.split('\n');
+  // 逐行扫描，记录当前所属小节标题，供「答案段优先」用。
+  let section = '';
+  const candidates = []; // {line, inAnswer}
+  for (const line of lines) {
+    const t = line.trim();
+    if (t.startsWith('#')) {
+      section = t.replace(/^#+\s*/, '');
+      continue; // 标题本身不是内容
     }
+    if (!t || t === '---') continue;
+    const l = t.toLowerCase();
+    if (!words.some((w) => l.includes(w.toLowerCase()))) continue;
+    if (KNOWN_SLUG_HINT.test(t)) continue;
+    // 非内容行：frontmatter 的键值对（tags:/id:/status:/updated:/author:/superseded-by:）
+    if (/^(tags|id|status|updated|author|superseded-by|superseded|aliases)\s*:/.test(t)) continue;
+    candidates.push({ line: t, inAnswer: ANSWER_SECTION_RE.test(section) });
   }
-  return '';
+  if (!candidates.length) return '';
+  // 答案段里的行优先；否则回退到第一条命中的正文行
+  const best = candidates.find((c) => c.inAnswer) || candidates[0];
+  return clip(best.line, 160);
 }
 
 // ---------- note: 经验实时暂存（source 页，一念一落，防流失） ----------
@@ -1113,6 +1151,93 @@ export async function cmdNote({ dir, text, tags }) {
   await cmdLog({ dir: root, title: clean, kind: 'note' });
   return `✓ 经验暂存 → sources/${file}\n  ${clean} ${atTag(who)}`;
 }
+
+// ---------- concept: 概念页脚手架（给「写入」定结构，不替人做判断） ----------
+/** 建一张带骨架的概念页。
+ *
+ * 为何需要它（实测 2026-09-15）: concepts/ 页原来**没有任何代码写入路径** ——
+ * 全靠人/AI 手写 markdown，结果 26 页里 2 页完全没有「做完怎么确认」。
+ * 而骨架只写在 skill 的**文字里**（"触发场景/表现/解法/验证命令"），没有执行点 → 看运气。
+ * 对照: `abs note` 落的 source 页结构整齐，因为模板在**代码里**。
+ *
+ * 边界（关键）: 它只给**结构**，不给**内容**。
+ * 「这条值不值得留 / 归哪一页」仍靠人判断 —— 那是 skill 明写的分工（深提炼不自动化）。
+ * 所以本命令不猜语义、不自动提炼，只在你要新建页时把该有的位置摆好。
+ *
+ * 尾巴用「占位符」而非真实值: 这样 lint 的 NO-TAIL 判据在占位未填时仍会报
+ * （骨架≠完成）。填完删掉占位行即可。 */
+export async function cmdConcept({ dir, slug, title, tags, desc }) {
+  let root;
+  try {
+    root = await requireBrain(dir || process.cwd());
+  } catch {
+    return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
+  }
+  const raw = String(slug || '').trim();
+  if (!raw) {
+    return [
+      '用法: abs concept <slug> --title "一句话标题" [--tags a,b] [--desc "index 里的一句话"]',
+      '  例: abs concept docker-prisma-429 --title "Docker 内存超限导致 Prisma 429"',
+      '  说明: 只给骨架（头/中/尾位置），内容仍由你写 —— 判断不自动化。',
+    ].join('\n');
+  }
+  // slug 即文件名（命名即链接）。收口掉路径分隔符与空白，防逃出 concepts/。
+  const name = raw.replace(/[\s/\\]+/g, '-').replace(/[^\w\u4e00-\u9fff.-]/g, '').replace(/^-+|-+$/g, '');
+  if (!name) return `✗ slug 无效（清洗后为空）: ${raw}`;
+  const who = await requireUser();
+  await ensurePersonPage(root, who);
+  const dirP = brainPath(root, 'concepts');
+  await fs.mkdir(dirP, { recursive: true });
+  const file = join(dirP, `${name}.md`);
+  const head = String(title || '').trim() || name;
+  const tagList = ['concept', ...String(tags || '').split(',').map((t) => t.trim()).filter(Boolean)];
+  const body = [
+    '---',
+    `tags: [${tagList.join(', ')}]`,
+    `id: ${name}`,
+    `author: ${who}`,
+    `updated: ${today()}`,
+    'status: draft',
+    '---',
+    '',
+    `# 概念：${head}`,
+    '',
+    '## 触发场景',
+    '<!-- 什么情况下该想起这条？（写可检索的词，别只写“遇到问题”） -->',
+    '',
+    '## ❌ 表现',
+    '<!-- 具体症状 / 贴报错 / 复现条件 -->',
+    '',
+    '## 🛠 解法',
+    '<!-- 根因 + 修复 -->',
+    '',
+    '## 验证',
+    '<!-- 做完怎么确认？跑什么命令 / 看什么信号 / 用什么判据。必须填 —— 没尾巴的经验只能被“相信”，不能被“验证” -->',
+    '',
+    '## 关联连接',
+    `- ${atTag(who)} — 本页沉淀者`,
+    '（在这挂相关页双链，别留孤岛）',
+    '',
+  ].join('\n');
+  // 独占写（wx）：已存在则 EEXIST —— 与 ensurePersonPage 同路数。
+  // 不用「先查后写」：那有 TOCTOU 竞态，且已有人工内容一律不覆盖是本仓硬规则。
+  // 也不走 tmp+rename：rename 会默默覆盖已存在文件，而这里必须「存在就拒绝」。
+  try {
+    await fs.writeFile(file, body, { encoding: 'utf8', flag: 'wx' });
+  } catch (e) {
+    if (e.code === 'EEXIST') {
+      return `• 已存在，不覆盖 → .brain/concepts/${name}.md\n  要改请直接编辑（或先删页）；新建请换个 slug。`;
+    }
+    throw e;
+  }
+  const oneLine = String(desc || '').trim() || clip(head, 60);
+  await registerInIndex(root, 'Concepts', name, oneLine);
+  await cmdLog({ dir: root, title: `新建概念页 ${name}`, kind: 'concept' });
+  return `✓ 概念页骨架 → .brain/concepts/${name}.md ${atTag(who)}\n` +
+    '  已给好四段位置；填完内容后：删掉 <!-- --> 占位、按需改 status: active、挂双链。\n' +
+    '  尾部「## 验证」必须填（留空会被 abs lint 报 NO-TAIL）。';
+}
+
 // ---------- person: 使用者实体页（首次需要时创建，已存在则不动） ----------
 /** 确保 entities/<name>.md 存在。已存在一律不动（里面的技术栈/特点是人工沉淀的）。
  * 用 `wx` 独占写：并发下后到者拿到 EEXIST 就静默跳过，不覆盖。
@@ -1250,6 +1375,20 @@ export async function cmdLint({ dir }) {
         issues.push(`OVER-SIZE: ${pg.rel} (${pg.lines}L/${pg.bytes}B > ${PAGE_MAX_LINES}L/${PAGE_MAX_BYTES / 1024}KB; 拆或外链)`);
       }
     }
+    // NO-TAIL: concept 页只有「头」（触发场景/表现）没有「尾」（可执行的东西）= 只能信，不能验。
+    // 尾巴的本质不是「叫验证」，而是【给出可执行的东西】：跑什么 / 怎么查 / 按什么步骤 / 用什么判据。
+    //
+    // 判据为何要宽（实测）:
+    //   26 页的段名高度分散 —— `## ✅ 处置` 出现 17 次，比 `## 🛠 解法` 还多；
+    //   还有 `## 做法`(11) / `## 判据` / `## ✅ 正确顺序` / `## 测试要点` / `## 分析步骤`。
+    //   只认「验证」二字会误报 7/11（64%）→ 噪音 → 规则被忽略。
+    // 判据为何要看「段内有没有真内容」:
+    //   `abs concept` 生成的骨架自带 `## 验证` 占位；若只看标题，骨架刚建就被判有尾（假阴性）。
+    //   所以必须排除「只有 <!-- 占位 --> 的空段」。
+    // 实测此版: 误报 0 / 漏报 0（报出的 2 页确实都没有「做完怎么确认」）。
+    if (pg.dir === 'concepts' && !hasTail(pg.body)) {
+      issues.push(`NO-TAIL: ${pg.rel}（无「做完怎么确认」；尾巴写清跑什么/看什么/按什么判据，别只有头）`);
+    }
     if (pg.dir !== 'sources' && !pg.indexed) {
       issues.push(`INDEX-MISSING: ${pg.rel} not listed as [[${pg.slug}]] in index.md`);
     }
@@ -1381,6 +1520,35 @@ const PAGE_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];
 // 放宽到 8KB：当前最大页 5463B，留约 50% 余量，但不至于失去"该拆了"的信号。
 // 提成常量避免检查条件与提示文本各写一份而漂移。
 const PAGE_MAX_LINES = 150;
+
+/** 尾巴关键词：只要段名里带这些「动作词」，就认为作者在给「做完怎么确认」。
+ *  为何不限定叫「验证」：实测 26 页段名高度分散（`## ✅ 处置` 17 次 > `## 🛠 解法`），
+ *  只认「验证」会误报 7/11（64%）—— 噪音会让规则失去意义。 */
+const TAIL_WORDS = '验证|检查|清单|测试|处置|做法|步骤|顺序|判据|信号|怎么';
+
+/** concept 页是否有「尾」（可执行的东西）。
+ *  两种真实形态都算：
+ *   1. 有带动作词的段标题，且**段内有真内容** —— 排除 `abs concept` 骨架的
+ *      `## 验证` + `<!-- 占位 -->`（只看标题会把未填的骨架误判为有尾）。
+ *   2. 列表项形式，如 `3. 验证命令：\`cmd\``（hook-sh-not-bash / todo-rewrite-not-map 的写法）。
+ *  逐行扫描而非复杂正则：需要「段边界」与「占位识别」，正则会难读且难改。 */
+export function hasTail(body) {
+  const lines = String(body || '').split('\n');
+  const headRe = new RegExp(`^#{2,6}[^\\n]*(${TAIL_WORDS})`);
+  for (let i = 0; i < lines.length; i++) {
+    if (!headRe.test(lines[i])) continue;
+    const lvl = lines[i].match(/^#+/)[0].length;
+    for (let j = i + 1; j < lines.length; j++) {
+      const t = lines[j].trim();
+      const h = lines[j].match(/^(#+)\s/);
+      if (h && h[1].length <= lvl) break;        // 本段结束，换下一段找
+      if (!t) continue;
+      if (t.startsWith('<!--') || t === '-->') continue; // 占位注释不算内容
+      return true;
+    }
+  }
+  return new RegExp(`^\\s*(?:\\d+\\.|[-*])\\s*\\**[^\\n]{0,20}(${TAIL_WORDS})`, 'm').test(String(body || ''));
+}
 const PAGE_MAX_BYTES = 8 * 1024;
 
 // source 页超龄未提炼的天数阈值（SOURCE-UNDISTILLED）。

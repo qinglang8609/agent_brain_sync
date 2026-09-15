@@ -1,9 +1,8 @@
 # 📋 Todo Board
-
 ## Todo
 ## Done
-### 2026-09-15
 
+### 2026-09-15
 - [x] SOURCES-DIGEST-14 [[fanchao]] — 消化 sources/ 14 个堆积（>10 触发 SOURCES-PILED-UP）：提炼进 concepts/、清源页、清引用、修 index。另评估「自动消化门槛」可行性。 【落地】 (完成 2026-09-15)
 - [x] INSTALL-TREE-GUARD [[fanchao]] — 安装树与代码版本不一致的显式守卫：包内一个 skill 都找不到时不再静默装 0 个，改报版本+布局+修复命令。触发源=fnos 半升级实测（旧代码1.8.2 + 新布局1.8.3 → 甩一个当前版本不存在的路径 ENOENT skill/SKILL.md）。 【落地】 (完成 2026-09-15)
   ↳ 断点: 已发布 1.8.4（用户授权后发版+推送，commit c8bbb0e）。改动: src/install.js ALL_SKILLS IIFE 尾部加空数组守卫(+14行); test/install.test.js 新增 3 例(扁平旧布局/skill缺失/正常不误伤, +63行)。验证: 全量 321 测试全绿; registry tarball 实测(正常布局 OK / 压成扁平必报错); 全局装 1.8.4 后 abs install 四宿主全成功。边界: 守卫只治「新代码+旧布局」，治不了「旧代码+新布局」(旧代码改不动) —— fnos 那台靠重装。}
@@ -19,7 +18,6 @@
   ↳ 断点: 完成：①status 三值定死(active/superseded/draft，缺字段=active 存量零迁移) ②abs supersede <页> --by <新页>(不删文件、幂等、拒悬空 --by、可反悔) ③note 默认 draft ④query 默认隐藏 superseded(--all 可看+告知隐藏数) ⑤lint 加 SUPERSEDED-DANGLING/DRAFT-STALE。CLI+MCP(abs_supersede, 12工具)。315 测试全绿(新增 9 例)，两轮破坏验证(store.js statusOfPage→6红、query隐藏逻辑→1红)。已 install --yes 扇出宿主。
 
 ### 2026-09-13
-
 - [x] #1.1 [[fanchao]] abs task 调用不稳定 — 写代码时不登记，只有复盘/手工才更新 【落地】 (完成 2026-09-13)
 - [x] SKILL-DRIFT [[fanchao]] — skill 双份漂移：仓库 skill/SKILL.md（中文分区名）vs 安装版 ~/.claude/skills/abs-agent-brain-sync/SKILL.md（英文分区名）不一致。下次改 skill 极易改错一份。建议：安装器从仓库 skill/SKILL.md 单向覆盖，或文档化'安装版为准、仓库版只是模板'。 【落地】 (完成 2026-09-13)
 - [x] VERSION-DRIFT-1.7.6 [[fanchao]] — 版本号谎言：v1.7.5 打标后 c3c9974(英文分区名+checkBrainShape)落地但未 bump，全局装 1.7.5 实为旧码。已 npm version patch→1.7.6 发布+全局重装，abs load 实测 checkBrainShape 生效(todo.md 结构重排)。教训:代码前进了版本号没跟=发布流程断，npm view 有 cache 延迟需 --force clean 【落地】 (完成 2026-09-13)
