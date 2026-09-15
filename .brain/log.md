@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-09-15 18:56] [[fanchao]] dev | sessions 命名契约补两处：①长期归档页豁免（tags 含 archive 的页不参与 SPLIT/MISPLACED —— codebuddy 那个 33KB 仓库 todo.md 全文归档永远无法并入当天 log，不豁免就永久挂报警，而永久报警会训练人忽略报警）；②UNRESOLVED-CONFLICT 判据从裸子串收紧为认段标题（codebuddy 快照因任务描述写「知识冲突裁决」而误报）。345 测试全绿；破坏验证双方全红。
 ## [2026-09-15 18:46] [[fanchao]] dev | 本仓 sessions/ 迁移完成（用新写的 upsertArchiveSection 迁移自己，验证代码）：4 个 *-todo归档.md 全部并入 log-<日期>.md 的「## 📦 任务归档」段，删旧文件、清 index。71 条任务无损（22+6+30+13）。lint 3→0：顺带修掉归档正文里 3 处「描述链接语法」的字面 [[name]]/[[人名]]（lint 不认反引号，改用「」表述）。341 测试全绿。
 ## [2026-09-15 18:40] [[fanchao]] dev | sessions/ 命名契约落地：①skill 定死「一天一个文件、只叫 log-<日期>.md，归档并入其 ## 📦 任务归档 段」，附四条禁令（不另建归档文件/不放 source 页/不拆多快照/不手工倒大文件）；②lint 加 SESSIONS-SPLIT（同天多文件）+ SESSIONS-MISPLACED（tags 不属 sessions）两条机械检查。341 测试全绿；破坏验证 3 轮全红。实测 codebuddy：报出 4 天分裂（09-07 达 5 个文件）+ 4 页错位。
 ## [2026-09-15 18:28] [[fanchao]] dev | 收尾：把「进化」聊到底+交付三版。①实证 Rules 不积累（13/14 条来自人工注入）→ 缺的不是机制是「判据」，判断必须留给人；②定位 concepts/ 页无代码写入路径是「文档没尾巴」的根因，对照 sources/ 页因模板在代码里而整齐；③交付 abs concept（写入侧定结构，只给结构不给内容）+ NO-TAIL 判据（放宽认动作词，因 ##✅处置 17次>##🛠解法；收紧要求段内有真内容）+ 补 2 页真缺尾（本仓 NO-TAIL 归零）；④发 1.8.5→1.8.6（先发版后改文档的顺序错误，已记入 npm-publish-flow）。337 测试全绿。

@@ -1374,7 +1374,12 @@ export async function cmdLint({ dir }) {
     if (['concepts', 'entities', 'syntheses'].includes(pg.dir) && !(inbound.get(pg.slug) || 0)) {
       issues.push(`NO-INBOUND: ${pg.rel} (无人链接到本页；在相关页的 ## 关联连接 挂一条 [[${pg.slug}]]）`);
     }
-    if (/知识冲突/.test(pg.body) && /status: draft/.test(pg.frontmatter)) {
+    // UNRESOLVED-CONFLICT: 有「## 知识冲突」段但还是 draft = 冲突标了没裁决。
+    // 判据必须认【段标题】而非页内出现「知识冲突」字样。
+    // 坑（2026-09-15 实测）: 原用裸子串 → codebuddy 的会话快照因任务描述里写了
+    // 「更新 session-key-fingerprint-flaw（知识冲突裁决）」而误报（它并无该段）。
+    // 同 NO-TAIL 的教训: 判据看结构，不看关键词。
+    if (/^#{2,6}[^\n]*知识冲突/m.test(pg.body) && /status: draft/.test(pg.frontmatter)) {
       issues.push(`UNRESOLVED-CONFLICT: ${pg.rel}`);
     }
     if (['concepts', 'entities', 'syntheses'].includes(pg.dir)) {
@@ -1438,6 +1443,12 @@ export async function cmdLint({ dir }) {
     // 于是「一个 log- + 一个旧杂文件」被数成 1 个而非 2 个，漏报。
     const m = pg.slug.match(/^(?:log-)?(\d{4}-\d{2}-\d{2})/);
     if (!m) continue;
+    // 长期存续的归档页（tags 含 archive）豁免：它不是「当天记录」，而是外部产物的全文归档。
+    // 实测 codebuddy 的 `2026-09-07-todo-md-archive.md`（495行/33KB，仓库根 todo.md 全文，
+    // 被 10 个页引用）—— 它永远无法「并入当天 log」（体积与性质都不对）。
+    // 不豁免就会永久挂一条报警，而永久报警会训练人忽略报警（比误报更贵）。
+    const tags = String(pg.frontmatter).match(/^tags:\s*(.+)$/m)?.[1] || '';
+    if (/\barchive\b/.test(tags)) continue;
     if (!sessByDate.has(m[1])) sessByDate.set(m[1], []);
     sessByDate.get(m[1]).push(pg.slug);
   }
@@ -1447,13 +1458,13 @@ export async function cmdLint({ dir }) {
         `一天只应有一个 \`log-${date}.md\`：归档写进其「## 📦 任务归档」段，多主题写成多个 ## 子段`);
     }
   }
-  // SESSIONS-MISPLACED: sessions/ 里放了 tags 既非 session-log 也非 todo-archive 的页。
+  // SESSIONS-MISPLACED: sessions/ 里放了 tags 既非 session-log / todo-archive / archive 的页。
   // 实例：codebuddy 的 `2026-09-07-ui-fixes.md`（tags: [source,session-log]）等 5 页 ——
   // 当时做的一组工作不是「暂存线索」，而就是当天的快照正文。
   for (const pg of pages) {
     if (pg.dir !== 'sessions') continue;
     const tags = String(pg.frontmatter).match(/^tags:\s*(.+)$/m)?.[1] || '';
-    if (!/session-log|todo-archive/.test(tags)) {
+    if (!/session-log|todo-archive|archive/.test(tags)) {
       issues.push(`SESSIONS-MISPLACED: ${pg.rel}（tags: ${tags.trim()} 不属 sessions/；` +
         `当天工作写进 \`log-<日期>.md\` 正文，暂存线索用 \`abs note\` 落 sources/）`);
     }

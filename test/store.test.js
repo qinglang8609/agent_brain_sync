@@ -1856,3 +1856,51 @@ describe('load 顶部「待消化」提示（与滞留同构的送达机制）',
     assert.ok(out.includes('有 11 条'), `模板不该被计数（应仍为 11）: ${out}`);
   });
 });
+
+// 长期归档页豁免（2026-09-15）: sessions/ 里 tags 含 archive 的页不算「当天记录」，
+// 不参与 SESSIONS-SPLIT/MISPLACED。实例: codebuddy 的 2026-09-07-todo-md-archive.md
+// （495行/33KB，仓库根 todo.md 全文，被 10 个页引用）—— 它永远无法并入当天 log。
+// 不豁免就会永久挂一条报警，而永久报警会训练人忽略报警。
+describe('sessions/ 长期归档页豁免', () => {
+  test('tags 含 archive 的页不报 SPLIT（可与 log 共存）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-20.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-20\nstatus: active\n---\n# X\n\n## 验证\n跑 test\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-20-todo-md-archive.md'),
+      '---\ntags: [session-log, archive]\nupdated: 2026-09-20\nstatus: reviewed\n---\n# 归档\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SESSIONS-SPLIT[^\n]*2026-09-20/.test(out), `归档页应与 log 共存不报: ${out}`);
+    assert.ok(!/SESSIONS-MISPLACED[^\n]*todo-md-archive/.test(out), `archive tag 不该报错位: ${out}`);
+  });
+
+  // 反向钉住: 豁免不能扩大 —— tags 只含 session-log 的第二份文件仍要报（那才是真分裂）。
+  test('无 archive tag 的同天第二个文件仍要报', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-21-extra.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-21\nstatus: active\n---\n# X\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-21.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-21\nstatus: active\n---\n# X\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/SESSIONS-SPLIT[^\n]*2026-09-21/.test(out), `无 archive tag 仍应报: ${out}`);
+  });
+});
+
+// UNRESOLVED-CONFLICT 判据: 认【段标题】而非页内出现字样。
+// 坑（2026-09-15 实测）: 原用裸子串 → codebuddy 会话快照因任务描述写了
+// 「更新 xxx（知识冲突裁决）」而误报（它并无该段）。同 NO-TAIL 的教训: 判据看结构。
+describe('UNRESOLVED-CONFLICT 判据', () => {
+  test('有「## 知识冲突」段且 status:draft → 报', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'real-conflict.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n' +
+      '# 概念\n\n## 知识冲突\n两版说法并存，待裁决\n\n## 验证\n跑 test\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/UNRESOLVED-CONFLICT[^\n]*real-conflict/.test(out), `真冲突应报: ${out}`);
+  });
+
+  test('正文只提「知识冲突」字样但无该段 → 不报（防误报）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'mentions-conflict.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n' +
+      '# 概念\n\n## 做了什么\n- [x] 更新某页（知识冲突裁决）\n\n## 验证\n跑 test\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/UNRESOLVED-CONFLICT[^\n]*mentions-conflict/.test(out),
+      `只是提到不该报: ${out}`);
+  });
+});
