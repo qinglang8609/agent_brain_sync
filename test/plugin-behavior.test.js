@@ -166,16 +166,82 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     await handlers.before_agent_start({ prompt: '这一轮的产出记一下' }, { cwd: proj });
     await handlers.turn_end({ toolResults: [{ toolName: 'edit', input: { file_path: 'src/todo.js' } }] }, { cwd: proj });
     await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
-    assert.equal(injected.length, 1);
-    assert.match(injected[0].text, /本会话素材/, `应带素材标题: ${injected[0].text.slice(-400)}`);
-    assert.match(injected[0].text, /user: 这一轮的产出记一下/, '应带用户原话');
-    assert.match(injected[0].text, /tool: src\/todo\.js/, '应带改过的文件');
+    // 写文件现在会先插一条「登记提醒」（新增契约），收尾提醒在其后。
+    // 不再断言总数固定 —— 两种提醒都会发，顺序是登记在前、收尾在后。
+    const teardown = injected.filter((m) => /本会话素材|收尾/.test(m.text));
+    assert.equal(teardown.length, 1, `收尾提醒应恰好一条: ${injected.map((m) => m.text.slice(0, 40)).join(' | ')}`);
+    assert.match(teardown[0].text, /本会话素材/, `应带素材标题: ${teardown[0].text.slice(-400)}`);
+    assert.match(teardown[0].text, /user: 这一轮的产出记一下/, '应带用户原话');
+    assert.match(teardown[0].text, /tool: src\/todo\.js/, '应带改过的文件');
     // 素材只能用一次：新会话重新累积（这里是刻意的：素材属于会话，不是全局）
     await handlers.session_start({}, { cwd: proj });
     await handlers.turn_end({ toolResults: [{ toolName: 'edit', input: { file_path: 'src/new.js' } }] }, { cwd: proj });
     await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
-    assert.match(injected[1].text, /tool: src\/new\.js/, '新会话素材应重新累积');
-    assert.ok(!injected[1].text.includes('src/todo.js'), '不得重复上一会话的旧料');
+    const t2 = injected.filter((m) => /本会话素材/.test(m.text));
+    assert.match(t2[t2.length - 1].text, /tool: src\/new\.js/, '新会话素材应重新累积');
+    assert.ok(!t2[t2.length - 1].text.includes('src/todo.js'), '不得重复上一会话的旧料');
+  });
+
+  // ---- 新增：写文件 = 任务开始 → 立刻提醒登记（不等 agent_end） ----
+  describe('turn_end 登记提醒（写文件即任务开始）', () => {
+    test('改项目文件 → turn_end 立即注入登记提醒（不等 agent_end）', async () => {
+      const mod = await loadPi(join(sandbox, 'log'));
+      const { handlers, injected } = harness(mod.default);
+      const proj = await makeProject('pi-reg');
+      await handlers.session_start({}, { cwd: proj });
+      await handlers.turn_end({ toolResults: [{ toolName: 'edit', input: { file_path: 'src/a.js' } }] }, { cwd: proj });
+      assert.equal(injected.length, 1, '改了文件就该当场提醒');
+      assert.match(injected[0].text, /登记提醒/, injected[0].text);
+      assert.match(injected[0].text, /src\/a\.js/, '应列出改过的文件');
+      assert.match(injected[0].text, /跳过/, '必须明说纯讨论可跳过（不逼 AI 造任务）');
+    });
+
+    test('只改 .brain/ 自身 → 不提醒（记录行为不是任务）', async () => {
+      const mod = await loadPi(join(sandbox, 'log'));
+      const { handlers, injected } = harness(mod.default);
+      const proj = await makeProject('pi-reg2');
+      await handlers.session_start({}, { cwd: proj });
+      await handlers.turn_end({ toolResults: [{ toolName: 'edit', input: { file_path: '.brain/log.md' } }] }, { cwd: proj });
+      await handlers.turn_end({ toolResults: [{ toolName: 'edit', input: { file_path: '.brain/concepts/x.md' } }] }, { cwd: proj });
+      assert.equal(injected.length, 0, `写图谱不应提醒登记: ${injected.map((m) => m.text.slice(0, 60))}`);
+    });
+
+    test('同一文件再改一轮仍提醒（用户要频繁，不是一次性）', async () => {
+      const mod = await loadPi(join(sandbox, 'log'));
+      const { handlers, injected } = harness(mod.default);
+      const proj = await makeProject('pi-reg3');
+      await handlers.session_start({}, { cwd: proj });
+      const one = [{ toolName: 'edit', input: { file_path: 'src/same.js' } }];
+      await handlers.turn_end({ toolResults: one }, { cwd: proj });
+      await handlers.turn_end({ toolResults: one }, { cwd: proj });
+      assert.equal(injected.length, 2, '同一文件改第二回也要提醒（否则回到「提醒一次就沉默」）');
+    });
+
+    test('项目文件 + .brain 混写 → 列出项目文件、不列 .brain', async () => {
+      const mod = await loadPi(join(sandbox, 'log'));
+      const { handlers, injected } = harness(mod.default);
+      const proj = await makeProject('pi-reg4');
+      await handlers.session_start({}, { cwd: proj });
+      await handlers.turn_end({
+        toolResults: [
+          { toolName: 'edit', input: { file_path: 'src/mix.js' } },
+          { toolName: 'edit', input: { file_path: '.brain/log.md' } },
+        ],
+      }, { cwd: proj });
+      assert.equal(injected.length, 1);
+      assert.match(injected[0].text, /src\/mix\.js/);
+      assert.ok(!/改了：.*\.brain/.test(injected[0].text), `不应把 .brain 当任务文件: ${injected[0].text}`);
+    });
+
+    test('无 .brain 的项目不提醒（不在那沉淀）', async () => {
+      const mod = await loadPi(join(sandbox, 'log'));
+      const { handlers, injected } = harness(mod.default);
+      const bare = join(sandbox, 'no-brain-reg');
+      await fs.mkdir(bare, { recursive: true });
+      await handlers.session_start({}, { cwd: bare });
+      await handlers.turn_end({ toolResults: [{ toolName: 'edit', input: { file_path: 'src/a.js' } }] }, { cwd: bare });
+      assert.equal(injected.length, 0);
+    });
   });
 
   test('今日已收尾的项目不注入', async () => {
@@ -276,6 +342,82 @@ describe('op​encode 插件 行为级 (session.idle 收尾注入)', () => {
     const hooks = await mod.default.server({ client: { session: { promptAsync: async () => {} } }, directory: proj });
     assert.equal(typeof hooks.event, 'function');
     assert.equal(typeof hooks['tool.execute.after'], 'function');
+  });
+
+  // 写文件 = 任务开始 → 当场推登记提醒（不等 idle）
+  describe('tool.execute.after 登记提醒', () => {
+    test('写项目文件 → 立即注入登记提醒', async () => {
+      const mod = await loadOc(join(sandbox, 'log'));
+      const proj = await makeProject('oc-reg');
+      const injected = [];
+      const hooks = await mod.default.server({
+        client: { session: { promptAsync: async (a) => injected.push(a.body.parts[0].text) } },
+        directory: proj,
+      });
+      await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's1' } } });
+      await hooks['tool.execute.after']({ tool: 'edit', args: { file_path: 'src/a.js' } });
+      assert.equal(injected.length, 1, `改文件应提醒: ${JSON.stringify(injected)}`);
+      assert.match(injected[0], /登记提醒/);
+      assert.match(injected[0], /src\/a\.js/);
+      assert.match(injected[0], /跳过/, '必须明说可跳过');
+    });
+
+    test('只改 .brain/ → 不提醒；bash 只读也不提醒', async () => {
+      const mod = await loadOc(join(sandbox, 'log'));
+      const proj = await makeProject('oc-reg2');
+      const injected = [];
+      const hooks = await mod.default.server({
+        client: { session: { promptAsync: async (a) => injected.push(a.body.parts[0].text) } },
+        directory: proj,
+      });
+      await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's1' } } });
+      await hooks['tool.execute.after']({ tool: 'edit', args: { file_path: '.brain/log.md' } });
+      await hooks['tool.execute.after']({ tool: 'bash', args: { command: 'ls -la' } });
+      assert.equal(injected.length, 0, `不应提醒: ${JSON.stringify(injected)}`);
+    });
+
+    test('bash 写命令 → 提醒（很多修改经 bash 完成）', async () => {
+      const mod = await loadOc(join(sandbox, 'log'));
+      const proj = await makeProject('oc-reg3');
+      const injected = [];
+      const hooks = await mod.default.server({
+        client: { session: { promptAsync: async (a) => injected.push(a.body.parts[0].text) } },
+        directory: proj,
+      });
+      await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's1' } } });
+      await hooks['tool.execute.after']({ tool: 'bash', args: { command: 'sed -i "" s/a/b/ src/x.js' } });
+      assert.equal(injected.length, 1, 'bash 写应提醒');
+      assert.match(injected[0], /bash:/);
+    });
+
+    test('同一文件再写仍提醒（频繁是故意的）', async () => {
+      const mod = await loadOc(join(sandbox, 'log'));
+      const proj = await makeProject('oc-reg4');
+      const injected = [];
+      const hooks = await mod.default.server({
+        client: { session: { promptAsync: async (a) => injected.push(a.body.parts[0].text) } },
+        directory: proj,
+      });
+      await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's1' } } });
+      const w = { tool: 'edit', args: { file_path: 'src/same.js' } };
+      await hooks['tool.execute.after'](w);
+      await hooks['tool.execute.after'](w);
+      assert.equal(injected.length, 2, '不应因同一文件而沉默');
+    });
+
+    test('无 .brain 的项目不提醒', async () => {
+      const mod = await loadOc(join(sandbox, 'log'));
+      const bare = join(sandbox, 'oc-nobrain-reg');
+      await fs.mkdir(bare, { recursive: true });
+      const injected = [];
+      const hooks = await mod.default.server({
+        client: { session: { promptAsync: async (a) => injected.push(a.body.parts[0].text) } },
+        directory: bare,
+      });
+      await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's1' } } });
+      await hooks['tool.execute.after']({ tool: 'edit', args: { file_path: 'src/a.js' } });
+      assert.equal(injected.length, 0);
+    });
   });
 
   test('只读不注入; 写后 idle 注入一次并落痕; 再 idle 节流', async () => {

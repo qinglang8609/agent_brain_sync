@@ -20,6 +20,7 @@ abs todo                     # 看板（Done 折成计数；明细 abs todo --fu
 abs index / abs log          # 完整 index.md / log.md
 abs status                   # 当前项目 + 图谱概要
 abs query <词1> [词2 …]      # 检索 .brain/ 知识页（多词 OR）
+abs resolve <页名或id>       # 反查页面路径（改名后 id 不变）
 abs lint                     # 图谱体检（死链/悬挂/超限/堆积/未提炼/Rules 超限）
 
 # 写
@@ -170,9 +171,13 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
    - 快照里的任务现在真做完了 → `abs todo done <id>`（done 后下次 load 滞留自动消失）；
    - 还没做完 → `abs todo note <id> --note "接到哪/改到哪个文件"` 补断点（别空手续接）。
    滞留没清完就不算接上了状态——这是「任务做完没进 Done」的根治动作。
-3. **读命中页**：按关键词在 index 定位 → 读对应 concepts/entities 全文。
+3. **读命中页**：`abs query <词>` 检索（多词 OR）→ 拿到页名后读那几个文件。
+   ```bash
+   abs query <词>                  # 全文检索，只回命中几页
+   abs resolve <页名或id>          # 反查文件路径（页改过名时用 id 能找回）
+   ```
    > ⚠️ **绝不通读 `.brain/`**（29 页就约 11 万 token，全读塞满窗口）。
-   > 要状态→`abs load`；要主题→`abs query <词>`（只回命中几页）；要某页→只读那页。
+   > 要状态→`abs load`；要主题→`abs query <词>`；要完整页清单→`abs index`（或直接读 `.brain/index.md`）；要某页→`abs resolve` 拿到路径后**只读那一页**。
    > 汇总多文件时用 `ctx_execute` 类工具在沙箱里处理，**只打印结论**。
 4. **续 todo**：默认续 todo 分支 → 把顶部未完成项当当前任务开做。
 5. **登记新任务**：有明确新任务而 todo 没有 → `abs todo add <id> --note 做什么` 再动工。
@@ -209,6 +214,30 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 > Op​enCode todowrite / pi `/list`）—— 那些多是会话内临时，不写 `.brain/todo.md`，
 > 下会话接不上、收尾没影。原生 todo 顶多记“本会话不跨断点的临时拆解”。
 
+## 写文件 = 任务开始（收到登记提醒就立即做）
+
+**改了项目文件，说明有任务在进行。** hook 观测到写入会就地注入一条
+`[abs 登记提醒]`（pi 在 `turn_end`、Op​enCode 在 `tool.execute.after`），**不等会话结束**。
+
+**为什么不等收尾**（实测教训）：旧设计只在会话末尾提醒 —— 而那时用户已想结束、
+AI 只想收尾不想登记。且「任务何时开始」只有写文件那一刻清楚：等收尾回忆必漏。
+
+收到登记提醒，当场判断（**三选一，不猜**）：
+
+| 情况 | 动作 |
+|---|---|
+| 属于某个任务，todo 里没有 | `abs todo add <id> --note "做什么"` |
+| 属于已在登记的任务 | `abs todo note <id> --note "改到哪/下一步"` |
+| 纯讨论/调研/只改 `.brain/` 自身 | **无需登记**，回「跳过」即可 |
+
+> **「跳过」是合法选项** —— 不逼你造任务。假条目比不登记更坏（污染看板，下会话当真）。
+>
+> **判据是「整个项目」，但排除 `.brain/` 自身**：`abs note` / `abs log` 也写文件，
+> 但那是**记录行为**不是任务 —— 不排除则每落一条经验都弹一次提醒，纯噪音。
+>
+> **提醒很频繁是故意的**：每轮写文件都提醒（同一文件改第二回也提）。嫌吵就当场登记，
+> 登记完下一轮仍有写入还会提 —— 它盯的是「有活干就有登记」，不是「提醒过一次就算了」。
+
 ## 每轮结束：收尾循环（Stop / 告一段落后必做）
 
 **每个任务边界、被 Stop/打断、告一段落时，别停半空。** 这是“开场接上状态、结束落回状态”的闭环。
@@ -241,6 +270,9 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 
 1. **暂存线索**：`abs note`（或建 `sources/YYYY-MM-DD-slug.md`）记做了什么、改哪些文件、验证命令。
 2. **抽规律**：值得留的 → `concepts/<kebab-slug>.md`：触发场景/❌表现/🛠根因+解法+验证。挂双链。
+   **同时检查：旧页里有没有被本次推翻的说法？** 有 → `abs supersede <旧页> --by <新页>`
+   （别删页；删了会让下个会话重踩同一个坑、重新记一遍）。核实过的新页把 `status` 改成 `active`
+   （`abs note` 落的页默认是 `draft`）。
 3. **沉淀实体**：碰了重要未记录的事物 → `entities/<TitleCase>.md`。
 4. **对账 todo**：做完的归位 Done（标结语+日期），做一半的补断点，卡住的改 `[滞留中]`。
 5. **综合(可选)**：推进了选型/取舍 → `syntheses/`。
@@ -253,10 +285,28 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 
 ## 知识页格式
 
-统一 frontmatter：`tags / author / updated / status`（`status: draft`，或 `reviewed` = 冲突已裁决）。
+统一 frontmatter：`tags / author / updated / status`。
 `tags` 首标签 ∈ `entity|concept|source|synthesis|session-log`。`author` 与 `entities/<name>.md` 同名。
 
+**`status` 三个值（生命周期，别写别的）：**
+
+| 值 | 含义 | 读取侧行为 |
+|---|---|---|
+| `active` | 当前有效（**缺字段默认就是它**，存量页无需改） | 正常展示 |
+| `draft` | 待核实（`abs note` 新落的经验默认这个） | 展示但标注 `[draft 未核实]` |
+| `superseded` | **已被推翻，别再依据它** | `query` 默认隐藏（计数据告知） |
+
+**推翻一条经验**（不要删文件！）：
+```bash
+abs supersede <页名> --by <取代它的新页>   # 不写 --by 也行 = 单纯弃用，无替代
+```
+→ 把 `status` 改成 `superseded` 并写 `superseded-by`。**历史必须留**：删了会让下个会话重踩同一个坑、重新记一遍。
+→ 核实后发现仍有效：把 `status` 改回 `active`（一行，可反悔）。
+→ 拒写悬空引用：`--by` 指向不存在的页会直接拒绝。
+
 - **每页必须有 `## 关联连接`**，用 `[[页面名]]` 链相关页 —— 严禁孤岛页。
+  **链路解释写在 `—` 后面**（如 `[[hook-throttle-alignment]] — 节流判据要对齐「真收尾」`），
+  这样 AI 不点开就知道该不该跟进；只写链点不写解释，等于没链。
 - **命名即链接**：`[[Docker]]` → `entities/Docker.md`；`[[docker-prisma-429]]` → `concepts/`。不建别名层。
 - **知识冲突**：不静默覆盖，加 `## 知识冲突` 两版都留、标来源时间，交人工裁决。
 - 概念页骨架：`触发场景 / ❌表现(贴报错) / 🛠解法(根因+修复+验证命令) / 关联连接`。
@@ -265,9 +315,12 @@ Done 区由 `abs wrapup` 在会话结束时自动把「超 3 天且整天都已�
 
 - `abs query <词>` 检索（多词 OR）→ 读命中页 → 答用 `[[页面名]]` 标来源。
   **代码问题（符号在哪/谁调用）不在 .brain，直接读源码**；.brain 只答"踩过什么坑/上次做到哪"。
-- `abs lint` 体检：死链/孤岛/**悬挂页**/缺 frontmatter/模板残留/超尺寸/sources 堆积/**超龄未提炼**/index 漏列/Rules 超限。
+  已被推翻的经验默认不返回（`--all` 可看）—— 但若你确实需要拿旧结论对照，记得它已被推翻。
+- `abs lint` 体检：死链/孤岛/**悬挂页**/缺 frontmatter/模板残留/超尺寸/sources 堆积/**超龄未提炼**/index 漏列/Rules 超限/**取代者悬空**/**draft 超龄**。
   - `NO-INBOUND`：有出边但无人 `[[链接]]` 到你 = 挂在图上没人接（孤岛检查只抓"零出零入"）。
   - `SOURCE-UNDISTILLED`：source 超 7 天仍未链到任何 concept = 暂存了没归位。
+  - `SUPERSEDED-DANGLING`：`superseded-by` 指向的页不存在（删页后忘同步）。
+  - `DRAFT-STALE`：concepts 等长期停在 `draft` = 既没核实也没推翻，核实/推翻后各改一行。
 
 ## 三层分工
 

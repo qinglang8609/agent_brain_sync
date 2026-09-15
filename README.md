@@ -69,7 +69,9 @@ abs todo done    TASK-1
 
 abs note "一句话经验" --tags 坑,docker    # 经验暂存 → sources/
 abs log "完成 X"                          # 记一行流水；abs log 无参 = 查看
-abs query <词>                            # 检索图谱（多词 OR）
+abs query <词>                            # 检索图谱（多词 OR）；已被推翻的经验默认隐藏（--all 可看）
+abs resolve <页名或id>                    # 反查页面路径（页改名后 id 不变）
+abs supersede <页名> [--by <新页>]        # 标记经验已失效（不删文件，保留历史；query 默认不再返回）
 abs status                                # 当前项目 + 图谱概要
 abs lint                                  # 体检：死链/孤岛/超尺寸/堆积
 abs rule                                  # 列出 index.md 的 ## Rules 硬规则

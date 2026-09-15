@@ -12,6 +12,14 @@
  *     - before_agent_start (用户发话 = 天然话题边界) → 记用户原话
  *     - turn_end (每轮结束) → 记改过哪些文件
  *   累积在**内存**(下方 sessionNotes), 收尾时拼进注入提示 —— **不落盘**。
+ *
+ * 登记提醒 (2026-09-15 用户定): 写文件 = 任务开始的机械信号。
+ *   旧设计只在 agent_end 提醒收尾 —— 但那时用户已想结束, AI 只想收尾不想登记;
+ *   且「任务何时开始」只有写文件那一刻清楚, 事后回忆必漏。
+ *   故 turn_end 检测到**项目文件**写入即注入登记提示(不等 agent_end):
+ *     · 频繁没关系 —— 每轮改文件都提醒(用户明确要求), 用 nudgeCount 防同一轮重复
+ *     · 判据 = 整个项目, 但**排除 .brain/ 自身**(写图谱不是任务, 是记录行为)
+ *     · 文案明说「纯讨论可跳过」—— 不逼 AI 造任务(否则会长出假条目污染看板)
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { appendFile, mkdir, readFile, stat } from "node:fs/promises"
@@ -109,16 +117,55 @@ async function loggedToday(brain: string): Promise<boolean> {
   } catch { return false }
 }
 
+// 写文件 = 任务开始的机械信号。
+// 注: `abs note` / `abs log` 也会写文件 —— 但那是**记录行为**不是任务，
+// 所以要排除 .brain/ 自身（否则每落一条经验都弹一次登记提醒，纯噪音）。
+// ponytail: 用路径前缀判，不解析项目根（子目录/软链场景可能漏判；
+// 漏判的代价只是少提醒一次，不丢数据）。
+const BRAIN_PATH = /\.brain[\/]/;
+
+function isProjectWrite(p: string | undefined, cmd?: string): boolean {
+  if (cmd !== undefined) return !READONLY_CMD.test(cmd); // bash: 非只读就算
+  if (!p) return false;
+  return !BRAIN_PATH.test(String(p));
+}
+
+/** 从一轮的 toolResults 里抽出「改过的项目文件」。排除 .brain/ 自身。 */
+function projectWrites(toolResults: any[]): string[] {
+  const out = new Set<string>();
+  for (const r of toolResults || []) {
+    const name = String(r?.toolName || "");
+    if (!WRITE_TOOLS.has(name)) continue;
+    if (r?.isError) continue;
+    if (name === "bash") {
+      const cmd = String(r?.input?.command ?? r?.args?.command ?? "");
+      if (!isProjectWrite(undefined, cmd)) continue;
+      out.add("bash: " + cmd.slice(0, 60));
+      continue;
+    }
+    const f = r?.input?.file_path ?? r?.args?.file_path ?? r?.input?.path ?? r?.args?.path;
+    if (isProjectWrite(f ? String(f) : undefined)) out.add(String(f));
+  }
+  return [...out];
+}
+
 export default function absPiHook(pi: ExtensionAPI): void {
   // 收尾注入的节流状态。声明在**外层** + 在 session_start 里重置：
   // 否则同一进程的第二个会话会继承上一个会话的 true，永久不再提醒
   // （2026-09-13 实测：同一天多个会话时后半场全部静默）。
   let teardownNudged = false
   let agentEndSeen = false
+  // 登记提醒节流：只需防**同一轮内**重复注入（一个 turn_end 只提醒一次）。
+  // 跨轮不去重 —— 用户明确要「频繁一点」：同一文件改第二回仍是新任务进展，
+  // 该提醒。曾经用「文件列表」当去重键 → 同一文件再改就永不提醒（实测 step②失败）。
+  let lastNudgedTurn = -1
+  let turnSeq = 0
 
   pi.on("session_start", () => {
     teardownNudged = false
     agentEndSeen = false
+    lastNudgedTurn = -1
+    turnSeq = 0
     return logHook("session_start").catch(() => {})
   })
 
@@ -129,7 +176,8 @@ export default function absPiHook(pi: ExtensionAPI): void {
   })
 
   // 每轮结束 = 这轮干了什么（改了哪些文件）。机械事实，供收尾时回忆。
-  pi.on("turn_end", async (event: any, _ctx: any) => {
+  // 同时：写文件 = 任务开始 → **立刻**提醒登记（不等 agent_end）。
+  pi.on("turn_end", async (event: any, ctx: any) => {
     const files = new Set<string>()
     for (const r of event?.toolResults || []) {
       const name = String(r?.toolName || "")
@@ -143,6 +191,28 @@ export default function absPiHook(pi: ExtensionAPI): void {
       }
     }
     if (files.size) addNote("tool", [...files].join(", "))
+
+    // ---- 登记提醒：项目文件被写 = 任务已经开始 ----
+    const touched = projectWrites(event?.toolResults || [])
+    if (!touched.length) return
+    const me = ++turnSeq
+    if (me === lastNudgedTurn) return // 同一轮不重复（turn_end 理论上只来一次，防御）
+    lastNudgedTurn = me
+    const cwd = (ctx && ctx.cwd) || process.cwd()
+    if (!(await findBrain(cwd))) return // 无图谱 = 不在这项目沉淀，不打扰
+    await logHook(`turn_end:register-nudge files=${touched.length}`).catch(() => {})
+    try {
+      pi.sendUserMessage(
+        "[abs 登记提醒] 本轮改了项目文件，说明有任务在进行。\n" +
+        "改了：" + touched.slice(0, 6).join(", ") + (touched.length > 6 ? ` 等 ${touched.length} 个` : "") + "\n" +
+        "若这属于某个任务，立刻登记（别等到会话结束才回忆——那时必漏）：\n" +
+        "  · 新任务: abs todo add <id> --note \"做什么\"\n" +
+        "  · 已有任务: abs todo note <id> --note \"改到哪/下一步\"\n" +
+        "  · 纯讨论/调研/改图谱自身 → 无需登记，回「跳过」即可。\n" +
+        "简洁执行，不要复述本条提醒。",
+        { deliverAs: "followUp" },
+      )
+    } catch {}
   })
   // 收尾注入: 每个会话最多一次, 避免反复打扰。
   pi.on("agent_end", async (event: any, ctx: any) => {

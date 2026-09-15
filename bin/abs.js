@@ -2,7 +2,7 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive } from '../src/store.js';
+import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede } from '../src/store.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
@@ -74,6 +74,8 @@ const FLAG_SPEC = {
   'payload': { type: 'string' },
   'tags': { type: 'string' },
   'state': { type: 'string' },
+  'by': { type: 'string' },
+  'all': { type: 'boolean' },
   'keep-days': { type: 'string' },
   'help': { type: 'boolean' },
   'dry-run': { type: 'boolean' },
@@ -144,6 +146,8 @@ function parseArgv(args) {
     note: values.note,
     as: values.as,
     state: values.state,
+    by: values.by,
+    all: !!values.all,
     payload: values.payload,
     tags: values.tags,
     help: !!values.help,
@@ -183,7 +187,12 @@ const usage = `abs — agent-brain-sync 记忆工具
   abs note "经验一句话" [--tags 坑,docker]    经验实时暂存 → sources/
 
 维护:
-  abs query <词1> [词2 …]    检索 .brain/ 知识页 (多词 OR)
+  abs query <词1> [词2 …] [--all]
+                            检索 .brain/ 知识页 (多词 OR)；superseded 默认隐藏
+  abs resolve <id-or-slug> [更多…]
+                            按 id/页面名反查路径 (页改名后 id 不变，仍能找回)
+  abs supersede <页名> [--by <取代它的页>]
+                            标记一条经验已失效 (不删文件；query/load 默认不再展示)
   abs todo archive [--keep-days N] [--dry-run]
                             归档 Done 区旧日期组 → sessions/<日期>-todo归档.md
                             (默认保留近 3 天; 任一天有未完成则整天不归档)
@@ -400,7 +409,15 @@ async function main() {
         break;
       }
       case 'query': {
-        console.log(await cmdQuery({ dir: opts.dir, terms: opts._ }));
+        console.log(await cmdQuery({ dir: opts.dir, terms: opts._, includeSuperseded: opts.all }));
+        break;
+      }
+      case 'supersede': {
+        console.log(await cmdSupersede({ dir: opts.dir, refs: opts._, by: opts.by }));
+        break;
+      }
+      case 'resolve': {
+        console.log(await cmdResolve({ dir: opts.dir, refs: opts._ }));
         break;
       }
       case 'lint': {

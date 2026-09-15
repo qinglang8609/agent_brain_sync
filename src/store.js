@@ -430,11 +430,164 @@ async function readFileOrNull(p) {
  * 最大的单体膨胀源（Done 已折叠，见 collapseDone）。
  *
  * 续接真正需要的只是「有哪些分区、各多少页」（据此知道去哪找），不需要每页写了什么 ——
- * 要那个用 `abs index`（或直接读 index.md / 按词 `abs query`）。
+ * 要那个用 `abs index`（完整原文件）或按词 `abs query`。
  *
  * `## Rules` 也已不在本函数输出——它由 rulesSection 在**上方**单独成段（需要正文）；
  * 这里再原样吐一遍 = 同一段硬规则在首屏出现两次（2026-09-13 实测发现）。
  * 曾另有 `## Roadmap`：AI 自己写的方向总结，会被反复读到并带偏会话，已删。 */
+// ---------- page id: 改名不改引用 ----------
+// 问题：`.brain` 内部引用靠 [[slug]]，而 slug 就是文件名 —— 改一次文件名，
+// 所有指向它的链接静默变成 DEAD-LINK，只能靠 lint 事后抓。
+// 解法（最小代价）：页面 frontmatter 写一行 `id:`，建页时冻结。
+//   • 不发明新编号：id 默认等于建页时的 slug（人可读、可手写、无需迁移）
+//   • 旧页无 id → 回退用 slug，因此存量 31 页零迁移
+//   • 改名后 slug 变而 id 不变 → lint 报 ID-DRIFT，提示改成谁
+// 为什么不上内容哈希/uuid：哈希一改内容就变（比文件名还不稳定），
+// uuid 不可读不可手写且要全量迁移。slug 就是最合适的 id，只要不再跟文件名跑。
+const ID_RE = /^id:\s*(.+)$/m;
+
+/** 读页面 id；无 id 行则回退 slug（存量页零迁移）。 */
+export function idOfPage(body, slug) {
+  const m = String(body || '').match(ID_RE);
+  return m ? m[1].trim() : slug;
+}
+
+/** 给存量页补 id（只在缺时写），落 frontmatter。返回 'added' | 'exists' | 'no-fm'。 */
+export async function backfillPageId(full, slug) {
+  const res = await editFile(full, (cur) => {
+    if (!cur || !cur.startsWith('---\n')) return SKIP;
+    if (ID_RE.test(cur.split('\n---')[0])) return SKIP; // 已有 id 不动
+    const end = cur.indexOf('\n---', 3);
+    if (end === -1) return SKIP;
+    return { text: `${cur.slice(0, end)}\nid: ${slug}${cur.slice(end)}` };
+  });
+  return res === SKIP ? 'exists' : 'added';
+}
+
+// ---------- page status: 经验/知识页的生命周期 ----------
+// 问题：经验写进去就永远躺在那里 —— 推翻时删不掉（skill 里写着"人工内容一律不覆盖"，
+// AI 不敢删）、读的时候又看不见（load 只给分区计数）→ 旧经验持续骗下一个会话。
+// 解法：给已有的 `status:` 字段（字段本来就存在，20 页在用）定死三个值：
+//   active      当前有效（缺字段的默认值 —— 存量 22 页零迁移）
+//   superseded  已被推翻，别再依据它 —— 配 superseded-by 指向取代它的页
+//   draft       待核实（abs note 新落的经验就是这个）
+// 关键：推翻 = 改一行 frontmatter，**不删文件不丢历史** —— AI 敢做，人也能反悔。
+// 为什么不用新字段/新目录：字段已存在且有存量值，重命名会另起一套双轨（同 OPTS-DOUBLE-KEYS 之病）。
+export const PAGE_STATUS = ['active', 'superseded', 'draft'];
+const STATUS_RE = /^status:\s*(\S+)\s*$/m;
+const SUPERSEDED_BY_RE = /^superseded-by:\s*(.+)$/m;
+
+/** 读页面 status；无字段或是未知值时当 active（存量页零迁移）。 */
+export function statusOfPage(body, frontmatter) {
+  const fm = frontmatter !== undefined
+    ? frontmatter
+    : (String(body || '').match(/^---\n([\s\S]*?)\n---/) || ['', ''])[1];
+  const m = String(fm).match(STATUS_RE);
+  const v = m ? m[1].trim() : '';
+  return PAGE_STATUS.includes(v) ? v : 'active';
+}
+
+/** 读 superseded-by（只在 status=superseded 时有意义）。无则空串。 */
+export function supersededByOf(body) {
+  const m = String(body || '').match(SUPERSEDED_BY_RE);
+  return m ? m[1].trim() : '';
+}
+
+// ---------- supersede: 标记一条经验被推翻（回退的写入端） ----------
+// 为什么是标记而不是删除：
+//   ① 删除后下一个会话会重新踩同一个坑并重新记一遍（历史本身是资产）
+//   ② AI 不敢删（人工内容不覆盖），但敢改一行 frontmatter
+//   ③ 反悔只需把 status 改回 active
+export async function cmdSupersede({ dir, refs, by }) {
+  const list = (refs || []).map((r) => String(r).trim()).filter(Boolean);
+  if (!list.length) return '用法: abs supersede <页名或id> [更多…] [--by <取代它的页>]  — 标记经验已失效（不删文件）';
+  let root;
+  try {
+    root = await requireBrain(dir || process.cwd());
+  } catch {
+    return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
+  }
+  const byRef = String(by || '').trim();
+  // 取代者必须先存在 —— 否则写下一个永远悬空的引用（lint 会报，不如现在拒）。
+  if (byRef) {
+    const target = await resolvePage(root, byRef);
+    if (!target) return `✗ --by ${byRef}: 图谱里没有这页（先用 abs resolve 确认页名）`;
+  }
+  const out = [];
+  // 取代者 slug 在循环外解析一次（锁内 mutator 不能 await）
+  const bySlug = byRef ? (await resolvePage(root, byRef)).slug : '';
+  for (const r of list) {
+    const hit = await resolvePage(root, r);
+    if (!hit) { out.push(`✗ ${r}: 未找到（试 abs query <词> 或 abs index 看清单）`); continue; }
+    const res = await editFile(hit.full, (cur) => {
+      if (!cur || !cur.startsWith('---\n')) return SKIP;
+      const end = cur.indexOf('\n---', 3);
+      if (end === -1) return SKIP;
+      let fm = cur.slice(0, end);
+      // 幂等：已是 superseded 且 superseded-by 一致 → 不写盘
+      const curSt = statusOfPage('', fm);
+      const curBy = supersededByOf(cur);
+      if (curSt === 'superseded' && curBy === bySlug) return SKIP;
+      // 去掉旧的 superseded-by（不论换不换取代者，旧值都作废）
+      fm = fm.replace(/\nsuperseded-by:.*(?=\n|$)/g, '');
+      fm = STATUS_RE.test(fm)
+        ? fm.replace(STATUS_RE, 'status: superseded')
+        : `${fm}\nstatus: superseded`;
+      // superseded-by 用 slug（不是 id）：人直接能按名找页，lint 能直接比对文件名
+      if (bySlug) fm = `${fm}\nsuperseded-by: ${bySlug}`;
+      return { text: fm + cur.slice(end) };
+    });
+    out.push(res === SKIP
+      ? `= ${hit.slug}: 已是 superseded（无变化）`
+      : `✓ ${hit.slug} → superseded${byRef ? ` (被 [[${byRef}]] 取代)` : ''}`);
+  }
+  return out.join('\n');
+}
+
+/** 把 id（或 slug）解析为页面路径。命中返回 {slug, dir, full, id}，否则 null。 */
+export async function resolvePage(root, idOrSlug) {
+  const want = String(idOrSlug || '').trim();
+  if (!want) return null;
+  const vault = brainPath(root);
+  for (const d of PAGE_DIRS) {
+    const p = join(vault, d);
+    let files;
+    try { files = await fs.readdir(p); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.md') || f.startsWith('_')) continue;
+      const slug = f.replace(/\.md$/, '');
+      const full = join(p, f);
+      // slug 直接命中就够快（绝大多数调用走这条），不命中才去读 frontmatter 比 id
+      if (slug === want) return { slug, dir: d, full, id: want };
+      const body = await fs.readFile(full, 'utf8').catch(() => '');
+      const id = idOfPage(body, slug);
+      if (id === want) return { slug, dir: d, full, id };
+    }
+  }
+  return null;
+}
+
+// ---------- resolve: id/slug → 页面路径（引用的反查端） ----------
+// 配合 frontmatter 的 id: 使用。页改名后 id 不变，靠本命令仍能找回来。
+export async function cmdResolve({ dir, refs }) {
+  const list = (refs || []).map((r) => String(r).trim()).filter(Boolean);
+  if (!list.length) return '用法: abs resolve <id-or-slug> [更多…]  — 按 id/页面名反查路径';
+  let root;
+  try {
+    root = await requireBrain(dir || process.cwd());
+  } catch {
+    return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
+  }
+  const lines = [];
+  for (const r of list) {
+    const hit = await resolvePage(root, r);
+    lines.push(hit
+      ? `✓ ${r} → ${BRAIN_DIR}/${hit.dir}/${hit.slug}.md${hit.id !== hit.slug ? `  (id=${hit.id})` : ''}`
+      : `✗ ${r}: 未找到（试 abs index 看完整清单，或 abs query <词> 全文搜）`);
+  }
+  return lines.join('\n');
+}
+
 export function collapseIndex(text) {
   const s = String(text || '').trim();
   if (!s) return '';
@@ -794,7 +947,7 @@ export async function cmdShow({ dir, view, full }) {
 // ---------- query: 检索知识图谱（多词 OR，扫全 .md 页） ----------
 const KNOWN_SLUG_HINT = /模板残留|\[\[slug\]\]/;
 
-export async function cmdQuery({ dir, terms }) {
+export async function cmdQuery({ dir, terms, includeSuperseded }) {
   const words = (terms || []).map((w) => String(w).trim()).filter(Boolean);
   if (!words.length) {
     return '用法: abs query <词1> [词2 …]  — 多词 OR 检索 .brain/ 全部知识页';
@@ -824,20 +977,42 @@ export async function cmdQuery({ dir, terms }) {
         // 作者从本页 frontmatter 读（权威来源）。不在 index 行里重复 ——
         // index 行是覆盖式更新的，作者会从"创建者"漂成"最后改的人"。
         const au = body.match(/^author:\s*(.+)$/m);
+        const st = statusOfPage(body);
+        // 被推翻的经验默认不出现在检索结果里 —— 它的存在意义是"别再用它"，
+        // 而不是回答"我上次怎么解決 X"（那会拿到一个已知错误的答案）。
+        // 但它不是静默消失：计数里告知还有几条被隐藏（带 --all 能看）。
+        if (st === 'superseded' && !includeSuperseded) {
+          hits.push({ hidden: true, slug: f.replace(/\.md$/, '') });
+          continue;
+        }
         hits.push({
           full, slug: f.replace(/\.md$/, ''), matched,
           author: au ? au[1].trim() : '',
+          id: idOfPage(body, f.replace(/\.md$/, '')),
+          status: st,
+          supersededBy: supersededByOf(body),
           snippet: firstHitLine(body, words),
         });
       }
     }
   }
-  if (!hits.length) return `query [${words.join(', ')}]: 无命中。用 abs lint 看图谱健康；首次使用先 abs init。`;
-  const lines = hits.map((h) => {
+  const hidden = hits.filter((h) => h.hidden).length;
+  const shown = hits.filter((h) => !h.hidden);
+  if (!shown.length) {
+    const extra = hidden ? `（另外 ${hidden} 页已标记 superseded，用 abs query ${words.join(' ')} --all 查看）` : '';
+    return `query [${words.join(', ')}]: 无命中。${extra}用 abs lint 看图谱健康；首次使用先 abs init。`;
+  }
+  const lines = shown.map((h) => {
     const by = h.author ? `  @${h.author}` : '';
-    return `📄 ${h.slug}${by}  (命中: ${h.matched.join(', ')})\n    ${h.snippet}`;
+    // id 只在≠slug 时显示 —— 相同时再印一遗就是纯噪音（绝大多数页）。
+    // 目的：让 AI 拿到一个改名也不漂的引用句柄（abs resolve <id> 能反查回来）。
+    const id = h.id && h.id !== h.slug ? `  [id: ${h.id}]` : '';
+    // draft = 未经核实。不拦使用，但必须让 AI 知道这是它自己没验证过的。
+    const st = h.status === 'draft' ? '  [draft 未核实]' : '';
+    return `📄 ${h.slug}${by}${id}${st}  (命中: ${h.matched.join(', ')})\n    ${h.snippet}`;
   });
-  return [`query [${words.join(', ')}] → ${hits.length} 页:`, '', ...lines].join('\n');
+  const tail = hidden ? [``, `（${hidden} 页 superseded 已隐藏；--all 可看）`] : [];
+  return [`query [${words.join(', ')}] → ${shown.length} 页:`, '', ...lines, ...tail].join('\n');
 }
 
 function firstHitLine(body, words) {
@@ -883,6 +1058,7 @@ export async function cmdNote({ dir, text, tags }) {
   const body = [
     '---',
     `tags: [${fmTags}]`,
+    `id: ${file.replace(/\.md$/, '')}`,
     `author: ${who}`,
     `updated: ${today()}`,
     'status: draft',
@@ -924,6 +1100,7 @@ export async function ensurePersonPage(root, name) {
   const body = [
     '---',
     'tags: [entity, person]',
+    `id: ${nm}`,
     `author: ${nm}`,
     `updated: ${today()}`,
     'status: draft',
@@ -1002,6 +1179,19 @@ export async function cmdLint({ dir }) {
 
   for (const pg of pages) {
     if (!pg.hasFrontmatter) issues.push(`NO-FRONTMATTER: ${pg.rel}`);
+    // ID-DRIFT: 页面写了 id 但已跟文件名(slug)不一致 = 改过名或改过 id。
+    // 不是错误（id 就是用来固定身份的），但必须提示：[[slug]] 形式的引用指向的是**文件名**，
+    // 改名后旧引用全变 DEAD-LINK；本检查让「静默断链」变成「一条可执行的提示」。
+    // 优先看「有没有别的页 id 指向旧名」→ 那才是真正的改名现场。
+    if (pg.hasFrontmatter) {
+      const id = idOfPage(pg.body, pg.slug);
+      // 反向查：有别的页声明 id = 本页 slug，说明本页是从那个 id 改名过来的。
+      // 这种才是「改名没同步引用」的真信号；单纯 id≠slug 也可能只是手写的 id。
+      if (id !== pg.slug) {
+        issues.push(`ID-DRIFT: ${pg.rel} (frontmatter id=${id} ≠ 文件名 ${pg.slug}；` +
+          `引用请用 [[${id}]] 或改回文件名)`);
+      }
+    }
     for (const ln of pg.links) {
       // 两类都不是真链接，只报 TEMPLATE-LINK（且不短路就会再报一次 DEAD-LINK，同一条报两遍）：
       //   ① 模板占位: `[[页面名]]` / `[[slug]]` / `[[Name]]` —— 模板没填
@@ -1061,6 +1251,32 @@ export async function cmdLint({ dir }) {
     try { ageMs = Date.now() - (await fs.stat(join(root, pg.rel))).mtimeMs; } catch { continue; }
     if (ageMs > staleMs) {
       issues.push(`SOURCE-UNDISTILLED: ${pg.rel}（${SOURCE_STALE_DAYS} 天未提炼成 concept；提炼后删 source 并清引用）`);
+    }
+  }
+
+  // SUPERSEDED-DANGLING: superseded 页声明的取代者也必须存在。
+  // 它跟 DEAD-LINK 同性质（指向不存在的页），但后果更重：
+  // 读者被引导去找一个不存在的"新版本"，比单纯断链更容易让人以为"没新页就是没替代"。
+  for (const pg of pages) {
+    if (pg.status !== 'superseded') continue;
+    if (!pg.supersededBy) continue; // 无取代者也是合法状态（就是弃用，没替代）
+    const by = pg.supersededBy.replace(/^\[\[|\]\]$/g, '').trim();
+    if (!names.has(by)) {
+      issues.push(`SUPERSEDED-DANGLING: ${pg.rel} (superseded-by: ${by} —— 该页不存在，删页后未同步)`);
+    }
+  }
+
+  // DRAFT-STALE: draft 停太久 = 既没核实也没被推翻，实质是写了没人看的堆积。
+  // 不报 sources（它们由 SOURCE-UNDISTILLED 管），只报 concepts/entities/syntheses ——
+  // 那些页是"应该已经被确认过"的长期资产，长期 draft 说明核实环节缺位。
+  for (const pg of pages) {
+    if (pg.status !== 'draft') continue;
+    if (pg.dir === 'sources') continue;
+    let ageMs = 0;
+    try { ageMs = Date.now() - (await fs.stat(join(root, pg.rel))).mtimeMs; } catch { continue; }
+    if (ageMs > DRAFT_STALE_DAYS * 86400 * 1000) {
+      const days = Math.floor(ageMs / 86400000);
+      issues.push(`DRAFT-STALE: ${pg.rel}（已 ${days} 天停在 draft；核实后改 status: active，推翻则 abs supersede）`);
     }
   }
 
@@ -1144,6 +1360,9 @@ const PAGE_MAX_BYTES = 8 * 1024;
 // source 页超龄未提炼的天数阈值（SOURCE-UNDISTILLED）。
 // 7 天 = 跨过至少一个完整工作周还没人提炼，基本等于被遗忘。
 const SOURCE_STALE_DAYS = 7;
+// draft 超龄阈值：新落的经验（abs note）默认 draft，指的是"还没核实过"。
+// 长期停在 draft = 既没被核实也没被推翻，属"写了没人看"的堆积 —— 不自动改，只报。
+const DRAFT_STALE_DAYS = 14;
 
 async function listPages(vault) {
   let indexText = '';
@@ -1178,6 +1397,8 @@ async function listPages(vault) {
         lines: body.split('\n').length,
         bytes: Buffer.byteLength(body, 'utf8'),
         indexed: indexText.includes(`[[${f.replace(/\.md$/, '')}]]`),
+        status: statusOfPage(body, fm ? fm[1] : ''),
+        supersededBy: supersededByOf(body),
       });
     }
   }

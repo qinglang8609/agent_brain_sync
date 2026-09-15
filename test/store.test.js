@@ -6,7 +6,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, renderArchivePage, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
@@ -1455,5 +1455,171 @@ describe('Done 结语契约', () => {
        '- [x] D1 【落地】 (完成 2026-09-11)', ''].join('\n'), 'utf8');
     const out = await cmdLint({ dir: projectA });
     assert.ok(!out.includes('DONE-NO-DATE'), `日期齐全不应报: ${out}`);
+  });
+});
+
+// ---------- page id: 改名不改引用 ----------
+// 设计要点（为什么不上 uuid/哈希）：id 默认 = 建页时的 slug，人可读可手写，
+// 且旧页无 id 时回退 slug → 存量页零迁移。哈希随内容变，uuid 不可读且要全量迁移。
+describe('page id (abs resolve)', () => {
+  test('idOfPage: 有 id 行读 id，无 id 行回退 slug', () => {
+    assert.equal(idOfPage('---\nid: my-id\ntags: [x]\n---\n# H', 'file-slug'), 'my-id');
+    assert.equal(idOfPage('---\ntags: [x]\n---\n# H', 'file-slug'), 'file-slug');
+    // 无 frontmatter 的裸 md 也不能炸
+    assert.equal(idOfPage('# H only', 'bare'), 'bare');
+  });
+
+  test('resolvePage: 按 slug 命中；改名后按 id 仍能找回', async () => {
+    const cdir = join(projectA, '.brain', 'concepts');
+    // 建一个「已改过名」的页：文件名是新名，frontmatter 留着旧 id
+    await fs.writeFile(join(cdir, 'new-name.md'),
+      '---\nid: old-name\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 页\n', 'utf8');
+    const bySlug = await resolvePage(projectA, 'new-name');
+    assert.equal(bySlug.slug, 'new-name');
+    const byId = await resolvePage(projectA, 'old-name');
+    assert.ok(byId, '按旧 id 应能找回改名后的页');
+    assert.equal(byId.slug, 'new-name');
+    assert.equal(byId.id, 'old-name');
+    assert.equal(await resolvePage(projectA, 'zzz-none'), null);
+  });
+
+  test('lint 抓 ID-DRIFT: frontmatter id 与文件名不一致', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'drifted.md'),
+      '---\nid: original-slug\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 页\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('ID-DRIFT'), out);
+    assert.ok(out.includes('drifted.md'), out);
+  });
+
+  test('lint 不因 id==slug 误报 ID-DRIFT', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'same.md'),
+      '---\nid: same\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 页\n\n[[todo]]\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    // 只断言没有 ID-DRIFT 类问题 —— 该页可能因其它规则(如 NO-INBOUND)被列，
+    // 那些与本机制无关，一并 grep 文件名会把无关问题当成失败。
+    assert.ok(!/ID-DRIFT[^\n]*same\.md/.test(out), `id==slug 不应报 ID-DRIFT: ${out}`);
+  });
+
+  test('backfillPageId: 给存量页补 id，已有 id 不动', async () => {
+    const cdir = join(projectA, '.brain', 'concepts');
+    const f = join(cdir, 'legacy.md');
+    await fs.writeFile(f, '---\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 老页\n', 'utf8');
+    assert.equal(await backfillPageId(f, 'legacy'), 'added');
+    const after = await fs.readFile(f, 'utf8');
+    assert.ok(/^id: legacy$/m.test(after), after);
+    // id 必须落在 frontmatter 内（第一个 --- 与第二个 --- 之间），不能跑到正文
+    const fmEnd = after.indexOf('\n---', 3);
+    assert.ok(after.indexOf('id: legacy') < fmEnd, `id 应在 frontmatter 内: ${after}`);
+    // 二次调用幂等
+    assert.equal(await backfillPageId(f, 'legacy'), 'exists');
+  });
+
+  test('cmdResolve: 命中给路径，未命中给逃生口', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'r1.md'),
+      '---\nid: r1\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 页\n', 'utf8');
+    const ok = await cmdResolve({ dir: projectA, refs: ['r1'] });
+    assert.ok(ok.includes('.brain/concepts/r1.md') || ok.includes('concepts/r1.md'), ok);
+    const miss = await cmdResolve({ dir: projectA, refs: ['zzz'] });
+    assert.ok(miss.includes('未找到'), miss);
+  });
+
+  test('cmdNote 落页时写 id（新页自带改名安全的句柄）', async () => {
+    await cmdNote({ dir: projectA, text: 'id 化验证用的一条经验 xyzid', tags: 'idtest' });
+    const files = (await fs.readdir(join(projectA, '.brain', 'sources'))).filter((f) => f.endsWith('.md'));
+    const hit = files.find((f) => f.includes('xyzid'));
+    assert.ok(hit, `应落一个含 xyzid 的 source: ${files.join(',')}`);
+    const body = await fs.readFile(join(projectA, '.brain', 'sources', hit), 'utf8');
+    assert.ok(/^id: /m.test(body), `新页 frontmatter 应有 id: ${body.slice(0, 200)}`);
+    assert.ok(body.includes(`id: ${hit.replace(/\.md$/, '')}`), 'id 应等于建页时的 slug');
+  });
+});
+
+// ---------- page status: 经验的生命周期（active/superseded/draft） ----------
+// 存在的理由：经验写进去就永远躺在那里 —— 推翻时删不掉（人工内容不覆盖），
+// 读的时候又看不见 → 旧经验持续骗下一个会话。核心契约是「推翻 = 改一行 frontmatter，
+// 不删文件不丢历史」，且被推翻的内容默认不再出现在检索结果里。
+describe('page status (abs supersede)', () => {
+  test('statusOfPage: 无字段/未知值都当 active（存量页零迁移）', () => {
+    assert.equal(statusOfPage('---\nid: a\n---\n# H'), 'active');
+    assert.equal(statusOfPage('---\nstatus: reviewed\n---\n# H'), 'active', '旧的 reviewed 值归为 active');
+    assert.equal(statusOfPage('---\nstatus: superseded\n---\n# H'), 'superseded');
+    assert.equal(statusOfPage('---\nstatus: draft\n---\n# H'), 'draft');
+    assert.equal(statusOfPage('', ''), 'active');
+  });
+
+  test('cmdSupersede: 标记失效并写 superseded-by（不删文件）', async () => {
+    const cdir = join(projectA, '.brain', 'concepts');
+    await fs.writeFile(join(cdir, 'old-way.md'),
+      '---\nid: old-way\ntags: [concept]\nupdated: 2026-01-01\nstatus: active\n---\n\n# 老做法\n\n[[todo]]\n', 'utf8');
+    await fs.writeFile(join(cdir, 'new-way.md'),
+      '---\nid: new-way\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 新做法\n\n[[todo]]\n', 'utf8');
+    const out = await cmdSupersede({ dir: projectA, refs: ['old-way'], by: 'new-way' });
+    assert.ok(out.includes('superseded'), out);
+    const body = await fs.readFile(join(cdir, 'old-way.md'), 'utf8');
+    assert.ok(/^status: superseded$/m.test(body), body);
+    assert.ok(/^superseded-by: new-way$/m.test(body), body);
+    assert.ok(body.includes('# 老做法'), '文件不能被删/清空，历史要留');
+  });
+
+  test('cmdSupersede 幂等：重复标记不重复写', async () => {
+    const cdir = join(projectA, '.brain', 'concepts');
+    await fs.writeFile(join(cdir, 'a.md'), '---\nid: a\ntags: [concept]\n---\n\n# A\n', 'utf8');
+    await cmdSupersede({ dir: projectA, refs: ['a'] });
+    const out2 = await cmdSupersede({ dir: projectA, refs: ['a'] });
+    assert.ok(/已是 superseded/.test(out2), out2);
+    const body = await fs.readFile(join(cdir, 'a.md'), 'utf8');
+    assert.equal((body.match(/status:/g) || []).length, 1, `status 行不应重复: ${body}`);
+  });
+
+  test('cmdSupersede: --by 指向不存在的页 → 拒绝（防写悬空引用）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'b.md'), '---\nid: b\n---\n\n# B\n', 'utf8');
+    const out = await cmdSupersede({ dir: projectA, refs: ['b'], by: 'no-such-page' });
+    assert.ok(out.includes('没有这页'), out);
+    const body = await fs.readFile(join(projectA, '.brain', 'concepts', 'b.md'), 'utf8');
+    assert.ok(!/superseded-by/.test(body), '拒绝时不应写盘');
+  });
+
+  test('query 默认隐藏 superseded，--all 可见且给计数', async () => {
+    const cdir = join(projectA, '.brain', 'concepts');
+    await fs.writeFile(join(cdir, 'live.md'),
+      '---\nid: live\ntags: [concept]\n---\n\n# LIVE 关键词 zebra\n', 'utf8');
+    await fs.writeFile(join(cdir, 'dead.md'),
+      '---\nid: dead\ntags: [concept]\nstatus: superseded\n---\n\n# DEAD 关键词 zebra\n', 'utf8');
+    const def = await cmdQuery({ dir: projectA, terms: ['zebra'] });
+    assert.ok(def.includes('live'), def);
+    assert.ok(!def.includes('dead'), `被推翻的不应出现在默认结果: ${def}`);
+    assert.ok(/1 页 superseded 已隐藏/.test(def), `应告知隐藏了几条: ${def}`);
+    const all = await cmdQuery({ dir: projectA, terms: ['zebra'], includeSuperseded: true });
+    assert.ok(all.includes('dead') && all.includes('live'), all);
+  });
+
+  test('query 标注 draft（未核实的经验要让人看得见）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'dd.md'),
+      '---\nid: dd\ntags: [concept]\nstatus: draft\n---\n\n# DD 关键词 quokka\n', 'utf8');
+    const out = await cmdQuery({ dir: projectA, terms: ['quokka'] });
+    assert.ok(/draft 未核实/.test(out), `draft 应被标注: ${out}`);
+  });
+
+  test('lint 抓 SUPERSEDED-DANGLING（取代者页不存在）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'dangling.md'),
+      '---\nid: dangling\ntags: [concept]\nstatus: superseded\nsuperseded-by: ghost-page\n---\n\n# D\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('SUPERSEDED-DANGLING'), out);
+    assert.ok(out.includes('ghost-page'), out);
+  });
+
+  test('lint 不误报：superseded 无 superseded-by 是合法状态', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'abandoned.md'),
+      '---\nid: abandoned\ntags: [concept]\nstatus: superseded\n---\n\n# A\n\n[[todo]]\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SUPERSEDED-DANGLING[^\n]*abandoned/.test(out), `无取代者不该报: ${out}`);
+  });
+
+  test('abs note 落的新页是 draft（未经核实）', async () => {
+    await cmdNote({ dir: projectA, text: '生命周期验证用经验 statusprobe' });
+    const files = (await fs.readdir(join(projectA, '.brain', 'sources'))).filter((f) => f.includes('statusprobe'));
+    assert.ok(files.length, '应落 source 页');
+    const body = await fs.readFile(join(projectA, '.brain', 'sources', files[0]), 'utf8');
+    assert.ok(/^status: draft$/m.test(body), `新经验应为 draft: ${body.slice(0, 300)}`);
   });
 });
