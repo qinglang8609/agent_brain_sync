@@ -1,6 +1,6 @@
 {
   "name": "@fanchao8609/agent_brain_sync",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "agent-brain-sync: 跨会话 AI 编码记忆 — hook 纯触发 + CLI/MCP 读写 .brain markdown 图谱, 防并发写保护。",
   "type": "module",
   "license": "MIT",
