@@ -94,4 +94,5 @@ find ~ -maxdepth 4 -type d -name ".brain" -not -path "*/node_modules/*"
 - [[learning-loop-collect-distill-deliver]] — 写入侧定结构（本页是它在目录层的应用）
 - [[abs-install-layout]] — 另一个「命名/布局须与读取方同一版本」的实例
 - [[silent-data-loss-diagnosis]] — 漏报（该报不报）属于静默失效的一种
+- [[audit-claims-verify-before-fix]] — 判据类断言（正则/结构）必须先跑过再认
 - [[AgentBrainSync]] — 项目实体页

@@ -65,4 +65,5 @@ abs query <词> --all     # superseded 是否默认隐藏且可查回
 - [[teardown-automation]] — 触发时机设计的正面案例（换时机而非加提醒）
 - [[silent-data-loss-diagnosis]] — 「加了但不生效」的排查入口
 - [[read-side-output-must-not-scale]] — 「复用已有清单」是删掉重叠功能的依据
+- [[self-reported-reasoning-is-post-hoc]] — 实测否证后「该删就删」的案例（skill/abs-think-tree）
 - [[AgentBrainSync]] — 项目实体页

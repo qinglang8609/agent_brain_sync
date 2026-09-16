@@ -66,4 +66,6 @@ status: active
 ## 相关连接
 - [[symbol-reference-needs-real-run]] — 验证**方法**层面（本页是**假设**层面，更上游）
 - [[silent-data-loss-diagnosis]] — 排查顺序（本页补「先列多假设」这一步）
+- [[audit-claims-verify-before-fix]] — 镜像坑：不验证**别人的**输入（审计清单）就动手，同一病的另一面
+- [[self-reported-reasoning-is-post-hoc]] — 同族：看起来很真的过程≠证据（自述推理是事后合理化）
 - [[fanchao]] — 本规律的报出者

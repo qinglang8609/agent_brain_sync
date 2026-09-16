@@ -1,8 +1,16 @@
 # 📋 Todo Board
 ## Todo
 ## Done
-### 2026-09-16
 
+### 2026-09-16
+- [x] AUDIT-P2-SERVE-OPEN [[fanchao]] — --open 死代码（FLAG_SPEC 无 open）、unref 不可达、--port abc NaN 不校验 【落地】 (完成 2026-09-16)
+- [x] AUDIT-P2-ZWSP [[fanchao]] — help/update 用户可见输出含 U+200B，复制即坏。清洗输出侧字符串 + 守卫测试扩到输出 【落地】 (完成 2026-09-16)
+- [x] AUDIT-P2-OC-RESET [[fanchao]] — opencode 插件 nudged/wroteFiles/idleSeen 不随 session.created 重置，同进程后续会话全部静默。重置+行为测试 【落地】 (完成 2026-09-16)
+- [x] AUDIT-P2-ZOD [[fanchao]] — bin/mcp.js import zod 但 package.json 未声明，靠 SDK 传递依赖碰巧能用。加一行 dependencies 【落地】 (完成 2026-09-16)
+- [x] AUDIT-P1-DEV-FILTER [[fanchao]] — 收尾判据三宿主不一致：pi 已认 dev| 条目，store.js:838 与 opencode:51 仍是旧判据。回灌 dev 过滤 【落地】 (完成 2026-09-16)
+- [x] AUDIT-P1-MCP-AS [[fanchao]] — abs_task schema 缺 as 参数，done 分支忽略 note 静默盖。补 schema as + done 吃 note 【落地】 (完成 2026-09-16)
+- [x] SERVE-PORT-FIXED [[fanchao]] — abs serve 默认端口 7777 固定 → 第二个项目起不来。改为 0 让系统分配空闲端口 【落地】 (完成 2026-09-16)
+  ↳ 断点: 改动: bin/abs.js:377 port 7777→0(含帮助文本), src/serve.js:465 默认参数 7777→0。验证: 同进程 serve 两次 → 57353/57354 不冲突; npm test 377 pass 0 fail
 - [x] ABS-SERVE [[fanchao]] — abs serve: .brain/ 挂成只读网页。左目录树+右渲染+双链跳转+5主题+明暗切换+手机抽屉。零依赖(CDN 引 marked/hljs)，只绑127.0.0.1、只读、防路径穿越 【落地】 (完成 2026-09-16)
 - [x] TODO-BORROW [[fanchao]] — todo 借 Anneal: 断点要素固定前缀(验证/边界/阻塞/不做) + Parked 标记故意搁置 【落地】 (完成 2026-09-16)
   ↳ 断点: 阻塞: 待确认断点要素是否只保留 验证/边界/阻塞 三项
@@ -13,7 +21,6 @@
 - [x] fanout 三层 n 分叉思考引擎 [[fanchao]] 【落地】 (完成 2026-09-16)
 
 ### 2026-09-15
-
 - [x] SOURCES-DIGEST-DH [[fanchao]] — desktop_herdr 20 个 source 提炼：8 进度日志合并 + 10 坑提炼进 5 个新 concept + 2 已覆盖 【落地】 (完成 2026-09-15)
 - [x] NO-TAIL-44 [[fanchao]] — 补 44 页验证段：~/Docker 11 + codebuddy 10 + zj_shop 16 + desktop_herdr 3 + 家目录 4 【落地】 (完成 2026-09-15)
 - [x] CONCEPT-CMD [[fanchao]] — 新增 abs concept 命令（概念页骨架，只给结构不给内容）+ NO-TAIL 判据（放宽认动作词、收紧识破占位） 【落地】 (完成 2026-09-15)

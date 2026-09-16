@@ -1,4 +1,14 @@
 # 🗒 Activity Log
+## [2026-09-16 20:16] [[fanchao]] dev | 沉淀: 4 个 source 提炼归位 → 3 个新 concept(端口默认值让OS分配 / 审计清单先证伪再改 / 自述思考层=事后陪跑); think-tree 两条只留实测否证结论(skill 已删, 不为死产物留 active 页); 删 source 后 lint 报 3 悬挂+1 死链, 挂双向链后归 0
+## [2026-09-16 20:14] [[fanchao]] concept | 新建概念页 self-reported-reasoning-is-post-hoc
+## [2026-09-16 20:14] [[fanchao]] concept | 新建概念页 audit-claims-verify-before-fix
+## [2026-09-16 20:14] [[fanchao]] concept | 新建概念页 resource-default-let-os-assign
+## [2026-09-16 20:03] [[fanchao]] dev | 精简 CLI help: 主帮助 55行→28行(常用四条+单行命令表), 参数细节下沉到子命令级 --help; 新增 load/init/serve/todo/note/query/config 七个子用法页; --help 拦截统一收口到 switch 前(修 serve --help 直接起服务的坑)。385 test 全绿
+## [2026-09-16 17:20] [[fanchao]] dev | 落地审计修复6项: ①MCP abs_task+as参数/note=结语(矛盾报错) ②teardown判据dev过滤回灌store+opencode(与pi一致) ③输出侧ZWSP清除+守卫扩输出 ④opencode session.created重置节流状态 ⑤zod显式声明^3.25||^4.0 ⑥serve --no-open接线+port校验+删死unref。385 test 全绿(+8), 端到端真进程验证三宿主路径
+## [2026-09-16 17:20] [[fanchao]] note | 审计修正类任务必须先证伪再改：本轮审计6条中 2 条部分失实(ZWSP 曾被我误判为 mojibake——cat -v 的 M-^@M-^K 正是 E2 80 8B；done 分支 note 不是仅丢弃而是静默盖【落地】)。全部用最小探针真跑确证后才动手。多宿主同构逻辑(pi/CC/opencode 判据)修一处必须回灌其余, 三副本不同步=静默失效。
+## [2026-09-16 14:56] [[fanchao]] dev | 修复 abs serve 端口写死: 默认 7777→0(系统分配空闲端口), bin/abs.js+src/serve.js+帮助文本; 两项目可同时开服务, 377 test 全绿
+## [2026-09-16 14:56] [[fanchao]] note | 写死默认端口的工具无法多项目并用：默认值应为 0 让 OS 分配空闲端口，而不是固定端口 + 冲突重试。serve() 已用 server.address().port 回真实端口，所以调用方无需感知。
+## [2026-09-16 14:56] [[fanchao]] note | 写死默认端口的工具无法多项目并用：abs serve 默认 7777，第二个项目启动直接 EADDRINUSE。默认值应为 0(让 OS 分配空闲端口)，serve() 已用 server.address().port 回真实端口，调用方打印/打开也自动正确。端口冲突不该靠"重试下一个端口"补，OS 分配天然无冲突。
 ## [2026-09-16 14:44] [[fanchao]] dev | 新增 abs serve + 检索/错误码/卡点三项改进 + 删 think-tree: - abs serve: 把 .brain/ 挂成只读网页(src/serve.js)。左目录树+右正文+[[双链]]跳转+5主题(GitHub/阅读/松/墨/蓝调)×明暗切换+手机抽屉+last-page 记忆。零依赖(CDN 引 marked/hljs)，只绑127.0.0.1、只读、路径穿越返回403。中文字族显式前置 + text-spacing-trim 修「中文不整齐」。 - query 借 tags 做关联检索: tag权重8>标题4>正文1; 精确命中时模糊不混入(全图27页→3页); 模糊门槛要求 gram≥4(修 zzzz不存在 误报10页)。 - load 给该查的词(queryHint) + note --when 存触发条件 + extractBlocks 抽 阻塞: 行提到顶部。 - 写操作带错误码: NO_BRAIN/NO_USER/NO_MATCH(与 MCP 侧对齐)。 - 修 mark 堆积: event.sh 幂等 mark 只写不删(361→19); store.js 兼底 key 把 tmp 路径编进去致项目级节流失效。 - 删 skill/abs-think-tree: 实测 L1 答案 8/8 落第1位, 是「知答案再编陪跑」的假思考过程…
 ## [2026-09-16 13:20] [[fanchao]] note | 测试触发条件字段是否写入
 ## [2026-09-16 01:31] [[fanchao]] dev | 新增 skill/abs-think-tree（三层思考骨架+check.js）。测试纳入 npm test（360 通过）。
