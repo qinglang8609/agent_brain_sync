@@ -57,7 +57,7 @@ async function cmdUpdate({ yes }) {
   console.log(r);
   console.log('\n刷新四宿主 hook/skill（hook 脚本烧的是绝对路径 + 模板快照，升级后必须重装）…');
   await runInstall({ agent: undefined, mcp: true, skill: true, yes: yes !== false });
-  console.log(`\n完成。重启宿主（pi / op​encode / cl​aude-code / co​dex）后新 hook 生效。`);
+  console.log(`\n完成。重启宿主（pi / opencode / claude-code / codex）后新 hook 生效。`);
 }
 
 const [,, cmd, ...rest] = process.argv;
@@ -91,10 +91,13 @@ const FLAG_SPEC = {
   'repair': { type: 'boolean' },
   'no-mcp': { type: 'boolean' },
   'no-skill': { type: 'boolean' },
+  // serve 用: --no-open 不自动开浏览器（open 命令仅 macOS）。坑: 曾漏声明 → serve 判
+  // opts.open !== false 恒真, --no-open 接不上。
+  'no-open': { type: 'boolean' },
 };
 
 /** 已被"规范键"接管的 raw flag：不再原样漏出（见 parseArgv 返回处的白名单注释）。 */
-const KNOWN_RAW = new Set(['keep-days', 'dry-run', 'no-mcp', 'no-skill']);
+const KNOWN_RAW = new Set(['keep-days', 'dry-run', 'no-mcp', 'no-skill', 'no-open']);
 
 function parseArgv(args) {
   // 坑: parseArgs 会把**任何** `-` 开头的 token 当选项，连正文一起吃：
@@ -167,6 +170,7 @@ function parseArgv(args) {
     dryRun: !!values['dry-run'],
     mcp: !values['no-mcp'],
     skill: !values['no-skill'],
+    open: !values['no-open'],
   };
   // 未声明的 `--unknown` 静默收下（旧行为：不进位置参数，也不报错）。
   // 这条保留是因为 rejectExtra 只看位置参数 —— 把未知 flag 放进去会改成报错，
@@ -176,63 +180,56 @@ function parseArgv(args) {
   }
   return o;
 }
-const usage = `abs — agent-brain-sync 记忆工具
+const usage = `abs — 跨会话记忆工具（.brain/ 图谱）
 
-快速开始:
-  abs init                     在项目里建 .brain/ 图谱
-  abs load                     看当前状态 (每次开工先跑这个)
-  abs todo add X --note "做什么"    登记一个任务
-  abs note "经验一句话"          随手记一条经验 → sources/
+常用:
+  abs load                          开工先跑: 读状态、接上次的活
+  abs todo add X --note "做什么"      登记任务 (done/state/note 管后续)
+  abs note "经验一句话"               随手记经验; abs log "完成 X" 记成果
+  abs query <词…>                   检索 .brain/; abs todo 看任务板
 
-以上四条覆盖日常使用的 90%。
+全部命令 (细节: abs <命令> --help):
+  init [--repair]            建图谱 (当前目录)
+  load                       开机读状态
+  todo                       任务看板 (add/note/state/done/archive)
+  index | log | status       索引 / 流水 / 概要
+  note <经验> [--tags a,b]   经验暂存 → sources/
+  concept <slug> --title …   建概念页骨架
+  query <词…> [--all]       检索知识页 (多词 OR)
+  resolve <页名…>            反查页面路径
+  supersede <页名> [--by 页] 标经验已失效
+  lint                       图谱体检 (死链/超限)
+  rule [add "一句话"]        硬规则读写
+  serve [--port N] [--no-open]  浏览 .brain/ (仅本机; 端口默认自动选)
+  install|uninstall [--agent <宿主>] [--no-mcp] [--no-skill]
+  update                     升级并刷新 hook/skill
+  config [set user <名字>]   使用者姓名 (写操作需先设置)
+  --version | help           版本 / 本帮助
 
-读写:
-  abs load                   开机读状态 (index/todo/log)
-  abs todo                   任务看板 Todo / Done（未完成的都在这，行首带状态）
-  abs index                  图谱索引 index.md
-  abs log                    流水 log.md
-  abs status                 当前项目 + 图谱概要
-  abs serve [--port 7777]    在浏览器里浏览 .brain/（只读，仅本机）
-  abs todo add     <id> [--note ..] [--section ..]  登记任务 (start 同义)
-  abs todo note    <id> --note "断点/进度"   实时落 ↳ 断点 行（建议前缀: 验证: / 边界: / 阻塞:）
-  abs todo state   <id> --note "进行中|讨论中|滞留中"    改状态标记（原地，不搬区）
-  abs todo done    <id> [--as 落地|否决|仅方案]    完成；结语标明到底"做成了没有"
-                               默认 落地。否决=评估后不做(含做了又撤)；仅方案=只设计过
-                               不加结语或结语失真会让下一个会话把"想过"当成"做完了"。
-  abs log "完成 X：…"         记一行工作成果 (无参=查看)
-  abs note "经验" [--tags 坑,docker] [--when "何时该读"]   经验实时暂存 → sources/
-  abs concept <slug> --title "标题" [--tags a,b] [--desc "index 描述"]
-                            建概念页骨架（头/中/尾四段位置）。只给结构不给内容
-
-检索与维护:
-  abs query <词1> [词2 …] [--all]
-                            检索 .brain/ 知识页 (多词 OR)；superseded 默认隐藏
-  abs resolve <id-or-slug> [更多…]
-                            按 id/页面名反查路径 (页改名后 id 不变，仍能找回)
-  abs supersede <页名> [--by <取代它的页>]
-                            标记一条经验已失效 (不删文件；query/load 默认不再展示)
-  abs lint                   图谱体检 (死链/孤岛/超尺寸/堆积)
-  abs rule                   列出 index.md 的 ## Rules 硬规则
-  abs rule add "一句话"      追加一条硬规则 (只放违反会丢数据/静默失效级的)
-  abs todo archive [--keep-days N] [--dry-run]
-                            归档 Done 区旧日期组 → sessions/<日期>-todo归档.md
-
-安装与配置 (一次性):
-  abs install [--agent <宿主>]   安装 MCP+hook+skill (宿主: cl​aude-code/co​dex/op​encode/pi)
-  abs uninstall [--agent <...>]  卸载
-  abs update                 升级到最新版并刷新四宿主 hook/skill
-  abs config [show]          查看使用者姓名 (标记作者用)
-  abs config set user <名字> 设置使用者姓名 → ~/.abs/config.json
-                             未设置时写操作会报错要求先设置 (临时: ABS_USER=<名字> abs ...)
-  abs init [--repair]        建 .brain/ 图谱; 结构不完整时报明细, --repair 只补缺不覆盖
-  abs --version              显示当前版本
-  abs help                   本帮助
-
-注: abs wrapup / abs teardown-check 是 hook 内部命令, 不需手动调用。
+注: wrapup / teardown-check 是 hook 内部命令。
 `;
 
 /** 子命令级用法（abs <cmd> --help 时打印）。 */
 const subUsage = {
+  load: [
+    'abs load — 开机读状态（Rules 全量 + 图谱计数 + todo 看板 + 最近 log）',
+    '',
+    '用法:',
+    '  abs load [--dir <项目根>]',
+    '',
+    '说明:',
+    '  • 顶部出现「⏳ 上会话滞留」时先收尾再开工',
+    '  • 输出是折叠过的；全量明细用 abs todo --full / abs index',
+  ].join('\n'),
+  init: [
+    'abs init — 在当前目录（或 --dir）建 .brain/ 图谱',
+    '',
+    '用法:',
+    '  abs init [--repair] [--dir <项目根>]',
+    '',
+    '说明:',
+    '  • 结构不完整时报明细；--repair 只补缺不覆盖，已有内容一律不动',
+  ].join('\n'),
   install: [
     'abs install — 把 MCP + hook + skill 安装到 AI 编码宿主',
     '',
@@ -269,6 +266,65 @@ const subUsage = {
     '说明:',
     '  • 只删 abs 自己装的东西，保留你其它的 hook / MCP / 配置字段',
     '  • 配置文件无法解析时会跳过该文件（不覆盖）但仍清理 abs 的脚本与 skill',
+  ].join('\n'),
+  serve: [
+    'abs serve — 把 .brain/ 挂成只读网页（左目录树 + 右正文 + [[双链]]跳转）',
+    '',
+    '用法:',
+    '  abs serve [--port N] [--no-open] [--dir <项目根>]',
+    '',
+    '参数:',
+    '  --port N      端口。默认 0 = 自动选空闲端口（多项目可同时开各的）',
+    '  --no-open     不自动打开浏览器（open 仅 macOS）',
+    '  --dir <路径>  服务别的项目的 .brain/',
+    '',
+    '说明:',
+    '  • 只读、仅绑定 127.0.0.1，外部访问不了',
+    '  • 主题/明暗切换在网页右上角；最后一页会记住',
+  ].join('\n'),
+  todo: [
+    'abs todo — 任务看板（Todo / Done 两区；未完成都带行首状态标记）',
+    '',
+    '用法:',
+    '  abs todo                       看板',
+    '  abs todo add <id> [--note "做什么"] [--section 讨论中|滞留中]',
+    '  abs todo note <id> --note "断点/进度"',
+    '  abs todo state <id> --note 进行中|讨论中|滞留中',
+    '  abs todo done <id> [--as 落地|否决|仅方案] [结语文字]',
+    '  abs todo archive [--keep-days N] [--dry-run]',
+    '',
+    'done 的结语:',
+    '  落地(默认) = 真做成且有验证; 否决 = 评估后不做(含做了又撤); 仅方案 = 只设计过',
+    '  结语失真会让下个会话把"想过"当成"做完了" —— 不确定就写清楚',
+  ].join('\n'),
+  note: [
+    'abs note — 经验实时暂存 → sources/（幂等去重；先记后提炼）',
+    '',
+    '用法:',
+    '  abs note "一句话经验" [--tags 坑,docker] [--when "什么时候该读这条"]',
+    '',
+    '说明:',
+    '  • --tags 首个标签建议带类别（坑/技巧/决策…），检索按词 OR 命中',
+    '  • --when 供 load 的相关页推荐匹配「何时该读」',
+    '  • sources 是暂存区: 提炼成 concept 后应清理',
+  ].join('\n'),
+  query: [
+    'abs query — 全文检索 .brain/ 知识页',
+    '',
+    '用法:',
+    '  abs query <词1> [词2 …] [--all]     多词 OR；命中页按命中数排序',
+    '',
+    '参数:',
+    '  --all    连 superseded(已失效)页一起返回',
+  ].join('\n'),
+  config: [
+    'abs config — 使用者姓名（写操作的作者标记）',
+    '',
+    '用法:',
+    '  abs config                 查看当前姓名',
+    '  abs config set user <名字>  设置（未设置时写操作报错要求先设置）',
+    '',
+    '临时用法: ABS_USER=<名字> abs …',
   ].join('\n'),
 };
 
@@ -336,7 +392,12 @@ async function main() {
   try {
     const opts = parseArgv(rest);
     if (RENAMED[cmd]) throw new Error(RENAMED[cmd]());
-    switch (cmd) {
+    // 子命令级 --help: 有用法页的命令在此一处拦截（此前只在 install/uninstall 分支里判,
+    // 其余命令的 --help 被忽略 —— serve --help 曾直接把服务起起来挂住终端）。
+    if (opts.help && subUsage[cmd] && !(cmd === 'todo' && opts._.length)) {
+      console.log(subUsage[cmd]);
+    } else {
+      switch (cmd) {
       case 'init': {
         rejectExtra(opts._, 'abs init [--repair]');
         const msg = opts.repair
@@ -374,15 +435,22 @@ async function main() {
         // 坑(2026-09-16 实测): requireBrain 返回的是【项目根】, .brain/ 在它下面 ——
         // 直接把项目根当服务根会扫到 node_modules。必须走 brainPath()。
         const root = brainPath(await requireBrain(opts.dir || process.cwd()));
-        const port = opts.port ? Number(opts.port) : 7777;
+        // 默认 0 = 让系统挑空闲端口：固定 7777 第二个项目就起不来了。
+        // --port abc 曾静默变 NaN → server listen 报怪错；在此拦下。
+        const port = opts.port ? Number(opts.port) : 0;
+        if (!Number.isInteger(port) || port < 0 || port > 65535) {
+          throw new Error(`✗ --port 需为 0-65535 的整数（收到 "${opts.port}"）。0 = 自动选空闲端口`);
+        }
+        // --no-open 显式声明在 FLAG_SPEC（type:boolean），parseArgv 归一化为 open:false。
+        // 坑(2026-09-16 审计#6): 曾判 opts.open !== false 但 FLAG_SPEC 无 open →
+        // 条件恒真且 --no-open 接不上（open 命令也仅 macOS）。
         const { url, server } = await serve({ root, port });
         console.log(`📖 abs serve → ${url}`);
         console.log(`   根: ${root}`);
         console.log('   (只读，仅本机可访；Ctrl+C 停止)');
-        if (opts.open !== false) runCmd('open', [url]);
+        if (opts.open) runCmd('open', [url]);
         // 不断开进程：服务要活着才有用
         await new Promise(() => {});
-        server.unref();
         break;
       }
       // abs todo —— 无子命令=看板；带子命令=任务写操作
@@ -431,11 +499,7 @@ async function main() {
       }
       case 'install':
       case 'uninstall': {
-        // 子命令级 --help: 打印用法后直接返回。
-        // 坑(INSTALL-HELP-FOOTGUN): 以前 --help 只在顶层命令被识别，跟在 install 后面时
-        // 落到 parseArgv 的通用分支，而 install 分支根本不读它 → 用户想看帮助，
-        // 实际执行了全量安装（幂等不炸，但确实改了四宿主配置，写了 15 个文件）。
-        if (opts.help) { console.log(subUsage[cmd]); break; }
+        // --help 已在 switch 前统一拦截（subUsage）。
         if (cmd === 'install') {
           await runInstall({ agent: opts.agent, mcp: opts.mcp !== false, skill: opts.skill !== false, yes: opts.yes });
         } else {
@@ -488,6 +552,7 @@ async function main() {
       case '--version': case '-v': case 'version': console.log(pkgVersion()); break;
       case 'help': case undefined: case '--help': console.log(usage); break;
       default: throw new Error(`未知命令: ${cmd}\n\n${usage}`);
+      }
     }
   } catch (e) {
     // 带码的错（AbsError）：首行印 [CODE]，fallback 另起一行。

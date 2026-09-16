@@ -259,7 +259,7 @@ abs todo archive            # 一条命令搞定，无需手工搬
 | 只在讨论、还没动手 | `abs_task {action:state, id:"T-1", note:"讨论中"}` | 原地改标记 |
 | 卡住了/等人等数据 | `abs_task {action:state, id:"T-1", note:"滞留中"}` | 原地改标记 |
 | 被打断/干到一半 | `abs_task {action:note, id:"T-1", note:"改到哪个文件/到哪步"}` | 原地 ↳断点 |
-| 子任务做完 | `abs_task {action:done, id:"T-1", note:"结语"}` | Done |
+| 子任务做完 | `abs_task {action:done, id:"T-1", note:"结语文字", as:"落地|否决|仅方案"}` | Done（as 默认 落地；做了又撤用否决，只设计过用仅方案，别让假【落地】污染看板） |
 | 总结出经验/坑/规律 | `abs_note {text:"一句话", tags:"坑,docker"}` | sources/ |
 
 > **为什么只有两区**（2026-09-13 实测）：跨 4 个项目，Backlog/Today 常年 **0 条**，而 log.md
@@ -389,6 +389,6 @@ abs supersede <页名> --by <取代它的新页>   # 不写 --by 也行 = 单纯
 - 只读写 `.brain/` 与目标代码，不动全局配置（一次性接入除外）。
 - 只写真实发生的事实；遵守容量纪律，宁缺毋滥。
 - 双链/frontmatter/index 必须自洽 —— 坏链 = 掰断接力棒。
-- **排查 bug 时挂载 `bug-hunter` skill**（随 abs 一并安装，在 `skills/bug-hunter/`）：
+- **排查 bug 时挂载 `bug-hunter` skill**（随 abs 一并安装，安装名为 `abs-bug-hunter`，位于 ~/.pi/agent/skills/abs-bug-hunter/ 等宿主对应目录）：
   完整排查流程（列假设 → 复现 → 定位改动 → 打印 → 顺藤摸瓜 → 根因 → 验证）
   与「给结论要明确」都在那份里。**排查方法不写在本文件**（两份维护必漂）。

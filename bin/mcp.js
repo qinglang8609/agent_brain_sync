@@ -112,19 +112,20 @@ tool(
 
 tool(
   'abs_task',
-  '任务实时落盘（幂等键 = id）。start 登记进 Todo / note 补断点(改到哪文件哪行) / state 改状态 / done 完成归位 Done。',
+  '任务实时落盘（幂等键 = id）。start 登记进 Todo / note 补断点(改到哪文件哪行) / state 改状态 / done 完成归位 Done（done 时 note=结语文字，as=结语类型：落地|否决|仅方案）。',
   {
     action: z.enum(['add', 'start', 'done', 'note', 'state']),
     id: z.string().describe('任务幂等键，如 TASK-xxx 或子任务名'),
     cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
-    note: z.string().optional().describe('add/start=做什么; note=断点(文件/到哪步); state=进行中|讨论中|滞留中'),
+    note: z.string().optional().describe('add/start=做什么; note=断点(文件/到哪步); state=进行中|讨论中|滞留中; done=结语文字'),
+    as: z.enum(['落地', '否决', '仅方案']).optional().describe('仅 done：结语类型。默认 落地。做了又撤/评估后不做用 否决，只设计过用 仅方案 —— 别让假【落地】污染看板'),
   },
-  async ({ action, id, cwd, note }) => {
+  async ({ action, id, cwd, note, as }) => {
     const root = await findBrainRoot(cwd || process.cwd());
     if (!root) return errNoBrain(cwd || process.cwd());
     // add 是 start 的别名（与 CLI `abs todo add` 对齐）
     const act = action === 'add' ? 'start' : action;
-    return { content: [{ type: 'text', text: await cmdTask({ dir: root, action: act, id, note }) }] };
+    return { content: [{ type: 'text', text: await cmdTask({ dir: root, action: act, id, note, as }) }] };
   }
 );
 

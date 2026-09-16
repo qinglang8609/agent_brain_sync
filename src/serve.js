@@ -461,8 +461,9 @@ async function load(path, el) {
 /**
  * 起服务。
  * @param {{root:string, port?:number, host?:string}} cfg  root = .brain/ 绝对路径
+ *   port = 0（默认）让系统挑空闲端口，多个项目可同时开。
  */
-export async function serve({ root, port = 7777, host = '127.0.0.1' }) {
+export async function serve({ root, port = 0, host = '127.0.0.1' }) {
   const server = http.createServer(async (req, res) => {
     try {
       const url = req.url || '/';

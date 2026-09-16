@@ -167,6 +167,32 @@ describe('mcp: 工具调用', () => {
     assert.ok(/Done/.test(textOf(b)), textOf(b));
   });
 
+  // 坑(2026-09-16 审计): schema 无 as，done 的 note 被静默丢弃 → 恒盖【落地】。
+  // MCP 用户永远标不了否决/仅方案，按 SKILL.md 表格传 note 的全部失真。
+  test('abs_task done+note=结语不再被丢弃（落地/否决/仅方案三态）', async () => {
+    const read = async () => await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
+    await tool('abs_task', { action: 'start', id: 'MA', note: 'x', cwd: projA });
+    await tool('abs_task', { action: 'done', id: 'MA', note: '验证: 全绿', cwd: projA });
+    let t = await read();
+    assert.match(t, /MA.*验证: 全绿\s*【落地】/s, `note 应作为结语落盘: ${t}`);
+    await tool('abs_task', { action: 'start', id: 'MB', note: 'x', cwd: projA });
+    await tool('abs_task', { action: 'done', id: 'MB', as: '否决', cwd: projA });
+    t = await read();
+    assert.match(t, /MB.*【否决】/s, `as=否决 应生效: ${t}`);
+    await tool('abs_task', { action: 'start', id: 'MC', note: 'x', cwd: projA });
+    await tool('abs_task', { action: 'done', id: 'MC', note: '只画图【仅方案】', cwd: projA });
+    t = await read();
+    assert.match(t, /MC.*【仅方案】/s, `note 自带【kind】应被识别: ${t}`);
+  });
+
+  test('abs_task done: as 与 note 里【kind】矛盾 → isError 不猜', async () => {
+    await tool('abs_task', { action: 'start', id: 'ME', note: 'x', cwd: projA });
+    const r = await tool('abs_task', { action: 'done', id: 'ME', note: '做了又撤【否决】', as: '落地', cwd: projA });
+    assert.ok(r.result?.isError, JSON.stringify(r));
+    const t = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
+    assert.ok(!/ME.*\[x\]/.test(t), `矛盾输入不得落盘: ${t}`);
+  });
+
   test('abs_note 落 sources; abs_query 可检索', async () => {
     await tool('abs_note', { text: 'MCP 专属经验 xyzq9', cwd: projA });
     const q = await tool('abs_query', { terms: ['xyzq9'], cwd: projA });

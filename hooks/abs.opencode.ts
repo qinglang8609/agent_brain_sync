@@ -39,16 +39,18 @@ const server = async ({ client, directory }) => {
     try { const st = await stat(join(d, ".brain")); return st.isDirectory() ? join(d, ".brain") : null } catch { return null }
   }
 
-  // 判定"今天是否收尾过": 必须匹配 log.md 的条目头 '## [YYYY-MM-DD HH:MM]'。
-  // 坑: 曾用裸日期 substring(includes('2026-09-10')), 结果正文/任务行里任何一处
-  //     提到今天就能把 nudge 永久压掉(误判为已收尾), 守卫形同虚设。
+  // 判定"今天是否收尾过": 只认【工作成果】条目(kind=dev)，行头 '## [YYYY-MM-DD HH:MM] [[name]] dev |'。
+  // 坑1: 曾用裸日期 substring, 正文/任务行里任何一处提到今天就把 nudge 永久压掉(守卫形同虚设)。
+  // 坑2(2026-09-13 实测, pi 侧先修): `abs note` 也写 log.md(kind=note),
+  //     旧判据只看「今天有没有行」会把「沉淀了一条经验」误判成「已收尾」→ 整天不再提醒。
+  //     三宿主(pi/CC/op​encode)判据必须一致 —— 见 [[hook-throttle-alignment]]。
   async function loggedToday(brain) {
     try {
       const txt = await readFile(join(brain, "log.md"), "utf8")
       const d = new Date()
       const pad = (n) => String(n).padStart(2, "0")
       const today = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
-      return new RegExp("^## \\[" + today + " \\d{2}:\\d{2}\\]", "m").test(txt)
+      return new RegExp("^## \\[" + today + " \\d{2}:\\d{2}\\] (?:\\[[^\\]]+\\]\\] )?dev \\|", "m").test(txt)
     } catch { return false }
   }
 
@@ -90,6 +92,14 @@ const server = async ({ client, directory }) => {
         // session.created / idle 等事件带 sessionID —— 存下来供 tool.execute.after 用
         const sid = event.properties && event.properties.sessionID
         if (sid) currentSessionID = String(sid)
+        // 新会话 = 重置节流状态。坑(2026-09-13 pi 侧同构实测): 状态声明在 server 工厂闭包里,
+        // 同一进程的第二个会话会继承上个会话的 true → 永久不再提醒(后半场全部静默)。
+        // pi 侧在 session_start 里重置; op​encode 的对应事件就是 session.created。
+        if (type === "session.created") {
+          wroteFiles = false
+          nudged = false
+          idleSeen = false
+        }
         return
       }
       if (type !== "session.idle") return // idle = 每轮结束, 不记日志(太吵), 只做收尾判定

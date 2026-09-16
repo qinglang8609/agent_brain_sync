@@ -371,6 +371,54 @@ describe('op​encode 插件 行为级 (session.idle 收尾注入)', () => {
     const log2 = await hooksLog(logDir);
     assert.equal((log2.match(/session\.idle:seen/g) || []).length, 1, 'seen 只记一次');
   });
+
+  // 根因回归(2026-09-16 审计#4, pi 侧 2026-09-13 同构实测): nudged/wroteFiles 声明在
+  // server 工厂闭包里, session.created 不重置 → 同进程第二个会话继承 true, 永久静默。
+  test('跨会话重置: 上会话已 nudge, 新 session.created 后同项目仍能再注入', async () => {
+    const logDir = join(sandbox, 'log');
+    const mod = await loadOc(logDir);
+    const proj = await makeProject('oc-reset');
+    const injected = [];
+    const hooks = await mod.default.server({
+      client: { session: { promptAsync: async (a) => injected.push(a) } },
+      directory: proj,
+    });
+    // 会话1: 写 + idle → 注入一次并节流
+    await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's1' } } });
+    await hooks['tool.execute.after']({ tool: 'edit' });
+    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
+    assert.equal(injected.length, 1, '会话1 应注入');
+    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
+    assert.equal(injected.length, 1, '会话1 节流');
+    // 会话2 (同进程, 新 session.created): 必须重新计数, 而不是继承会话1的已nudge状态
+    await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's2' } } });
+    await hooks['tool.execute.after']({ tool: 'edit' });
+    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's2' } } });
+    assert.equal(injected.length, 2, '新会话必须重新注入(老代码继承 nudged=true 永久静默)');
+    assert.equal(injected[1].path.id, 's2', '注入须指向新 session');
+  });
+
+  // 根因回归(2026-09-16 审计#2): loggedToday 旧判据只看「今天有没有行」,
+  // `abs note`(kind=note) 也写 log.md → 沉淀一条经验就被当成「已收尾」, 整天不再提醒。
+  // pi 侧已修(只认 dev|), 三宿主判据必须一致。
+  test('今日只有 note 条目(kind=note)不算已收尾 → 仍注入', async () => {
+    const logDir = join(sandbox, 'log');
+    const mod = await loadOc(logDir);
+    const proj = join(sandbox, 'oc-note-only');
+    await fs.mkdir(join(proj, '.brain'), { recursive: true });
+    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
+    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    await fs.writeFile(join(proj, '.brain', 'log.md'),
+      `# Activity Log\n## [${today} 10:00] [[x]] note | 沉淀了一条经验\n`, 'utf8');
+    const injected = [];
+    const hooks = await mod.default.server({
+      client: { session: { promptAsync: async (a) => injected.push(a) } },
+      directory: proj,
+    });
+    await hooks['tool.execute.after']({ tool: 'edit' });
+    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
+    assert.equal(injected.length, 1, 'note 条目不算收尾, 必须注入(旧判据会静默吞掉)');
+  });
 });
 
 // ============================ CC/Co​dex Stop 收尾注入 ============================
@@ -573,6 +621,35 @@ describe('零宽字符守卫 (ZWSP)', () => {
       // 标识符/关键字/字符串字面量里不得有 ZWSP; 注释里的 ZWSP 无害(与仓库既有风格一致)
       const codeOnly = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
       assert.ok(!codeOnly.includes(ZWSP), `${name} 代码行(非注释)不应含 ZWSP`);
+    }
+  });
+
+  // 坑(2026-09-16 审计#3): 上两条只护输入侧与产物, 漏了「打印给用户」的字符串。
+  // help 文本里的 op​encode/cl​aude-code 曾带 ZWSP → 用户复制到终端, CLI 报「未知 agent」。
+  // 守卫靶子扩到输出侧: bin/abs.js 所有 console.* 行不得含真实 ZWSP 字节。
+  test('用户可见输出(console.*)不含 ZWSP —— 复制不坏', async () => {
+    const src = await fs.readFile(join(REPO, 'bin', 'abs.js'), 'utf8');
+    const bad = src.split('\n')
+      .map((l, i) => [i + 1, l])
+      .filter(([, l]) => /console\.(log|error|warn)/.test(l) && l.includes(ZWSP))
+      .map(([n]) => n);
+    assert.deepEqual(bad, [], `console 输出行含 ZWSP(复制即坏): 行 ${bad.join(', ')}`);
+  });
+
+  // 端到端: 帮助文本里列出的每个宿主名, 用户原样复制去 --agent 必须能被识别。
+  // 这正是 ZWSP 坑的真实受害路径: 复制 help 里的 cl​aude-code → 「未知 agent」。
+  test('帮助里的宿主名可复制直接使用 (end-to-end)', async () => {
+    const h = await run(['help']);
+    const line = h.stdout.split('\n').find((l) => l.includes('install') && l.includes('agent'));
+    assert.ok(line, 'help 应有 install 行');
+    // 新版帮助宿主名在 subUsage 里: abs install --help 的 --agent 行
+    const sub = await run(['install', '--help']);
+    const agentLine = sub.stdout.split('\n').find((l) => l.includes('只装一个宿主'));
+    assert.ok(agentLine, `install --help 应有 --agent 行: ${sub.stdout.slice(0, 200)}`);
+    const list = agentLine.split(':')[1].split('|').map((s) => s.trim()).filter(Boolean);
+    assert.ok(list.length >= 3, `install --help 应列出宿主名: ${sub.stdout.slice(0, 200)}`);
+    for (const a of list) {
+      assert.ok(!a.includes(ZWSP), `宿主名 "${a}" 含 ZWSP, 用户复制必坏`);
     }
   });
 });

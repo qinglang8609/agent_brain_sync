@@ -831,11 +831,14 @@ export async function cmdTeardownCheck({ dir, payload }) {
     let root;
     try { root = await requireBrain(dir0); } catch { return '{}'; }
 
-    // 条件③: log.md 今日尚无条目(条目头 '## [YYYY-MM-DD HH:MM]')
+    // 条件③: log.md 今日尚无【工作成果】条目(条目头 '## [YYYY-MM-DD HH:MM] [[name]] dev |')。
+    // 坑(2026-09-13 实测, pi 侧先修): `abs note` 也写 log.md(kind=note)，
+    // 旧判据只看「今天有没有行」会把「沉淀了一条经验」误判成「今天已收尾」→ 整天不再提醒。
+    // 三宿主(pi/CC/op​encode)判据必须一致 —— 见 [[hook-throttle-alignment]]。
     const logTxt = await readIfExists(brainPath(root, 'log.md'));
     const stamp = localStamp();            // 'YYYY-MM-DD HH:MM'
     const day = stamp.slice(0, 10);
-    if (new RegExp('^## \\[' + day + ' \\d{2}:\\d{2}\\]', 'm').test(logTxt)) return '{}';
+    if (new RegExp('^## \\[' + day + ' \\d{2}:\\d{2}\\] (?:\\[\\[[^\\]]+\\]\\] )?dev \\|', 'm').test(logTxt)) return '{}';
 
     // 条件④: 每会话一次。
     // 双保险, 因为官方 stop_hook_active 有已知
@@ -1003,13 +1006,22 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
     if (as && !DONE_KINDS.includes(as)) {
       throw new Error(`✗ --as 只接受: ${DONE_KINDS.join(' | ')}（收到 "${as}"）`);
     }
-    const res = await markDone(brainPath(root, 'todo.md'), id, as || '落地');
+    // 结语 = note（MCP 路径）或位置参数（CLI 路径）。坑(2026-09-16 实测):
+    // MCP abs_task schema 无 as，AI 按旧 SKILL.md 传 note 会被静默丢弃、行上默认盖【落地】
+    // —— 状态失真且无声。现在 note 也当结语；note 里自带【落地/否决/仅方案】时它就是 kind。
+    // as 与 note 里的 kind 矛盾 → 报错不猜（猜一侧就是静默篡改另一侧）。
+    const conclusion = note ? String(note).replace(/\u200b/g, '') : undefined;
+    const inlineKind = conclusion ? (conclusion.match(/【(落地|否决|仅方案)】/) || [])[1] : undefined;
+    if (inlineKind && as && inlineKind !== as) {
+      throw new Error(`✗ as="${as}" 与 note 里的【${inlineKind}】矛盾 —— 只留一个（改 as，或改 note 里的【】）`);
+    }
+    const res = await markDone(brainPath(root, 'todo.md'), id, as || inlineKind || '落地', conclusion);
     return res;
   }
   throw new Error(`unknown task action: ${action}`);
 }
 
-async function markDone(file, id, kind = '落地') {
+async function markDone(file, id, kind = '落地', conclusion) {
   const res = await editFile(file, (text) => {
     const lines = text.split('\n');
     let changed = false;
@@ -1020,8 +1032,10 @@ async function markDone(file, id, kind = '落地') {
       const l = lines[i];
       if (!moved && idOfTaskLine(l) === wantId) {
         changed = true;
+        // 结语（MCP note / CLI 位置参数）拼在日期前 —— 与 CLI `abs todo done <id> [--as ..] <结语>` 同一落点。
+        const tail = conclusion ? ` — ${conclusion}` : '';
         const head = withDoneKind(
-          stripStateMark(l).replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + ` (完成 ${today()})`,
+          stripStateMark(l).replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + `${tail} (完成 ${today()})`,
           kind,
         );
         const bp = [];

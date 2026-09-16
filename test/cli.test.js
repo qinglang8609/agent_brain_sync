@@ -249,7 +249,7 @@ describe('cli: 未知命令/help', () => {
   test('help 零退出并含用法', async () => {
     const r = await run(['help']);
     assert.equal(r.code, 0);
-    assert.ok(r.stdout.includes('abs init'), r.stdout);
+    assert.ok(r.stdout.includes('常用') && r.stdout.includes('abs load'), r.stdout);
   });
 
   // 回归: 用户报"abs update 看不到新版本" —— 因为当时根本没有 update/--version 命令。
@@ -266,7 +266,7 @@ describe('cli: 未知命令/help', () => {
   test('help 列出 update 与 --version (自我管理命令可发现)', async () => {
     const r = await run(['help']);
     assert.equal(r.code, 0);
-    assert.ok(r.stdout.includes('abs update'), 'help 应列出 abs update');
+    assert.ok(/^\s+update\b/m.test(r.stdout), 'help 应列出 update');
     assert.ok(r.stdout.includes('--version'), 'help 应列出 --version');
   });
 });
@@ -384,15 +384,15 @@ describe('cli: argv 解析', () => {
 
   // help 结构（2026-09-16）：首次使用者打开终端要知道先输什么。
   // 原 help 从"读:"开始，19 个命令平铺 —— 新用户不知道从哪开始。
-  test('help 带「快速开始」四条，且四条都真存在', async () => {
+  test('help 常用四条，且四条都真存在 (或 --help 可用)', async () => {
     const r = await run(['help']);
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /快速开始/, 'help 应有「快速开始」段');
+    assert.match(r.stdout, /常用/, 'help 应有「常用」段');
     // 四条命令逐条验证真的可调用（防止写了个不存在的命令）
-    for (const cmd of [['init'], ['load']]) {
+    for (const cmd of [['load'], ['query', 'x']]) {
       const rr = await run([...cmd, '--help'], { cwd: REPO });
-      assert.ok(rr.code === 0 || /用法|Usage/.test(rr.stdout + rr.stderr),
-        `快速开始里提到的 "${cmd.join(' ')}" 应可用`);
+      assert.ok(rr.code === 0 || /用法|Usage|检索/.test(rr.stdout + rr.stderr),
+        `常用里提到的 "${cmd.join(' ')}" 应可用`);
     }
   });
 
@@ -679,5 +679,39 @@ describe('cli: 未设姓名时的主动提醒', () => {
     assert.match(r.stdout, /^push:/, `应注入而非放行: ${r.stdout}`);
     const reason = JSON.parse(r.stdout.slice(5)).reason;
     assert.ok(reason.includes('abs config set user'), `收尾指令应含设姓名步骤: ${reason}`);
+  });
+
+  // 根因回归(2026-09-16 审计#2, pi 侧 2026-09-13 先修): 旧判据「今日有任何条目」
+  // 把 `abs note`(kind=note) 沉淀当成「今日已收尾」→ CC/Co​dex 整天不再注入。
+  test('teardown-check: 今日只有 note 条目不算已收尾 → 仍注入', async () => {
+    const p = join(sandbox, 'p-noteonly');
+    const env = { ABS_CONFIG_DIR: join(sandbox, 'no-cfg'), ABS_USER: 'tester', ABS_LOG_DIR: join(sandbox, 'no-log') };
+    await run(['init', '--dir', p], { env });
+    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
+    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    await fs.writeFile(join(p, '.brain', 'log.md'),
+      `# Activity Log\n## [${today} 10:00] [[x]] note | 沉淀了一条经验\n`, 'utf8');
+    const trans = join(sandbox, 'no.jsonl');
+    await fs.writeFile(trans,
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write' }] } }) + '\n', 'utf8');
+    const payload = JSON.stringify({ session_id: 'ses_NO', cwd: p, transcript_path: trans });
+    const r = await run(['teardown-check', '--payload', payload], { env });
+    assert.match(r.stdout, /^push:/, `note 条目不算收尾, 应注入(旧判据会放行): ${r.stdout.slice(0, 120)}`);
+  });
+
+  test('teardown-check: 今日已有 dev 条目 → 放行(判据对齐后仍有效)', async () => {
+    const p = join(sandbox, 'p-devdone');
+    const env = { ABS_CONFIG_DIR: join(sandbox, 'dv-cfg'), ABS_USER: 'tester', ABS_LOG_DIR: join(sandbox, 'dv-log') };
+    await run(['init', '--dir', p], { env });
+    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
+    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    await fs.writeFile(join(p, '.brain', 'log.md'),
+      `# Activity Log\n## [${today} 11:00] [[x]] dev | 完成某事\n`, 'utf8');
+    const trans = join(sandbox, 'dv.jsonl');
+    await fs.writeFile(trans,
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write' }] } }) + '\n', 'utf8');
+    const payload = JSON.stringify({ session_id: 'ses_DV', cwd: p, transcript_path: trans });
+    const r = await run(['teardown-check', '--payload', payload], { env });
+    assert.match(r.stdout, /^\{\}\s*$/, `今日已收尾应放行: ${r.stdout}`);
   });
 });
