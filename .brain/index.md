@@ -52,11 +52,15 @@
 - [[resource-default-let-os-assign]] — 稀缺全局资源的默认值：让 OS 分配，不写死
 - [[audit-claims-verify-before-fix]] — 审计清单也是待证证据：逐条最小探针确证后再改
 - [[self-reported-reasoning-is-post-hoc]] — 让模型自述思考层≠真思考：实测是知答案后编陪跑
+
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 - [[fanchao]] — 使用者；技术栈 / 特点·工作习惯 / 名下踩过的坑
+- [[tester]] — tester — 使用者；技术栈 / 特点 / 名下踩过的坑
 
 ## Sources
+- [[2026-09-17-对照实验实测-2026-09-16-abs]] — 对照实验实测(2026-09-16): abs 经验确实被读到并改变行为, 但增益集中在'现场验证不出来+失败无信号+错误需求'三类知识。T1 有效对照:…
+- [[2026-09-17-做关键词排序-queryhint]] — 做关键词排序/queryHint 时想靠「文档频率(df)」或「命中位置」判别主题词 —— 两条路都实测否证。①df 阈值不可解: cli 命中 13/30…
 ## Syntheses
 
 ## Sessions

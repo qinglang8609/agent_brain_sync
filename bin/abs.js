@@ -3,6 +3,7 @@
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
 import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede } from '../src/store.js';
+import { cmdAbInit, cmdAbGrade, cmdAbCheck, cmdAbPrompt } from '../src/ab.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
@@ -84,6 +85,13 @@ const FLAG_SPEC = {
   'by': { type: 'string' },
   'all': { type: 'boolean' },
   'keep-days': { type: 'string' },
+  // ab 用（对照实验台）。必须声明 —— 不在 FLAG_SPEC 的 `--cmd "x"` 会被静默当布尔 true，
+  // 正文进位置参数（同 --title 那个坑）。
+  'task': { type: 'string' },
+  'name': { type: 'string' },
+  'cmd': { type: 'string' },
+  // ab init: 覆盖已存在的同名实验（默认拒绝，防抹掉正在跑的 agent 工作目录）
+  'force': { type: 'boolean' },
   'help': { type: 'boolean' },
   'dry-run': { type: 'boolean' },
   'full': { type: 'boolean' },
@@ -545,6 +553,38 @@ async function main() {
       case 'lint': {
         rejectExtra(opts._, 'abs lint');
         console.log(await cmdLint({ dir: opts.dir }));
+        break;
+      }
+      // 对照实验台：搭台 + 判定（不起 agent —— 见 src/ab.js 顶部边界说明）
+      case 'ab': {
+        const sub = opts._[0];
+        if (sub === 'init') {
+          rejectExtra(opts._.slice(1), 'abs ab init --task <题面路径> [--name X]');
+          if (!opts.task) throw new Error('用法: abs ab init --task <题面路径> [--name X]');
+          console.log(await cmdAbInit({ root: opts.dir, name: opts.name, taskPath: opts.task, force: opts.force }));
+        } else if (sub === 'grade') {
+          rejectExtra(opts._.slice(1), 'abs ab grade --name X [--cmd "判定命令"]');
+          console.log(await cmdAbGrade({ name: opts.name, cmd: opts.cmd }));
+        } else if (sub === 'check') {
+          const p = opts._[1] || opts.task;
+          if (!p) throw new Error('用法: abs ab check <题面路径>');
+          console.log(await cmdAbCheck({ taskPath: p }));
+        } else if (sub === 'prompt') {
+          const name = opts.name || opts._[1];
+          const arm = (opts._[2] || '').toUpperCase();
+          if (!name || !['A', 'B'].includes(arm)) {
+            throw new Error('用法: abs ab prompt <实验名> <A|B>');
+          }
+          console.log(await cmdAbPrompt({ name, arm }));
+        } else {
+          console.log(
+            'abs ab —— 对照实验台（搭台 + 判定，不起 agent）\n\n' +
+            '  abs ab init --task <题面路径> [--name X]   建 A/B 两组 + 查题面泄题\n' +
+            '  abs ab grade --name X [--cmd "命令"]       对两组跑同一判定物，出对照表\n' +
+            '  abs ab check <题面路径>                    只查泄题\n\n' +
+            '边界: 它不起 agent（agent 由你或宿主工具起），也不替你做语义判断。',
+          );
+        }
         break;
       }
       // 内部命令（hook 专用，不出现在 help）：Stop 时机械快照未完成任务

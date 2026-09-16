@@ -73,6 +73,16 @@ describe('hook: 事件落技术日志', () => {
     const log = await fs.readFile(LOG_FILE(), 'utf8');
     assert.ok(log.includes('SessionStart'), log);
     assert.ok(log.includes('session_id'), `应含 payload 摘要: ${log}`);
+    // 时间戳前缀：日志靠它排序/定位。2026-09-17 实测发现这里没锁 ——
+    // 把 event.sh 的 date 输出删掉，本文件 5 条测试全绿（缺口真实存在）。
+    // 故对整行断言格式，而不是只 includes 事件名。
+    const line = log.split('\n').filter((l) => l.includes('] SessionStart ')).pop();
+    assert.ok(line, `应有 SessionStart 事件行: ${log}`);
+    assert.match(
+      line,
+      /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] SessionStart /,
+      `行首应为 [YYYY-MM-DD HH:MM:SS] 时间戳: ${JSON.stringify(line)}`,
+    );
   });
 
   test('payload 截断到 120 字符(长输入不刷爆)', async () => {
