@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-09-16 20:25] [[fanchao]] dev | 发现并修 CLI/MCP 结语路径不一致(todo done 的 [结语文字] 在 help 里承诺但实现只读 --note): 发版后用真实发布包按坑7实测才暴露。已修+补守卫测试 386 全绿, 发 1.9.1
 ## [2026-09-16 20:16] [[fanchao]] dev | 沉淀: 4 个 source 提炼归位 → 3 个新 concept(端口默认值让OS分配 / 审计清单先证伪再改 / 自述思考层=事后陪跑); think-tree 两条只留实测否证结论(skill 已删, 不为死产物留 active 页); 删 source 后 lint 报 3 悬挂+1 死链, 挂双向链后归 0
 ## [2026-09-16 20:14] [[fanchao]] concept | 新建概念页 self-reported-reasoning-is-post-hoc
 ## [2026-09-16 20:14] [[fanchao]] concept | 新建概念页 audit-claims-verify-before-fix
