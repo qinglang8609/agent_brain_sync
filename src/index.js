@@ -26,13 +26,32 @@ export function brainPath(brainRoot, ...rel) {
   return join(brainRoot, BRAIN_DIR, ...rel);
 }
 
+/**
+ * 带错误码的错（CLI/MCP 同源）。
+ *
+ * 为何要码（2026-09-16 借 Anneal 的 templateRefusal）：
+ *   MCP 侧早就有 code（err(msg,{code,fallback})，5 种），CLI 侧全是自然语言句子。
+ *   于是 hook/脚本无法区分「该静默」与「该报警」——只能靠抓字符串，改文案就碎。
+ *   约定：所有可预期的失败都带 code；调用方按码分支，不看文案。
+ * 命名：大写下划线（与 MCP 侧一致）。
+ */
+export class AbsError extends Error {
+  constructor(code, message, fallback) {
+    super(message);
+    this.name = 'AbsError';
+    this.code = code;
+    this.fallback = fallback || null;
+  }
+}
+
 /** 断言 .brain/ 存在，否则抛错（宁可失败不落错项目）。 */
 export async function requireBrain(startDir) {
   const root = await findBrainRoot(startDir);
   if (!root) {
-    throw new Error(
-      `abs: 目录 ${resolve(startDir)} 下没有 .brain/ 图谱（不向上搜索）。\n` +
-      `  请在该目录运行: abs init`
+    throw new AbsError(
+      'NO_BRAIN',
+      `abs: 目录 ${resolve(startDir)} 下没有 .brain/ 图谱（不向上搜索）。`,
+      '请在该目录运行: abs init'
     );
   }
   return root;

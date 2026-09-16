@@ -73,6 +73,9 @@ const FLAG_SPEC = {
   'as': { type: 'string' },
   'payload': { type: 'string' },
   'tags': { type: 'string' },
+  'port': { type: 'string' },
+  // note 的触发条件（何时该读这条经验）—— 供 load 的相关页推荐匹配。
+  'when': { type: 'string' },
   // concept 骨架用: 不在 FLAG_SPEC 里的 `--title` 会被静默当布尔 true（见 parseArgv 注释），
   // 于是 `--title "一句话"` 的正文会进位置参数 → 必须在这声明。
   'title': { type: 'string' },
@@ -175,46 +178,53 @@ function parseArgv(args) {
 }
 const usage = `abs — agent-brain-sync 记忆工具
 
-读:
+快速开始:
+  abs init                     在项目里建 .brain/ 图谱
+  abs load                     看当前状态 (每次开工先跑这个)
+  abs todo add X --note "做什么"    登记一个任务
+  abs note "经验一句话"          随手记一条经验 → sources/
+
+以上四条覆盖日常使用的 90%。
+
+读写:
   abs load                   开机读状态 (index/todo/log)
   abs todo                   任务看板 Todo / Done（未完成的都在这，行首带状态）
   abs index                  图谱索引 index.md
   abs log                    流水 log.md
   abs status                 当前项目 + 图谱概要
-
-写:
+  abs serve [--port 7777]    在浏览器里浏览 .brain/（只读，仅本机）
   abs todo add     <id> [--note ..] [--section ..]  登记任务 (start 同义)
-  abs todo note    <id> --note "断点/进度"   实时落 ↳ 断点 行
+  abs todo note    <id> --note "断点/进度"   实时落 ↳ 断点 行（建议前缀: 验证: / 边界: / 阻塞:）
   abs todo state   <id> --note "进行中|讨论中|滞留中"    改状态标记（原地，不搬区）
   abs todo done    <id> [--as 落地|否决|仅方案]    完成；结语标明到底"做成了没有"
                                默认 落地。否决=评估后不做(含做了又撤)；仅方案=只设计过
                                不加结语或结语失真会让下一个会话把"想过"当成"做完了"。
   abs log "完成 X：…"         记一行工作成果 (无参=查看)
-  abs note "经验一句话" [--tags 坑,docker]    经验实时暂存 → sources/
+  abs note "经验" [--tags 坑,docker] [--when "何时该读"]   经验实时暂存 → sources/
   abs concept <slug> --title "标题" [--tags a,b] [--desc "index 描述"]
                             建概念页骨架（头/中/尾四段位置）。只给结构不给内容
 
-维护:
+检索与维护:
   abs query <词1> [词2 …] [--all]
                             检索 .brain/ 知识页 (多词 OR)；superseded 默认隐藏
   abs resolve <id-or-slug> [更多…]
                             按 id/页面名反查路径 (页改名后 id 不变，仍能找回)
   abs supersede <页名> [--by <取代它的页>]
                             标记一条经验已失效 (不删文件；query/load 默认不再展示)
-  abs todo archive [--keep-days N] [--dry-run]
-                            归档 Done 区旧日期组 → sessions/<日期>-todo归档.md
-                            (默认保留近 3 天; 任一天有未完成则整天不归档)
   abs lint                   图谱体检 (死链/孤岛/超尺寸/堆积)
   abs rule                   列出 index.md 的 ## Rules 硬规则
-  abs rule add "一句话"      追加一条硬规则 (只放违反会丢数据/静默失效级的；展开写概念页)
-  abs config [show]          查看使用者姓名 (标记作者用)
-  abs config set user <名字> 设置使用者姓名 → ~/.abs/config.json
-                             未设置时写操作(todo/log/note)会报错要求先设置
-                             临时覆盖: ABS_USER=<名字> abs ...
-  abs init [--repair]        建 .brain/ 图谱; 结构不完整时报明细, --repair 只补缺不覆盖
-  abs install [--agent <宿主>]   安装 MCP+hook+skill (宿主: claude-code/codex/opencode/pi)
+  abs rule add "一句话"      追加一条硬规则 (只放违反会丢数据/静默失效级的)
+  abs todo archive [--keep-days N] [--dry-run]
+                            归档 Done 区旧日期组 → sessions/<日期>-todo归档.md
+
+安装与配置 (一次性):
+  abs install [--agent <宿主>]   安装 MCP+hook+skill (宿主: cl​aude-code/co​dex/op​encode/pi)
   abs uninstall [--agent <...>]  卸载
   abs update                 升级到最新版并刷新四宿主 hook/skill
+  abs config [show]          查看使用者姓名 (标记作者用)
+  abs config set user <名字> 设置使用者姓名 → ~/.abs/config.json
+                             未设置时写操作会报错要求先设置 (临时: ABS_USER=<名字> abs ...)
+  abs init [--repair]        建 .brain/ 图谱; 结构不完整时报明细, --repair 只补缺不覆盖
   abs --version              显示当前版本
   abs help                   本帮助
 
@@ -356,6 +366,25 @@ async function main() {
         rejectExtra(opts._, 'abs status');
         console.log(await cmdStatus({ dir: opts.dir }));
         break;
+      // abs serve —— 把 .brain/ 挂成只读网页（浏览器无法自己列目录，所以必须有服务端）
+      case 'serve': {
+        rejectExtra(opts._, 'abs serve');
+        const { serve } = await import('../src/serve.js');
+        const { requireBrain, brainPath } = await import('../src/index.js');
+        // 坑(2026-09-16 实测): requireBrain 返回的是【项目根】, .brain/ 在它下面 ——
+        // 直接把项目根当服务根会扫到 node_modules。必须走 brainPath()。
+        const root = brainPath(await requireBrain(opts.dir || process.cwd()));
+        const port = opts.port ? Number(opts.port) : 7777;
+        const { url, server } = await serve({ root, port });
+        console.log(`📖 abs serve → ${url}`);
+        console.log(`   根: ${root}`);
+        console.log('   (只读，仅本机可访；Ctrl+C 停止)');
+        if (opts.open !== false) runCmd('open', [url]);
+        // 不断开进程：服务要活着才有用
+        await new Promise(() => {});
+        server.unref();
+        break;
+      }
       // abs todo —— 无子命令=看板；带子命令=任务写操作
       case 'todo': {
         const [sub, id, ...rest2] = opts._;
@@ -386,7 +415,7 @@ async function main() {
         break;
       }
       case 'note': {
-        console.log(await cmdNote({ dir: opts.dir, text: opts._.join(' '), tags: opts.tags }));
+        console.log(await cmdNote({ dir: opts.dir, text: opts._.join(' '), tags: opts.tags, when: opts.when }));
         break;
       }
       case 'concept': {
@@ -461,7 +490,15 @@ async function main() {
       default: throw new Error(`未知命令: ${cmd}\n\n${usage}`);
     }
   } catch (e) {
-    console.error(String(e && e.message ? e.message : e));
+    // 带码的错（AbsError）：首行印 [CODE]，fallback 另起一行。
+    // 为何：hook/脚本需要机器可读的分支依据（借 Anneal 的 templateRefusal 惯例）。
+    // 无码的错照旧只印 message —— 不能把内部堆栈当错误码泄给使用人。
+    if (e && e.code) {
+      console.error(`[${e.code}] ${e.message}`);
+      if (e.fallback) console.error(`  → ${e.fallback}`);
+    } else {
+      console.error(String(e && e.message ? e.message : e));
+    }
     process.exit(1);
   }
 }

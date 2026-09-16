@@ -486,6 +486,42 @@ describe('CC/Co​dex Stop hook 收尾注入 (decision:block)', () => {
     assert.equal(await invoke(h, payload, env), '{}', '无 id 时第二次必须被项目级节流拦下(否则死循环)');
   });
 
+  // 回归(2026-09-16 实测): event.sh 的幂等 mark 只写不删 ——
+  // STAMP 是分钟级, 每分钟一个新文件, 永不回收 → 实测堆了 361 个。
+  test('event.sh 幂等 mark 不堆积 (旧分钟的被清理)', async () => {
+    const h = await renderHook('Stop');
+    const markDir = join(sandbox, 'm-projkey');
+    // 同名项目, 两个不同的父目录(模拟 tmpXXXX 不同)
+    const mk = async (tag, name) => {
+      const proj = join(sandbox, tag, name);
+      await fs.mkdir(join(proj, '.brain'), { recursive: true });
+      return proj;
+    };
+    const projA = await mk('tmpAAA', 'projx');
+    const projB = await mk('tmpBBB', 'projx');
+    const trA = join(sandbox, 'tr-a.jsonl');
+    const trB = join(sandbox, 'tr-b.jsonl');
+    await fs.writeFile(trA, '"Edit"');
+    await fs.writeFile(trB, '"Edit"');
+
+    const r1 = await invoke(h, JSON.stringify({ cwd: projA, transcript_path: trA }), { ABS_MARK_DIR: markDir });
+    assert.equal(JSON.parse(r1).decision, 'block', '第一次应注入');
+    // 另一个 tmp 下的同名项目: 节流应在【项目级】命中(因为无 session_id)
+    const r2 = await invoke(h, JSON.stringify({ cwd: projB, transcript_path: trB }), { ABS_MARK_DIR: markDir });
+    assert.equal(r2, '{}', '不同 tmp 的同名项目应被同一 key 节流');
+
+    const marks = (await fs.readdir(markDir).catch(() => [])).filter((f) => f.endsWith('.mark'));
+    // 同一分钟内不同 payload → 不同 FINGER, 各自合法 (幂等只保证"同一 payload 不重复")
+    // 关键: 不得残留【非本分钟】的 mark。
+    const hookMarks = marks.filter((f) => f.startsWith('abs-hook-'));
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}`;
+    const stale = hookMarks.filter((f) => !f.includes(stamp));
+    assert.equal(stale.length, 0, `不应残留非本分钟 mark: ${stale.join(',')}`);
+    assert.ok(hookMarks.length >= 1, '本分钟应有 mark');
+  });
+
   // 日志轮转: hooks.log 是 append-only 热路径, 无上限会无限增长。
   test('hooks.log 超阈值 → 轮转成 .1 并截断', async () => {
     const logDir = join(sandbox, 'rot');

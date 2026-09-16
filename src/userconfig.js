@@ -54,12 +54,16 @@ export async function setUser(name) {
 export async function requireUser() {
   const u = await getUser();
   if (u) return u;
-  throw new Error(
-    '✗ 尚未设置使用者姓名 —— 图谱需要标记每条记录的作者。\n' +
-    '  请任选其一设置后重试:\n' +
-    '    abs config set user <你的名字>     (写入 ~/.abs/config.json, 一次即可)\n' +
-    '    ABS_USER=<你的名字> abs ...        (仅本次生效)'
+  const e = new Error(
+    '✗ 尚未设置使用者姓名 —— 图谱需要标记每条记录的作者。'
   );
+  // 错误码：hook/脚本靠它区分「需先配置」与真故障（借 Anneal templateRefusal）。
+  e.code = 'NO_USER';
+  e.fallback =
+    '任选其一:\n' +
+    '    abs config set user <你的名字>     (写入 ~/.abs/config.json, 一次即可)\n' +
+    '    ABS_USER=<你的名字> abs ...        (仅本次生效)';
+  throw e;
 }
 
 /** 标记串：`[[name]]`（wikilink 到人页 entities/<name>.md）。

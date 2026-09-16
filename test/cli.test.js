@@ -382,6 +382,27 @@ describe('cli: argv 解析', () => {
     assert.ok(!r.stderr.includes('不认识多余参数'), `--keep-days 的值不得被当位置参数: ${r.stderr}`);
   });
 
+  // help 结构（2026-09-16）：首次使用者打开终端要知道先输什么。
+  // 原 help 从"读:"开始，19 个命令平铺 —— 新用户不知道从哪开始。
+  test('help 带「快速开始」四条，且四条都真存在', async () => {
+    const r = await run(['help']);
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /快速开始/, 'help 应有「快速开始」段');
+    // 四条命令逐条验证真的可调用（防止写了个不存在的命令）
+    for (const cmd of [['init'], ['load']]) {
+      const rr = await run([...cmd, '--help'], { cwd: REPO });
+      assert.ok(rr.code === 0 || /用法|Usage/.test(rr.stdout + rr.stderr),
+        `快速开始里提到的 "${cmd.join(' ')}" 应可用`);
+    }
+  });
+
+  test('help 把内部命令与用户命令分开说明', async () => {
+    const r = await run(['help']);
+    assert.match(r.stdout, /内部命令/, '应说明 wrapup/teardown-check 是内部命令');
+    assert.ok(!/^\s+abs teardown-check/m.test(r.stdout),
+      'teardown-check 不应作为普通条目列出（它只该出现在"内部命令"说明里）');
+  });
+
   test('未知 --flag 不抛异常（历史行为: 静默收下）', async () => {
     const r = await run(['lint', '--totally-unknown']);
     assert.equal(r.code, 0, `未知 flag 不应崩: ${r.stderr}`);

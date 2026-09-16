@@ -6,7 +6,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, upsertArchiveSection, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
@@ -61,12 +61,82 @@ describe('findBrainRoot 定位', () => {
     assert.equal(root, null, '祖先有图谱不等于本项目有图谱');
   });
 
-  test('requireBrain 无图谱时抛错且信息含 abs init', async () => {
-    await assert.rejects(() => requireBrain(projectB), /abs init/);
+  test('requireBrain 无图谱时抛带码的错 (NO_BRAIN + fallback 含 abs init)', async () => {
+    // 错误码是 hook/脚本的分支依据（借 Anneal templateRefusal）—— 比字符串匹配稳。
+    await assert.rejects(
+      () => requireBrain(projectB),
+      (e) => {
+        assert.equal(e.code, 'NO_BRAIN', '应带 NO_BRAIN 码');
+        assert.match(e.fallback, /abs init/, 'fallback 应给出修复命令');
+        assert.match(e.message, /没有 \.brain\//, 'message 应说明原因');
+        return true;
+      },
+    );
   });
 
   test('brainPath 拼接图谱内路径', () => {
     assert.equal(brainPath(projectA, 'todo.md'), join(projectA, '.brain', 'todo.md'));
+  });
+
+  // 错误码契约（2026-09-16）：可预期的失败都带 code，调用方按码分支不看文案。
+  test('requireUser 未设姓名时抛 NO_USER 码 + fallback', async () => {
+    const { requireUser } = await import('../src/userconfig.js');
+    const old = process.env.ABS_USER;
+    const oldHome = process.env.HOME;
+    process.env.HOME = join(projectB, 'no-such-home');
+    delete process.env.ABS_USER;
+    try {
+      await assert.rejects(
+        () => requireUser(),
+        (e) => {
+          assert.equal(e.code, 'NO_USER');
+          assert.match(e.fallback, /config set user/);
+          return true;
+        },
+      );
+    } finally {
+      process.env.HOME = oldHome;
+      if (old === undefined) delete process.env.ABS_USER;
+      else process.env.ABS_USER = old;
+    }
+  });
+
+  test('任务 id 不存在时输出带 NO_MATCH 前缀', async () => {
+    const out = await cmdTask({ dir: projectA, action: 'done', id: '绝对不存在的任务X' });
+    assert.match(out, /^\[NO_MATCH\]/, `应带 NO_MATCH 前缀: ${out}`);
+  });
+});
+
+describe('extractBlocks（卡点提取）', () => {
+  test('抽出 阻塞/等待/等 开头的附属行', () => {
+    const todo = [
+      '## Todo',
+      '- [ ] [进行中] A [[u]] — 任务',
+      '  ↳ 断点: 阻塞: 等 1.8.9 发版',
+      '- [ ] [进行中] B [[u]] — 任务',
+      '  ↳ 断点: 等待: 上游修完',
+      '- [ ] C [[u]] — 无卡点',
+      '  ↳ 断点: 普通进度而已',
+    ].join('\n');
+    const r = extractBlocks(todo);
+    assert.equal(r.length, 2, JSON.stringify(r));
+    assert.deepEqual(r[0], { id: 'A', why: '等 1.8.9 发版' });
+    assert.equal(r[1].id, 'B');
+  });
+
+  test('已完成行下的卡点不再抽出', () => {
+    const todo = ['- [x] A [[u]] — 完成', '  ↳ 阻塞: 旧的'].join('\n');
+    assert.deepEqual(extractBlocks(todo), []);
+  });
+
+  test('没写前缀不猜（普通断点不当卡点）', () => {
+    const todo = ['- [ ] A [[u]] — 任务', '  ↳ 断点: 改了 3 个文件'].join('\n');
+    assert.deepEqual(extractBlocks(todo), []);
+  });
+
+  test('空输入不报错', () => {
+    assert.deepEqual(extractBlocks(''), []);
+    assert.deepEqual(extractBlocks(undefined), []);
   });
 });
 
@@ -622,6 +692,45 @@ describe('cmdQuery', () => {
     );
     const out = await cmdQuery({ dir: projectA, terms: ['专属词'] });
     assert.ok(out.includes('a-page'), out);
+  });
+
+  // tags 关联（2026-09-16）：tags 是人工提炼的关键词，权重应高于正文。
+  test('tag 命中的页排在只正文命中的页前面', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'tagged.md'),
+      '---\ntags: [concept, 专属关联词]\nstatus: draft\n---\n正文无此词\n',
+      'utf8'
+    );
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'untagged.md'),
+      '---\ntags: [concept]\nstatus: draft\n---\n正文里提到 专属关联词\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['专属关联词'] });
+    const ti = out.indexOf('tagged');
+    const ui = out.indexOf('untagged');
+    assert.ok(ti !== -1 && ui !== -1, `两页都应命中: ${out}`);
+    assert.ok(ti < ui, `tag 命中应排前: ${out}`);
+    assert.ok(out.includes('[tag: 专属关联词]'), `应标出 tag 命中渠道: ${out}`);
+  });
+
+  // 回归（2026-09-16 实测）：模糊命中曾把无关页混进结果 ——
+  // 查 file-write-locking 返回 26 页（几乎全图，共 27 页）。
+  // 连字符词的 2-gram 太通用，模糊命中必须让位给精确命中。
+  test('有精确命中时模糊命中不混入结果 (但告知条数)', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'exact-hit-page.md'),
+      '---\ntags: [concept]\nstatus: draft\n---\n含 专有复合词XYZ 一词\n',
+      'utf8'
+    );
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'fuzzy-only-page.md'),
+      '---\ntags: [concept]\nstatus: draft\n---\n无那个词，但字形部分相近的正文\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['专有复合词XYZ'] });
+    assert.ok(out.includes('exact-hit-page'), `精确命中应在: ${out}`);
+    assert.ok(!/📄\s*fuzzy-only-page/.test(out), `模糊命中不得混入列表: ${out}`);
   });
 
   // 基线（2026-09-15 实测 296 条片段）: 25% 是非内容行（tags:/H1/段落标题）。

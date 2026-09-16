@@ -724,7 +724,7 @@ export async function setBreakpoint(brainRoot, { id, text }) {
     return { text: lines.join('\n'), ok: true };
   });
   return res === SKIP
-    ? { ok: false, msg: `(未找到含 "${id}" 的未完成任务行)` }
+    ? { ok: false, msg: `[NO_MATCH] 未找到含 "${id}" 的未完成任务行` }
     : { ok: true, msg: `✓ 断点已落 → ${id}\n  ${bp.trim()}` };
 }
 

@@ -7,6 +7,7 @@ import { requireUser, atTag, getUser } from './userconfig.js';
 import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
+import { keywords, pickRelevant, renderRelevant, recentFiles, rankPage } from './relevant.js';
 
 // ---------- init: 建 .brain/ 骨架 ----------
 const BRAIN_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];
@@ -332,6 +333,27 @@ export async function cmdLoad({ dir }) {
       ''
     );
   }
+  // 卡点提取（2026-09-16，定位 = 看板可见性）：
+  // 从 todo 里抽出带 `阻塞:` / `等待:` 的断点行，集中展示。
+  // 为何需要：断点行在任务下方，一屏扫过去看不出"哪些事在等人/等外部"。
+  // 只提取不求全 —— 只有明确写了前缀的才被抽出，没写的不猜。
+  const blocks = extractBlocks(todo);
+  if (blocks.length) {
+    const at = sections.findIndex((s) => String(s).startsWith('--- Rules'));
+    sections.splice(at === -1 ? 1 : at, 0,
+      `⛔ 卡点 ${blocks.length} 条（在等外部条件）`,
+      ...blocks.map((b) => `  - ${b.id}: ${b.why}`),
+      '');
+  }
+  // 相关页提示（2026-09-16）：实测 abs_query 几乎不被调用（MCP 日志 task 234 / note 54 / load 53 vs query 2）。
+  // 根因：load 只列目录 → 模型觉得"我记过了" → 真需要时靠印象。模型不知道自己不知道什么。
+  // 解法（用户定）：不替它查 —— 而是【把该查的词直接给出来】，降低发起查询的成本。
+  //   自动带出正文是错的方向：那会让 query 更没人用，且无法按需求变化调整词。
+  // 失败静默：这只是 additive 提示，出任何错都不应弄坏 load。
+  try {
+    const rel = await queryHint(root, todo);
+    if (rel) sections.push('', rel);
+  } catch { /* 提示失败不影响 load */ }
   // sources 堆积提醒：与「滞留」同构 —— 放在每次开工必经的顶部，而不是等人跑 lint。
   // 只数目录条目（不读文件），零成本。提炼仍手工：这里只负责送达，不替判断。
   const nsrc = await countSources(root);
@@ -344,6 +366,61 @@ export async function cmdLoad({ dir }) {
       '');
   }
   return sections.join('\n');
+}
+
+/**
+ * 从 todo 正文抽出"卡点"行，供 load 集中展示。
+ *
+ * 识别的前缀：`阻塞:` / `等待:` / `等 `（在断点/附属行里）。
+ * 为何只认前缀（不靠语义猜）：没写就是没写，猜出来的卡点比不报更坑。
+ *
+ * @returns {{id:string, why:string}[]}
+ */
+export function extractBlocks(todoText) {
+  const out = [];
+  let curId = null;
+  for (const line of String(todoText || '').split('\n')) {
+    // 任务行（未完成）：`- [ ] [状态] ID [[who]] — 描述`
+    const t = line.match(/^\s*-\s*\[\s*\]\s*(?:\[[^\]]*\]\s*)?(\S+)/);
+    if (t) { curId = t[1]; continue; }
+    // 完成行：不再跟踪
+    if (/^\s*-\s*\[x\]/.test(line)) { curId = null; continue; }
+    if (!curId) continue;
+    // 附属行（↳ 开头或缩进行）里找卡点前缀
+    const m = line.match(/^\s*(?:↳\s*断点:\s*)?(?:阻塞|等待|等)[:：]\s*(.+)$/);
+    if (m && m[1].trim()) out.push({ id: curId, why: m[1].trim() });
+  }
+  return out;
+}
+
+/**
+ * 开工提示：直接给出该查的几个词，降低发起 query 的成本。
+ *
+ * 为何不是"替它查"（2026-09-16 用户定）：自动带出正文会让 query 更没人用，
+ * 且无法按需求变化调整词。正确做法是把词准备好，查询仍由调用方发。
+ *
+ * 词从两个环境事实推：活跃 todo 的关键词 + 最近改过的文件名。
+ * 输出保持极短（两行）—— 它只是提示，不是报告。
+ */
+async function queryHint(root, todoText) {
+  const active = String(todoText || '')
+    .split('\n')
+    .filter((l) => /^\s*-\s*\[\s*\]/.test(l))
+    .join(' ');
+  const files = await recentFiles(root, { n: 5 }).catch(() => []);
+  const src = [active, files.map((f) => f.name).join(' ')].filter(Boolean).join(' ');
+  const kws = keywords(src);
+  // 只取 3 个：英文词优先（中文 2-gram 单看无意义）
+  const en = kws.filter((k) => /^[a-z][a-z0-9_-]+$/.test(k));
+  const zh = kws.filter((k) => !/^[a-z][a-z0-9_-]+$/.test(k));
+  const pick = [...en.slice(0, 2), ...zh.slice(0, 1)].slice(0, 3);
+  if (!pick.length) return '';
+  const rows = [
+    '--- 开工前建议查一次（图谱里有相关经验，别重踩）---',
+    `  abs query ${pick.join(' ')}`,
+  ];
+  if (files.length) rows.push(`  （据最近改动: ${files.slice(0, 3).map((f) => f.name).join(', ')}）`);
+  return rows.join('\n');
 }
 
 /** 数 sources/ 下的 .md 文件数（只读目录，不解析内容）—— load 顶部提醒用。
@@ -768,7 +845,12 @@ export async function cmdTeardownCheck({ dir, payload }) {
     // ② 己方节流: 以 session_id 落 mark。缺 id 时退化为按项目+日期节流,
     //    绝不"无节流"——否则一旦宿主张不到 id, decision:block 就会无限自激。
     const sid = String(ev.session_id || ev.sessionId || '').replace(/[^\w-]/g, '');
-    const key = sid || 'nosession-' + day + '-' + root.replace(/[^\w]/g, '_');
+    // 兼底 key 只用【项目名】而非 full path。
+    // 坑(2026-09-16 实测): 原用 root.replace(/[^\w]/g,'_') 会把 cwd 的 tmp 路径
+    //   (/var/folders/..._tmpXXXX) 也编进去 —— 而每个会话的 tmp 目录都不同,
+    //   于是"按项目+日期节流"根本没生效, 每次都新 key → ~/.abs/log/ 堆了 361 个 mark。
+    const projKey = root.split('/').filter(Boolean).pop() || 'unknown';
+    const key = sid || 'nosession-' + day + '-' + projKey;
     const mark = join(absLogDir(), `teardown-${key}.mark`);
     try {
       await fs.access(mark);
@@ -776,6 +858,15 @@ export async function cmdTeardownCheck({ dir, payload }) {
     } catch { /* 未推过 */ }
     await fs.mkdir(dirname(mark), { recursive: true });
     await fs.writeFile(mark, stamp).catch(() => {});
+    // mark 只增不减会堆成垃圾(实测 361 个)。只清【带旧日期】的 mark ——
+    // 节流只在当天有意义(判据是 day), 旧日期 mark 不可能再命中;
+    // 无日期的会话 mark(teardown-<sid>.mark)保留, 它靠自身存在与否判重。
+    try {
+      for (const f of await fs.readdir(absLogDir())) {
+        const m = f.match(/^teardown-.*-(\d{4}-\d{2}-\d{2})-.*\.mark$/);
+        if (m && m[1] !== day) await fs.unlink(join(absLogDir(), f)).catch(() => {});
+      }
+    } catch { /* 清理失败不影响主流程 */ }
 
     const msg = [
       // 未设姓名时把设置指令插到第0条 —— 否则后续 todo add/log/note 全会被守卫拦下。
@@ -899,10 +990,10 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
       cc = r.changed;
       return r.changed.length ? { text: r.text } : SKIP;
     });
-    return cc.length ? `✓ ${id} 状态 → [${note}]` : `(未找到含 "${id}" 的未完成任务行，或状态未变)`;
+    return cc.length ? `✓ ${id} 状态 → [${note}]` : `[NO_MATCH] 未找到含 "${id}" 的未完成任务行，或状态未变`;
   }
   if (action === 'note') {
-    if (!note) return '用法: abs todo note <id> --note "断点/进度"（实时落 ↳ 断点 行）';
+    if (!note) return '用法: abs todo note <id> --note "进度"\n  建议前缀（load 会把它们单独抽出来，让人一眼看到）:\n    验证: <跑过的命令/结果>\n    边界: <这方案治不了什么>\n    阻塞: <在等什么，卡在哪>';
     const r = await setBreakpoint(root, { id, text: note });
     return r.msg;
   }
@@ -945,7 +1036,7 @@ async function markDone(file, id, kind = '落地') {
     return { text: insertDoneGrouped(kept.join('\n'), moved) };
   });
   return res === SKIP
-    ? `(未找到含 "${id}" 的未完成任务行)`
+    ? `[NO_MATCH] 未找到含 "${id}" 的未完成任务行`
     : `✓ 已完成并归位 Done: ${id} 【${kind}】`;
 }
 
@@ -1002,8 +1093,9 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
       if (!f.endsWith('.md') || f.startsWith('_')) continue;
       const full = join(p, f);
       const body = await fs.readFile(full, 'utf8').catch(() => '');
-      const matched = words.filter((w) => body.toLowerCase().includes(w.toLowerCase()));
-      if (matched.length) {
+      const slug = f.replace(/\.md$/, '');
+      const rank = rankPage(body, slug, words);
+      if (rank) {
         // 作者从本页 frontmatter 读（权威来源）。不在 index 行里重复 ——
         // index 行是覆盖式更新的，作者会从"创建者"漂成"最后改的人"。
         const au = body.match(/^author:\s*(.+)$/m);
@@ -1012,28 +1104,34 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
         // 而不是回答"我上次怎么解決 X"（那会拿到一个已知错误的答案）。
         // 但它不是静默消失：计数里告知还有几条被隐藏（带 --all 能看）。
         if (st === 'superseded' && !includeSuperseded) {
-          hits.push({ hidden: true, slug: f.replace(/\.md$/, '') });
+          hits.push({ hidden: true, slug });
           continue;
         }
         hits.push({
-          full, slug: f.replace(/\.md$/, ''), matched,
+          full, slug, matched: rank.matched, kind: rank.kind, fuzzyScore: rank.score, via: rank.via,
           author: au ? au[1].trim() : '',
-          id: idOfPage(body, f.replace(/\.md$/, '')),
+          id: idOfPage(body, slug),
           status: st,
           supersededBy: supersededByOf(body),
-          snippet: firstHitLine(body, words),
+          snippet: firstHitLine(body, rank.matched.length ? rank.matched : words),
         });
       }
     }
   }
   const hidden = hits.filter((h) => h.hidden).length;
-  // 相关性排序：命中词多的排前面。
-  // 为什么不是严格 AND：26 页的量级下，「全词必须命中」经常直接归零（静默变成"查不到"）。
-  // 故先用命中数排序，让「全命中」自然浮顶；命中太稀（只 1 页）时才提示可加词。
-  // 实测痛点（2026-09-15）: 多词 OR 下查「安装 skill 报错」出 24/26 页（几乎全图）→ 相关性被稀释。
-  const shown = hits.filter((h) => !h.hidden)
-    .map((h) => ({ ...h, score: h.matched.length }))
+  // 分两区：精确命中优先，模糊只作补充。
+  // 坑(2026-09-16 实测): 不加区分时查 file-write-locking 返回 26 页（几乎全图）——
+  //   连字符词的 2-gram 太通用，模糊命中把无关页也拉进来。
+  //   规则：只要有任何精确命中，模糊命中的就不排在前面（但也不丢弃，单列一段）。
+  const exactHits = hits.filter((h) => !h.hidden && h.kind === 'exact')
+    .map((h) => ({ ...h, score: h.fuzzyScore }))
     .sort((a, b) => b.score - a.score);
+  const fuzzyHits = hits.filter((h) => !h.hidden && h.kind === 'fuzzy')
+    .map((h) => ({ ...h, score: h.fuzzyScore }))
+    .sort((a, b) => b.score - a.score);
+  // 有精确命中 → 模糊全藏起来（但不静默：告知数量 + 怎么看）
+  const fuzzySuppressed = exactHits.length > 0 && fuzzyHits.length > 0;
+  const shown = exactHits.length ? exactHits : fuzzyHits;
   if (!shown.length) {
     const extra = hidden ? `（另外 ${hidden} 页已标记 superseded，用 abs query ${words.join(' ')} --all 查看）` : '';
     return `query [${words.join(', ')}]: 无命中。${extra}用 abs lint 看图谱健康；首次使用先 abs init。`;
@@ -1045,13 +1143,19 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
     const id = h.id && h.id !== h.slug ? `  [id: ${h.id}]` : '';
     // draft = 未经核实。不拦使用，但必须让 AI 知道这是它自己没验证过的。
     const st = h.status === 'draft' ? '  [draft 未核实]' : '';
-    const full = words.length > 1 && h.score === words.length ? ' ★全命中' : '';
-    return `📄 ${h.slug}${by}${id}${st}  (命中: ${h.matched.join(', ')}${full})\n    ${h.snippet}`;
+    const full = h.kind === 'exact' && words.length > 1 && h.matched.length === words.length ? ' ★全命中' : '';
+    // 模糊命中必须显式标出 —— 否则用户会把"语义相近"当成"真的是这条"。
+    const fuzzy = h.kind === 'fuzzy' ? '  [模糊命中: 字面未出现，仅字形相近]' : '';
+    const hitTxt = h.matched.length ? h.matched.join(', ') : '(无字面命中)';
+    // 命中渠道：tag 最有价值（人工提炼的关键词），显式标出便于判断可信度
+    const viaTag = h.via && h.via.tag.length ? `  [tag: ${h.via.tag.join(', ')}]` : '';
+    return `📄 ${h.slug}${by}${id}${st}${fuzzy}  (命中: ${hitTxt}${full})${viaTag}\n    ${h.snippet}`;
   });
   // 多词且无全命中时告知降级了 —— 不静默给一堆弱相关结果。
-  const anyFull = shown.some((h) => h.score === words.length);
+  const anyFull = shown.some((h) => h.kind === 'exact' && h.matched.length === words.length);
   const tail = [];
   if (words.length > 1 && !anyFull) tail.push('', `（无页同时命中全部 ${words.length} 个词，以下按命中数排序）`);
+  if (fuzzySuppressed) tail.push('', `（另有 ${fuzzyHits.length} 页字形相近但字面未命中，已隐藏 —— 它们通常不相关）`);
   if (hidden) tail.push(``, `（${hidden} 页 superseded 已隐藏；--all 可看）`);
   return [`query [${words.join(', ')}] → ${shown.length} 页:`, '', ...lines, ...tail].join('\n');
 }
@@ -1092,9 +1196,9 @@ function firstHitLine(body, words) {
 // ---------- note: 经验实时暂存（source 页，一念一落，防流失） ----------
 const NOTE_DEDUP_MS = 60 * 1000;
 
-export async function cmdNote({ dir, text, tags }) {
+export async function cmdNote({ dir, text, tags, when }) {
   const clean = String(text || '').trim();
-  if (!clean) return '用法: abs note "经验/坑/技巧一句话"（落 sources/ 暂存页，实时不流失）';
+  if (!clean) return '用法: abs note "经验/坑/技巧一句话" [--when "何时该读它"]（落 sources/ 暂存页，实时不流失）';
   let root;
   try {
     root = await requireBrain(dir || process.cwd());
@@ -1118,6 +1222,9 @@ export async function cmdNote({ dir, text, tags }) {
   const slugSrc = slugOf(clean);
   const file = `${today()}-${slugSrc || 'note'}.md`;
   const heading = clip(clean, 80); // 页面标题: 完整优先, 超长才收口
+  // 触发条件（2026-09-16）：经验"写入多读得少"的根因之一是存的是结论、不是"何时该看"。
+  // 带上 --when 后，load 的相关页推荐能按当前在做的事匹配，而不是按主题词。
+  const whenText = String(when || '').trim();
   const body = [
     '---',
     `tags: [${fmTags}]`,
@@ -1130,9 +1237,11 @@ export async function cmdNote({ dir, text, tags }) {
     `# 来源：${heading}`,
     '',
     `TITLE: ${clean}`,
+    ...(whenText ? ['', `WHEN: ${whenText}`] : []),
     '',
     `## 记录（实时暂存，Teardown 时提炼进 concepts/ 后本页可删）`,
     `- ${clean}`,
+    ...(whenText ? [`- 何时读：${whenText}`] : []),
     '',
     '## 关联连接',
     `- ${atTag(who)} — 本页沉淀者`,

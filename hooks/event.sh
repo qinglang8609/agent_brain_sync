@@ -38,6 +38,14 @@ fi
   MARK="$MARK_DIR/abs-hook-${FINGER}-${STAMP}.mark"
   [ -e "$MARK" ] && exit 0
   : > "$MARK" 2>/dev/null
+  # mark 只增不减: STAMP 是分钟级 → 每分钟一批, 永不回收。实测堆了 361 个。
+  # 幂等窗口只 60s, 非本分钟的 mark 不可能再命中 → 清掉。
+  # 注意: 同一分钟内不同 payload 有不同 FINGER, 它们各自合法 —— 只按 STAMP 清, 不按 FINGER。
+  for old in "$MARK_DIR"/abs-hook-*.mark; do
+    [ -e "$old" ] || continue
+    case "$old" in *-"$STAMP".mark) continue ;; esac
+    rm -f "$old" 2>/dev/null
+  done
 
   # 定位项目由 CLI 完成 (向上找 .brain/, 代码写死); 找不到图谱则静默放弃。
   # 纪律: hook 事件只进技术日志 (~/.abs/log/), 不进图谱 log.md (那是活动流水, 不收琐碎请求)。

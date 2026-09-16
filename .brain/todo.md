@@ -3,6 +3,13 @@
 ## Done
 ### 2026-09-16
 
+- [x] ABS-SERVE [[fanchao]] — abs serve: .brain/ 挂成只读网页。左目录树+右渲染+双链跳转+5主题+明暗切换+手机抽屉。零依赖(CDN 引 marked/hljs)，只绑127.0.0.1、只读、防路径穿越 【落地】 (完成 2026-09-16)
+- [x] TODO-BORROW [[fanchao]] — todo 借 Anneal: 断点要素固定前缀(验证/边界/阻塞/不做) + Parked 标记故意搁置 【落地】 (完成 2026-09-16)
+  ↳ 断点: 阻塞: 待确认断点要素是否只保留 验证/边界/阻塞 三项
+- [x] WRITE-CODE [[fanchao]] — 写操作报错带机器可读错误码(仿 Anneal templateRefusal): 没图谱/没设姓名/任务id不存在 各自有 code 【落地】 (完成 2026-09-16)
+- [x] TEST [[fanchao]] — x 【落地】 (完成 2026-09-16)
+- [x] LOAD-HINT [[fanchao]] — load 给该查的词(queryHint) + note --when 存触发条件; when 未接进检索 【落地】 (完成 2026-09-16)
+- [x] QUERY-TAGS [[fanchao]] — abs query 借 tags 做关联检索: tag权重8>标题4>正文1, 精确命中时模糊不混入 【落地】 (完成 2026-09-16)
 - [x] fanout 三层 n 分叉思考引擎 [[fanchao]] 【落地】 (完成 2026-09-16)
 
 ### 2026-09-15
