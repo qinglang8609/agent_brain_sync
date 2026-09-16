@@ -349,6 +349,28 @@ describe('cli: note --tags 值解析', () => {
 // 若哪天又退回携带 true 的原样值，install 会把「不要 MCP」理解成「要 MCP」。
 // 断言方式: 跑 `abs install --help`（只打印用法、不写盘），看它是否认得这些 flag。
 describe('cli: argv 解析', () => {
+  // 坑(2026-09-16 实测): `abs todo --help` 写了 [结语文字]，但 done 分支只读 --note，
+  // 位置参数被 rejectExtra 当多余参数拒 —— 文档与实现不一致(测试装的临时包才发现)。
+  test('todo done 收位置参数结语（与 --note 等价，MCP 同语义）', async () => {
+    await run(['init', '--dir', proj]);
+    for (const id of ['CD-1', 'CD-2', 'CD-3']) {
+      await run(['todo', 'add', id, '--note', 'x', '--dir', proj]);
+    }
+    const r1 = await run(['todo', 'done', 'CD-1', '验证: 全绿', '--dir', proj]);
+    assert.equal(r1.code, 0, r1.stderr);
+    const r2 = await run(['todo', 'done', 'CD-2', '--note', '撤了【否决】', '--dir', proj]);
+    const r3 = await run(['todo', 'done', 'CD-3', '--as', '仅方案', '--dir', proj]);
+    assert.equal(r2.code, 0, r2.stderr);
+    assert.equal(r3.code, 0, r3.stderr);
+    const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.match(todo, /CD-1.*— 验证: 全绿 【落地】/, todo);
+    assert.match(todo, /CD-2.*— 撤了 【否决】/, 'note 自带【kind】应生效');
+    assert.match(todo, /CD-3.*【仅方案】/, todo);
+    // 非 done 子命令仍严格拒多余参数（add 不说清楚就是静默漏写）
+    const bad = await run(['todo', 'add', 'CD-9', '--note', 'x', '多余词', '--dir', proj]);
+    assert.notEqual(bad.code, 0, 'add 的多余参数应被拒');
+    assert.ok(bad.stderr.includes('不认识多余参数'), bad.stderr);
+  });
   // 从外部可观测的代理: install --no-mcp 与 --no-skill 不得被当成未知参数而报错
   test('--no-mcp / --no-skill 被识别为合法 flag（不报未知参数）', async () => {
     for (const flag of ['--no-mcp', '--no-skill']) {

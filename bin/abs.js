@@ -477,8 +477,18 @@ async function main() {
             `  登记任务: abs todo add <id> --note "做什么"`,
           );
         }
-        rejectExtra(rest2, `abs todo ${sub} <id>${action === 'done' ? ' [--as 落地|否决|仅方案]' : ' --note "…"'}`);
-        if (!id) throw new Error(`✗ 缺 <id>\n  用法: abs todo ${sub} <id>${action === 'done' ? ' [--as 落地|否决|仅方案]' : ' --note "…"'}`);
+        // done 的结语：--note "结语" 或位置参数（`abs todo done X 验证: 全绿`）都收。
+        // 坑(2026-09-16 实测): --help 里写了 [结语文字] 但实现只读 --note，
+        // 位置参数被 rejectExtra 当多余参数拒掉 —— 文档与实现不一致。
+        const isDone = action === 'done';
+        const usage = `abs todo ${sub} <id>${isDone ? ' [--as 落地|否决|仅方案] [--note "结语"]' : ' --note "…"'}`;
+        if (isDone) {
+          const note = opts.note || (rest2.length ? rest2.join(' ') : undefined);
+          console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note, as: opts.as }));
+          break;
+        }
+        rejectExtra(rest2, usage);
+        if (!id) throw new Error(`✗ 缺 <id>\n  用法: ${usage}`);
         console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note: opts.note, as: opts.as }));
         break;
       }
