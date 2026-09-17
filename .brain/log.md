@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-09-17 11:23] [[tester]] dev | 清理实验台: 删 /tmp 下 10 项(含 absab-作废/cwd1/reallint/v2/abtest/expb/abs-exp), 约14MB。注意: abs-exp/REPORT.md 等 EXP-BLANK-DIR 四轮实验的原始数据随之删除, 现仅存 .brain/ 摘录(见 todo EXP-BLANK-DIR 那条 Done 与 2026-09-16 快照)。要复现需重搭台
 ## [2026-09-17 11:19] [[tester]] dev | 删除 abs ab 对照实验台与 abs serve: 前者跑不通完整实验(需人起 agent, 三次尝试均因判据不可比失败), 后者无测试覆盖且未使用。删 src/ab.js+src/serve.js+test/ab.test.js(24测试)+bin/abs.js 入口+FLAG_SPEC+权限条目; 386测试全绿
 ## [2026-09-17 01:19] [[tester]] concept | 新建概念页 vacuous-test-passes-on-broken-code
 ## [2026-09-17 01:19] [[tester]] dev | 更正 01:03 那条 queryHint 结论: 「cli(df=13) vs load(df=11) 频率不可分→调参无解」已作废 —— 实测全大写 token 被 store.js 剥离规则挡在词表外, CLI 从未进入 hint 取词, 该比较的对象不存在。真实实测: T=11~15 阈值不起作用、剔除高频词后 top3 仍是噪音。修复方向未定
