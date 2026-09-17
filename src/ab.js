@@ -46,16 +46,37 @@ export const ARMS = {
  *   随机后缀只负责降低"手滑撞见"的概率，别把它当隔离保证。
  */
 export function armDir(expName, arm) {
-  // 后缀在进程内稳定（同一实验两次调用返回同一路径），但不暴露组间关系
-  const tag = `absab-${expName}-${arm}-${randSuffix(expName + arm)}`;
+  // 后缀在进程内稳定（同一实验两次调用返回同一路径）。
+  //
+  // 2026-09-17 修：原实现 `randSuffix(expName + arm)` 在多数实验名上**两组后缀相同**
+  //   （实测 `demo2`/`real1` 都得 `1cy1ch`，仅 `x` 得不同值）。
+  //   根因：多项式哈希 `h*31` 下，种子只差末尾一个字符（...A vs ...B）时 h 相差 1，
+  //   再 `.slice(0,6)` 截断 → 前 6 位 base36 完全一致。于是"随机后缀降低误撞"
+  //   这层在多数实验名上根本没起作用（与注释声称的不符）。
+  //   故两份修正：① 扩到 10 位降低截断折损；② 把 arm 混入**末尾**并单独再哈希一轮，
+  //   使 A/B 的差异落在高位而非低位。后者是关键的 —— 光扩位治不了低位差异。
+  const tag = `absab-${expName}-${arm}-${randSuffix(expName)}${randSuffix(arm + expName)}`;
   return join(AB_ROOT, tag.replace(/[^\w.-]+/g, '_'));
 }
 
-/** 由实验名+组名派生的短后缀：同实验稳定，跨实验不同。 */
+/**
+ * 由任意种子派生的短后缀：同种子稳定，不同种子不同。
+ *
+ * 混合手法：先累积，再把 h 的最后一步用位异或反喂一遍（aval­anche），
+ * 保证"种子只差一个字符"也能散布到高位 —— 这是 armDir 那个碰撞的根因。
+ */
 function randSuffix(seed) {
   let h = 0;
-  for (const ch of String(seed)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return h.toString(36).slice(0, 6);
+  const s = String(seed);
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    h = (h ^ (h >>> 15)) >>> 0; // 每步扩散，避免差异全留在低位
+  }
+  h = (h ^ (h >>> 13)) >>> 0;
+  h = (h * 0x5bd1e995) >>> 0;
+  h = (h ^ (h >>> 15)) >>> 0;
+  // 10 位 base36 —— 够宽，截断不会把不同种子折到同一串
+  return h.toString(36).padStart(8, '0').slice(0, 10);
 }
 
 /**
@@ -258,6 +279,20 @@ export async function cmdAbInit({ name, root, taskPath, force }) {
   }
   out.push(`✓ 分组自检通过：两组只差 .brain/（A 无、B 有 ${chk.bPages} 页）`);
 
+  // 起点可比性：两组快照都取 HEAD —— 若 HEAD 里没有本次要测的改动，
+  // 则两组拿到同一份旧代码，差值必然 0，而实验会"看着跑完"。
+  // 前面那条脏工作区警告是**提示性**的（会随输出滚走）；这里把它做成**自检项**，
+  // 与其它自检并列，目的是让人在"看一眼自检块"时就能看到它。
+  // 不直接拒跑：测试未提交改动是合法用法（手动 cp 进两组），故只报不断。
+  const dirty = await checkWorktreeSnapshot(r);
+  if (dirty.uncommitted) {
+    out.push(
+      `⚠ 起点可比性: 工作区有 ${dirty.n} 处未提交改动，快照取 HEAD —— ` +
+      `若本次要测的就是这些改动，两组都拿不到它们，测出来必然无差异。`,
+    );
+    out.push('  （要测未提交改动：先 commit；或手工把改动拷进两组目录）');
+  }
+
   const leaks = checkTaskForLeaks(taskText);
   if (leaks.length) {
     out.push(`⛔ 题面泄题 ${leaks.length} 处 —— 本仓三次实验都栽在这，改了再跑:`);
@@ -367,8 +402,7 @@ export async function cmdAbGrade({ name, cmd }) {
   if (!anyArm) return `✗ 没有实验 ${name}（先 abs ab init）`;
 
   const rows = [];
-  for (const arm of ['A', 'B']) {
-    const dir = armDir(name, arm);
+  for (const arm of ['A', 'B']) {    const dir = armDir(name, arm);
     let exists = true;
     try { await fs.access(dir); } catch { exists = false; }
     if (!exists) { rows.push({ arm, dir, state: '缺失' }); continue; }
@@ -408,6 +442,15 @@ export async function cmdAbGrade({ name, cmd }) {
       out.push('   差异存在 —— 但 n=1，不足以成规律。要下结论请重复多轮。');
     } else if (pass === fail && pass > 0) {
       out.push('   两组同结果 = 这次没测出差异。先查题面有没有泄题（abs ab init 会报）。');
+      out.push('   再查判据是不是在基线就已绿（两组同 PASS 时最常见的原因）。');
+    }
+    // 尺子自检：命令是否跑得起来（本仓踩过 exit 127 被当 FAIL 计分）
+    const broken = rows.filter((r) => r.code === 127 || r.code === 126);
+    if (broken.length) {
+      out.push('');
+      out.push(`⛔ 有组的判据跑不起来（exit ${broken.map((r) => r.code).join('/')}）:`);
+      out.push(`   ${broken.map((r) => ARMS[r.arm]).join(', ')} —— 这不是"作品错了"，是尺子坏了。`);
+      out.push('   先修判据命令（路径/可执行位/依赖），别把 exit 127 当 FAIL 计入对照。');
     }
   }
   return out.join('\n');
@@ -464,19 +507,127 @@ export async function verifyArms(expName) {
     problems.push(`两组 TASK.md 缺一个 —— 题面没落盘`);
   }
 
-  return { ok: problems.length === 0, problems, bPages };
+  // 判据可比性自检（2026-09-17 补，三次设计错误的共同病根）
+  const crit = await checkCriterionComparable(expName);
+  problems.push(...crit.problems);
+
+  return { ok: problems.length === 0, problems, bPages, crit };
 }
 
-/** `abs ab check <题面路径>` —— 单独查泄题，不建台。 */export async function cmdAbCheck({ taskPath }) {
+/**
+ * 判据可比性自检 —— **两组能不能用同一把尺子量**。
+ *
+ * 为何单独加这道（2026-09-17 实测）：本仓前面三道自检查的都是
+ *   「两组是否干净隔离」（只差 .brain/、目录互不可见、题面逐字相同）。
+ *   但实验失败的真实病根不止隔离 —— 还有**判据在两组上不等价**：
+ *     · 判据命令在某一组跑不起来（exit 127/126 = 命令不存在/不可执行）
+ *     · 判据在**起点就已满足**：两组未改动时都 PASS → 测不出任何改动
+ *   这两类都不会报错，只会让结论看着成立。
+ *
+ * 怎么查：若实验目录有 `判据.sh`，在两组**未改动的基线状态**各跑一次
+ *   （即 init 之后、agent 动手之前），报告两组 exit code。
+ *   因此本函数在 init 阶段最有价值 —— 那时两组确实都是原始快照。
+ *
+ * 它不做语义判断：只说"这把尺子在两组上有没有同等可用、起点是否已绿"，
+ *   不替人判"这次改动好不好"。
+ */
+export async function checkCriterionComparable(expName, cmd) {
+  const problems = [];
+  const detail = [];
+
+  // 判据命令：优先参数，其次实验目录下的 判据.sh
+  let useCmd = cmd || '';
+  if (!useCmd) {
+    for (const arm of ['A', 'B']) {
+      try {
+        const p = join(armDir(expName, arm), '判据.sh');
+        await fs.access(p);
+        useCmd = 'sh 判据.sh';
+        break;
+      } catch { /* 下一组 */ }
+    }
+  }
+  if (!useCmd) {
+    detail.push('无判据.sh 也未给判定命令 —— 跳过判据可比性自检（建议补上，否则无从判定）。');
+    return { problems, detail, ran: false };
+  }
+
+  const results = {};
+  for (const arm of ['A', 'B']) {
+    const dir = armDir(expName, arm);
+    try { await fs.access(dir); } catch { results[arm] = { missing: true }; continue; }
+    const r = await run(useCmd, dir);
+    results[arm] = { code: r.code, out: (r.out || r.err || '').trim().split('\n')[0] || '' };
+  }
+
+  for (const arm of ['A', 'B']) {
+    const r = results[arm];
+    if (!r || r.missing) continue;
+    if (r.code === 127 || r.code === 126) {
+      problems.push(
+        `${arm} 组的判据跑不起来（exit ${r.code}：命令不存在或不可执行）` +
+        ` —— 这一跑不是"作品错了"，是尺子坏了；修判据再跑`,
+      );
+    }
+  }
+
+  // 起点已绿 = 判据测不出改动（两组都 PASS 时最可疑）
+  const a = results.A, b = results.B;
+  if (a && b && !a.missing && !b.missing && a.code === 0 && b.code === 0) {
+    problems.push(
+      '判据在两组未改动的基线上**都已通过** —— 这把尺子测不出本次改动，' +
+      '两组都会 PASS，差值必然为 0。先确认：判据应该"跑前是红的"。',
+    );
+  }
+
+  detail.push(`判据命令: ${useCmd}`);
+  for (const arm of ['A', 'B']) {
+    const r = results[arm];
+    if (!r || r.missing) detail.push(`  ${arm}: 目录缺失`);
+    else detail.push(`  ${arm}: exit ${r.code}${r.out ? ` — ${r.out}` : ''}`);
+  }
+  return { problems, detail, ran: true, results };
+}
+
+/**
+ * 起点可比性：两组快照都取 HEAD，故工作区脏 ≡ 本次改动可能不在快照里。
+ *
+ * 为何单独抽出来：原来只有一句打印警告（滚过去就没了），且没任何断言。
+ * 本仓硬规则「靠提醒才能工作的功能，该删不该补」—— 要么做成自检，要么不要。
+ * 故这里做成可断言的返回值，并在 init 自检块里展示。
+ */
+export async function checkWorktreeSnapshot(repo) {
+  const st = await run('git status --porcelain', repo);
+  if (st.code !== 0) return { uncommitted: false, n: 0, unknown: true };
+  const lines = st.out.trim() ? st.out.trim().split('\n') : [];
+  return { uncommitted: lines.length > 0, n: lines.length };
+}
+
+/** `abs ab check <题面路径> [--name X]` —— 单独查泄题 + 判据可比性，不建台。 */
+export async function cmdAbCheck({ taskPath, name }) {
   let t;
   try { t = await fs.readFile(resolve(taskPath), 'utf8'); }
   catch (e) { return `✗ 读不到 ${taskPath}: ${e.message}`; }
   const leaks = checkTaskForLeaks(t);
-  if (!leaks.length) return '✓ 未发现泄题迹象（明写环境 / 提示陷阱 / 提示验证入口 三类都没命中）';
-  return [
-    `⛔ 题面泄题 ${leaks.length} 处:`,
-    ...leaks.map((l) => `  · ${l.kind}: 命中「${l.hit}」 → ${l.why}`),
-    '',
-    '改了再跑实验 —— 泄题的实验测不出记忆的价值。',
-  ].join('\n');
+  const out = [];
+  if (!leaks.length) out.push('✓ 未发现泄题迹象（明写环境 / 提示陷阱 / 提示验证入口 三类都没命中）');
+  else {
+    out.push(`⛔ 题面泄题 ${leaks.length} 处:`);
+    for (const l of leaks) out.push(`  · ${l.kind}: 命中「${l.hit}」 → ${l.why}`);
+    out.push('  改了再跑实验 —— 泄题的实验测不出记忆的价值。');
+  }
+
+  // 有实验名时顺带查判据可比性（同一把尺子能不能量两组）
+  if (name) {
+    const crit = await checkCriterionComparable(name);
+    out.push('');
+    if (crit.problems.length) {
+      out.push(`⛔ 判据可比性 ${crit.problems.length} 处:`);
+      for (const m of crit.problems) out.push(`  · ${m}`);
+    } else if (crit.ran) {
+      out.push('✓ 判据可比性通过（两组都能跑、基线未全绿）');
+    }
+    for (const d of crit.detail) out.push(`  ${d}`);
+  }
+  return out.join('\n');
 }

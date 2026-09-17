@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { promises as rm } from 'node:fs';
-import { checkTaskForLeaks, verifyArms, ARMS, cmdAbInit, buildArmPrompt, armDir } from '../src/ab.js';
+import { checkTaskForLeaks, verifyArms, ARMS, cmdAbInit, buildArmPrompt, armDir, checkCriterionComparable, checkWorktreeSnapshot } from '../src/ab.js';
 
 // ---------- 泄题检查 ----------
 // 三条规则各有真实来源：本仓 2026-09-16/17 做四轮对照实验，
@@ -154,4 +154,104 @@ test('cmdAbInit: 同名实验已存在时拒绝覆盖（防抹掉正在跑的 ag
   // 清理：测完把台子删掉，别留垃圾
   await rm.rm(armDir(name, 'A'), { recursive: true, force: true });
   await rm.rm(armDir(name, 'B'), { recursive: true, force: true });
+});
+
+// ---------- 判据可比性自检 ----------
+// 2026-09-17 三次实验失败的共同病根不是"两组没隔离"，而是**判据在两组上不等价**。
+// 本仓已有的三道自检（只差 .brain/、目录互不可见、题面逐字相同）都查不到这一类。
+
+test('checkCriterionComparable: 判据命令不存在（exit 127）要报"尺子坏了"', async () => {
+  const name = 'crit-broken-cmd';
+  await cmdAbInit({
+    taskPath: '/tmp/abtest/real1.md',
+    root: '/Users/fanchao/Code/agent_brain_sync',
+    name,
+  });
+  const r = await checkCriterionComparable(name, 'this-cmd-does-not-exist-xyz');
+  assert.ok(r.ran, '给了命令就该跑');
+  assert.ok(
+    r.problems.some((p) => /跑不起来|尺子坏了/.test(p)),
+    `exit 127 必须被识别为尺子问题，而非作品失败: ${JSON.stringify(r.problems)}`,
+  );
+  await rm.rm(armDir(name, 'A'), { recursive: true, force: true });
+  await rm.rm(armDir(name, 'B'), { recursive: true, force: true });
+});
+
+test('checkCriterionComparable: 基线已全绿要报"测不出改动"', async () => {
+  const name = 'crit-already-green';
+  await cmdAbInit({
+    taskPath: '/tmp/abtest/real1.md',
+    root: '/Users/fanchao/Code/agent_brain_sync',
+    name,
+  });
+  // `true` 恒真 = 模拟"判据在起点就满足"，两组都会 PASS，差值必然 0
+  const r = await checkCriterionComparable(name, 'true');
+  assert.ok(
+    r.problems.some((p) => /都已通过|测不出/.test(p)),
+    `基线全绿必须报警，否则两组同 PASS 会被当成"无差异": ${JSON.stringify(r.problems)}`,
+  );
+  await rm.rm(armDir(name, 'A'), { recursive: true, force: true });
+  await rm.rm(armDir(name, 'B'), { recursive: true, force: true });
+});
+
+test('checkCriterionComparable: 基线正确为红时不报（判据该跑前是红的）', async () => {
+  const name = 'crit-correctly-red';
+  await cmdAbInit({
+    taskPath: '/tmp/abtest/real1.md',
+    root: '/Users/fanchao/Code/agent_brain_sync',
+    name,
+  });
+  const r = await checkCriterionComparable(name, 'false'); // 恒假 = 起点为红
+  assert.equal(r.problems.length, 0, `基线为红是正常状态，不该报: ${JSON.stringify(r.problems)}`);
+  assert.ok(r.ran);
+  await rm.rm(armDir(name, 'A'), { recursive: true, force: true });
+  await rm.rm(armDir(name, 'B'), { recursive: true, force: true });
+});
+
+// ---------- arm 目录后缀：A/B 必须不同 ----------
+// 2026-09-17 实测：原 randSuffix 用多项式 h*31，种子只差末尾一个字符（...A vs ...B）
+// 时 h 相差 1，再 slice(0,6) → 前 6 位 base36 完全一致。
+// 后果：「随机后缀降低误撞」这层在多数实验名上根本没生效，两组在 /tmp 下并列可见。
+
+test('armDir: A/B 的随机后缀必须不同（不是靠路径里的 A/B 段凑差别）', () => {
+  // ⚠ 这里必须断言**后缀**，不能断言整个路径 ——
+  // 路径里本来就有 `-A-` / `-B-` 段，两组永远不相等，
+  // 于是 assert.notEqual(整个路径) 是**恒真的空测试**（初版就写错了，破坏验证才发现）。
+  const suffixOf = (p) => p.split('/').pop().split('-').pop();
+  for (const n of ['demo2', 'real1', 'x', 'exp', 'ab-test', 'a', '长实验名']) {
+    const sa = suffixOf(armDir(n, 'A'));
+    const sb = suffixOf(armDir(n, 'B'));
+    assert.notEqual(
+      sa, sb,
+      `实验 ${n} 的 A/B 得到同一后缀 ${sa} —— 随机后缀没起作用（两组会并列可见）`,
+    );
+  }
+});
+
+test('armDir: 同实验同组重复调用要稳定（不能每次都变）', () => {
+  assert.equal(armDir('stable', 'A'), armDir('stable', 'A'));
+  assert.equal(armDir('stable', 'B'), armDir('stable', 'B'));
+});
+
+test('armDir: 不同实验要得到不同后缀', () => {
+  const tags = new Set();
+  for (let i = 0; i < 20; i++) tags.add(armDir('exp' + i, 'A'));
+  assert.equal(tags.size, 20, '20 个不同实验名应得 20 个不同目录');
+});
+
+// ---------- 起点可比性（工作区脏 = 快照不含本次改动） ----------
+
+test('checkWorktreeSnapshot: 脏工作区要报未提交改动数', async () => {
+  const r = await checkWorktreeSnapshot('/Users/fanchao/Code/agent_brain_sync');
+  assert.equal(typeof r.uncommitted, 'boolean');
+  assert.equal(typeof r.n, 'number');
+  // 本仓当前就是脏的（有未提交文件）—— 故这里应报 true；不是则说明 git 读取路径变了
+  assert.ok(r.uncommitted, '本仓工作区当前有未提交改动，应报 true');
+  assert.ok(r.n > 0);
+});
+
+test('checkWorktreeSnapshot: 非 git 目录不炸（返回 unknown）', async () => {
+  const r = await checkWorktreeSnapshot('/tmp');
+  assert.equal(r.uncommitted, false, '读不到 git 状态时不该误报"有改动"');
+  assert.ok(r.unknown, '应标记为 unknown，让调用方知道这是"读不到"而非"很干净"');
 });

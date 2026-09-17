@@ -567,8 +567,8 @@ async function main() {
           console.log(await cmdAbGrade({ name: opts.name, cmd: opts.cmd }));
         } else if (sub === 'check') {
           const p = opts._[1] || opts.task;
-          if (!p) throw new Error('用法: abs ab check <题面路径>');
-          console.log(await cmdAbCheck({ taskPath: p }));
+          if (!p) throw new Error('用法: abs ab check <题面路径> [--name X]');
+          console.log(await cmdAbCheck({ taskPath: p, name: opts.name }));
         } else if (sub === 'prompt') {
           const name = opts.name || opts._[1];
           const arm = (opts._[2] || '').toUpperCase();
@@ -581,7 +581,7 @@ async function main() {
             'abs ab —— 对照实验台（搭台 + 判定，不起 agent）\n\n' +
             '  abs ab init --task <题面路径> [--name X]   建 A/B 两组 + 查题面泄题\n' +
             '  abs ab grade --name X [--cmd "命令"]       对两组跑同一判定物，出对照表\n' +
-            '  abs ab check <题面路径>                    只查泄题\n\n' +
+            '  abs ab check <题面路径> [--name X]       查泄题 + 判据可比性（给 name 时）\n\n' +
             '边界: 它不起 agent（agent 由你或宿主工具起），也不替你做语义判断。',
           );
         }

@@ -39,6 +39,7 @@
 - [[opencode-inject-channel-verdict]] — op​encode 注入通道判定: promptAsync(204)/prompt(200)/command(200) 均能唤醒 idle session; tui.* 假成功不唤醒; "零 nudge"真因是 gate 非通道
 - [[summary-truncation-hidden-cause]] — 散文截断是「摘要读起来抽象」的隐形根因且自我掩盖: 先查写入侧(硬切率 34/85 即确诊), 别去调 prompt; 修法须收口在一处
 - [[symbol-reference-needs-real-run]] — 引用新符号/判"等价"/新功能测试, 验证必须真跑到: node --check 查不出未导入标识符; 判等价只测恒真式不算验证(删 resolveProjectDir 回退分支即此坑); 新测试要跑破坏验证, 不红=没盖到
+- [[vacuous-test-passes-on-broken-code]] — 空测试: 断言恒真(如断言整个路径不等, 而路径里的 A/B 段已保证不等), 回退修复照样全绿; 检出只能靠破坏验证(回退到 bug 的真实旧实现看是否变红)
 - [[guard-blocks-noninteractive-callers]] — 加前置守卫前先问「谁在非交互地调我」: hook/CI 调的内部命令一律放行, 否则守卫失效是静默的(报错被吞); 必配一条「hook 路径不被拦」的测试
 - [[index-row-not-attribution]] — index 行是指针不是记录: 塞作者名会从"创建者"漂成"最后改的人"; 归因只写页 frontmatter, 要在读取侧展示
 - [[hook-throttle-alignment]] — hook 节流三种静默失效: 状态跨会话不重置 / 判据用代理信号(note 也写 log) / 素材不清空; 测试必须成对跑
@@ -53,6 +54,7 @@
 - [[audit-claims-verify-before-fix]] — 审计清单也是待证证据：逐条最小探针确证后再改
 - [[self-reported-reasoning-is-post-hoc]] — 让模型自述思考层≠真思考：实测是知答案后编陪跑
 
+- [[vacuous-test-passes-on-broken-code]] — 空测试：恒真断言，破坏代码也全绿
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 - [[fanchao]] — 使用者；技术栈 / 特点·工作习惯 / 名下踩过的坑
@@ -60,11 +62,12 @@
 
 ## Sources
 - [[2026-09-17-对照实验实测-2026-09-16-abs]] — 对照实验实测(2026-09-16): abs 经验确实被读到并改变行为, 但增益集中在'现场验证不出来+失败无信号+错误需求'三类知识。T1 有效对照:…
-- [[2026-09-17-做关键词排序-queryhint]] — 做关键词排序/queryHint 时想靠「文档频率(df)」或「命中位置」判别主题词 —— 两条路都实测否证。①df 阈值不可解: cli 命中 13/30…
+- [[2026-09-17-做关键词排序-queryhint]] — queryHint 三条实测: CLI 被大写剥离规则挡在词表外(故 df 重叠论证不成立, 前版已作废) / df 阈值 T=11~15 不起作用 / 剔高频词后 top3 仍噪音; 修复方向未定
 ## Syntheses
 
 ## Sessions
 - [[log-2026-09-16]] — 会话：修复 abs serve 端口写死（默认 7777→0 系统分配），两项目可同时开服务；含 abs note 重复页自坑
+- [[log-2026-09-17]] — 会话：更正 queryHint 错误结论(cli 被大写剥离规则挡住论证不成立) + abs ab 补判据可比性自检 + 修 arm 后缀碰撞；沉淀"空测试"概念
 - [[log-2026-09-12]] — 2026-09-12（任务归档）
 - [[log-2026-09-09]] — 2026-09-09（任务归档）
 - [[log-2026-09-15]] — 会话：fnos 安装失败定位为半升级（旧代码1.8.2 + 新布局1.8.3）→ 发布 1.8.4 加安装树守卫；含守卫边界与二次对账
