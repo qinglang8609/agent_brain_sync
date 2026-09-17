@@ -1,6 +1,6 @@
 ---
 name: abs-agent-brain-sync
-description: abs (agent-brain-sync) 跨会话 AI 编码记忆与任务续接。开场续接状态(abs load/MCP abs_load)，干活中任务/经验实时落盘(abs_task/abs_note)，需要收尾时才走收尾循环。解决会话无状态：经验/进度/坑碎片化、重开失忆。遇 bug 排查时配合挂载 bug-hunter skill。
+description: abs (agent-brain-sync) 跨会话 AI 编码记忆与任务续接。开场续接状态(abs load/MCP abs_load)，干活中任务/经验实时落盘(abs_task/abs_note)，需要收尾时才走收尾循环。解决会话无状态：经验/进度/坑碎片化、重开失忆。
 ---
 
 # abs — 跨会话记忆 (agent-brain-sync)
@@ -389,6 +389,3 @@ abs supersede <页名> --by <取代它的新页>   # 不写 --by 也行 = 单纯
 - 只读写 `.brain/` 与目标代码，不动全局配置（一次性接入除外）。
 - 只写真实发生的事实；遵守容量纪律，宁缺毋滥。
 - 双链/frontmatter/index 必须自洽 —— 坏链 = 掰断接力棒。
-- **排查 bug 时挂载 `bug-hunter` skill**（随 abs 一并安装，安装名为 `abs-bug-hunter`，位于 ~/.pi/agent/skills/abs-bug-hunter/ 等宿主对应目录）：
-  完整排查流程（列假设 → 复现 → 定位改动 → 打印 → 顺藤摸瓜 → 根因 → 验证）
-  与「给结论要明确」都在那份里。**排查方法不写在本文件**（两份维护必漂）。

@@ -279,7 +279,7 @@ describe('install opencode / pi', () => {
     const want = (await fs.readdir(join(REPO, 'skill'), { withFileTypes: true }))
       .filter((e) => e.isDirectory())
       .map((e) => e.name);
-    assert.ok(want.length >= 2, '至少应有主 skill + 附带 skill: ' + want);
+    assert.ok(want.length >= 1, 'skill/ 下至少应有一个可安装 skill: ' + want);
     for (const name of want) {
       const got = await fs.readFile(join(root, name, 'SKILL.md'), 'utf8');
       const src = await fs.readFile(join(REPO, 'skill', name, 'SKILL.md'), 'utf8');
@@ -306,6 +306,12 @@ describe('install opencode / pi', () => {
 
   // 卸载残留: 曾经只有 claude-code 删附带 skill，其余三宿主留下 abs-bug-hunter/
   test('卸载清理全部 skill，四宿主都不留残留', async () => {
+    // 2026-09-17 改：不再硬编码 abs-bug-hunter（已从仓库删除）——硬编码会把
+    // “删掉一个 skill”变成“测试挂掉”，把测试与具体 skill 清单绑死。
+    // 改为遍历 skill/ 下**实际存在**的每个 skill（与安装器同源）：以后增删都不必改本测试。
+    const names = (await fs.readdir(join(REPO, 'skill'), { withFileTypes: true }))
+      .filter((e) => e.isDirectory()).map((e) => e.name);
+    assert.ok(names.length >= 1, `skill/ 下应有可安装的 skill: ${names.join(',')}`);
     for (const [agent, root] of [
       ['claude-code', CC_CFG],
       ['codex', CODEX_CFG],
@@ -313,11 +319,15 @@ describe('install opencode / pi', () => {
       ['pi', join(sandbox, 'pi', 'agent')],
     ]) {
       await run(['install', '--agent', agent, '--yes']);
-      await fs.access(join(root, 'skills', 'abs-bug-hunter', 'SKILL.md'));
+      for (const name of names) await fs.access(join(root, 'skills', name, 'SKILL.md'));
       const r = await run(['uninstall', '--agent', agent, '--yes']);
       assert.equal(r.code, 0, `${agent}: ${r.stderr}`);
-      assert.ok(!existsSync(join(root, 'skills', 'abs-bug-hunter')), `${agent}: 卸载后不应留 abs-bug-hunter/`);
-      assert.ok(!existsSync(join(root, 'skills', 'abs-agent-brain-sync')), `${agent}: 卸载后不应留主 skill`);
+      // 全部 skill 都要清干净（含主 skill）
+      for (const name of names) {
+        assert.ok(!existsSync(join(root, 'skills', name)), `${agent}: 卸载后不应留 ${name}/`);
+      }
+      // 回归：已从仓库删除的旧 skill 不得残留在宿主目录
+      assert.ok(!existsSync(join(root, 'skills', 'abs-bug-hunter')), `${agent}: 卸载后不应留 abs-bug-hunter/（已删除）`);
     }
   });
 
