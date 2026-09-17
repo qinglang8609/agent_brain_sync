@@ -1,4 +1,6 @@
 # 🗒 Activity Log
+## [2026-09-17 12:51] [[tester]] concept | 新建概念页 guard-check-then-set-across-await
+## [2026-09-17 12:51] [[tester]] dev | 发布 v1.9.3: 修收尾注入反复打断(守卫竞态+重复注册提模块级) + 检索噪音(英文模糊恒真加hasCJK门/hint按主题强度排序) + hook幂等窗口被分钟边界截断(60s实际最坏1s); 删 abs-bug-hunter skill(侵入性太强, 备份~/.abs/backup/); index/todo带到rebuildStructure定点消除每次load假脏。推 git(4daa929+tag v1.9.3) + npm publish; 按发布包实测 abs --version=1.9.3、shasum一致、skill/ 只剩主 skill、hook幂等已是修复版、teardownInFlight 在位
 ## [2026-09-17 11:32] [[tester]] dev | 发布 v1.9.2: 删 abs ab 对照实验台与 abs serve; 推 git(5296036+tag v1.9.2) + npm publish(registry shasum 与本地一致); 按发布包实测 abs --version=1.9.2、已删命令报未知命令
 ## [2026-09-17 11:23] [[tester]] dev | 清理实验台: 删 /tmp 下 10 项(含 absab-作废/cwd1/reallint/v2/abtest/expb/abs-exp), 约14MB。注意: abs-exp/REPORT.md 等 EXP-BLANK-DIR 四轮实验的原始数据随之删除, 现仅存 .brain/ 摘录(见 todo EXP-BLANK-DIR 那条 Done 与 2026-09-16 快照)。要复现需重搭台
 ## [2026-09-17 11:19] [[tester]] dev | 删除 abs ab 对照实验台与 abs serve: 前者跑不通完整实验(需人起 agent, 三次尝试均因判据不可比失败), 后者无测试覆盖且未使用。删 src/ab.js+src/serve.js+test/ab.test.js(24测试)+bin/abs.js 入口+FLAG_SPEC+权限条目; 386测试全绿

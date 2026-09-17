@@ -1,9 +1,8 @@
 # 📋 Todo Board
-
 ## Todo
 ## Done
-### 2026-09-17
 
+### 2026-09-17
 - [x] hook-idempotent-minute-window [[tester]] — test/hook.test.js:98 偶发失败，定位后确认是产品缺陷非测试问题：event.sh 幂等 mark 名钉在分钟级 STAMP 上，跨分钟就换身份 → 「60s 幂等」实际最坏退化为 1s。实测复现（STAMP 2359→0000 落 2 行）。已修：mark 名只含指纹 + 时间戳写进文件内比较（拒绝 find -newermt：BSD 不认 @epoch；拒绝 -mmin：仍是分钟级）。395 测试全绿、幂等测试 10 轮 0 失败（原 1/12）。提交 8e70c4d — 已修并提交 8e70c4d：幂等 mark 改为「只含 payload 指纹 + 时间戳写在文件内」，窗口=真 60s，与分钟边界无关；清理逻辑不再按分钟批量删（那会在跨分钟时误删刚写的 mark）。破坏验证：退回旧方案 → 两条新测试均 fail。自身踩坑：新写的第一版测试是空测试（只改 mark 内容，而旧代码不读内容）—— 破坏验证拓出来了，改为断言身份方案才真打到缺陷 【落地】 (完成 2026-09-17)
 - [x] load-dirties-index [[tester]] — abs load 每次都会修改 .brain/index.md（无条件写入）: checkBrainShape 的 rebuildStructure 在 ## Entities 前插一个空行，生成结果与磁盘不同 → 每次 load 都把 index.md 弄脏。可复现（git checkout 后跑一次 load，diff 立即出现）。危害: 干净的 git 树被判脏、可能被误提交 — 根因与我当初登记的不同（重要更正）：不是 rebuildStructure 的代码 bug。生成器的定点是「有内容的分区前插空行、空分区紧贴」，且幂等（跑两次第二次 changed=[]）。真因是提交的 .brain/index.md 被手改偏离了定点（## Entities 前漏空行、空 ## Syntheses 前又多一个）→ 首个 load 写回一次。修法：不动代码，把两个文件带到定点后提交。验证：全新 checkout 后连跑 3 次 load，git status 均 0 脏文件（原为每次 1 行）。教训：我第一版改成「只第一个分区插空行」是错的（差异 20→57 行），靠实测数据推翻；当时若直接提交就会把真定点改坏 【落地】 (完成 2026-09-17)
 - [x] teardown-nudge-race [[tester]] — 收尾注入反复打断主任务。证据: ~/.abs/log/hooks.log 同会话 5 分钟内 6 次 teardown-nudge（注释写每会话一次），全日志 55 次。根因一: hooks/abs.pi.ts:155 守卫是跨 await 的检查-后置位（teardownNudged=true 隔了 logHook/loggedToday 两个 await）→ 并发 agent_end 全先过检查再各自置位；已复刻复现（5 次触发→注入 5 次）。根因二: 扩展重复注册（session_start 11 分钟内 8 次，00:07:58 连续 3 次）→ 闭包守卫不共享，同进程多实例各有自己的 flag。附因: agent_end 不是会话结束（docs/extensions.md:569 明说），且 loggedToday 判据反向（今天没 abs log→第一次就打扰；已 log→全沉默）。修法待定 — 两个根因均修并实测：①守卫跨 await 竞态（并发 5 次→注入 5 次，已复现）→ 进函数首动作置 teardownInFlight；②扩展重复注册（session_start 11 分 8 次）→ 状态提到模块级。393 测试全绿 + 两条回归测试均做破坏验证。提交 5c148fc 并已安装到 ~/.pi/agent/extensions/abs.ts（已核对实际生效） 【落地】 (完成 2026-09-17)
@@ -18,7 +17,6 @@
   ↳ 断点: 已破坏验证确认: 把 event.sh 的 date 格式输出删成 printf '%s %s' 后, 跑 test/hook.test.js → 5 pass 0 fail (全绿)。缺口是真的。根因: 断言只 log.includes('SessionStart'), 不锁格式
 
 ### 2026-09-16
-
 - [x] AUDIT-P2-SERVE-OPEN [[fanchao]] — --open 死代码（FLAG_SPEC 无 open）、unref 不可达、--port abc NaN 不校验 【落地】 (完成 2026-09-16)
 - [x] AUDIT-P2-ZWSP [[fanchao]] — help/update 用户可见输出含 U+200B，复制即坏。清洗输出侧字符串 + 守卫测试扩到输出 【落地】 (完成 2026-09-16)
 - [x] AUDIT-P2-OC-RESET [[fanchao]] — opencode 插件 nudged/wroteFiles/idleSeen 不随 session.created 重置，同进程后续会话全部静默。重置+行为测试 【落地】 (完成 2026-09-16)
@@ -37,7 +35,6 @@
 - [x] fanout 三层 n 分叉思考引擎 [[fanchao]] 【落地】 (完成 2026-09-16)
 
 ### 2026-09-15
-
 - [x] SOURCES-DIGEST-DH [[fanchao]] — desktop_herdr 20 个 source 提炼：8 进度日志合并 + 10 坑提炼进 5 个新 concept + 2 已覆盖 【落地】 (完成 2026-09-15)
 - [x] NO-TAIL-44 [[fanchao]] — 补 44 页验证段：~/Docker 11 + codebuddy 10 + zj_shop 16 + desktop_herdr 3 + 家目录 4 【落地】 (完成 2026-09-15)
 - [x] CONCEPT-CMD [[fanchao]] — 新增 abs concept 命令（概念页骨架，只给结构不给内容）+ NO-TAIL 判据（放宽认动作词、收紧识破占位） 【落地】 (完成 2026-09-15)

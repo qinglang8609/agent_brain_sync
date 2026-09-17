@@ -51,3 +51,9 @@ created: 2026-09-13
 ## 出处
 
 2026-09-13 修。三个 bug 都属「静默失效」：不报错、不留痕、只能靠用户察觉产出缺失。
+
+## 关联连接
+- [[guard-check-then-set-across-await]] — 同族的第四个漏：前三条是「判据/重置」错，这条是「并发」错（检查与置位跨 await → 每会话注入 6 次）
+- [[self-triggering-hook-loop]] — 自触发循环的刹车设计（节流器不允许有跳过分支）
+- [[teardown-automation]] — 收尾自动化总则（各宿主触发点 + 注入手段）
+- [[AgentBrainSync]] — 项目实体页

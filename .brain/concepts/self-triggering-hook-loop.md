@@ -78,6 +78,7 @@ const mark = join(absLogDir(), `teardown-${key}.mark`);   // absLogDir() = ABS_L
 
 ## 关联连接
 - [[teardown-automation]] — 收尾自动化总则（各宿主每轮结束事件 + 注入手段）
+- [[guard-check-then-set-across-await]] — 刹车写成「检查后 await 才置位」时，并发会一起冲过去（实测每会话注入 6 次）
 - [[host-plugin-silent-failure]] — 插件三坑（可观测性/签名/导出）
 - [[opencode-inject-channel-verdict]] — opencode 四通道唤醒判定表
 - [[AgentBrainSync]] — 项目实体页
