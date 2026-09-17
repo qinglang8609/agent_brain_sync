@@ -3,7 +3,6 @@
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
 import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede } from '../src/store.js';
-import { cmdAbInit, cmdAbGrade, cmdAbCheck, cmdAbPrompt } from '../src/ab.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
@@ -85,13 +84,6 @@ const FLAG_SPEC = {
   'by': { type: 'string' },
   'all': { type: 'boolean' },
   'keep-days': { type: 'string' },
-  // ab 用（对照实验台）。必须声明 —— 不在 FLAG_SPEC 的 `--cmd "x"` 会被静默当布尔 true，
-  // 正文进位置参数（同 --title 那个坑）。
-  'task': { type: 'string' },
-  'name': { type: 'string' },
-  'cmd': { type: 'string' },
-  // ab init: 覆盖已存在的同名实验（默认拒绝，防抹掉正在跑的 agent 工作目录）
-  'force': { type: 'boolean' },
   'help': { type: 'boolean' },
   'dry-run': { type: 'boolean' },
   'full': { type: 'boolean' },
@@ -99,13 +91,10 @@ const FLAG_SPEC = {
   'repair': { type: 'boolean' },
   'no-mcp': { type: 'boolean' },
   'no-skill': { type: 'boolean' },
-  // serve 用: --no-open 不自动开浏览器（open 命令仅 macOS）。坑: 曾漏声明 → serve 判
-  // opts.open !== false 恒真, --no-open 接不上。
-  'no-open': { type: 'boolean' },
 };
 
 /** 已被"规范键"接管的 raw flag：不再原样漏出（见 parseArgv 返回处的白名单注释）。 */
-const KNOWN_RAW = new Set(['keep-days', 'dry-run', 'no-mcp', 'no-skill', 'no-open']);
+const KNOWN_RAW = new Set(['keep-days', 'dry-run', 'no-mcp', 'no-skill']);
 
 function parseArgv(args) {
   // 坑: parseArgs 会把**任何** `-` 开头的 token 当选项，连正文一起吃：
@@ -178,7 +167,6 @@ function parseArgv(args) {
     dryRun: !!values['dry-run'],
     mcp: !values['no-mcp'],
     skill: !values['no-skill'],
-    open: !values['no-open'],
   };
   // 未声明的 `--unknown` 静默收下（旧行为：不进位置参数，也不报错）。
   // 这条保留是因为 rejectExtra 只看位置参数 —— 把未知 flag 放进去会改成报错，
@@ -208,7 +196,6 @@ const usage = `abs — 跨会话记忆工具（.brain/ 图谱）
   supersede <页名> [--by 页] 标经验已失效
   lint                       图谱体检 (死链/超限)
   rule [add "一句话"]        硬规则读写
-  serve [--port N] [--no-open]  浏览 .brain/ (仅本机; 端口默认自动选)
   install|uninstall [--agent <宿主>] [--no-mcp] [--no-skill]
   update                     升级并刷新 hook/skill
   config [set user <名字>]   使用者姓名 (写操作需先设置)
@@ -274,21 +261,6 @@ const subUsage = {
     '说明:',
     '  • 只删 abs 自己装的东西，保留你其它的 hook / MCP / 配置字段',
     '  • 配置文件无法解析时会跳过该文件（不覆盖）但仍清理 abs 的脚本与 skill',
-  ].join('\n'),
-  serve: [
-    'abs serve — 把 .brain/ 挂成只读网页（左目录树 + 右正文 + [[双链]]跳转）',
-    '',
-    '用法:',
-    '  abs serve [--port N] [--no-open] [--dir <项目根>]',
-    '',
-    '参数:',
-    '  --port N      端口。默认 0 = 自动选空闲端口（多项目可同时开各的）',
-    '  --no-open     不自动打开浏览器（open 仅 macOS）',
-    '  --dir <路径>  服务别的项目的 .brain/',
-    '',
-    '说明:',
-    '  • 只读、仅绑定 127.0.0.1，外部访问不了',
-    '  • 主题/明暗切换在网页右上角；最后一页会记住',
   ].join('\n'),
   todo: [
     'abs todo — 任务看板（Todo / Done 两区；未完成都带行首状态标记）',
@@ -401,7 +373,7 @@ async function main() {
     const opts = parseArgv(rest);
     if (RENAMED[cmd]) throw new Error(RENAMED[cmd]());
     // 子命令级 --help: 有用法页的命令在此一处拦截（此前只在 install/uninstall 分支里判,
-    // 其余命令的 --help 被忽略 —— serve --help 曾直接把服务起起来挂住终端）。
+    // 其余命令的 --help 被忽略 —— 曾出现子命令 --help 直接执行动作、挂住终端）。
     if (opts.help && subUsage[cmd] && !(cmd === 'todo' && opts._.length)) {
       console.log(subUsage[cmd]);
     } else {
@@ -435,32 +407,6 @@ async function main() {
         rejectExtra(opts._, 'abs status');
         console.log(await cmdStatus({ dir: opts.dir }));
         break;
-      // abs serve —— 把 .brain/ 挂成只读网页（浏览器无法自己列目录，所以必须有服务端）
-      case 'serve': {
-        rejectExtra(opts._, 'abs serve');
-        const { serve } = await import('../src/serve.js');
-        const { requireBrain, brainPath } = await import('../src/index.js');
-        // 坑(2026-09-16 实测): requireBrain 返回的是【项目根】, .brain/ 在它下面 ——
-        // 直接把项目根当服务根会扫到 node_modules。必须走 brainPath()。
-        const root = brainPath(await requireBrain(opts.dir || process.cwd()));
-        // 默认 0 = 让系统挑空闲端口：固定 7777 第二个项目就起不来了。
-        // --port abc 曾静默变 NaN → server listen 报怪错；在此拦下。
-        const port = opts.port ? Number(opts.port) : 0;
-        if (!Number.isInteger(port) || port < 0 || port > 65535) {
-          throw new Error(`✗ --port 需为 0-65535 的整数（收到 "${opts.port}"）。0 = 自动选空闲端口`);
-        }
-        // --no-open 显式声明在 FLAG_SPEC（type:boolean），parseArgv 归一化为 open:false。
-        // 坑(2026-09-16 审计#6): 曾判 opts.open !== false 但 FLAG_SPEC 无 open →
-        // 条件恒真且 --no-open 接不上（open 命令也仅 macOS）。
-        const { url, server } = await serve({ root, port });
-        console.log(`📖 abs serve → ${url}`);
-        console.log(`   根: ${root}`);
-        console.log('   (只读，仅本机可访；Ctrl+C 停止)');
-        if (opts.open) runCmd('open', [url]);
-        // 不断开进程：服务要活着才有用
-        await new Promise(() => {});
-        break;
-      }
       // abs todo —— 无子命令=看板；带子命令=任务写操作
       case 'todo': {
         const [sub, id, ...rest2] = opts._;
@@ -553,38 +499,6 @@ async function main() {
       case 'lint': {
         rejectExtra(opts._, 'abs lint');
         console.log(await cmdLint({ dir: opts.dir }));
-        break;
-      }
-      // 对照实验台：搭台 + 判定（不起 agent —— 见 src/ab.js 顶部边界说明）
-      case 'ab': {
-        const sub = opts._[0];
-        if (sub === 'init') {
-          rejectExtra(opts._.slice(1), 'abs ab init --task <题面路径> [--name X]');
-          if (!opts.task) throw new Error('用法: abs ab init --task <题面路径> [--name X]');
-          console.log(await cmdAbInit({ root: opts.dir, name: opts.name, taskPath: opts.task, force: opts.force }));
-        } else if (sub === 'grade') {
-          rejectExtra(opts._.slice(1), 'abs ab grade --name X [--cmd "判定命令"]');
-          console.log(await cmdAbGrade({ name: opts.name, cmd: opts.cmd }));
-        } else if (sub === 'check') {
-          const p = opts._[1] || opts.task;
-          if (!p) throw new Error('用法: abs ab check <题面路径> [--name X]');
-          console.log(await cmdAbCheck({ taskPath: p, name: opts.name }));
-        } else if (sub === 'prompt') {
-          const name = opts.name || opts._[1];
-          const arm = (opts._[2] || '').toUpperCase();
-          if (!name || !['A', 'B'].includes(arm)) {
-            throw new Error('用法: abs ab prompt <实验名> <A|B>');
-          }
-          console.log(await cmdAbPrompt({ name, arm }));
-        } else {
-          console.log(
-            'abs ab —— 对照实验台（搭台 + 判定，不起 agent）\n\n' +
-            '  abs ab init --task <题面路径> [--name X]   建 A/B 两组 + 查题面泄题\n' +
-            '  abs ab grade --name X [--cmd "命令"]       对两组跑同一判定物，出对照表\n' +
-            '  abs ab check <题面路径> [--name X]       查泄题 + 判据可比性（给 name 时）\n\n' +
-            '边界: 它不起 agent（agent 由你或宿主工具起），也不替你做语义判断。',
-          );
-        }
         break;
       }
       // 内部命令（hook 专用，不出现在 help）：Stop 时机械快照未完成任务
