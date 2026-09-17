@@ -55,6 +55,7 @@
 - [[self-reported-reasoning-is-post-hoc]] — 让模型自述思考层≠真思考：实测是知答案后编陪跑
 
 - [[vacuous-test-passes-on-broken-code]] — 空测试：恒真断言，破坏代码也全绿
+
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 - [[fanchao]] — 使用者；技术栈 / 特点·工作习惯 / 名下踩过的坑
