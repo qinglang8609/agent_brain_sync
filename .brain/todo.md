@@ -1,8 +1,12 @@
 # 📋 Todo Board
-## Todo
-## Done
 
+## Todo
+- [ ] [进行中] load-dirties-index [[tester]] — abs load 每次都会修改 .brain/index.md（无条件写入）: checkBrainShape 的 rebuildStructure 在 ## Entities 前插一个空行，生成结果与磁盘不同 → 每次 load 都把 index.md 弄脏。可复现（git checkout 后跑一次 load，diff 立即出现）。危害: 干净的 git 树被判脏、可能被误提交 (认领 2026-09-17)
+## Done
 ### 2026-09-17
+
+- [x] queryhint-noise [[tester]] — 修 queryHint/rankPage 噪音：英文 2-gram 模糊兜底使 ratio 恒为 1（实测 relevant 30 命中全 fuzzy score10、页面 0 命中）；拟只在中文用模糊。尺子=tag/页名级强命中（hook 6/todo 4/lock 2 vs relevant 0） — 两处缺陷均修复且实测验证：①rankPage 的 2-gram 模糊兜底对英文恒真（ratio 恒=1）→ 加 hasCJK 门，relevant 30→0；②queryHint 取词无质量信号 → 新增 topicStrength 按 tag/页名排序 + 剔0 + 剥掉任务行记号，load 提示 queryhint-noise tester 进行 → hook todo 实测。391 测试全绿、lint 0、三处破坏验证均能抓。提交 415008d 【落地】 (完成 2026-09-17)
+  ↳ 断点: 第2项（hint 取词）已完成。新增 topicStrength（tag/页名级命中数=尺子）+ queryHint 按它排序、强度0剔除、分词前剥掉任务行的 <id>/[[作者]] 记号。实测 load 提示从 queryhint-noise tester 进行 → hook todo 实测（全是 [tag:] 级真命中）。391 测试全绿 + lint 0 + 三处破坏验证均确认能抓（去排序→tester,hook；去剥记号→[[作者]] 泄漏）。遗留新发现: abs load 每次都会脏化 .brain/index.md（checkBrainShape 的 rebuildStructure 在 ## Entities 前插空行），可复现，已单独登记
 - [x] EXP-BLANK-DIR [[fanchao]] — 对照实验:空白目录测 .brain/ 是否真提升准确度。设计:同任务两轮(带/不带图谱)。关键约束:坑必须只在 .brain/ 里,代码里不能有答案 — 四轮对照实验完成: 未测出 .brain/ 的提升 —— 三轮因题面泄题失效(明写环境/提示陷阱/提示验证入口), 第四轮 abs ab 测出 B组3/4 vs A组2/4 但 n=1。唯一稳定发现: 乙组3/3主动引用 .brain/, 甲组0/3。实验过程暴露 abs ab 工具5个bug(已修) + 一个真缺口(test/hook.test.js未锁时间戳, 已修)。结论: 该实验设计无法证明 abs 有效性, 要真验证需另设计 【仅方案】 (完成 2026-09-17)
   ↳ 断点: 第三轮+实验B进行中。前三轮结论: 题面必泄题(3/3), 两组均避开。改用方案B: 测「读vs不读」而非「正确率」。台子: /tmp/expb/{A轮,B轮}(本仓HEAD快照, 仅差.brain/)。任务=给hooks/event.sh日志加时间戳且要真生效。判据(跑前定死): 汇报里 S1多副本/S2全局副本/S3重启进程/S4绝对路径验证 四项命中数
 - [x] AB-REAL1 [[tester]] — abs ab 首次真实用例: 给 hooks/event.sh 日志加 cwd= 字段 + 要求真生效。题面首次不泄题(abs ab check 通过)。台: /tmp/absab/real1/{A轮,B轮}。判据跑前定死: 机械=grep cwd= hooks/event.sh; 语义S1-S4记四项。目的: 验证 abs ab 工具本身是否好用 — abs ab 首次真实使用: 暴露并修掉5个bug (①A轮自带.brain静默失效 ②非仓库目录误导性报错 ③两组并排B组diff到答案 ④init覆盖正在跑的实验 ⑤只约束读不约束写→B组写穿~/.abs/hooks/ 7个真实文件)。⑤最重: 任务需求'让它真正生效'本身在推agent越界, 故边界段必须显式禁止写工作目录之外(~/.abs等)+给替代做法。已按用户指示abs install正式恢复环境、作废v2数据(隔离保留)、加写保护。测试405全绿(+16 ab测试), 破坏验证覆盖①②③④⑤ 【落地】 (完成 2026-09-17)
@@ -12,6 +16,7 @@
   ↳ 断点: 已破坏验证确认: 把 event.sh 的 date 格式输出删成 printf '%s %s' 后, 跑 test/hook.test.js → 5 pass 0 fail (全绿)。缺口是真的。根因: 断言只 log.includes('SessionStart'), 不锁格式
 
 ### 2026-09-16
+
 - [x] AUDIT-P2-SERVE-OPEN [[fanchao]] — --open 死代码（FLAG_SPEC 无 open）、unref 不可达、--port abc NaN 不校验 【落地】 (完成 2026-09-16)
 - [x] AUDIT-P2-ZWSP [[fanchao]] — help/update 用户可见输出含 U+200B，复制即坏。清洗输出侧字符串 + 守卫测试扩到输出 【落地】 (完成 2026-09-16)
 - [x] AUDIT-P2-OC-RESET [[fanchao]] — opencode 插件 nudged/wroteFiles/idleSeen 不随 session.created 重置，同进程后续会话全部静默。重置+行为测试 【落地】 (完成 2026-09-16)
@@ -30,6 +35,7 @@
 - [x] fanout 三层 n 分叉思考引擎 [[fanchao]] 【落地】 (完成 2026-09-16)
 
 ### 2026-09-15
+
 - [x] SOURCES-DIGEST-DH [[fanchao]] — desktop_herdr 20 个 source 提炼：8 进度日志合并 + 10 坑提炼进 5 个新 concept + 2 已覆盖 【落地】 (完成 2026-09-15)
 - [x] NO-TAIL-44 [[fanchao]] — 补 44 页验证段：~/Docker 11 + codebuddy 10 + zj_shop 16 + desktop_herdr 3 + 家目录 4 【落地】 (完成 2026-09-15)
 - [x] CONCEPT-CMD [[fanchao]] — 新增 abs concept 命令（概念页骨架，只给结构不给内容）+ NO-TAIL 判据（放宽认动作词、收紧识破占位） 【落地】 (完成 2026-09-15)
