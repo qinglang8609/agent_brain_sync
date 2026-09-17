@@ -106,6 +106,54 @@ describe('hook: 事件落技术日志', () => {
     assert.equal(hits.length, 1, `幂等应只落 1 行, 实际 ${hits.length}:\n${log}`);
   });
 
+  test('幂等身份不得含分钟时间：跨分钟仍能认出同一 payload', async () => {
+    // 回归 2026-09-17 实测定根因：旧实现把 mark 名钉在 STAMP=$(date +%Y%m%d%H%M)（分钟级）上，
+    // 于是两次调用只要**跨过分钟边界**，mark 路径就不同 → 幂等失效 → 落 2 行。
+    // 文档与测试都承诺「60s 内幂等」，而实际窗口最坏退化为 **1 秒**。
+    // 这是 `同一 payload 60s 内幂等` 那条偶发失败的真因（不是测试写得不好）。
+    //
+    // 为何不直接等一分钟：测试不该等 60s。
+    // 为何不能只改 mark 内容：旧代码**不读内容**（身份在文件名里），改了等于没改，测试会假通过
+    //   （实测确认：只改内容时旧代码下本测试仍全绿）——故这里改断**身份方案本身**。
+    // 判据：同一 payload 的 mark 身份必须与墙上时间无关，否则跨分钟必重复。
+    const script = await renderHook('Stop');
+    const payload = '{"reason":"cross-minute"}';
+    await runHook(script, payload);
+    await new Promise((res) => setTimeout(res, 300));
+    const marks = (await fs.readdir(MARK_DIR)).filter((f) => f.startsWith('abs-hook-'));
+    assert.ok(marks.length >= 1, `应有 mark: ${marks.join(',')}`);
+    // 命门断言：mark 名不得包含分钟级时间戳。
+    // 旧代码名形如 abs-hook-<finger>-<YYYYMMDDHHmm>.mark → 每过一分钟就换一个身份。
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    const minuteStamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}`;
+    assert.ok(!marks.some((f) => f.includes(minuteStamp)),
+      `mark 身份不得含分钟戳（否则跨分钟破坏 60s 幂等）: ${marks.join(',')}`);
+    // 且身份必须只由 payload 指纹决定：同一 payload 反复调用应始终指向同一个 mark
+    const before = marks.slice().sort().join(',');
+    await runHook(script, payload);
+    await new Promise((res) => setTimeout(res, 300));
+    const after = (await fs.readdir(MARK_DIR)).filter((f) => f.startsWith('abs-hook-')).sort().join(',');
+    assert.equal(after, before, `同一 payload 的 mark 身份应稳定不变: ${before} → ${after}`);
+  });
+
+  test('超过 60s 的 mark 允许再记（窗口不能无限大）', async () => {
+    // 与上一条成对：只验“不重复”会漏掉“永远不再记”的反向失效。
+    const script = await renderHook('Stop');
+    const payload = '{"reason":"expired"}';
+    await runHook(script, payload);
+    await new Promise((res) => setTimeout(res, 300));
+    const marks = (await fs.readdir(MARK_DIR)).filter((f) => f.startsWith('abs-hook-'));
+    for (const m of marks) {
+      await fs.writeFile(join(MARK_DIR, m), String(Math.floor(Date.now() / 1000) - 61));
+    }
+    await runHook(script, payload);
+    await new Promise((res) => setTimeout(res, 300));
+    const log = await fs.readFile(LOG_FILE(), 'utf8');
+    const hits = log.split('\n').filter((l) => l.includes(payload) && l.includes('Stop')).length;
+    assert.equal(hits, 2, `超龄后应可再记: ${hits} 行\n${log}`);
+  });
+
   test('不同 payload 各落一行', async () => {
     const script = await renderHook('UserPromptSubmit');
     await runHook(script, '{"text":"prompt-A"}');

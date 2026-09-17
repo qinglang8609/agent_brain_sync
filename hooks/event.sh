@@ -31,19 +31,36 @@ fi
 (
   # 幂等: 同一 payload 指纹在 60s 内只落一行 (防重复触发)。
   # mark 目录可经 ABS_MARK_DIR 覆盖(默认 /tmp)——测试注入沙盒目录隔离, 避免与真实/并发残留互扰。
+  #
+  # 坑（2026-09-17 实测定根因）：原实现把 mark 名钉在 STAMP=$(date +%Y%m%d%H%M)（分钟级）上，
+  # 而文档/测试约定的是【60s 窗口】。两者不等价：两次调用只要**跨过分钟边界**，
+  # STAMP 不同 → mark 路径不同 → [ -e ] 不命中 → 各写一行，实际窗口最坏缩到 1 秒。
+  # 实测复现（同 payload、STAMP 从 2359 跳到 0000）→ 落 2 行，违反 60s 承诺。
+  # 也是 test/hook.test.js「同一 payload 60s 内幂等」偶发失败的真因（不是测试写得不好）。
+  #
+  # 修法：mark 名**只含指纹**（与时间无关），幂等判据改看**写在 mark 里的时间戳**。
+  # 为何不靠 find -newermt：BSD find(macOS) 不认 `@epoch` 格式（实测报
+  #   `Can't parse date/time: @1789619554`）→ 守卫恒不命中 → 幂等彻底失效。
+  # 也不用 -mmin：只能到分钟级，正是原 bug 的同类误差。
+  # 把时间戳写进文件、用 shell 纯数字比 —— 不依赖任何平台工具的日期解析。
   FINGER=$(printf '%s' "$PAYLOAD" | cksum | cut -d' ' -f1)
-  STAMP=$(date +%Y%m%d%H%M)
   MARK_DIR="${ABS_MARK_DIR:-/tmp}"
   mkdir -p "$MARK_DIR" 2>/dev/null
-  MARK="$MARK_DIR/abs-hook-${FINGER}-${STAMP}.mark"
-  [ -e "$MARK" ] && exit 0
-  : > "$MARK" 2>/dev/null
-  # mark 只增不减: STAMP 是分钟级 → 每分钟一批, 永不回收。实测堆了 361 个。
-  # 幂等窗口只 60s, 非本分钟的 mark 不可能再命中 → 清掉。
-  # 注意: 同一分钟内不同 payload 有不同 FINGER, 它们各自合法 —— 只按 STAMP 清, 不按 FINGER。
+  MARK="$MARK_DIR/abs-hook-${FINGER}.mark"
+  NOW=$(date +%s)
+  PREV=$(cat "$MARK" 2>/dev/null)
+  case "$PREV" in ''|*[!0-9]*) PREV=0 ;; esac
+  # 60s 内已记过 → 幂等退出。窗口是真 60 秒，与分钟边界无关。
+  [ "$PREV" -gt 0 ] && [ "$((NOW - PREV))" -lt 60 ] && exit 0
+  printf '%s\n' "$NOW" > "$MARK" 2>/dev/null
+  # 清理: 只删**超龄**(>60s)的 mark。
+  # 不按分钟批量删 —— 那会在跨分钟时误删刚写的 mark（旧 bug 的帮凶）。
   for old in "$MARK_DIR"/abs-hook-*.mark; do
     [ -e "$old" ] || continue
-    case "$old" in *-"$STAMP".mark) continue ;; esac
+    [ "$old" = "$MARK" ] && continue
+    OV=$(cat "$old" 2>/dev/null)
+    case "$OV" in ''|*[!0-9]*) OV=0 ;; esac
+    [ "$OV" -gt 0 ] && [ "$((NOW - OV))" -lt 60 ] && continue
     rm -f "$old" 2>/dev/null
   done
 

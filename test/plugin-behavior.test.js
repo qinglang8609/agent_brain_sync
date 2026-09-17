@@ -605,15 +605,30 @@ describe('CC/Co​dex Stop hook 收尾注入 (decision:block)', () => {
     assert.equal(r2, '{}', '不同 tmp 的同名项目应被同一 key 节流');
 
     const marks = (await fs.readdir(markDir).catch(() => [])).filter((f) => f.endsWith('.mark'));
-    // 同一分钟内不同 payload → 不同 FINGER, 各自合法 (幂等只保证"同一 payload 不重复")
-    // 关键: 不得残留【非本分钟】的 mark。
+    // 不同 payload → 不同 FINGER, 各自合法 (幂等只保证"同一 payload 不重复")。
+    //
+    // 2026-09-17 改：旧断言查"mark 名里含本分钟 STAMP"，那是在断言**旧命名方案本身**。
+    // 命名前缀时间戳正是 bug 根源（跨分钟→mark 路径变→幂等失效，窗口从 60s 退化为 1s），
+    // 已改为"mark 名含指纹 + 内置时间戳"。故这里改断**意图**：不得堆积超龄 mark。
+    // 判据用 mark 文件内的时间戳（新方案），不依赖名字或平台日期工具。
     const hookMarks = marks.filter((f) => f.startsWith('abs-hook-'));
+    assert.ok(hookMarks.length >= 1, '本次应有 mark');
+    const nowSec = Math.floor(Date.now() / 1000);
+    const stale = [];
+    for (const f of hookMarks) {
+      const raw = (await fs.readFile(join(markDir, f), 'utf8')).trim();
+      const ts = Number(raw);
+      // 非数字（旧格式/损坏）或超龄 60s → 都算该清未清
+      if (!Number.isFinite(ts) || ts <= 0 || nowSec - ts >= 60) stale.push(`${f}(${raw})`);
+    }
+    assert.equal(stale.length, 0, `不应残留超龄 mark: ${stale.join(',')}`);
+    // 回归：本测试的命门是"跨分钟也保持幂等"，故断言 mark 名**不含分钟戳**
+    // （含了就是旧命名回来了，窗口会退化为 1s）。
     const d = new Date();
     const p = (n) => String(n).padStart(2, '0');
     const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}`;
-    const stale = hookMarks.filter((f) => !f.includes(stamp));
-    assert.equal(stale.length, 0, `不应残留非本分钟 mark: ${stale.join(',')}`);
-    assert.ok(hookMarks.length >= 1, '本分钟应有 mark');
+    assert.ok(!hookMarks.some((f) => f.includes(stamp)),
+      `mark 名不得含分钟戳（跨分钟会破坏 60s 幂等）: ${hookMarks.join(',')}`);
   });
 
   // 日志轮转: hooks.log 是 append-only 热路径, 无上限会无限增长。
