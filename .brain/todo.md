@@ -1,10 +1,10 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] load-dirties-index [[tester]] — abs load 每次都会修改 .brain/index.md（无条件写入）: checkBrainShape 的 rebuildStructure 在 ## Entities 前插一个空行，生成结果与磁盘不同 → 每次 load 都把 index.md 弄脏。可复现（git checkout 后跑一次 load，diff 立即出现）。危害: 干净的 git 树被判脏、可能被误提交 (认领 2026-09-17)
 ## Done
-
 ### 2026-09-17
+
+- [x] load-dirties-index [[tester]] — abs load 每次都会修改 .brain/index.md（无条件写入）: checkBrainShape 的 rebuildStructure 在 ## Entities 前插一个空行，生成结果与磁盘不同 → 每次 load 都把 index.md 弄脏。可复现（git checkout 后跑一次 load，diff 立即出现）。危害: 干净的 git 树被判脏、可能被误提交 — 根因与我当初登记的不同（重要更正）：不是 rebuildStructure 的代码 bug。生成器的定点是「有内容的分区前插空行、空分区紧贴」，且幂等（跑两次第二次 changed=[]）。真因是提交的 .brain/index.md 被手改偏离了定点（## Entities 前漏空行、空 ## Syntheses 前又多一个）→ 首个 load 写回一次。修法：不动代码，把两个文件带到定点后提交。验证：全新 checkout 后连跑 3 次 load，git status 均 0 脏文件（原为每次 1 行）。教训：我第一版改成「只第一个分区插空行」是错的（差异 20→57 行），靠实测数据推翻；当时若直接提交就会把真定点改坏 【落地】 (完成 2026-09-17)
 - [x] teardown-nudge-race [[tester]] — 收尾注入反复打断主任务。证据: ~/.abs/log/hooks.log 同会话 5 分钟内 6 次 teardown-nudge（注释写每会话一次），全日志 55 次。根因一: hooks/abs.pi.ts:155 守卫是跨 await 的检查-后置位（teardownNudged=true 隔了 logHook/loggedToday 两个 await）→ 并发 agent_end 全先过检查再各自置位；已复刻复现（5 次触发→注入 5 次）。根因二: 扩展重复注册（session_start 11 分钟内 8 次，00:07:58 连续 3 次）→ 闭包守卫不共享，同进程多实例各有自己的 flag。附因: agent_end 不是会话结束（docs/extensions.md:569 明说），且 loggedToday 判据反向（今天没 abs log→第一次就打扰；已 log→全沉默）。修法待定 — 两个根因均修并实测：①守卫跨 await 竞态（并发 5 次→注入 5 次，已复现）→ 进函数首动作置 teardownInFlight；②扩展重复注册（session_start 11 分 8 次）→ 状态提到模块级。393 测试全绿 + 两条回归测试均做破坏验证。提交 5c148fc 并已安装到 ~/.pi/agent/extensions/abs.ts（已核对实际生效） 【落地】 (完成 2026-09-17)
 - [x] queryhint-noise [[tester]] — 修 queryHint/rankPage 噪音：英文 2-gram 模糊兜底使 ratio 恒为 1（实测 relevant 30 命中全 fuzzy score10、页面 0 命中）；拟只在中文用模糊。尺子=tag/页名级强命中（hook 6/todo 4/lock 2 vs relevant 0） — 两处缺陷均修复且实测验证：①rankPage 的 2-gram 模糊兜底对英文恒真（ratio 恒=1）→ 加 hasCJK 门，relevant 30→0；②queryHint 取词无质量信号 → 新增 topicStrength 按 tag/页名排序 + 剔0 + 剥掉任务行记号，load 提示 queryhint-noise tester 进行 → hook todo 实测。391 测试全绿、lint 0、三处破坏验证均能抓。提交 415008d 【落地】 (完成 2026-09-17)
   ↳ 断点: 第2项（hint 取词）已完成。新增 topicStrength（tag/页名级命中数=尺子）+ queryHint 按它排序、强度0剔除、分词前剥掉任务行的 <id>/[[作者]] 记号。实测 load 提示从 queryhint-noise tester 进行 → hook todo 实测（全是 [tag:] 级真命中）。391 测试全绿 + lint 0 + 三处破坏验证均确认能抓（去排序→tester,hook；去剥记号→[[作者]] 泄漏）。遗留新发现: abs load 每次都会脏化 .brain/index.md（checkBrainShape 的 rebuildStructure 在 ## Entities 前插空行），可复现，已单独登记
@@ -17,6 +17,7 @@
   ↳ 断点: 已破坏验证确认: 把 event.sh 的 date 格式输出删成 printf '%s %s' 后, 跑 test/hook.test.js → 5 pass 0 fail (全绿)。缺口是真的。根因: 断言只 log.includes('SessionStart'), 不锁格式
 
 ### 2026-09-16
+
 - [x] AUDIT-P2-SERVE-OPEN [[fanchao]] — --open 死代码（FLAG_SPEC 无 open）、unref 不可达、--port abc NaN 不校验 【落地】 (完成 2026-09-16)
 - [x] AUDIT-P2-ZWSP [[fanchao]] — help/update 用户可见输出含 U+200B，复制即坏。清洗输出侧字符串 + 守卫测试扩到输出 【落地】 (完成 2026-09-16)
 - [x] AUDIT-P2-OC-RESET [[fanchao]] — opencode 插件 nudged/wroteFiles/idleSeen 不随 session.created 重置，同进程后续会话全部静默。重置+行为测试 【落地】 (完成 2026-09-16)
@@ -35,6 +36,7 @@
 - [x] fanout 三层 n 分叉思考引擎 [[fanchao]] 【落地】 (完成 2026-09-16)
 
 ### 2026-09-15
+
 - [x] SOURCES-DIGEST-DH [[fanchao]] — desktop_herdr 20 个 source 提炼：8 进度日志合并 + 10 坑提炼进 5 个新 concept + 2 已覆盖 【落地】 (完成 2026-09-15)
 - [x] NO-TAIL-44 [[fanchao]] — 补 44 页验证段：~/Docker 11 + codebuddy 10 + zj_shop 16 + desktop_herdr 3 + 家目录 4 【落地】 (完成 2026-09-15)
 - [x] CONCEPT-CMD [[fanchao]] — 新增 abs concept 命令（概念页骨架，只给结构不给内容）+ NO-TAIL 判据（放宽认动作词、收紧识破占位） 【落地】 (完成 2026-09-15)
