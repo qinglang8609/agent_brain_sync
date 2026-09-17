@@ -158,6 +158,52 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     assert.equal(injected.length, 2, '新会话必须能再次注入（重置节流）');
   });
 
+  test('并发 agent_end 只注入一次（跨 await 的检查-置位竞态回归）', async () => {
+    // 回归 2026-09-17 实测定根因：~/.abs/log/hooks.log 里同会话 5 分钟注入 6 次，
+    // 全日志 55 次。原实现是「先 `if (nudged) return` 检查 → 隔若干 await（logHook/loggedToday）
+    // 才 teardownNudged = true」→ 并发调用全部先过检查、再各自置位 → 一起注入。
+    // 而 agent_end 是**每轮 run 结束**都触发（不等于会话结束），并发是常态。
+    // 修法：进函数第一个动作就置 in-flight（检查与置位间无 await）。
+    const logDir = join(sandbox, 'log');
+    const mod = await loadPi(logDir);
+    const { handlers, injected } = harness(mod.default);
+    const proj = await makeProject('pi-race');
+    const msgs = [{ role: 'toolResult', toolName: 'edit' }];
+    // 不 await 逐个跑 —— 模拟真实的同时触发
+    await Promise.all([
+      handlers.agent_end({ messages: msgs }, { cwd: proj }),
+      handlers.agent_end({ messages: msgs }, { cwd: proj }),
+      handlers.agent_end({ messages: msgs }, { cwd: proj }),
+      handlers.agent_end({ messages: msgs }, { cwd: proj }),
+      handlers.agent_end({ messages: msgs }, { cwd: proj }),
+    ]);
+    assert.equal(injected.length, 1, `并发 5 次只能注入 1 次，实际 ${injected.length} 次`);
+    // seen 痕也不能重复（它同样被守卫，实测生产里泄漏了 6 次）
+    const log = await hooksLog(logDir);
+    const seen = (log.match(/agent_end:seen/g) || []).length;
+    assert.equal(seen, 1, `agent_end:seen 应恰好一行，实际 ${seen} 行`);
+    const nudges = (log.match(/agent_end:teardown-nudge/g) || []).length;
+    assert.equal(nudges, 1, `teardown-nudge 落痕应恰好一条，实际 ${nudges} 条`);
+  });
+
+  test('重复注册扩展（多实例）仍共享节流（session_start 多次触发的回归）', async () => {
+    // 回归 2026-09-17 实测：session_start 11 分钟内触发 8 次（00:07:58 一口气 3 次）——
+    // 扩展被重复注册。原守卫声明在被反复调用的工厂函数里 → 每注册一份就多一份独立闭包，
+    // “每会话一次”变成“每实例一次”。修法：状态提到模块级，同进程内只有一份。
+    const logDir = join(sandbox, 'log');
+    const mod = await loadPi(logDir);
+    const proj = await makeProject('pi-multi');
+    const msgs = [{ role: 'toolResult', toolName: 'edit' }];
+    const a = harness(mod.default);   // 第 1 份注册
+    const b = harness(mod.default);   // 第 2 份注册
+    await Promise.all([
+      a.handlers.agent_end({ messages: msgs }, { cwd: proj }),
+      b.handlers.agent_end({ messages: msgs }, { cwd: proj }),
+    ]);
+    const total = a.injected.length + b.injected.length;
+    assert.equal(total, 1, `两份实例合计只能注入 1 次，实际 ${total} 次`);
+  });
+
   test('收尾提示带本会话素材（hook 机械记的用户原话+改过的文件）', async () => {
     const logDir = join(sandbox, 'log');
     const mod = await loadPi(logDir);

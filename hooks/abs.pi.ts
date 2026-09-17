@@ -115,16 +115,38 @@ async function loggedToday(brain: string): Promise<boolean> {
 }
 
 
+/** 收尾注入的节流状态。
+ *
+ * 为何在**模块级**而不在 absPiHook() 里（2026-09-17 实测）：扩展会被重复注册
+ * （session_start 11 分钟内触发 8 次），每次注册都新建一份闭包 → flag 不共享 →
+ * 实测同会话 5 分钟注入 6 次。模块级状态在同一进程内只有一份，注册多少次都共享。
+ *
+ * teardownNudged  = 本会话已注入过（终态，session_start 才重置）
+ * teardownInFlight = 正在判定中（抢在 await 之前置位，堵住并发重入）
+ * agentEndSeen    = 本会话已留过 seen 痕（可观测性，同样每会话一次）
+ */
+let teardownNudged = false
+let teardownInFlight = false
+let agentEndSeen = false
+
+/** 会话边界重置节流（session_start 与注册时都调）。
+ *  不重置 → 同进程第二个会话继承 true 永久静默（2026-09-13 实测过的坑）。 */
+function resetThrottle(): void {
+  teardownNudged = false
+  teardownInFlight = false
+  agentEndSeen = false
+}
+
 export default function absPiHook(pi: ExtensionAPI): void {
-  // 收尾注入的节流状态。声明在**外层** + 在 session_start 里重置：
-  // 否则同一进程的第二个会话会继承上一个会话的 true，永久不再提醒
-  // （2026-09-13 实测：同一天多个会话时后半场全部静默）。
-  let teardownNudged = false
-  let agentEndSeen = false
+  // 收尾注入的节流状态。故意声明在**模块级**（不在被反复调用的工厂函数里），
+  // 因为**扩展会被重复注册**：实测 session_start 在 11 分钟内触发 8 次
+  // （2026-09-17 00:07:58 一口气 3 次）。注册几份就得到几份独立闭包，
+  // 各自的 flag 彼此看不见 → “每会话一次”变成“每实例一次” → 实测同会话 5 分钟注入 6 次。
+  // 模块级状态在同一进程内共享，注册多少次都只有一份。
+  resetThrottle()
 
   pi.on("session_start", (event: any, _ctx: any) => {
-    teardownNudged = false
-    agentEndSeen = false
+    resetThrottle()
     return logHook("session_start").catch(() => {})
   })
 
@@ -152,8 +174,18 @@ export default function absPiHook(pi: ExtensionAPI): void {
   })
 
   // 收尾注入: 每个会话最多一次, 避免反复打扰。
+  //
+  // 坑（2026-09-17 实测定根因）：原实现是「先检查 flag → 若干 await → 才置位」，
+  // 而 agent_end **每轮 run 结束都触发**（官方 docs/extensions.md:569：它不等于会话结束，
+  // Pi 之后还可能继续跑 follow-up）。并发的多次调用因此**全部先通过 `if (nudged) return`**，
+  // 之后才各自置位 → 一起注入。实测同会话 5 分钟内注入 6 次，全日志 55 次。
+  // 修法：进函数**第一个动作**就抢占（置位在任何 await 之前），失败再把标志放回。
+  // 这样“检查+设置”之间没有让出点，并发调用只有一个能赢。
   pi.on("agent_end", async (event: any, ctx: any) => {
-    if (teardownNudged) return
+    if (teardownNudged || teardownInFlight) return
+    teardownInFlight = true
+    // 从这里往下任何提前 return 都必须解除 in-flight（否则本次会话永久不再提醒）。
+    const release = () => { teardownInFlight = false }
     const cwd = (ctx && ctx.cwd) || process.cwd()
     const brain = await findBrain(cwd)
     // 可观测性: 本会话首次 agent_end 无条件留一行痕。
@@ -163,14 +195,15 @@ export default function absPiHook(pi: ExtensionAPI): void {
       // 带上 cwd 与命中的 brain —— 否则事后无法解释“为何这条 nudge 会出现”
       await logHook(`agent_end:seen cwd=${cwd} brain=${brain || 'none'}`).catch(() => {})
     }
-    if (!brain) return // 无图谱=不在这项目沉淀, 不打扰
-    if (!hasWriteWork(event?.messages ? collectToolResults(event.messages) : [])) return
+    if (!brain) return release() // 无图谱=不在这项目沉淀, 不打扰
+    if (!hasWriteWork(event?.messages ? collectToolResults(event.messages) : [])) return release()
     // 今日已收尾 → 只在**本会话还没真正干事**时才静默。
     // 旧行为：今天 log 有一行就整天闭口 —— 于是收尾之后的产出全部没人提醒。
     // 注意不能用 sessionNotes.length 当判据：用户每说一句话就会 push 一条，
     // 那会让 nudge 每轮都触发（噪音）。判据保持「今天已收尾」但配合下面的笔记消费。
-    if (await loggedToday(brain)) return
+    if (await loggedToday(brain)) return release()
     teardownNudged = true
+    teardownInFlight = false
     await logHook("agent_end:teardown-nudge").catch(() => {})
     // 素材交给 AI 后清空：同一会话再触发时不该重复喂旧料。
     const notes = sessionNotes.splice(0, sessionNotes.length)
