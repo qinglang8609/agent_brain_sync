@@ -1,6 +1,31 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { keywords, scorePage, pickRelevant, digest, renderRelevant, rankPage, tagsOf } from "../src/relevant.js";
+import { keywords, scorePage, pickRelevant, digest, renderRelevant, rankPage, tagsOf, hasCJK, topicStrength } from "../src/relevant.js";
+
+test("topicStrength: 只数 tag/页名级命中，正文子串不计", () => {
+  // 实测动机: hint 原取词拿词表前几个（无质量信号）→ 提示语变成废词。
+  const pages = [
+    { name: "hook-throttle", body: "---\ntags: [concept, hook]\n---\n正文" },
+    { name: "other-page", body: "正文里提到 hook 但不在 tags/页名" },
+    { name: "noise-page", body: "正文什么都不提" },
+  ];
+  const s = topicStrength(pages, ["hook", "nevermentioned"]);
+  assert.equal(s.get("hook"), 1, "只有 tags/页名命中才算主题级（正文子串不算）");
+  assert.equal(s.get("nevermentioned"), 0, "无命中应为 0（调用方据此剔除）");
+});
+
+test("topicStrength: 分离度可辨识 —— 好词高分、废词 0 分", () => {
+  // 尺子实测（44 页图谱）: hook 6 / todo 4 / lock 2  vs  queryhint-noise 0 / 进行 0
+  const pages = [
+    { name: "a", body: "---\ntags: [hook]\n---\n" },
+    { name: "b", body: "---\ntags: [hook, todo]\n---\n" },
+    { name: "c", body: "---\ntags: [todo]\n---\n" },
+  ];
+  const s = topicStrength(pages, ["hook", "todo", "进行", "queryhint-noise"]);
+  assert.ok(s.get("hook") > s.get("进行"), "好词强度应高于废词");
+  assert.equal(s.get("进行"), 0);
+  assert.equal(s.get("queryhint-noise"), 0);
+});
 
 test("tagsOf: 解析 frontmatter tags", () => {
   const body = "---\ntags: [concept, 部署, hook]\nid: x\n---\n正文";
@@ -32,6 +57,23 @@ test("rankPage: 标题命中权重介于 tag 与正文之间", () => {
 test("rankPage: 无关短词不产生模糊假阳性", () => {
   // "不存在" 只有 [不存,存在] 两个 gram, 都常见 -> 不得靠模糊命中
   assert.equal(rankPage("随便一段中文正文", "p", ["zzzz不存在"]), null);
+});
+
+test("rankPage: 英文词不走 2-gram 模糊兜底（实测：ratio 恒为 1）", () => {
+  // 根因(2026-09-17 实测): "relevant" 的 7 个 gram(re,el,ev,va,an,nt) 在任意英文页里都有,
+  // ratio 恒为 1.0, 稳过 FUZZY_MIN=0.6 -> 每页都命中。
+  // 实测后果: 44 页图谱上 query relevant -> 30 命中全是 fuzzy, 而 "relevant" 在那些页里出现 0 次。
+  //
+  // 夹具为何长这样: 短页 gram 太少，ratio 到不了 0.6（实测 "a"/"store todo lock" 都不复现），
+  // 必须含足够多个 re/el/ev/va —— 下列两句实测 ratio=0.71/0.86，会稳过旧门槛。
+  const noise = "reveal evil valve relay";
+  assert.equal(rankPage(noise, "unrelated-page", ["relevant"]), null,
+    "英文词无精确命中时应沉默，而不是靠 gram 巧合命中");
+  assert.equal(rankPage("relevance everywhere", "p", ["relevant"]), null);
+  // 对照: 真精确命中仍要走精确路径（不是把英文查询整体关掉）
+  assert.equal(rankPage("此处提到 relevant 一词", "p", ["relevant"]).kind, "exact");
+  // 对照: 中文查询的模糊兜底必须保留（它才是该机制的设计对象）
+  assert.ok(hasCJK("并发写") && !hasCJK("relevant"));
 });
 
 test("keywords: 英文词 + 中文 2-gram, 去停用词", () => {

@@ -7,7 +7,7 @@ import { requireUser, atTag, getUser } from './userconfig.js';
 import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
-import { keywords, pickRelevant, renderRelevant, recentFiles, rankPage } from './relevant.js';
+import { keywords, pickRelevant, renderRelevant, recentFiles, rankPage, topicStrength } from './relevant.js';
 
 // ---------- init: 建 .brain/ 骨架 ----------
 const BRAIN_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];
@@ -400,19 +400,40 @@ export function extractBlocks(todoText) {
  * 且无法按需求变化调整词。正确做法是把词准备好，查询仍由调用方发。
  *
  * 词从两个环境事实推：活跃 todo 的关键词 + 最近改过的文件名。
- * 输出保持极短（两行）—— 它只是提示，不是报告。
+ *
+ * 挑词用【主题级强度】排序，不取词表前几个（2026-09-17 实测修正）：
+ *   原实现 `pick = [...en.slice(0,2), ...zh.slice(0,1)]` 取的是最前面的词，
+ *   而 todo 行以 `<任务id> [[作者]]` 开头 → 任务 id 与用户名稳占前两位，
+ *   实测输出 `abs query queryhint-noise tester 进行`（强度 0/1/0，全是废词）。
+ *   现按 topicStrength（tag/页名命中数）降序取，强度 0 的一律不提示
+ *   —— 命中不了任何页的词，建议去查它等于没建议。
+ * 失败静默：读页出错就当没有强词，退回不提示（不影响 load）。
+ *
+ * @param {string} root 项目根
+ * @param {string} todoText
+ * @param {{name:string,body:string}[]} [pages] 已读好的页（省一次磁盘扫描）
  */
-async function queryHint(root, todoText) {
+async function queryHint(root, todoText, pages) {
   const active = String(todoText || '')
     .split('\n')
     .filter((l) => /^\s*-\s*\[\s*\]/.test(l))
+    // 剔掉任务行的结构记号再分词：`- [ ] [状态] <id> [[作者]] —` 里只有「—」后面是真内容。
+    // 实测教训（2026-09-17）：不剔的话 `<id>` 与 `[[作者]]` 会进入词表，
+    // 而作者名恰好有自己的 entities/<作者>.md 页 → 命中**页名** → 强度 1 过了门槛，
+    // 于是提示语变成「查一下你自己的名字」。建议查作者页不是“别重踩的经验”。
+    // 用 task 行自身的形状剥（与 idOfTaskLine 同源），不维护人名/任务名黑名单。
+    .map((l) => l.replace(/^\s*-\s*\[\s*\]\s*(?:\[[^\]]*\]\s*)?(?:\S+\s*)?/, '').replace(/\[\[[^\]]*\]\]/g, ' '))
     .join(' ');
   const files = await recentFiles(root, { n: 5 }).catch(() => []);
   const src = [active, files.map((f) => f.name).join(' ')].filter(Boolean).join(' ');
   const kws = keywords(src);
-  // 只取 3 个：英文词优先（中文 2-gram 单看无意义）
-  const en = kws.filter((k) => /^[a-z][a-z0-9_-]+$/.test(k));
-  const zh = kws.filter((k) => !/^[a-z][a-z0-9_-]+$/.test(k));
+  if (!kws.length) return '';
+  const all = pages || await listPages(brainPath(root)).catch(() => []);
+  const strength = topicStrength(all.map((p) => ({ name: p.slug, body: p.body })), kws);
+  // 英文词优先（中文 2-gram 单看无意义，只做补充）；每组内按强度降序
+  const byStrength = (a, b) => (strength.get(b) || 0) - (strength.get(a) || 0) || a.localeCompare(b);
+  const en = kws.filter((k) => /^[a-z][a-z0-9_-]+$/.test(k)).sort(byStrength).filter((k) => strength.get(k) > 0);
+  const zh = kws.filter((k) => !/^[a-z][a-z0-9_-]+$/.test(k)).sort(byStrength).filter((k) => strength.get(k) > 0);
   const pick = [...en.slice(0, 2), ...zh.slice(0, 1)].slice(0, 3);
   if (!pick.length) return '';
   const rows = [

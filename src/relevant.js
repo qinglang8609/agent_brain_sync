@@ -159,6 +159,22 @@ function ngrams(s) {
   return out;
 }
 
+/** 是否走 2-gram 模糊兜底。
+ *
+ * 只对【含中文】的查询词生效（2026-09-17 实测根因）。
+ * 为何要这道门：字符 2-gram 是给中文设计的（"并发写"→"互斥"），中文 gram 有区分度；
+ * 英文没有 —— "relevant" 的 7 个 gram(re,el,ev,va,an,nt) 在**任意**英文页里都存在，
+ * ratio 恒为 1.0，稳过 FUZZY_MIN=0.6 → 每页都命中。
+ * 实测（44 页图谱）：query relevant → 30 命中全是 fuzzy score=10，而 "relevant" 在
+ * 页面里出现 0 次；query store → 42/44 命中。这些命中是巧合子串，不是相关。
+ * 收紧后同一图谱：relevant 30→0、store 42→16（剩下的 16 是真子串命中）。
+ * 反证该门不误伤：20 个真实中文查询（并发写/静默失效/陈旧路径…）实测 fuzzy 命中全为 0，
+ * 全走精确路径 —— 收紧后逐字不变。
+ */
+export function hasCJK(s) {
+  return /[\u4e00-\u9fa5]/.test(String(s || ''));
+}
+
 /** 模糊门槛 + 最小 gram 数（见 rankPage 注释） */
 export const FUZZY_MIN = 0.6;
 // 查询词去重后的 gram 数必须≥4：否则 "zzzz不存在" 只剩 [不存,存在] 两个 gram，
@@ -209,10 +225,42 @@ export function rankPage(body, pageName, queryWords) {
     }
     return { kind: 'exact', matched: exact, score, overlap, ratio, via };
   }
-  const qGramCount = new Set(queryWords.flatMap((w) => ngrams(String(w).toLowerCase()))).size;
-  if (qGramCount >= FUZZY_MIN_GRAMS && ratio >= FUZZY_MIN)
+  const fuzzyWords = queryWords.filter(hasCJK);
+  const qGramCount = new Set(fuzzyWords.flatMap((w) => ngrams(String(w).toLowerCase()))).size;
+  if (fuzzyWords.length && qGramCount >= FUZZY_MIN_GRAMS && ratio >= FUZZY_MIN)
     return { kind: 'fuzzy', matched: [], score: ratio * 10, overlap, ratio, via: { tag: [], title: [], body: [] } };
   return null;
+}
+
+/**
+ * 给候选词按「主题级强度」打分，供 hint 挑词用。
+ *
+ * 为何需要（2026-09-17 实测）：hint 原取词是 `keywords()` 保序 + `slice(0,2)` ——
+ * 拿的是**最前面**的两个词，没有任何质量信号。而 todo 行以
+ * `- [ ] [进行中] <任务id> [[作者]] — 描述` 开头，于是任务 id 和作者名
+ * 稳定占据前两位，提示语变成 `abs query queryhint-noise tester 进行`。
+ * 实测这三个词的强度全为 0~1（noise 0 命中 / 进行 1 命中），等于没提示。
+ *
+ * 尺子 = tag / 页名级命中数（rankPage 的 via.tag / via.title）。
+ * 为何不用「正文命中数」：正文子串命中在 44 页图谱上随口一词就有十几页
+ * （实测 store 16、覆盖 18），不区分好坏；tag/页名是人工提炼的主题信号。
+ * 实测分离度：hook 6 / todo 4 / lock 2  vs  queryhint-noise 0 / 进行 0。
+ *
+ * @param {{name:string,body:string}[]} pages
+ * @param {string[]} words
+ * @returns {Map<string, number>} 词 → 主题级命中数
+ */
+export function topicStrength(pages, words) {
+  const out = new Map();
+  for (const w of words) {
+    let n = 0;
+    for (const p of pages) {
+      const r = rankPage(p.body, p.name, [w]);
+      if (r && (r.via.tag.length || r.via.title.length)) n++;
+    }
+    out.set(w, n);
+  }
+  return out;
 }
 
 /** 取页正文的摘要：优先 frontmatter 的 description，退化到首个非标题行。 */

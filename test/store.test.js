@@ -496,6 +496,45 @@ describe('board/load/status', () => {
     assert.ok(out.includes('log.md'));
   });
 
+  // 回归(2026-09-17 实测): hint 原取词是 keywords() 保序 + slice(0,2)。
+  // todo 行以 `<任务id> [[作者]] — 描述` 开头，任务 id 与用户名稳占前两位，
+  // 于是提示语变成 `abs query queryhint-noise tester 进行`（实测强度全为 0~1，全是废词）。
+  // 两处修正: (a) 分词前剥掉任务行结构记号（id / [[作者]]）(b) 按 topicStrength 排序 + 剔 0。
+  //
+  // 夹具为何要带 `tester` 这个弱词：只放一个强词时，去不去排序都能碰对，测不出排序。
+  // tester 在夹具里命中它自己的 entities/tester.md 页名（强度 1），且**写在 hook 前面** ——
+  // 这样「不排序」会先选中 tester，测试才能真的保住排序这一步。
+  test('load 的 queryHint 建议的是图谱里真有的主题词（不是任务id/用户名）', async () => {
+    // 建一个 tags 含 hook 的页 —— 它才是应该被建议去查的主题
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'hook-throttle.md'),
+      '---\ntags: [concept, hook]\nid: hook-throttle\n---\n\n# hook 节流\n\n正文\n', 'utf8');
+    // 任务 id 是干扰项（强度 0）。
+    // 描述里再放一个弱词 lock(强度 0——夹具里无 lock 页) 与强词 hook，
+    // 用来分别看住「剔 0」与「按强度排序」两步。
+    await cmdTask({ dir: projectA, action: 'start', id: 'zzz-noise-task', note: 'zzweaklock 相关的 hook 节流' });
+    const out = await cmdLoad({ dir: projectA });
+    const m = out.match(/abs query ([^\n]+)/);
+    assert.ok(m, `应给出建议查询: ${out}`);
+    const words = m[1].trim().split(/\s+/);
+    assert.equal(words[0], 'hook', `强词应排第一（而非插入序在前面的弱词）: ${words}`);
+    assert.ok(!words.some((w) => w.startsWith('zzz-noise-task')), `不该建议任务 id: ${words}`);
+  });
+
+  // 第二处独立缺陷（同一个测试只放强词时看不出来）：任务行里的 `[[作者]]` 会被当普通文本分词。
+  // 而作者名恰有自己的 entities/<作者>.md 页 → 命中**页名** → 过了强度门槛，
+  // 于是提示语让 AI “去查一下你自己的名字”。
+  // 故这里把作者名**只**放在 `[[...]]` 标记里（描述正文不出现），剥记号这一步才成为必要条件。
+  test('load 的 queryHint 不把任务行的 [[作者]] 标记当查询词', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'hook-throttle.md'),
+      '---\ntags: [concept, hook]\nid: hook-throttle\n---\n\n# hook 节流\n\n正文\n', 'utf8');
+    // ABS_USER=tester（见 beforeEach）→ task 行会带 [[tester]]，且它有自己的实体页
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-9', note: 'hook 节流' });
+    const out = await cmdLoad({ dir: projectA });
+    const words = out.match(/abs query ([^\n]+)/)[1].trim().split(/\s+/);
+    assert.ok(!words.includes('tester'), `[[作者]] 不该进查询词: ${words}`);
+    assert.ok(words.includes('hook'), `真主题词应保留: ${words}`);
+  });
+
   // 回归: load/todo 曾全量打印 Done 区，而 Done 无上限增长 → 长历史项目上
   // abs load 直接把上下文塞满（实报：「另一台机器 abs load 塞了 40%」）。
   // 实测本仓库修复前 Done 占 load 输出的 68.8%（19.6KB/28.4KB）。
