@@ -1,4 +1,6 @@
 # 🗒 Activity Log
+## [2026-09-18 17:16] [[fanchao]] dev | 发版 1.9.5 并更新本地：npm latest=1.9.5（含 todo 登记不及时修复）；全局装 + 四宿主 abs install 刷新，skill/hook 逐文件 diff 校验一致；ABS_BIN 指向真实全局 bin。395 测试全绿。注：8b5afd7 提交信息里'1.9.4 卡在 staged 态不可用'的结论是错的 —— 实为 registry 传播延迟，1.9.4 也已正常发布，更正已落 sources/。
+## [2026-09-18 17:16] [[fanchao]] note | npm publish 报 '+ pkg@ver' 后 registry 读到 404/E409 不等于发布失败：实测 1.9.4/1.9.5 均成功，只是传播延迟 1-2 分钟。E409 'Cannot publish over previously staged version' 的真意是「该版本已在发布飞行中」，正确动作是等，不是换版号。判据：等 60-90s 后查 tarball HTTP 码（200=已上传成功，只是还没进 versions[]），别信 npm 的退出码（E409 时它 exit 0）。我据错误推断连发 1.9.4/1.9.5/1.9.6 三个版号，浪费两个。
 ## [2026-09-18 17:04] [[fanchao]] dev | 诊断'新项目作者名提取不对'：根因是 ~/.abs/config.json 残留 user=tester（手动设置遗留，非代码 bug，测试隔离完好）；已改回 fanchao。同时确认 todo 空转非 abs 缺陷 —— abs 的 start/done 与已砍分区无关，是会话内没在任务边界登记所致，纪律已落 sources/。
 ## [2026-09-18 17:04] [[fanchao]] note | todo 是'随做随写'的活看板，攒到最后补 = 看板在被人看的时候是空的，跨会话续接丢锚点。abs 的 start/done 是任务行级操作（与已砍掉的 Backlog/Today 分区无关），所以'一口气做完来不及挂分区'不能当作不登记的理由。纪律：每个任务边界立刻 abs todo add/done，不等收尾。证据：本会话全项目改完文件，.brain/ 今日零记录。
 ## [2026-09-18 17:04] [[fanchao]] note | user 名残留会让新项目任务全标错作者：~/.abs/config.json 的 {user} 是单一全局值，一次手动 'abs config set user tester' 会永久污染之后所有项目（实测新项目看板每条都标 [[tester]]）。诊断三步：cat ~/.abs/config.json → 有值就是它，无值才去查 ABS_USER 环境变量。测试隔离本身是好的（ABS_CONFIG_DIR 指向沙箱），所以见到陌生用户名先怀疑残留、别先怀疑代码。
