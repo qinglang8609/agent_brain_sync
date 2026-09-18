@@ -1,8 +1,8 @@
 # 📋 Todo Board
 ## Todo
 ## Done
-
 ### 2026-09-17
+
 - [x] hook-idempotent-minute-window [[tester]] — test/hook.test.js:98 偶发失败，定位后确认是产品缺陷非测试问题：event.sh 幂等 mark 名钉在分钟级 STAMP 上，跨分钟就换身份 → 「60s 幂等」实际最坏退化为 1s。实测复现（STAMP 2359→0000 落 2 行）。已修：mark 名只含指纹 + 时间戳写进文件内比较（拒绝 find -newermt：BSD 不认 @epoch；拒绝 -mmin：仍是分钟级）。395 测试全绿、幂等测试 10 轮 0 失败（原 1/12）。提交 8e70c4d — 已修并提交 8e70c4d：幂等 mark 改为「只含 payload 指纹 + 时间戳写在文件内」，窗口=真 60s，与分钟边界无关；清理逻辑不再按分钟批量删（那会在跨分钟时误删刚写的 mark）。破坏验证：退回旧方案 → 两条新测试均 fail。自身踩坑：新写的第一版测试是空测试（只改 mark 内容，而旧代码不读内容）—— 破坏验证拓出来了，改为断言身份方案才真打到缺陷 【落地】 (完成 2026-09-17)
 - [x] load-dirties-index [[tester]] — abs load 每次都会修改 .brain/index.md（无条件写入）: checkBrainShape 的 rebuildStructure 在 ## Entities 前插一个空行，生成结果与磁盘不同 → 每次 load 都把 index.md 弄脏。可复现（git checkout 后跑一次 load，diff 立即出现）。危害: 干净的 git 树被判脏、可能被误提交 — 根因与我当初登记的不同（重要更正）：不是 rebuildStructure 的代码 bug。生成器的定点是「有内容的分区前插空行、空分区紧贴」，且幂等（跑两次第二次 changed=[]）。真因是提交的 .brain/index.md 被手改偏离了定点（## Entities 前漏空行、空 ## Syntheses 前又多一个）→ 首个 load 写回一次。修法：不动代码，把两个文件带到定点后提交。验证：全新 checkout 后连跑 3 次 load，git status 均 0 脏文件（原为每次 1 行）。教训：我第一版改成「只第一个分区插空行」是错的（差异 20→57 行），靠实测数据推翻；当时若直接提交就会把真定点改坏 【落地】 (完成 2026-09-17)
 - [x] teardown-nudge-race [[tester]] — 收尾注入反复打断主任务。证据: ~/.abs/log/hooks.log 同会话 5 分钟内 6 次 teardown-nudge（注释写每会话一次），全日志 55 次。根因一: hooks/abs.pi.ts:155 守卫是跨 await 的检查-后置位（teardownNudged=true 隔了 logHook/loggedToday 两个 await）→ 并发 agent_end 全先过检查再各自置位；已复刻复现（5 次触发→注入 5 次）。根因二: 扩展重复注册（session_start 11 分钟内 8 次，00:07:58 连续 3 次）→ 闭包守卫不共享，同进程多实例各有自己的 flag。附因: agent_end 不是会话结束（docs/extensions.md:569 明说），且 loggedToday 判据反向（今天没 abs log→第一次就打扰；已 log→全沉默）。修法待定 — 两个根因均修并实测：①守卫跨 await 竞态（并发 5 次→注入 5 次，已复现）→ 进函数首动作置 teardownInFlight；②扩展重复注册（session_start 11 分 8 次）→ 状态提到模块级。393 测试全绿 + 两条回归测试均做破坏验证。提交 5c148fc 并已安装到 ~/.pi/agent/extensions/abs.ts（已核对实际生效） 【落地】 (完成 2026-09-17)
@@ -17,6 +17,7 @@
   ↳ 断点: 已破坏验证确认: 把 event.sh 的 date 格式输出删成 printf '%s %s' 后, 跑 test/hook.test.js → 5 pass 0 fail (全绿)。缺口是真的。根因: 断言只 log.includes('SessionStart'), 不锁格式
 
 ### 2026-09-16
+
 - [x] AUDIT-P2-SERVE-OPEN [[fanchao]] — --open 死代码（FLAG_SPEC 无 open）、unref 不可达、--port abc NaN 不校验 【落地】 (完成 2026-09-16)
 - [x] AUDIT-P2-ZWSP [[fanchao]] — help/update 用户可见输出含 U+200B，复制即坏。清洗输出侧字符串 + 守卫测试扩到输出 【落地】 (完成 2026-09-16)
 - [x] AUDIT-P2-OC-RESET [[fanchao]] — opencode 插件 nudged/wroteFiles/idleSeen 不随 session.created 重置，同进程后续会话全部静默。重置+行为测试 【落地】 (完成 2026-09-16)
@@ -34,25 +35,7 @@
 - [x] QUERY-TAGS [[fanchao]] — abs query 借 tags 做关联检索: tag权重8>标题4>正文1, 精确命中时模糊不混入 【落地】 (完成 2026-09-16)
 - [x] fanout 三层 n 分叉思考引擎 [[fanchao]] 【落地】 (完成 2026-09-16)
 
-### 2026-09-15
-- [x] SOURCES-DIGEST-DH [[fanchao]] — desktop_herdr 20 个 source 提炼：8 进度日志合并 + 10 坑提炼进 5 个新 concept + 2 已覆盖 【落地】 (完成 2026-09-15)
-- [x] NO-TAIL-44 [[fanchao]] — 补 44 页验证段：~/Docker 11 + codebuddy 10 + zj_shop 16 + desktop_herdr 3 + 家目录 4 【落地】 (完成 2026-09-15)
-- [x] CONCEPT-CMD [[fanchao]] — 新增 abs concept 命令（概念页骨架，只给结构不给内容）+ NO-TAIL 判据（放宽认动作词、收紧识破占位） 【落地】 (完成 2026-09-15)
-- [x] SESSIONS-CONTRACT [[fanchao]] — sessions/ 一天一文件命名契约：归档并入当天 log（abs todo archive 自动）+ 4 条 lint 检查 + 6 个项目存量迁移 【落地】 (完成 2026-09-15)
-- [x] SOURCES-DIGEST-14 [[fanchao]] — 消化 sources/ 14 个堆积（>10 触发 SOURCES-PILED-UP）：提炼进 concepts/、清源页、清引用、修 index。另评估「自动消化门槛」可行性。 【落地】 (完成 2026-09-15)
-- [x] INSTALL-TREE-GUARD [[fanchao]] — 安装树与代码版本不一致的显式守卫：包内一个 skill 都找不到时不再静默装 0 个，改报版本+布局+修复命令。触发源=fnos 半升级实测（旧代码1.8.2 + 新布局1.8.3 → 甩一个当前版本不存在的路径 ENOENT skill/SKILL.md）。 【落地】 (完成 2026-09-15)
-  ↳ 断点: 已发布 1.8.4（用户授权后发版+推送，commit c8bbb0e）。改动: src/install.js ALL_SKILLS IIFE 尾部加空数组守卫(+14行); test/install.test.js 新增 3 例(扁平旧布局/skill缺失/正常不误伤, +63行)。验证: 全量 321 测试全绿; registry tarball 实测(正常布局 OK / 压成扁平必报错); 全局装 1.8.4 后 abs install 四宿主全成功。边界: 守卫只治「新代码+旧布局」，治不了「旧代码+新布局」(旧代码改不动) —— fnos 那台靠重装。}
-- [x] AUTO-REG [[fanchao]] — 写文件即自动登记(hook 端)：写项目文件→hook 直接 spawn abs autotask 建/追加 [待归类] 条目，不再只弹提醒。幂等键=会话(同会话只一条)。待发版(1.8.0 已发布版不含此功能，故本地实测走仓库 bin) 【落地】 (完成 2026-09-15)
-  ↳ 断点: 完成：新增 cmdAutoTask + abs autotask 内部命令 + 两宿主 hook 调用。332 测试全绿(+7)，破坏验证2轮全红(幂等键失效/无图谱误写)。踩坑记录：①opencode 模板加了 @@ABS_BIN@@ 但安装器没替换→产物坏 TS(31个测试炸)；②我的 node 脚本写文件名时多插了一个零宽空格(16 vs 15 字符)，导致 ENOENT；③实测发现 1.8.0 已发布版不含 autotask，hook spawn 全局 bin 会静默失败(stdio:ignore 吞掉'未知命令')——这不是 bug 是未发版，但暴露了一个真问题：hook 调全局 bin 时，若全局版本落后就会静默失效。
-- [x] AUTO-OCSESS [[fanchao]] — [待归类] 改了 src/oc-test.js 【否决】 (完成 2026-09-15)
-  ↳ 改了 1 个文件：src/oc-test.js
-- [x] AUTO-TESTSESS [[fanchao]] — [待归类] 改了 src/x.js 【否决】 (完成 2026-09-15)
-  ↳ 改了 1 个文件：src/x.js
-- [x] TODO-AUTO [[fanchao]] — 写文件即任务开始：turn_end 检测到写文件→立刻注入登记提示(每会话每次写文件都提醒，频繁没关系)；判据=整个项目排除.brain自身；文案明说'纯讨论可跳过'；配套 reviewed→active 迁移 + SKILL.md 约束文档更新 【落地】 (完成 2026-09-15)
-  ↳ 断点: 完成：写文件即任务开始。pi(turn_end)/opencode(tool.execute.after) 检测项目文件写入→当场注入[abs 登记提醒](不等 agent_end)，文案含改过的文件+三选一(新任务add/已有note/纯讨论跳过)。判据=整个项目但排除 .brain/ 自身(note/log 也写文件但是记录行为非任务)。频繁是故意的：每轮写文件都提醒，同文件再改也提醒。另:reviewed→active 迁移20页(字段值归一到三值)，SKILL.md 新增该节。325测试全绿(+5 pi +5 oc)，破坏验证2轮。
-- [x] EXP-LIFECYCLE [[fanchao]] — 经验/知识页生命周期：①status 三值定死语义(active/superseded/draft) ②abs supersede <页> --by <页> 标记推翻 ③abs note 落页默认 draft ④query/load 默认不展示 superseded ⑤lint 查 superseded-by 指向是否存在 + 查 draft 超龄未核实。不含 todo 自动化(用户明确排除) 【落地】 (完成 2026-09-15)
-  ↳ 断点: 完成：①status 三值定死(active/superseded/draft，缺字段=active 存量零迁移) ②abs supersede <页> --by <新页>(不删文件、幂等、拒悬空 --by、可反悔) ③note 默认 draft ④query 默认隐藏 superseded(--all 可看+告知隐藏数) ⑤lint 加 SUPERSEDED-DANGLING/DRAFT-STALE。CLI+MCP(abs_supersede, 12工具)。315 测试全绿(新增 9 例)，两轮破坏验证(store.js statusOfPage→6红、query隐藏逻辑→1红)。已 install --yes 扇出宿主。
-
 ### Archived
+- [[log-2026-09-15]] 完成任务 11 条
 - [[log-2026-09-13]] 完成任务 5 条
 - [[2026-09-12-todo归档]] 完成任务 13 条

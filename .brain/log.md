@@ -1,4 +1,7 @@
 # 🗒 Activity Log
+## [2026-09-18 17:04] [[fanchao]] dev | 诊断'新项目作者名提取不对'：根因是 ~/.abs/config.json 残留 user=tester（手动设置遗留，非代码 bug，测试隔离完好）；已改回 fanchao。同时确认 todo 空转非 abs 缺陷 —— abs 的 start/done 与已砍分区无关，是会话内没在任务边界登记所致，纪律已落 sources/。
+## [2026-09-18 17:04] [[fanchao]] note | todo 是'随做随写'的活看板，攒到最后补 = 看板在被人看的时候是空的，跨会话续接丢锚点。abs 的 start/done 是任务行级操作（与已砍掉的 Backlog/Today 分区无关），所以'一口气做完来不及挂分区'不能当作不登记的理由。纪律：每个任务边界立刻 abs todo add/done，不等收尾。证据：本会话全项目改完文件，.brain/ 今日零记录。
+## [2026-09-18 17:04] [[fanchao]] note | user 名残留会让新项目任务全标错作者：~/.abs/config.json 的 {user} 是单一全局值，一次手动 'abs config set user tester' 会永久污染之后所有项目（实测新项目看板每条都标 [[tester]]）。诊断三步：cat ~/.abs/config.json → 有值就是它，无值才去查 ABS_USER 环境变量。测试隔离本身是好的（ABS_CONFIG_DIR 指向沙箱），所以见到陌生用户名先怀疑残留、别先怀疑代码。
 ## [2026-09-17 12:51] [[tester]] concept | 新建概念页 guard-check-then-set-across-await
 ## [2026-09-17 12:51] [[tester]] dev | 发布 v1.9.3: 修收尾注入反复打断(守卫竞态+重复注册提模块级) + 检索噪音(英文模糊恒真加hasCJK门/hint按主题强度排序) + hook幂等窗口被分钟边界截断(60s实际最坏1s); 删 abs-bug-hunter skill(侵入性太强, 备份~/.abs/backup/); index/todo带到rebuildStructure定点消除每次load假脏。推 git(4daa929+tag v1.9.3) + npm publish; 按发布包实测 abs --version=1.9.3、shasum一致、skill/ 只剩主 skill、hook幂等已是修复版、teardownInFlight 在位
 ## [2026-09-17 11:32] [[tester]] dev | 发布 v1.9.2: 删 abs ab 对照实验台与 abs serve; 推 git(5296036+tag v1.9.2) + npm publish(registry shasum 与本地一致); 按发布包实测 abs --version=1.9.2、已删命令报未知命令
