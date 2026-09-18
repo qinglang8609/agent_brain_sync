@@ -57,8 +57,9 @@ const server = async ({ client, directory }) => {
 
   const TEARDOWN_MSG =
     "[abs] 本会话改过文件，.brain/ 今日无记录。\n" +
-    "这条是信息不是命令：该沉淀就沉淀，没有可沉淀的直接回一句「无可沉淀」，不用凑。\n" +
-    "需要时：abs todo / abs todo done <id> / abs note \"...\" / abs log \"...\""
+    "这条是信息不是命令：该登记/沉淀就登记，没有可沉淀的直接回一句「无可沉淀」，不用凑。\n" +
+    "先看任务：本会话做完的事有没有进看板？（abs todo / abs todo done <id>；干到一半 abs todo note <id> --note 断点）\n" +
+    "再看沉淀：经验/坑 → abs note \"...\"；成果流水 → abs log \"...\""
 
   // bash 里只跑查询类命令不算改文件 (与 pi 侧 READONLY_CMD 同义, 但生成代码里要写进模板串)
   const READONLY_CMD = /^\s*(ls|cat|grep|rg|find|head|tail|wc|git\s+(status|log|diff|show|branch)|pwd|which|echo|node\s+-v|npm\s+(ls|view)|curl)\b/

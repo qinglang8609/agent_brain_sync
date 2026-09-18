@@ -134,6 +134,13 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     assert.equal(injected.length, 1, '写后应注入一次');
     assert.equal(injected[0].opts.deliverAs, 'followUp', '流式中注入须用 followUp');
     assert.match(injected[0].text, /\[abs\] 本会话改过文件/, '注入文本应是 abs 事实提示');
+    // 2026-09-18: 注入的注意力顺序 = 先任务登记、后沉淀。实测失效路径是
+    // 「只补 note/log、todo 全程空」——文案把 todo 埋在一串动词里就没人当首要动作。
+    assert.match(injected[0].text, /先看任务：.*abs todo done/, 'todo 登记须先于沉淀出现');
+    assert.ok(
+      injected[0].text.indexOf('先看任务') < injected[0].text.indexOf('再看沉淀'),
+      '任务登记段必须在沉淀段之前',
+    );
     assert.ok(!injected[0].text.includes('\\n'), '注入文本不应残留转义 \\n');
     const log = await hooksLog(logDir);
     assert.match(log, /pi:agent_end:teardown-nudge/, '必须有真实落痕(证伪静默失效)');
