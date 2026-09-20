@@ -9,6 +9,10 @@ import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 import { keywords, pickRelevant, renderRelevant, recentFiles, rankPage, topicStrength } from './relevant.js';
 
+// Re-export lint.js symbols so external importers (e.g. bin/mcp.js, bin/abs.js) still work.
+export { cmdLint, listPages, hasTail, PAGE_DIRS } from './lint.js';
+import { SOURCES_MAX, PAGE_DIRS, listPages } from './lint.js';
+
 // ---------- init: 建 .brain/ 骨架 ----------
 const BRAIN_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];
 const BRAIN_FILES = ['index.md', 'log.md', 'todo.md'];
@@ -132,8 +136,7 @@ export function logTemplate() {
  * 标记不一致 = 直接改成标准（“能自己处理的先处理”）。
  * 只按**整行精确匹配**改标题，绝不动正文 —— 不做模糊替换，否则正文里提到的旧名会被误改。 */
 // sources/ 堆积阀值：超过就是「采了没消化」。lint 报 SOURCES-PILED-UP，load 顶部同步提示。
-// 两处共用同一常量 —— 阀值只有一个真源。
-const SOURCES_MAX = 10;
+// 两处共用同一常量 —— 阀值只有一个真源（SOURCES_MAX 在 lint.js 定义，此处导入使用）。
 
 export const BRAIN_SHAPE = {
   'todo.md': {
@@ -351,20 +354,18 @@ export async function cmdLoad({ dir }) {
   //   自动带出正文是错的方向：那会让 query 更没人用，且无法按需求变化调整词。
   // 失败静默：这只是 additive 提示，出任何错都不应弄坏 load。
   try {
-    const rel = await queryHint(root, todo);
+    const rel = await queryHintSection(root, todo);
     if (rel) sections.push('', rel);
   } catch { /* 提示失败不影响 load */ }
   // sources 堆积提醒：与「滞留」同构 —— 放在每次开工必经的顶部，而不是等人跑 lint。
   // 只数目录条目（不读文件），零成本。提炼仍手工：这里只负责送达，不替判断。
-  const nsrc = await countSources(root);
-  if (nsrc > SOURCES_MAX) {
-    // 插在滞留之后 / Rules 之前：滞留更紧急（卡住当前工作），消化其次。
-    const at = sections.findIndex((s) => String(s).startsWith('--- Rules')) ;
-    sections.splice(at === -1 ? 1 : at, 0,
-      `♻ 待消化: sources/ 有 ${nsrc} 条 > ${SOURCES_MAX}（采集了没提炼）`,
-      '→ abs lint 看明细；提炼成 concepts/ 后删 source 并清引用',
-      '');
-  }
+  try {
+    const srcWarn = await sourcesCountSection(root);
+    if (srcWarn) {
+      const at = sections.findIndex((s) => String(s).startsWith('--- Rules'));
+      sections.splice(at === -1 ? 1 : at, 0, ...srcWarn);
+    }
+  } catch { /* 提醒失败不影响 load */ }
   return sections.join('\n');
 }
 
@@ -452,6 +453,22 @@ async function countSources(root) {
     const files = await fs.readdir(brainPath(root, 'sources'));
     return files.filter((f) => f.endsWith('.md') && !f.startsWith('_')).length;
   } catch { return 0; }
+}
+
+/** queryHint 的 load 端封装：返回提示文本（含标题行），无强词则空串。失败静默。 */
+async function queryHintSection(root, todo) {
+  return queryHint(root, todo);
+}
+
+/** sources 堆积提醒：返回 [标题行, ...内容行] 或 null。失败静默。 */
+async function sourcesCountSection(root) {
+  const nsrc = await countSources(root);
+  if (nsrc <= SOURCES_MAX) return null;
+  return [
+    `♻ 待消化: sources/ 有 ${nsrc} 条 > ${SOURCES_MAX}（采集了没提炼）`,
+    '→ abs lint 看明细；提炼成 concepts/ 后删 source 并清引用',
+    '',
+  ];
 }
 
 // ---------- Rules: index.md 里的硬规则区 ----------
@@ -1095,138 +1112,9 @@ export async function cmdShow({ dir, view, full }) {
   if (!text) return `(${v}.md 为空)`;
   return v === 'todo' ? boardText(root, text, { full: !!full }) : text;
 }
-// ---------- query: 检索知识图谱（多词 OR，扫全 .md 页） ----------
-const KNOWN_SLUG_HINT = /模板残留|\[\[slug\]\]/;
 
-export async function cmdQuery({ dir, terms, includeSuperseded }) {
-  // 每个 term 内部再按空白拆 —— 让 `abs query "发布 流程"` 与 `abs query 发布 流程` 等价。
-  // 坑: 曾经引号包起来的 "发布 流程" 被当成一个完整短语 → 全图无命中。
-  // 用户看到「无命中」会以为图谱里没这条经验，实际只是词没被拆开（静默失效）。
-  const words = [...new Set(
-    (terms || []).flatMap((w) => String(w).trim().split(/\s+/)).filter(Boolean)
-  )];
-  if (!words.length) {
-    return '用法: abs query <词1> [词2 …]  — 多词检索 .brain/ 全部知识页';
-  }
-  let root;
-  try {
-    root = await requireBrain(dir || process.cwd());
-  } catch {
-    return `未找到 .brain/ 图谱（无记忆可查）。先在项目根运行: abs init`;
-  }
-  const hits = [];
-  const dirs = ['concepts', 'entities', 'sources', 'syntheses', 'sessions'];
-  for (const d of dirs) {
-    const p = brainPath(root, d);
-    let files;
-    try {
-      files = await fs.readdir(p);
-    } catch {
-      continue;
-    }
-    for (const f of files) {
-      if (!f.endsWith('.md') || f.startsWith('_')) continue;
-      const full = join(p, f);
-      const body = await fs.readFile(full, 'utf8').catch(() => '');
-      const slug = f.replace(/\.md$/, '');
-      const rank = rankPage(body, slug, words);
-      if (rank) {
-        // 作者从本页 frontmatter 读（权威来源）。不在 index 行里重复 ——
-        // index 行是覆盖式更新的，作者会从"创建者"漂成"最后改的人"。
-        const au = body.match(/^author:\s*(.+)$/m);
-        const st = statusOfPage(body);
-        // 被推翻的经验默认不出现在检索结果里 —— 它的存在意义是"别再用它"，
-        // 而不是回答"我上次怎么解決 X"（那会拿到一个已知错误的答案）。
-        // 但它不是静默消失：计数里告知还有几条被隐藏（带 --all 能看）。
-        if (st === 'superseded' && !includeSuperseded) {
-          hits.push({ hidden: true, slug });
-          continue;
-        }
-        hits.push({
-          full, slug, matched: rank.matched, kind: rank.kind, fuzzyScore: rank.score, via: rank.via,
-          author: au ? au[1].trim() : '',
-          id: idOfPage(body, slug),
-          status: st,
-          supersededBy: supersededByOf(body),
-          snippet: firstHitLine(body, rank.matched.length ? rank.matched : words),
-        });
-      }
-    }
-  }
-  const hidden = hits.filter((h) => h.hidden).length;
-  // 分两区：精确命中优先，模糊只作补充。
-  // 坑(2026-09-16 实测): 不加区分时查 file-write-locking 返回 26 页（几乎全图）——
-  //   连字符词的 2-gram 太通用，模糊命中把无关页也拉进来。
-  //   规则：只要有任何精确命中，模糊命中的就不排在前面（但也不丢弃，单列一段）。
-  const exactHits = hits.filter((h) => !h.hidden && h.kind === 'exact')
-    .map((h) => ({ ...h, score: h.fuzzyScore }))
-    .sort((a, b) => b.score - a.score);
-  const fuzzyHits = hits.filter((h) => !h.hidden && h.kind === 'fuzzy')
-    .map((h) => ({ ...h, score: h.fuzzyScore }))
-    .sort((a, b) => b.score - a.score);
-  // 有精确命中 → 模糊全藏起来（但不静默：告知数量 + 怎么看）
-  const fuzzySuppressed = exactHits.length > 0 && fuzzyHits.length > 0;
-  const shown = exactHits.length ? exactHits : fuzzyHits;
-  if (!shown.length) {
-    const extra = hidden ? `（另外 ${hidden} 页已标记 superseded，用 abs query ${words.join(' ')} --all 查看）` : '';
-    return `query [${words.join(', ')}]: 无命中。${extra}用 abs lint 看图谱健康；首次使用先 abs init。`;
-  }
-  const lines = shown.map((h) => {
-    const by = h.author ? `  @${h.author}` : '';
-    // id 只在≠slug 时显示 —— 相同时再印一遗就是纯噪音（绝大多数页）。
-    // 目的：让 AI 拿到一个改名也不漂的引用句柄（abs resolve <id> 能反查回来）。
-    const id = h.id && h.id !== h.slug ? `  [id: ${h.id}]` : '';
-    // draft = 未经核实。不拦使用，但必须让 AI 知道这是它自己没验证过的。
-    const st = h.status === 'draft' ? '  [draft 未核实]' : '';
-    const full = h.kind === 'exact' && words.length > 1 && h.matched.length === words.length ? ' ★全命中' : '';
-    // 模糊命中必须显式标出 —— 否则用户会把"语义相近"当成"真的是这条"。
-    const fuzzy = h.kind === 'fuzzy' ? '  [模糊命中: 字面未出现，仅字形相近]' : '';
-    const hitTxt = h.matched.length ? h.matched.join(', ') : '(无字面命中)';
-    // 命中渠道：tag 最有价值（人工提炼的关键词），显式标出便于判断可信度
-    const viaTag = h.via && h.via.tag.length ? `  [tag: ${h.via.tag.join(', ')}]` : '';
-    return `📄 ${h.slug}${by}${id}${st}${fuzzy}  (命中: ${hitTxt}${full})${viaTag}\n    ${h.snippet}`;
-  });
-  // 多词且无全命中时告知降级了 —— 不静默给一堆弱相关结果。
-  const anyFull = shown.some((h) => h.kind === 'exact' && h.matched.length === words.length);
-  const tail = [];
-  if (words.length > 1 && !anyFull) tail.push('', `（无页同时命中全部 ${words.length} 个词，以下按命中数排序）`);
-  if (fuzzySuppressed) tail.push('', `（另有 ${fuzzyHits.length} 页字形相近但字面未命中，已隐藏 —— 它们通常不相关）`);
-  if (hidden) tail.push(``, `（${hidden} 页 superseded 已隐藏；--all 可看）`);
-  return [`query [${words.join(', ')}] → ${shown.length} 页:`, '', ...lines, ...tail].join('\n');
-}
-
-/** 从页面正文取一段「像答案」的片段。
- *  基线（2026-09-15 实测 296 条片段）: 25% 是非内容行（tags:/H1/段落标题）。
- *  典型症状: 查「发布」时 npm-publish-flow 返回 `tags: [concept, npm, publish, 发布]`
- *  —— frontmatter 在第 3 行，跑在正文前，于是「含关键词的第一行」永远先命中它。
- *  所以必须：(1) 跳过 frontmatter/标题这类非内容行；(2) 优先从「答案段」里找。
- *  只做机械判断：行首标记 + 所属小节标题，不猜语义。 */
-const ANSWER_SECTION_RE = /解法|根因|修复|验证|流程|标准|判据|处置|怎么办|🛠/;
-
-function firstHitLine(body, words) {
-  const lines = body.split('\n');
-  // 逐行扫描，记录当前所属小节标题，供「答案段优先」用。
-  let section = '';
-  const candidates = []; // {line, inAnswer}
-  for (const line of lines) {
-    const t = line.trim();
-    if (t.startsWith('#')) {
-      section = t.replace(/^#+\s*/, '');
-      continue; // 标题本身不是内容
-    }
-    if (!t || t === '---') continue;
-    const l = t.toLowerCase();
-    if (!words.some((w) => l.includes(w.toLowerCase()))) continue;
-    if (KNOWN_SLUG_HINT.test(t)) continue;
-    // 非内容行：frontmatter 的键值对（tags:/id:/status:/updated:/author:/superseded-by:）
-    if (/^(tags|id|status|updated|author|superseded-by|superseded|aliases)\s*:/.test(t)) continue;
-    candidates.push({ line: t, inAnswer: ANSWER_SECTION_RE.test(section) });
-  }
-  if (!candidates.length) return '';
-  // 答案段里的行优先；否则回退到第一条命中的正文行
-  const best = candidates.find((c) => c.inAnswer) || candidates[0];
-  return clip(best.line, 160);
-}
+// Re-export query.js symbols so external importers still work.
+export { cmdQuery } from './query.js';
 
 // ---------- note: 经验实时暂存（source 页，一念一落，防流失） ----------
 const NOTE_DEDUP_MS = 60 * 1000;
@@ -1439,362 +1327,4 @@ export async function registerInIndex(root, section, slug, desc) {
       : index.slice(0, after) + `\n${line}` + index.slice(after);
     return { text: next };
   });
-}
-
-// ---------- lint: 体检（与 scripts/lint.sh 同规则的 Node 版，供 CLI/MCP 直调） ----------
-export async function cmdLint({ dir }) {
-  let root;
-  try {
-    root = await requireBrain(dir || process.cwd());
-  } catch {
-    return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
-  }
-  const vault = brainPath(root);
-  const pages = await listPages(vault);
-  const names = new Set(pages.map((p) => p.slug));
-  // `.brain` 顶层文件（index / log / todo）也是真实页：从图谱看 [[todo]] 就是 todo.md。
-  // 坑: 以前只把子目录当页 → [[todo]] 被当成死链（误报），反而逼用户去删掉正确引用。
-  // 只用于「链接目标是否存在」判定；不参与 ORPHAN / INDEX-MISSING（它们只针对子目录页）。
-  for (const f of await fs.readdir(vault).catch(() => [])) {
-    if (f.endsWith('.md')) names.add(f.replace(/\.md$/, ''));
-  }
-  const linkedNames = new Set(pages.flatMap((p) => p.links));
-  // 入度统计（不含 index.md）：图上"有人引用它"才算被接上。
-  // index 是入口清单（每页都会被登记），算进去就永远不会有 NO-INBOUND —— 失去意义。
-  const inbound = new Map();
-  for (const p of pages) for (const ln of p.links) inbound.set(ln, (inbound.get(ln) || 0) + 1);
-  // index.md 里列的 [[x]] —— 用于反向查死引用（列了但页不存在）
-  let indexLinks = [];
-  try {
-    const idx = await fs.readFile(join(vault, 'index.md'), 'utf8');
-    indexLinks = [...idx.matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim());
-  } catch { /* 无 index 则不查 */ }
-  const issues = [];
-
-  for (const pg of pages) {
-    if (!pg.hasFrontmatter) issues.push(`NO-FRONTMATTER: ${pg.rel}`);
-    // ID-DRIFT: 页面写了 id 但已跟文件名(slug)不一致 = 改过名或改过 id。
-    // 不是错误（id 就是用来固定身份的），但必须提示：[[slug]] 形式的引用指向的是**文件名**，
-    // 改名后旧引用全变 DEAD-LINK；本检查让「静默断链」变成「一条可执行的提示」。
-    // 优先看「有没有别的页 id 指向旧名」→ 那才是真正的改名现场。
-    if (pg.hasFrontmatter) {
-      const id = idOfPage(pg.body, pg.slug);
-      // 反向查：有别的页声明 id = 本页 slug，说明本页是从那个 id 改名过来的。
-      // 这种才是「改名没同步引用」的真信号；单纯 id≠slug 也可能只是手写的 id。
-      if (id !== pg.slug) {
-        issues.push(`ID-DRIFT: ${pg.rel} (frontmatter id=${id} ≠ 文件名 ${pg.slug}；` +
-          `引用请用 [[${id}]] 或改回文件名)`);
-      }
-    }
-    for (const ln of pg.links) {
-      // 两类都不是真链接，只报 TEMPLATE-LINK（且不短路就会再报一次 DEAD-LINK，同一条报两遍）：
-      //   ① 模板占位: `[[页面名]]` / `[[slug]]` / `[[Name]]` —— 模板没填
-      //   ② 描述语法时引用的字面量: `[[<slug>]]` —— 尖括号不是合法 wikilink 字符，
-      //      而是任务描述在解释格式（如 “在 ### 归档 段留下 [[<slug>]] 完成任务 N 条”）。
-      // 单靠关键字（slug/name）分辨不了两者，故额外认尖括号形态。
-      if (/^<.+>$/.test(ln) || /slug|Name|name|Date|页面名$/.test(ln)) {
-        issues.push(`TEMPLATE-LINK: ${pg.rel} -> [[${ln}]]`);
-      } else if (!names.has(ln)) {
-        issues.push(`DEAD-LINK: ${pg.rel} -> [[${ln}]]`);
-      }
-    }
-    // ORPHAN: sources/ 暂存页与会话/归档页豁免。前者是暂存线索（提炼成 concept 前天然孤立），
-    // 后者是历史记录（已登记在 index.md，就是图谱入口，无需再制造双链）。
-    // 豁免名单含两种归档命名：旧 `*-todo归档`（存量页仍在）+ 新 `log-*`
-    //（2026-09-15 起归档并入当天快照，见 todo.js 的 upsertArchiveSection）。
-    const isTerminal = pg.dir === 'sources'
-      || /todo归档$/.test(pg.slug)
-      || (pg.dir === 'sessions' && /^log-/.test(pg.slug));
-    if (!isTerminal && !pg.links.length && !linkedNames.has(pg.slug)) {
-      issues.push(`ORPHAN-PAGE: ${pg.rel} (no links out, no links in)`);
-    }
-    // NO-INBOUND: 有出边但无人指向 = 挂在图上没人接。ORPHAN-PAGE 只抓"零出零入"，
-    // 抓不到"连了 5 条出去却没人连它"的悬挂页（实测 concepts/file-shape-check-on-load 即是）。
-    // 只查知识页（concepts/entities/syntheses）——sources/sessions 的孤立是设计使然。
-    if (['concepts', 'entities', 'syntheses'].includes(pg.dir) && !(inbound.get(pg.slug) || 0)) {
-      issues.push(`NO-INBOUND: ${pg.rel} (无人链接到本页；在相关页的 ## 关联连接 挂一条 [[${pg.slug}]]）`);
-    }
-    // UNRESOLVED-CONFLICT: 有「## 知识冲突」段但还是 draft = 冲突标了没裁决。
-    // 判据必须认【段标题】而非页内出现「知识冲突」字样。
-    // 坑（2026-09-15 实测）: 原用裸子串 → codebuddy 的会话快照因任务描述里写了
-    // 「更新 session-key-fingerprint-flaw（知识冲突裁决）」而误报（它并无该段）。
-    // 同 NO-TAIL 的教训: 判据看结构，不看关键词。
-    if (/^#{2,6}[^\n]*知识冲突/m.test(pg.body) && /status: draft/.test(pg.frontmatter)) {
-      issues.push(`UNRESOLVED-CONFLICT: ${pg.rel}`);
-    }
-    if (['concepts', 'entities', 'syntheses'].includes(pg.dir)) {
-      if (pg.lines > PAGE_MAX_LINES || pg.bytes > PAGE_MAX_BYTES) {
-        issues.push(`OVER-SIZE: ${pg.rel} (${pg.lines}L/${pg.bytes}B > ${PAGE_MAX_LINES}L/${PAGE_MAX_BYTES / 1024}KB; 拆或外链)`);
-      }
-    }
-    // NO-TAIL: concept 页只有「头」（触发场景/表现）没有「尾」（可执行的东西）= 只能信，不能验。
-    // 尾巴的本质不是「叫验证」，而是【给出可执行的东西】：跑什么 / 怎么查 / 按什么步骤 / 用什么判据。
-    //
-    // 判据为何要宽（实测）:
-    //   26 页的段名高度分散 —— `## ✅ 处置` 出现 17 次，比 `## 🛠 解法` 还多；
-    //   还有 `## 做法`(11) / `## 判据` / `## ✅ 正确顺序` / `## 测试要点` / `## 分析步骤`。
-    //   只认「验证」二字会误报 7/11（64%）→ 噪音 → 规则被忽略。
-    // 判据为何要看「段内有没有真内容」:
-    //   `abs concept` 生成的骨架自带 `## 验证` 占位；若只看标题，骨架刚建就被判有尾（假阴性）。
-    //   所以必须排除「只有 <!-- 占位 --> 的空段」。
-    // 实测此版: 误报 0 / 漏报 0（报出的 2 页确实都没有「做完怎么确认」）。
-    if (pg.dir === 'concepts' && !hasTail(pg.body)) {
-      issues.push(`NO-TAIL: ${pg.rel}（无「做完怎么确认」；尾巴写清跑什么/看什么/按什么判据，别只有头）`);
-    }
-    if (pg.dir !== 'sources' && !pg.indexed) {
-      issues.push(`INDEX-MISSING: ${pg.rel} not listed as [[${pg.slug}]] in index.md`);
-    }
-  }
-
-  // index.md 反向检查: 列了 [[x]] 但 x 页不存在 —— 删页/归档 source 后忘了清 index 的残留。
-  // (page→index 的 INDEX-MISSING 已有, 这里补 index→page, 否则死引用静默留在入口文件里)
-  for (const ln of indexLinks) {
-    if (/slug|Name|name|Date|页面名$/.test(ln)) continue; // 模板占位行
-    if (!names.has(ln)) issues.push(`INDEX-DEAD-LINK: index.md -> [[${ln}]] (该页不存在, 删页后忘清 index?)`);
-  }
-
-  const nsrc = pages.filter((p) => p.dir === 'sources').length;
-  if (nsrc > SOURCES_MAX) issues.push(`SOURCES-PILED-UP: sources/ has ${nsrc} files > ${SOURCES_MAX}; 提炼归档旧 source`);
-
-  // SOURCE-UNDISTILLED: source 页超过 SOURCE_STALE_DAYS 天仍没链到任何 concept 页 = 暂存了没归位。
-  // 只数总量（SOURCES-PILED-UP）抓不到"4 个 source 里 3 个没提炼"——实测本仓即如此。
-  // 判据机械可判：出边里有没有 concepts/ 的页 + mtime 超龄，不猜语义。
-  const conceptSlugs = new Set(pages.filter((p) => p.dir === 'concepts').map((p) => p.slug));
-  const staleMs = SOURCE_STALE_DAYS * 86400 * 1000;
-  for (const pg of pages) {
-    if (pg.dir !== 'sources') continue;
-    if (pg.links.some((ln) => conceptSlugs.has(ln))) continue;
-    let ageMs = 0;
-    try { ageMs = Date.now() - (await fs.stat(join(root, pg.rel))).mtimeMs; } catch { continue; }
-    if (ageMs > staleMs) {
-      issues.push(`SOURCE-UNDISTILLED: ${pg.rel}（${SOURCE_STALE_DAYS} 天未提炼成 concept；提炼后删 source 并清引用）`);
-    }
-  }
-
-  // SESSIONS-NAMING: sessions/ 的一天一文件契约（见 skill 的「sessions/ 命名契约」）。
-  // 实测 codebuddy 乱局（2026-09-15）：一天最多出现 5 个文件、5 种 tags、同天两个快照。
-  // 判据纯机械：按“日期前缀”归组——同天 >1 个文件报 SPLIT；单个但非规范名报 NAMING。
-  // 只看文件名，不猜内容。
-  const sessByDate = new Map();
-  for (const pg of pages) {
-    if (pg.dir !== 'sessions') continue;
-    // 同时认两种写法：规范名 `log-<日期>` 与旧/杂命名 `<日期>-…`。
-    // 坑（写测试时抓到的）: 首版只写 `^(\d{4}-…)` → **匹配不上规范名 `log-2026-09-07`**，
-    // 于是「一个 log- + 一个旧杂文件」被数成 1 个而非 2 个，漏报。
-    const m = pg.slug.match(/^(?:log-)?(\d{4}-\d{2}-\d{2})/);
-    if (!m) continue;
-    // 长期存续的归档页豁免：**只认独立的 `archive` 标签**（如 `tags: [session-log, archive]`），
-    // 不认 `todo-archive`（那是旧归档页的标签，它正是要迁移的对象）。
-    // 坑（2026-09-15 在 ~/Docker 实测抓到）: 首版用 `\barchive\b` —— 而 `todo-archive`
-    // 里 `-` 与 `a` 之间也是词边界 → **老式归档页全被豁免**，一个都不报（漏报四天）。
-    // 豁免是为「外部产物全文归档」（如仓库 todo.md 全文）设的，不是为旧命名归档页。
-    const tags = String(pg.frontmatter).match(/^tags:\s*(.+)$/m)?.[1] || '';
-    const tagList = tags.replace(/^\[|\]$/g, '').split(',').map((t) => t.trim());
-    if (tagList.includes('archive')) continue;
-    if (!sessByDate.has(m[1])) sessByDate.set(m[1], []);
-    sessByDate.get(m[1]).push(pg.slug);
-  }
-  for (const [date, slugs] of sessByDate) {
-    if (slugs.length > 1) {
-      issues.push(`SESSIONS-SPLIT: ${date} 在 sessions/ 有 ${slugs.length} 个文件（${slugs.join('、')}）；` +
-        `一天只应有一个 \`log-${date}.md\`：归档写进其「## 📦 任务归档」段，多主题写成多个 ## 子段`);
-    } else if (!slugs[0].startsWith('log-')) {
-      // 单个文件但**不是规范名** —— 旧命名（`<日期>-todo归档.md` 等）单独存留。
-      // 坑（2026-09-15 在 ~/Docker 实测抓到）: 首版只看“同天 >1 个” → 4 个日期
-      // 各只有一份 `<日期>-todo归档.md` → 一个都不报（漏报）。
-      // 旧命名的页无论是否孤单都该改：跑 `abs todo archive` 后并入 `log-<日期>.md`。
-      issues.push(`SESSIONS-NAMING: ${date} 的文件 \`${slugs[0]}.md\` 不是规范名；` +
-        `应为 \`log-${date}.md\`（跑 abs todo archive 会并入；旧归档页可删）`);
-    }
-  }
-  // SESSIONS-MISPLACED: sessions/ 里放了 tags 既非 session-log / todo-archive / archive 的页。
-  // 实例：codebuddy 的 `2026-09-07-ui-fixes.md`（tags: [source,session-log]）等 5 页 ——
-  // 当时做的一组工作不是「暂存线索」，而就是当天的快照正文。
-  for (const pg of pages) {
-    if (pg.dir !== 'sessions') continue;
-    const tags = String(pg.frontmatter).match(/^tags:\s*(.+)$/m)?.[1] || '';
-    if (!/session-log|todo-archive|archive/.test(tags)) {
-      issues.push(`SESSIONS-MISPLACED: ${pg.rel}（tags: ${tags.trim()} 不属 sessions/；` +
-        `当天工作写进 \`log-<日期>.md\` 正文，暂存线索用 \`abs note\` 落 sources/）`);
-    }
-  }
-
-  // SUPERSEDED-DANGLING: superseded 页声明的取代者也必须存在。
-  // 它跟 DEAD-LINK 同性质（指向不存在的页），但后果更重：
-  // 读者被引导去找一个不存在的"新版本"，比单纯断链更容易让人以为"没新页就是没替代"。
-  for (const pg of pages) {
-    if (pg.status !== 'superseded') continue;
-    if (!pg.supersededBy) continue; // 无取代者也是合法状态（就是弃用，没替代）
-    const by = pg.supersededBy.replace(/^\[\[|\]\]$/g, '').trim();
-    if (!names.has(by)) {
-      issues.push(`SUPERSEDED-DANGLING: ${pg.rel} (superseded-by: ${by} —— 该页不存在，删页后未同步)`);
-    }
-  }
-
-  // DRAFT-STALE: draft 停太久 = 既没核实也没被推翻，实质是写了没人看的堆积。
-  // 不报 sources（它们由 SOURCE-UNDISTILLED 管），只报 concepts/entities/syntheses ——
-  // 那些页是"应该已经被确认过"的长期资产，长期 draft 说明核实环节缺位。
-  for (const pg of pages) {
-    if (pg.status !== 'draft') continue;
-    if (pg.dir === 'sources') continue;
-    let ageMs = 0;
-    try { ageMs = Date.now() - (await fs.stat(join(root, pg.rel))).mtimeMs; } catch { continue; }
-    if (ageMs > DRAFT_STALE_DAYS * 86400 * 1000) {
-      const days = Math.floor(ageMs / 86400000);
-      issues.push(`DRAFT-STALE: ${pg.rel}（已 ${days} 天停在 draft；核实后改 status: active，推翻则 abs supersede）`);
-    }
-  }
-
-  // Rules 区：它的价值在“少而重”，且不被折叠（load 每次都全量读）。
-  // 无上限增长 = 把 load 又撑回去（同 Done / index 清单的膨胀根因）。
-  {
-    const idxTxt = await readFileOrNull(join(vault, 'index.md'));
-    const { items, found } = readRules(idxTxt);
-    if (found && items.length > RULES_MAX) {
-      issues.push(`RULES-PILED-UP: Rules 区 ${items.length} 条 > ${RULES_MAX}；把长条目提炼成概念页，这里只留一句话`);
-    }
-    // 该区是 load 必读的硬规则清单，条目却写得像段落 → 提醒改短句。
-    const longOnes = items.filter((l) => l.trim().length > 160);
-    if (longOnes.length) {
-      issues.push(`RULES-TOO-LONG: Rules 区 ${longOnes.length} 条超 160 字符（如 "${clip(longOnes[0].trim(), 40)}"）；展开写进概念页，这里只留一句话（不带链接）`);
-    }
-  }
-
-  // Done 区堆积：它无上限增长，且 `abs todo`/`abs load` 每次全量打印 → 越积越难用。
-  // （与 hooks.log/wrapup.log 同类问题；那两处有轮转，这里靠 `abs todo archive`。）
-  // 坑: 曾经写成 brainPath(vault, 'todo.md')，而 vault 已经是 .brain 目录
-  // → 拼出 .brain/.brain/todo.md（ENOENT），又被外层 try/catch 吞掉
-  // → 检查静默失效（lint 永远 0 problem）。故这里不用 try/catch 吞错，
-  // 只对 ENOENT 做缺省，写错路径这类编程错会直接暴露。
-  const todoTxt = await fs.readFile(join(vault, 'todo.md'), 'utf8').catch(() => '');
-  const di = todoTxt.split('\n').findIndex((l) => l.startsWith('## Done'));
-  if (di !== -1) {
-    const doneLines = todoTxt.split('\n').slice(di + 1).filter((l) => l.trim()).length;
-    const DONE_MAX = 60;
-    if (doneLines > DONE_MAX) {
-      issues.push(`DONE-PILED-UP: Done 区 ${doneLines} 行 > ${DONE_MAX}; 跑 \`abs todo archive\` 迁出旧日期组`);
-    }
-
-    // 结语契约：Done 的 [x] 必须带【落地/否决/仅方案】。
-    // 为什么钉死: 无结语的 [x] 同时意味着"真做完了"和"只想过"，读的人无法区分。
-    // 实测翻车: 把"跑通后又被撤销"的 daemon 条当成已落地 → 得出错误结论。
-    // 只查 Done 区（含历史归档前的旧条目也算），不做自动改写（改记录属内容决策，不该由 lint 代劳）。
-    const doneBody = todoTxt.split('\n').slice(di + 1);
-    const noKind = doneBody.filter((l) => /^\s*- \[x\]/.test(l) && !doneKindOf(l));
-    if (noKind.length) {
-      const sample = (noKind[0].match(/- \[x\] (\S+)/) || [, '?'])[1];
-      issues.push(
-        `DONE-NO-KIND: Done 区 ${noKind.length} 条缺结语（如 ${sample}）。` +
-        `逐条补 \`--as 落地|否决|仅方案\`（新条目：abs todo done <id> --as …）`,
-      );
-    }
-    // 完成日期同理必须由工具盖：手写 [x] 时人会抄语义部分（结语）而漏掉机械部分（日期）。
-    // 后果不只是排版不齐 —— 无日期行归入 `### （未标日期）` 尾组，而归档靠日期判天数，
-    // 故这些行**永远无法被 abs todo archive 迁出**（todo.js:300 保守跳过）。
-    // 即：漏一个日期 = 一条永久钉住 Done 区、拖大 load 输出的行。
-    // 两处在同一处校验（同一份契约的两半），别只查一半给假信心。
-    const noDate = doneBody.filter((l) => /^\s*- \[x\]/.test(l) && !doneDateOf(l));
-    if (noDate.length) {
-      const sample = (noDate[0].match(/- \[x\] (\S+)/) || [, '?'])[1];
-      issues.push(
-        `DONE-NO-DATE: Done 区 ${noDate.length} 条缺 \`(完成 YYYY-MM-DD)\`（如 ${sample}）。` +
-        `手写的 [x] 不会自动盖日期 —— 补上后重跑；新条目一律走 \`abs todo done <id>\`。`,
-      );
-    }
-  }
-
-  const n = issues.length;
-  return [
-    ...(issues.length ? issues : []),
-    '',
-    `lint: ${n} problem(s).`,
-    n === 0 ? '✓ 图谱健康' : '',
-  ].filter(Boolean).join('\n');
-}
-
-const PAGE_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];
-
-// concept/entity/synthesis 页的容量上限，超出提示"拆或外链"。
-// 曾为 150L/5120B —— 实测偏紧：跨 4 项目 68 页里仅 2 页超限，且都只超一点
-// （5463B / 5440B）；为满足它还把一页从 5319B 压到 4972B（内容受损、收益为零）。
-// 放宽到 8KB：当前最大页 5463B，留约 50% 余量，但不至于失去"该拆了"的信号。
-// 提成常量避免检查条件与提示文本各写一份而漂移。
-const PAGE_MAX_LINES = 150;
-
-/** 尾巴关键词：只要段名里带这些「动作词」，就认为作者在给「做完怎么确认」。
- *  为何不限定叫「验证」：实测 26 页段名高度分散（`## ✅ 处置` 17 次 > `## 🛠 解法`），
- *  只认「验证」会误报 7/11（64%）—— 噪音会让规则失去意义。 */
-const TAIL_WORDS = '验证|检查|清单|测试|处置|做法|步骤|顺序|判据|信号|怎么';
-
-/** concept 页是否有「尾」（可执行的东西）。
- *  两种真实形态都算：
- *   1. 有带动作词的段标题，且**段内有真内容** —— 排除 `abs concept` 骨架的
- *      `## 验证` + `<!-- 占位 -->`（只看标题会把未填的骨架误判为有尾）。
- *   2. 列表项形式，如 `3. 验证命令：\`cmd\``（hook-sh-not-bash / todo-rewrite-not-map 的写法）。
- *  逐行扫描而非复杂正则：需要「段边界」与「占位识别」，正则会难读且难改。 */
-export function hasTail(body) {
-  const lines = String(body || '').split('\n');
-  const headRe = new RegExp(`^#{2,6}[^\\n]*(${TAIL_WORDS})`);
-  for (let i = 0; i < lines.length; i++) {
-    if (!headRe.test(lines[i])) continue;
-    const lvl = lines[i].match(/^#+/)[0].length;
-    for (let j = i + 1; j < lines.length; j++) {
-      const t = lines[j].trim();
-      const h = lines[j].match(/^(#+)\s/);
-      if (h && h[1].length <= lvl) break;        // 本段结束，换下一段找
-      if (!t) continue;
-      if (t.startsWith('<!--') || t === '-->') continue; // 占位注释不算内容
-      return true;
-    }
-  }
-  return new RegExp(`^\\s*(?:\\d+\\.|[-*])\\s*\\**[^\\n]{0,20}(${TAIL_WORDS})`, 'm').test(String(body || ''));
-}
-const PAGE_MAX_BYTES = 8 * 1024;
-
-// source 页超龄未提炼的天数阈值（SOURCE-UNDISTILLED）。
-// 7 天 = 跨过至少一个完整工作周还没人提炼，基本等于被遗忘。
-const SOURCE_STALE_DAYS = 7;
-// draft 超龄阈值：新落的经验（abs note）默认 draft，指的是"还没核实过"。
-// 长期停在 draft = 既没被核实也没被推翻，属"写了没人看"的堆积 —— 不自动改，只报。
-const DRAFT_STALE_DAYS = 14;
-
-async function listPages(vault) {
-  let indexText = '';
-  try {
-    indexText = await fs.readFile(join(vault, 'index.md'), 'utf8');
-  } catch { /* no index yet */ }
-  const pages = [];
-  for (const d of PAGE_DIRS) {
-    const dp = join(vault, d);
-    let files;
-    try {
-      files = await fs.readdir(dp);
-    } catch {
-      continue;
-    }
-    for (const f of files) {
-      if (!f.endsWith('.md') || f.startsWith('_')) continue;
-      const full = join(dp, f);
-      const body = await fs.readFile(full, 'utf8').catch(() => '');
-      const fm = body.match(/^---\n([\s\S]*?)\n---/);
-      const links = [...new Set([...body.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1].split('|')[0]))];
-      pages.push({
-        dir: d,
-        // 带上 .brain/ 前缀：这串会原样出现在 lint 提示里，用户会拿它去找文件。
-        // 坑: 曾经只给 vault 相对路径（concepts/x.md），用户到项目根找 concepts/ 找不到。
-        rel: `${BRAIN_DIR}/${d}/${f}`,
-        slug: f.replace(/\.md$/, ''),
-        body,
-        frontmatter: fm ? fm[1] : '',
-        hasFrontmatter: body.startsWith('---\n'),
-        links,
-        lines: body.split('\n').length,
-        bytes: Buffer.byteLength(body, 'utf8'),
-        indexed: indexText.includes(`[[${f.replace(/\.md$/, '')}]]`),
-        status: statusOfPage(body, fm ? fm[1] : ''),
-        supersededBy: supersededByOf(body),
-      });
-    }
-  }
-  return pages;
 }
