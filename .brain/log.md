@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-09-22 21:57] [[fanchao]] dev | 删收尾注入：agent_end 是每轮 run 结束而非会话结束，deliverAs=followUp 把每轮都变成打断（用户实报「干一会就中断」）。pi/opencode 注入及其全部附属（hasWriteWork/loggedToday/notesBlock/teardownNudged）整体删除，只留 seen 埋点。9 个测试改为断言不再注入。385/385 通过。
 ## [2026-09-18 17:16] [[fanchao]] dev | 发版 1.9.5 并更新本地：npm latest=1.9.5（含 todo 登记不及时修复）；全局装 + 四宿主 abs install 刷新，skill/hook 逐文件 diff 校验一致；ABS_BIN 指向真实全局 bin。395 测试全绿。注：8b5afd7 提交信息里'1.9.4 卡在 staged 态不可用'的结论是错的 —— 实为 registry 传播延迟，1.9.4 也已正常发布，更正已落 sources/。
 ## [2026-09-18 17:16] [[fanchao]] note | npm publish 报 '+ pkg@ver' 后 registry 读到 404/E409 不等于发布失败：实测 1.9.4/1.9.5 均成功，只是传播延迟 1-2 分钟。E409 'Cannot publish over previously staged version' 的真意是「该版本已在发布飞行中」，正确动作是等，不是换版号。判据：等 60-90s 后查 tarball HTTP 码（200=已上传成功，只是还没进 versions[]），别信 npm 的退出码（E409 时它 exit 0）。我据错误推断连发 1.9.4/1.9.5/1.9.6 三个版号，浪费两个。
 ## [2026-09-18 17:04] [[fanchao]] dev | 诊断'新项目作者名提取不对'：根因是 ~/.abs/config.json 残留 user=tester（手动设置遗留，非代码 bug，测试隔离完好）；已改回 fanchao。同时确认 todo 空转非 abs 缺陷 —— abs 的 start/done 与已砍分区无关，是会话内没在任务边界登记所致，纪律已落 sources/。

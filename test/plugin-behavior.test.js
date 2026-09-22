@@ -119,7 +119,9 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     assert.equal(injected.length, 0, 'grep 不应注入');
   });
 
-  test('真改过文件 → 注入一次, deliverAs=followUp, 日志有落痕; 再触发被节流', async () => {
+  // 2026-09-18: 收尾注入已停用 —— deliverAs:"followUp" 每轮 agent_end 抢一个 follow-up
+  // turn, 用户实报「干到一半任务被打断」。埋点保留(证伪静默失效)。
+  test('真改过文件 → 不再注入; 日志仍落痕; 节流状态不变', async () => {
     const logDir = join(sandbox, 'log');
     const mod = await loadPi(logDir);
     const { handlers, injected } = harness(mod.default);
@@ -131,111 +133,17 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
       { role: 'toolResult', toolName: 'edit' },
     ];
     await handlers.agent_end({ messages: msgs }, { cwd: proj });
-    assert.equal(injected.length, 1, '写后应注入一次');
-    assert.equal(injected[0].opts.deliverAs, 'followUp', '流式中注入须用 followUp');
-    assert.match(injected[0].text, /\[abs\] 本会话改过文件/, '注入文本应是 abs 事实提示');
-    // 2026-09-18: 注入的注意力顺序 = 先任务登记、后沉淀。实测失效路径是
-    // 「只补 note/log、todo 全程空」——文案把 todo 埋在一串动词里就没人当首要动作。
-    assert.match(injected[0].text, /先看任务：.*abs todo done/, 'todo 登记须先于沉淀出现');
-    assert.ok(
-      injected[0].text.indexOf('先看任务') < injected[0].text.indexOf('再看沉淀'),
-      '任务登记段必须在沉淀段之前',
-    );
-    assert.ok(!injected[0].text.includes('\\n'), '注入文本不应残留转义 \\n');
+    assert.equal(injected.length, 0, '不得再往对话里注入 follow-up 打断用户');
     const log = await hooksLog(logDir);
-    assert.match(log, /pi:agent_end:teardown-nudge/, '必须有真实落痕(证伪静默失效)');
-    // 节流
+    assert.match(log, /pi:agent_end:seen/, '运维埋点须保留(区分事件没触发/被守卫拦下)');
+    // 再触发仍不得注入
     await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'write' }] }, { cwd: proj });
-    assert.equal(injected.length, 1, '每会话最多一次');
+    assert.equal(injected.length, 0, '任何轮次都不得注入');
   });
 
-  test('session_start 重置节流：同进程的第二个会话仍能注入', async () => {
-    // 回归 2026-09-13 实报：同一天后续会话全部静默——
-    // teardownNudged 声明在 absPiHook 作用域且 session_start 不重置，
-    // 于是同一进程的第二个会话永久继承 true，后半场全部静默。
-    const logDir = join(sandbox, 'log');
-    const mod = await loadPi(logDir);
-    const { handlers, injected } = harness(mod.default);
-    const proj = await makeProject('pi-reset');
-    const msgs = [{ role: 'toolResult', toolName: 'edit' }];
-    await handlers.agent_end({ messages: msgs }, { cwd: proj });
-    assert.equal(injected.length, 1, '首会话应注入');
-    await handlers.session_start({}, { cwd: proj });
-    await handlers.agent_end({ messages: msgs }, { cwd: proj });
-    assert.equal(injected.length, 2, '新会话必须能再次注入（重置节流）');
-  });
-
-  test('并发 agent_end 只注入一次（跨 await 的检查-置位竞态回归）', async () => {
-    // 回归 2026-09-17 实测定根因：~/.abs/log/hooks.log 里同会话 5 分钟注入 6 次，
-    // 全日志 55 次。原实现是「先 `if (nudged) return` 检查 → 隔若干 await（logHook/loggedToday）
-    // 才 teardownNudged = true」→ 并发调用全部先过检查、再各自置位 → 一起注入。
-    // 而 agent_end 是**每轮 run 结束**都触发（不等于会话结束），并发是常态。
-    // 修法：进函数第一个动作就置 in-flight（检查与置位间无 await）。
-    const logDir = join(sandbox, 'log');
-    const mod = await loadPi(logDir);
-    const { handlers, injected } = harness(mod.default);
-    const proj = await makeProject('pi-race');
-    const msgs = [{ role: 'toolResult', toolName: 'edit' }];
-    // 不 await 逐个跑 —— 模拟真实的同时触发
-    await Promise.all([
-      handlers.agent_end({ messages: msgs }, { cwd: proj }),
-      handlers.agent_end({ messages: msgs }, { cwd: proj }),
-      handlers.agent_end({ messages: msgs }, { cwd: proj }),
-      handlers.agent_end({ messages: msgs }, { cwd: proj }),
-      handlers.agent_end({ messages: msgs }, { cwd: proj }),
-    ]);
-    assert.equal(injected.length, 1, `并发 5 次只能注入 1 次，实际 ${injected.length} 次`);
-    // seen 痕也不能重复（它同样被守卫，实测生产里泄漏了 6 次）
-    const log = await hooksLog(logDir);
-    const seen = (log.match(/agent_end:seen/g) || []).length;
-    assert.equal(seen, 1, `agent_end:seen 应恰好一行，实际 ${seen} 行`);
-    const nudges = (log.match(/agent_end:teardown-nudge/g) || []).length;
-    assert.equal(nudges, 1, `teardown-nudge 落痕应恰好一条，实际 ${nudges} 条`);
-  });
-
-  test('重复注册扩展（多实例）仍共享节流（session_start 多次触发的回归）', async () => {
-    // 回归 2026-09-17 实测：session_start 11 分钟内触发 8 次（00:07:58 一口气 3 次）——
-    // 扩展被重复注册。原守卫声明在被反复调用的工厂函数里 → 每注册一份就多一份独立闭包，
-    // “每会话一次”变成“每实例一次”。修法：状态提到模块级，同进程内只有一份。
-    const logDir = join(sandbox, 'log');
-    const mod = await loadPi(logDir);
-    const proj = await makeProject('pi-multi');
-    const msgs = [{ role: 'toolResult', toolName: 'edit' }];
-    const a = harness(mod.default);   // 第 1 份注册
-    const b = harness(mod.default);   // 第 2 份注册
-    await Promise.all([
-      a.handlers.agent_end({ messages: msgs }, { cwd: proj }),
-      b.handlers.agent_end({ messages: msgs }, { cwd: proj }),
-    ]);
-    const total = a.injected.length + b.injected.length;
-    assert.equal(total, 1, `两份实例合计只能注入 1 次，实际 ${total} 次`);
-  });
-
-  test('收尾提示带本会话素材（hook 机械记的用户原话+改过的文件）', async () => {
-    const logDir = join(sandbox, 'log');
-    const mod = await loadPi(logDir);
-    const { handlers, injected } = harness(mod.default);
-    const proj = await makeProject('pi-notes');
-    await handlers.before_agent_start({ prompt: '这一轮的产出记一下' }, { cwd: proj });
-    await handlers.turn_end({ toolResults: [{ toolName: 'edit', input: { file_path: 'src/todo.js' } }] }, { cwd: proj });
-    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
-    // 写文件本轮不再注入任何提醒（2026-09-15 撤销：每轮弹 Follow-up 太吵）。
-    // 不再断言总数固定 —— 两种提醒都会发，顺序是登记在前、收尾在后。
-    const teardown = injected.filter((m) => /本会话素材|收尾/.test(m.text));
-    assert.equal(teardown.length, 1, `收尾提醒应恰好一条: ${injected.map((m) => m.text.slice(0, 40)).join(' | ')}`);
-    assert.match(teardown[0].text, /本会话素材/, `应带素材标题: ${teardown[0].text.slice(-400)}`);
-    assert.match(teardown[0].text, /user: 这一轮的产出记一下/, '应带用户原话');
-    assert.match(teardown[0].text, /tool: src\/todo\.js/, '应带改过的文件');
-    // 素材只能用一次：新会话重新累积（这里是刻意的：素材属于会话，不是全局）
-    await handlers.session_start({}, { cwd: proj });
-    await handlers.turn_end({ toolResults: [{ toolName: 'edit', input: { file_path: 'src/new.js' } }] }, { cwd: proj });
-    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
-    const t2 = injected.filter((m) => /本会话素材/.test(m.text));
-    assert.match(t2[t2.length - 1].text, /tool: src\/new\.js/, '新会话素材应重新累积');
-    assert.ok(!t2[t2.length - 1].text.includes('src/todo.js'), '不得重复上一会话的旧料');
-  });
-
-  // ---- 新增：写文件 = 任务开始 → 立刻提醒登记（不等 agent_end） ----
+  // ---- 以下一批用例(节流重置/并发竞态/多实例/素材拼装/note-vs-dev 判据)都在测
+  // 「何时注入」。注入已停用(2026-09-18), 这些用例失去对象 → 整体删除, 不留
+  // 无法失败的断言充数。守卫函数本身仍被 seen 埋点用例覆盖。
 
   test('今日已收尾的项目不注入', async () => {
     const mod = await loadPi(join(sandbox, 'log'));
@@ -243,47 +151,6 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     const proj = await makeProject('pi-done', true);
     await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
     assert.equal(injected.length, 0, 'log.md 有今日 dev 记录则不再打扰');
-  });
-
-  // ===== 回归 2026-09-13: 节流误判导致后续会话静默 =====
-  // abs note 也写 log.md（kind=note），旧判据 (^## [今天 HH:MM]) 把「沉淀了一条经验」
-  // 当成「今天已收尾」→ 整天不再提醒 → 新冒的话题全部漏登。只认 kind=dev。
-  test('今日只有 note（无 dev）→ 仍应注入（note 不是收尾）', async () => {
-    const mod = await loadPi(join(sandbox, 'log'));
-    const { handlers, injected } = harness(mod.default);
-    const proj = await makeProject('pi-noteonly');
-    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
-    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    await fs.writeFile(join(proj, '.brain', 'log.md'),
-      `# 🗒 Activity Log\n\n## [${today} 10:00] [[fanchao]] note | 只沉淀了经验\n`, 'utf8');
-    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
-    assert.equal(injected.length, 1, '只有 note 不得当已收尾');
-    // 有 dev 则真的不打扰
-    await fs.appendFile(join(proj, '.brain', 'log.md'),
-      `## [${today} 11:00] [[fanchao]] dev | 真收尾\n`, 'utf8');
-    await handlers.session_start({}, { cwd: proj });
-    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
-    assert.equal(injected.length, 1, '有 dev 记录后不再打扰');
-  });
-
-  // 守卫收紧: 曾用裸日期 substring(includes(today)) 判"今天收尾过",
-  // 于是正文里任何一处提到今天的日期(任务行/引文/本提醒文本)都会把 nudge 永久压掉。
-  // 必须只认 log.md 的条目头 '## [YYYY-MM-DD HH:MM]'。
-  test('正文提到今天日期 ≠ 已收尾 (旧 substring 守卫的误判回归)', async () => {
-    const mod = await loadPi(join(sandbox, 'log'));
-    const { handlers, injected } = harness(mod.default);
-    const proj = join(sandbox, 'pi-false-positive');
-    await fs.mkdir(join(proj, '.brain'), { recursive: true });
-    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
-    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    // 无任何 '## [today HH:MM]' 条目头, 但正文里出现了今天的日期
-    await fs.writeFile(
-      join(proj, '.brain', 'log.md'),
-      `# Activity Log\n\n> 目标: ${today} 前完成迁移\n## [2020-01-01 00:00] dev | 旧\n`,
-      'utf8',
-    );
-    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
-    assert.equal(injected.length, 1, '正文提到今天日期不应被当作已收尾');
   });
 
   // 可观测性: 无 seen 痕就无法区分「事件没触发」与「触发了但被守卫拦下」——
@@ -314,7 +181,7 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
 });
 
 // ============================ op​encode ============================
-describe('op​encode 插件 行为级 (session.idle 收尾注入)', () => {
+describe('op​encode 插件 行为级', () => {
   async function loadOc(logDir) {
     await run(['install', '--agent', 'opencode', '--yes']);
     const p = join(sandbox, 'opencode', 'plugins', 'abs.ts');
@@ -329,16 +196,17 @@ describe('op​encode 插件 行为级 (session.idle 收尾注入)', () => {
     assert.ok(!mod.AbsPlugin, '不应存在命名导出 AbsPlugin');
   });
 
-  test('server 返回 event 与 tool.execute.after 两个钩子', async () => {
+  // 2026-09-18: 收尾注入已停用(用户实报「干活干一会就中断」), 连同 tool.execute.after
+  // (唯一用途是给注入置 wroteFiles) 一起删除。插件现在只剩 event 一个钩子。
+  test('server 只返回 event 钩子(注入相关的 tool.execute.after 已删除)', async () => {
     const mod = await loadOc(join(sandbox, 'log'));
     const proj = await makeProject('oc-hooks');
-    const hooks = await mod.default.server({ client: { session: { promptAsync: async () => {} } }, directory: proj });
+    const hooks = await mod.default.server({ directory: proj });
     assert.equal(typeof hooks.event, 'function');
-    assert.equal(typeof hooks['tool.execute.after'], 'function');
+    assert.equal(hooks['tool.execute.after'], undefined, '已无消费方, 不得残留');
   });
 
-
-  test('只读不注入; 写后 idle 注入一次并落痕; 再 idle 节流', async () => {
+  test('任何事件都不得注入; session.idle 留 seen 痕; 事件名不得 undefined', async () => {
     const logDir = join(sandbox, 'log');
     const mod = await loadOc(logDir);
     const proj = await makeProject('oc-write');
@@ -347,130 +215,29 @@ describe('op​encode 插件 行为级 (session.idle 收尾注入)', () => {
       client: { session: { promptAsync: async (a) => injected.push(a) } },
       directory: proj,
     });
-    // 只读: 无 tool.execute.after 写标记
     await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's1' } } });
     await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    assert.equal(injected.length, 0, '只读不应注入');
-    // 写后
-    await hooks['tool.execute.after']({ tool: 'edit' });
     await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    assert.equal(injected.length, 1, '写后应注入一次');
-    assert.equal(injected[0].path.id, 's1', '注入须指向当前 session');
-    assert.match(injected[0].body.parts[0].text, /\[abs\] 本会话改过文件/);
-    assert.ok(!injected[0].body.parts[0].text.includes('\\n'), '注入文本不应残留转义');
+    await hooks.event({ event: { type: 'session.deleted', properties: { sessionID: 's1' } } });
+    assert.equal(injected.length, 0, '不得再往对话里注入打断用户');
     const log = await hooksLog(logDir);
-    assert.match(log, /opencode:session\.created/, 'session.created 应落痕');
-    assert.match(log, /opencode:session\.idle:teardown-nudge/, '必须有真实落痕(证伪静默失效)');
+    assert.match(log, /session\.created/, 'session.created 应落痕');
+    assert.match(log, /session\.idle:seen/, 'idle 应留 seen 痕(区分未触发/被拦下)');
+    assert.equal((log.match(/session\.idle:seen/g) || []).length, 1, 'seen 只记一次');
     assert.ok(!log.includes('undefined'), '事件名不得是 undefined(曾因 ({name}) 签名错)');
-    // 节流
-    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    assert.equal(injected.length, 1, '每会话最多一次');
   });
 
-  test('今日已收尾不注入; 无 .brain 不注入', async () => {
-    const mod = await loadOc(join(sandbox, 'log'));
-    // 今日已收尾
-    const done = await makeProject('oc-done', true);
-    const inj1 = [];
-    const h1 = await mod.default.server({ client: { session: { promptAsync: async (a) => inj1.push(a) } }, directory: done });
-    await h1['tool.execute.after']({ tool: 'write' });
-    await h1.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    assert.equal(inj1.length, 0, '今日已收尾不打扰');
-    // 无图谱
-    const nobrain = join(sandbox, 'oc-nobrain');
-    await fs.mkdir(nobrain, { recursive: true });
-    const inj2 = [];
-    const h2 = await mod.default.server({ client: { session: { promptAsync: async (a) => inj2.push(a) } }, directory: nobrain });
-    await h2['tool.execute.after']({ tool: 'edit' });
-    await h2.event({ event: { type: 'session.idle', properties: { sessionID: 's2' } } });
-    assert.equal(inj2.length, 0, '无图谱不打扰');
-  });
-
-  // 根因回归: "零 nudge" 曾被误解为 promptAsync 通道故障, 实际是 wroteFiles 守卫漏了 bash。
-  // op​encode 里很多修改走 bash(heredoc/sed), 纯 bash 会话永远不置位 → 提醒静默不发。
-  test('bash 写命令算改文件(置位), 只读 bash 不算', async () => {
-    const mod = await loadOc(join(sandbox, 'log'));
-    const cases = [
-      [['bash', { command: 'sed -i s/a/b/ f.js' }], 1, 'bash 写命令应置位'],
-      [['bash', { command: 'git status' }], 0, '只读 bash 不应置位'],
-      [['bash', { command: 'ls -la' }], 0, '只读 bash 不应置位'],
-      [['write', {}], 1, 'write 工具应置位'],
-      [['read', {}], 0, '纯读不应置位'],
-    ];
-    for (const [toolArgs, want, msg] of cases) {
-      const inj = [];
-      const proj = await makeProject(`oc-gate-${toolArgs[0]}-${want}-${Math.random().toString(36).slice(2, 7)}`);
-      const h = await mod.default.server({
-        client: { session: { promptAsync: async (a) => inj.push(a) } },
-        directory: proj,
-      });
-      await h['tool.execute.after']({ tool: toolArgs[0], args: toolArgs[1] });
-      await h.event({ event: { type: 'session.idle', properties: { sessionID: 's' } } });
-      assert.equal(inj.length, want, msg);
-    }
-  });
-
-  test('首次 session.idle 无条件留 seen 痕 (可观测性)', async () => {
-    const logDir = join(sandbox, 'log');
-    const mod = await loadOc(logDir);
-    const done = await makeProject('oc-seen', true); // 今日已收尾 → 不会 nudge
-    const hooks = await mod.default.server({ client: { session: { promptAsync: async () => {} } }, directory: done });
-    await hooks['tool.execute.after']({ tool: 'edit' });
-    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    const log = await hooksLog(logDir);
-    assert.match(log, /opencode:session\.idle:seen/, '即使被守卫拦下, 也必须有 seen 痕');
-    assert.ok(!/teardown-nudge/.test(log), '被拦下时不应有 nudge 痕');
-    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    const log2 = await hooksLog(logDir);
-    assert.equal((log2.match(/session\.idle:seen/g) || []).length, 1, 'seen 只记一次');
-  });
-
-  // 根因回归(2026-09-16 审计#4, pi 侧 2026-09-13 同构实测): nudged/wroteFiles 声明在
-  // server 工厂闭包里, session.created 不重置 → 同进程第二个会话继承 true, 永久静默。
-  test('跨会话重置: 上会话已 nudge, 新 session.created 后同项目仍能再注入', async () => {
+  test('新 session.created 重置埋点状态 (否则第二个会话永久不留痕)', async () => {
     const logDir = join(sandbox, 'log');
     const mod = await loadOc(logDir);
     const proj = await makeProject('oc-reset');
-    const injected = [];
-    const hooks = await mod.default.server({
-      client: { session: { promptAsync: async (a) => injected.push(a) } },
-      directory: proj,
-    });
-    // 会话1: 写 + idle → 注入一次并节流
+    const hooks = await mod.default.server({ directory: proj });
     await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's1' } } });
-    await hooks['tool.execute.after']({ tool: 'edit' });
     await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    assert.equal(injected.length, 1, '会话1 应注入');
-    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    assert.equal(injected.length, 1, '会话1 节流');
-    // 会话2 (同进程, 新 session.created): 必须重新计数, 而不是继承会话1的已nudge状态
     await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's2' } } });
-    await hooks['tool.execute.after']({ tool: 'edit' });
     await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's2' } } });
-    assert.equal(injected.length, 2, '新会话必须重新注入(老代码继承 nudged=true 永久静默)');
-    assert.equal(injected[1].path.id, 's2', '注入须指向新 session');
-  });
-
-  // 根因回归(2026-09-16 审计#2): loggedToday 旧判据只看「今天有没有行」,
-  // `abs note`(kind=note) 也写 log.md → 沉淀一条经验就被当成「已收尾」, 整天不再提醒。
-  // pi 侧已修(只认 dev|), 三宿主判据必须一致。
-  test('今日只有 note 条目(kind=note)不算已收尾 → 仍注入', async () => {
-    const logDir = join(sandbox, 'log');
-    const mod = await loadOc(logDir);
-    const proj = join(sandbox, 'oc-note-only');
-    await fs.mkdir(join(proj, '.brain'), { recursive: true });
-    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
-    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    await fs.writeFile(join(proj, '.brain', 'log.md'),
-      `# Activity Log\n## [${today} 10:00] [[x]] note | 沉淀了一条经验\n`, 'utf8');
-    const injected = [];
-    const hooks = await mod.default.server({
-      client: { session: { promptAsync: async (a) => injected.push(a) } },
-      directory: proj,
-    });
-    await hooks['tool.execute.after']({ tool: 'edit' });
-    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    assert.equal(injected.length, 1, 'note 条目不算收尾, 必须注入(旧判据会静默吞掉)');
+    const log = await hooksLog(logDir);
+    assert.equal((log.match(/session\.idle:seen/g) || []).length, 2, '每个会话各留一次 seen 痕');
   });
 });
 

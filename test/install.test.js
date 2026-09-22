@@ -13,6 +13,14 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
+/** 去掉行注释与块注释, 便于对生成产物做“代码里是否还有 X”的断言。
+ *  注释里点名被删的 API 是刻意留的教训, 不该被判为残留。 */
+function stripComments(src) {
+  return String(src)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+}
+
 const CLI = join(REPO, 'bin', 'abs.js');
 
 let sandbox;
@@ -373,19 +381,20 @@ describe('install opencode / pi', () => {
     assert.ok(cfg.mcpServers.other, '别人的 MCP 不能被误删');
   });
 
-  // 回归: 收尾注入必须在 agent_end 上(只挂 session_shutdown 时, 干活到一半永远不触发收尾)。
-  test('pi 扩展挂 agent_end 收尾注入: 真改过文件 + 今日未收尾才注入, 每会话一次', async () => {
+  // 2026-09-18: 收尾注入已删除(用户实报「干活干一会就中断」)。本用例反向锁定:
+  // 不得再出现任何向对话注入的机制, 但 agent_end 埋点必须保留。
+  test('pi 扩展不再注入收尾指令 (agent_end 埋点保留)', async () => {
     await run(['install', '--agent', 'pi', '--yes']);
     const src = await fs.readFile(join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'), 'utf8');
-    assert.ok(/pi\.on\("agent_end"/.test(src), '必须在 agent_end 挂收尾注入(不只 session_shutdown)');
-    assert.ok(src.includes('sendUserMessage'), '应用 sendUserMessage 注入收尾指令(而非只记日志)');
-    assert.ok(src.includes('followUp'), '流式中注入应用 deliverAs: followUp');
-    assert.ok(src.includes('teardownNudged'), '应有每会话一次的节流标志');
-    assert.ok(src.includes('hasWriteWork'), '应只在本会话真改过文件时触发');
-    assert.ok(src.includes('loggedToday'), '今日已收尾则不再打扰');
-    assert.ok(src.includes('findBrain'), '无 .brain 的项目不打扰');
-    // 只读命令不得触发(bash 里跑 ls/grep 不算改文件)
-    assert.ok(src.includes('READONLY_CMD'), '应区分只读 bash 与真改文件');
+    // 只看代码, 不看注释 —— 注释里点名被删的 API 是刻意的(留教训), 不算残留
+    const code = stripComments(src);
+    assert.ok(/pi\.on\("agent_end"/.test(code), 'agent_end 埋点必须保留');
+    assert.ok(!code.includes('sendUserMessage'), '不得再向对话注入 follow-up turn');
+    assert.ok(!code.includes('followUp'), '不得再用 deliverAs: followUp');
+    assert.ok(!code.includes('teardownNudged'), '注入节流标志应一并删除');
+    assert.ok(!code.includes('loggedToday'), '收尾判定应一并删除');
+    assert.ok(code.includes('agent_end:seen'), '可观测性埋点应在');
+    assert.ok(code.includes('findBrain'), '无 .brain 的项目不打扰');
   });
 
   // 回归: 插件生命周期事件只进技术日志 hooks.log, 不得 spawn `abs log` 灌图谱 log.md。
@@ -423,20 +432,22 @@ describe('install opencode / pi', () => {
     assert.ok(/export default \{/.test(src), '应有 export default { id, server }');
     assert.ok(/^\s*server,?\s*$/m.test(src), 'default 应挂 server 字段');
     assert.ok(!/export const AbsPlugin/.test(src), '不得用命名导出(加载器取 default, 命名导出被忽略)');
-    assert.ok(/const server = async \(\{ client, directory \}\)/.test(src), 'server 应接收 { client, directory }');
+    assert.ok(/const server = async \(\{[^}]*directory[^}]*\}\)/.test(src), 'server 应接收 { directory }');
   });
 
-  // 回归: opencode 侧的收尾自动化 (与 pi 的 agent_end 同策略)
-  test('opencode 插件 session.idle 收尾注入: 真改过文件才推, 每会话一次', async () => {
+  // 2026-09-18: 收尾注入已删除(同 pi 侧), 连同 tool.execute.after/wroteFiles/nudged/promptAsync。
+  // 本用例反向锁定: 不得再出现注入机制, 且 idle 埋点保留。
+  test('插件不再注入收尾指令 (session.idle 埋点保留)', async () => {
     await run(['install', '--agent', 'opencode', '--yes']);
     const src = await fs.readFile(join(sandbox, 'opencode', 'plugins', 'abs.ts'), 'utf8');
-    assert.ok(src.includes('tool.execute.after'), '应用 tool.execute.after 观测真实写操作');
-    assert.ok(src.includes('wroteFiles'), '应有本会话是否改过文件的标志');
-    assert.ok(src.includes('nudged'), '应有每会话一次的节流标志');
-    assert.ok(src.includes('promptAsync'), '应用 client.session.promptAsync 注入收尾指令');
-    assert.ok(src.includes('findBrain'), '无 .brain 的项目不打扰');
-    assert.ok(src.includes('loggedToday'), '今日已收尾则不再打扰');
-    assert.ok(src.includes('client') && src.includes('directory'), '插件应接收 { client, directory } 入参');
+    const code = stripComments(src); // 同上: 注释里留的被删 API 名不算残留
+    assert.ok(!code.includes('tool.execute.after'), '观测钩子已无消费方, 应删除');
+    assert.ok(!code.includes('wroteFiles'), '写文件标志应删除');
+    assert.ok(!code.includes('nudged'), '注入节流标志应删除');
+    assert.ok(!code.includes('promptAsync'), '不得再注入 follow-up turn');
+    assert.ok(!code.includes('loggedToday'), '收尾判定应删除');
+    assert.ok(code.includes('session.idle:seen'), '可观测性埋点应在');
+    assert.ok(code.includes('findBrain'), '无 .brain 的项目不打扰');
   });
 });
 
