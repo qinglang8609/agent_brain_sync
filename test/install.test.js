@@ -342,10 +342,10 @@ describe('install opencode / pi', () => {
 
   // 回归: 曾经 withMcp 只打印「走 extension 内桥接」而没有任何桥接代码 ——
   // 靠 mcp-adapter 的 hostConfigDiscovery 间接读到 claude 注册才"看起来能用",
-  // 没有 claude 宿主的机器上 abs MCP 直接缺失。必须真写 mcp.json。
-  test('pi 必须真注册 MCP 到 mcp.json (不能只靠 hostConfigDiscovery 间接发现)', async () => {
+  // 没有 claude 宿主的机器上 abs MCP 直接缺失。必须真写 mcp-adapter.json。
+  test('pi 必须真注册 MCP 到 mcp-adapter.json (不能只靠 hostConfigDiscovery 间接发现)', async () => {
     await run(['install', '--agent', 'pi', '--yes']);
-    const cfg = JSON.parse(await fs.readFile(join(sandbox, 'pi', 'agent', 'mcp.json'), 'utf8'));
+    const cfg = JSON.parse(await fs.readFile(join(sandbox, 'pi', 'agent', 'mcp-adapter.json'), 'utf8'));
     const entry = cfg.mcpServers?.abs;
     assert.ok(entry, 'mcpServers.abs 必须存在');
     assert.equal(entry.type, 'stdio');
@@ -353,7 +353,7 @@ describe('install opencode / pi', () => {
   });
 
   test('pi MCP 幂等重装 + 不覆盖既有 mcpServers / settings / imports', async () => {
-    const p = join(sandbox, 'pi', 'agent', 'mcp.json');
+    const p = join(sandbox, 'pi', 'agent', 'mcp-adapter.json');
     await fs.mkdir(dirname(p), { recursive: true });
     await fs.writeFile(p, JSON.stringify({
       mcpServers: { other: { command: 'foo' } },
@@ -371,7 +371,7 @@ describe('install opencode / pi', () => {
   });
 
   test('pi 卸载只删 mcpServers.abs, 保留其它宿主体', async () => {
-    const p = join(sandbox, 'pi', 'agent', 'mcp.json');
+    const p = join(sandbox, 'pi', 'agent', 'mcp-adapter.json');
     await fs.mkdir(dirname(p), { recursive: true });
     await fs.writeFile(p, JSON.stringify({ mcpServers: { other: { command: 'foo' } } }));
     await run(['install', '--agent', 'pi', '--yes']);
@@ -562,7 +562,7 @@ describe('uninstall 只删本 agent, 不误删其它', () => {
 // 退化成"直接覆盖"，会静默清掉用户其它工具的 hook/MCP 配置 —— 后果重且难察觉。
 // 本层用真实文件预置"别人的"配置，逐宿主断言安装后仍在。
 describe('全量安装 install --yes 不破坏既有配置', () => {
-  const PI_MCP = () => join(sandbox, 'pi', 'agent', 'mcp.json');
+  const PI_MCP = () => join(sandbox, 'pi', 'agent', 'mcp-adapter.json');
   const OC_JSON = () => join(sandbox, 'opencode', 'opencode.json');
   const CODEX_TOML = () => join(sandbox, 'codex', 'config.toml');
   const CODEX_HOOKS = () => join(sandbox, 'codex', 'hooks.json');

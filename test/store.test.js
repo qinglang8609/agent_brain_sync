@@ -6,7 +6,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, upsertArchiveSection, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
@@ -837,6 +837,21 @@ describe('cmdQuery', () => {
     const out = await cmdQuery({ dir: projectA, terms: [] });
     assert.ok(out.includes('用法') || out.toLowerCase().includes('usage'), out);
   });
+
+  test('命中超过 10 页时截断并给收窄提示（read-side-output-must-not-scale）', async () => {
+    // 造 12 页都命中同一词（零填充保证字典序=数值序，避免 bulk-10 排在 bulk-2 前面）
+    for (let i = 1; i <= 12; i++) {
+      const n = String(i).padStart(2, '0');
+      await fs.writeFile(join(projectA, '.brain', 'concepts', `bulk-${n}.md`),
+        `---\ntags: [concept]\nstatus: active\n---\n# 页${n}\n共同词 bulkword\n`, 'utf8');
+    }
+    const out = await cmdQuery({ dir: projectA, terms: ['bulkword'] });
+    assert.ok(/展示前 10 页/.test(out), `应说明展示上限: ${out}`);
+    assert.ok(/另有 2 页未展示/.test(out), `应告知还有 2 页未展示: ${out}`);
+    // 第 11/12 页不应出现在输出里
+    assert.ok(!out.includes('bulk-11'), `第 11 页不应展示: ${out}`);
+    assert.ok(!out.includes('bulk-12'), `第 12 页不应展示: ${out}`);
+  });
 });
 
 // ---------- abs concept: 概念页脚手架（给写入定结构，不替判断） ----------
@@ -966,6 +981,24 @@ describe('cmdNote (经验实时暂存)', () => {
   test('空文本拒绝', async () => {
     const r = await cmdNote({ dir: projectA, text: '   ' });
     assert.ok(r.includes('用法') || r.includes('text'), r);
+  });
+
+  test('--type 写入 frontmatter（合法值）', async () => {
+    const r = await cmdNote({ dir: projectA, text: '用户要求发布前人工核对', type: 'constraint' });
+    assert.ok(r.includes('✓'), r);
+    const srcDir = join(projectA, '.brain', 'sources');
+    const files = (await fs.readdir(srcDir)).filter((f) => f.endsWith('.md'));
+    const body = await fs.readFile(join(srcDir, files[0]), 'utf8');
+    assert.ok(body.includes('type: constraint'), 'frontmatter 应含 type: constraint');
+  });
+
+  test('--type 非法值不写入（静默降级为无类型）', async () => {
+    const r = await cmdNote({ dir: projectA, text: '类型非法值', type: 'bogus' });
+    assert.ok(r.includes('✓'), r);
+    const srcDir = join(projectA, '.brain', 'sources');
+    const files = (await fs.readdir(srcDir)).filter((f) => f.endsWith('.md'));
+    const body = await fs.readFile(join(srcDir, files[0]), 'utf8');
+    assert.ok(!body.includes('type: bogus'), '非法 type 不应写入');
   });
 });
 
@@ -1964,6 +1997,40 @@ describe('page status (abs supersede)', () => {
     assert.ok(files.length, '应落 source 页');
     const body = await fs.readFile(join(projectA, '.brain', 'sources', files[0]), 'utf8');
     assert.ok(/^status: draft$/m.test(body), `新经验应为 draft: ${body.slice(0, 300)}`);
+  });
+});
+
+describe('cmdReview (待确认页队列)', () => {
+  test('列出 draft 页（只扫 concepts/sources，跳过 entities/sessions）', async () => {
+    // 造一个 draft 概念页 + 一个 draft 人页 + 一个 draft 日志页
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'rv-concept.md'),
+      '---\nid: rv-concept\ntags: [concept]\nstatus: draft\n---\n\n# 概念草稿\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'entities', 'rv-person.md'),
+      '---\ntags: [entity, person]\nstatus: draft\n---\n\n# 人页\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'rv-log.md'),
+      '---\ntags: [session-log]\nstatus: draft\n---\n\n# 日志页\n', 'utf8');
+    const out = await cmdReview({ dir: projectA });
+    assert.ok(out.includes('rv-concept'), `概念页应在队列: ${out}`);
+    assert.ok(!out.includes('rv-person'), `人页不应进队列: ${out}`);
+    assert.ok(!out.includes('rv-log'), `日志页不应进队列: ${out}`);
+  });
+
+  test('--accept 把 draft 升为 active', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'rv-acc.md'),
+      '---\nid: rv-acc\ntags: [concept]\nstatus: draft\n---\n\n# 待确认\n', 'utf8');
+    const out = await cmdReview({ dir: projectA, refs: ['rv-acc'], action: 'accept' });
+    assert.ok(out.includes('active'), out);
+    const body = await fs.readFile(join(projectA, '.brain', 'concepts', 'rv-acc.md'), 'utf8');
+    assert.ok(/^status: active$/m.test(body), body);
+  });
+
+  test('--reject 把 draft 标为 superseded', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'rv-rej.md'),
+      '---\nid: rv-rej\ntags: [concept]\nstatus: draft\n---\n\n# 待否决\n', 'utf8');
+    const out = await cmdReview({ dir: projectA, refs: ['rv-rej'], action: 'reject' });
+    assert.ok(out.includes('superseded'), out);
+    const body = await fs.readFile(join(projectA, '.brain', 'concepts', 'rv-rej.md'), 'utf8');
+    assert.ok(/^status: superseded$/m.test(body), body);
   });
 });
 describe('load 顶部「待消化」提示（与滞留同构的送达机制）', () => {

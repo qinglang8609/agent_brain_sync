@@ -81,7 +81,13 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
     const extra = hidden ? `（另外 ${hidden} 页已标记 superseded，用 abs query ${words.join(' ')} --all 查看）` : '';
     return `query [${words.join(', ')}]: 无命中。${extra}用 abs lint 看图谱健康；首次使用先 abs init。`;
   }
-  const lines = shown.map((h) => {
+  // 输出条数上限（2026-09-30 补）：落实 read-side-output-must-not-scale 规则。
+  // query 会把命中页全部渲染；图谱长大到几百页时一次命中 50 页会爆输出。
+  // 硬上限 10 页，超出只给计数 + 收窄提示（不给全文 —— 那不是「不静默」，是「可再查」）。
+  const MAX_SHOWN = 10;
+  const overflow = shown.length - MAX_SHOWN;
+  const displayed = shown.slice(0, MAX_SHOWN);
+  const lines = displayed.map((h) => {
     const by = h.author ? `  @${h.author}` : '';
     // id 只在≠slug 时显示 —— 相同时再印一遗就是纯噪音（绝大多数页）。
     // 目的：让 AI 拿到一个改名也不漂的引用句柄（abs resolve <id> 能反查回来）。
@@ -97,12 +103,13 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
     return `📄 ${h.slug}${by}${id}${st}${fuzzy}  (命中: ${hitTxt}${full})${viaTag}\n    ${h.snippet}`;
   });
   // 多词且无全命中时告知降级了 —— 不静默给一堆弱相关结果。
-  const anyFull = shown.some((h) => h.kind === 'exact' && h.matched.length === words.length);
+  const anyFull = displayed.some((h) => h.kind === 'exact' && h.matched.length === words.length);
   const tail = [];
   if (words.length > 1 && !anyFull) tail.push('', `（无页同时命中全部 ${words.length} 个词，以下按命中数排序）`);
   if (fuzzySuppressed) tail.push('', `（另有 ${fuzzyHits.length} 页字形相近但字面未命中，已隐藏 —— 它们通常不相关）`);
   if (hidden) tail.push(``, `（${hidden} 页 superseded 已隐藏；--all 可看）`);
-  return [`query [${words.join(', ')}] → ${shown.length} 页:`, '', ...lines, ...tail].join('\n');
+  if (overflow > 0) tail.push(``, `（另有 ${overflow} 页未展示 —— 用更具体的词收窄：abs query <词1> <词2>）`);
+  return [`query [${words.join(', ')}] → ${shown.length} 页（展示前 ${displayed.length} 页）:`, '', ...lines, ...tail].join('\n');
 }
 
 /** 从页面正文取一段「像答案」的片段。

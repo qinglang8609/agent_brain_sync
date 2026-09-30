@@ -8,6 +8,7 @@ import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, bo
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 import { keywords, pickRelevant, renderRelevant, recentFiles, rankPage, topicStrength } from './relevant.js';
+import { impactOf } from './codegraph.js';
 
 // Re-export lint.js symbols so external importers (e.g. bin/mcp.js, bin/abs.js) still work.
 export { cmdLint, listPages, hasTail, PAGE_DIRS } from './lint.js';
@@ -708,6 +709,71 @@ export async function resolvePage(root, idOrSlug) {
   return null;
 }
 
+// ---------- review: 待确认页队列（draft → active/superseded） ----------
+// 为何需要：abs note 落的是 status: draft（未经核实），但之前没有「确认」这一步 ——
+//   draft 只是标签，没人管，经验就永远停在「待核实」状态，从不正式化。
+// 借鉴 TencentDB 的 review/route 治理环节：提取后必经审查，防止脏知识进入正式图谱。
+// 本命令只做「把 draft 显式升为 active 或否决为 superseded」，不替人判断内容好坏。
+// 动作收口在一处（editFile 锁内），并发安全同 supersede。
+export async function cmdReview({ dir, refs, action }) {
+  let root;
+  try {
+    root = await requireBrain(dir || process.cwd());
+  } catch {
+    return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
+  }
+  const act = String(action || '').toLowerCase();
+  if (act && !['accept', 'reject'].includes(act)) {
+    return '用法: abs review [--accept <页名…>] [--reject <页名…>]  — 无参数列出全部 draft 页';
+  }
+  // 无动作 → 列出所有 draft 页（待确认队列）
+  if (!act) {
+    const pages = await listPages(brainPath(root));
+    // 只扫经验/知识目录（concepts/sources）。entities 是人页、sessions 是日志，
+    // 它们不是「待核实的经验」，不该进 review 队列（拉进来会把人页/日志当经验误确认）。
+    const REVIEW_DIRS = ['concepts', 'sources'];
+    const drafts = pages.filter((p) => REVIEW_DIRS.includes(p.dir) && statusOfPage(p.body) === 'draft');
+    if (!drafts.length) return '✓ 没有待确认的 draft 页。';
+    const lines = drafts.map((p) => {
+      const t = p.body.match(/^#\s*(.+)$/m);
+      const title = t ? t[1].trim() : p.slug;
+      return `  [draft] ${p.slug} — ${title}`;
+    });
+    return [
+      `待确认 draft 页 ${drafts.length} 条：`,
+      ...lines,
+      '',
+      '确认: abs review --accept <页名> [更多…]    否决: abs review --reject <页名> [更多…]',
+    ].join('\n');
+  }
+  // 有动作 → 对每个 ref 改 status
+  const list = (refs || []).map((r) => String(r).trim()).filter(Boolean);
+  if (!list.length) return `✗ --${act} 需要至少一个页名。用法: abs review --${act} <页名…>`;
+  const target = act === 'accept' ? 'active' : 'superseded';
+  const out = [];
+  for (const r of list) {
+    const hit = await resolvePage(root, r);
+    if (!hit) { out.push(`✗ ${r}: 未找到（试 abs review 看清单）`); continue; }
+    const res = await editFile(hit.full, (cur) => {
+      if (!cur || !cur.startsWith('---\n')) return SKIP;
+      const end = cur.indexOf('\n---', 3);
+      if (end === -1) return SKIP;
+      let fm = cur.slice(0, end);
+      const curSt = statusOfPage('', fm);
+      // 幂等：已是目标状态 → 不写盘
+      if (curSt === target) return SKIP;
+      fm = STATUS_RE.test(fm)
+        ? fm.replace(STATUS_RE, `status: ${target}`)
+        : `${fm}\nstatus: ${target}`;
+      return { text: fm + cur.slice(end) };
+    });
+    out.push(res === SKIP
+      ? `= ${hit.slug}: 已是 ${target}（无变化）`
+      : `✓ ${hit.slug} → ${target}`);
+  }
+  return out.join('\n');
+}
+
 // ---------- resolve: id/slug → 页面路径（引用的反查端） ----------
 // 配合 frontmatter 的 id: 使用。页改名后 id 不变，靠本命令仍能找回来。
 export async function cmdResolve({ dir, refs }) {
@@ -1119,7 +1185,7 @@ export { cmdQuery } from './query.js';
 // ---------- note: 经验实时暂存（source 页，一念一落，防流失） ----------
 const NOTE_DEDUP_MS = 60 * 1000;
 
-export async function cmdNote({ dir, text, tags, when }) {
+export async function cmdNote({ dir, text, tags, when, impact, type }) {
   const clean = String(text || '').trim();
   if (!clean) return '用法: abs note "经验/坑/技巧一句话" [--when "何时该读它"]（落 sources/ 暂存页，实时不流失）';
   let root;
@@ -1140,6 +1206,15 @@ export async function cmdNote({ dir, text, tags, when }) {
       return `• 60s 内已落同文本 → ${f} (跳过重复)`;
     }
   }
+  // 影响面（可选）：显式传 --impact <符号> 时，借本机 CodeGraph 拿「改它波及谁」。
+  // 失败/未装 codegraph 静默降级为无，绝不阻断 note 落盘。
+  const impactText = impact ? await impactOf(impact, root) : null;
+  // 类型（可选）：借鉴 TencentDB 的 L1 四分类，把自由文本经验分成可分类的资产。
+  // 默认不强制（自由文本仍是主体）；显式 --type 时才写进 frontmatter，供检索/load 区分。
+  // 合法值对齐 L1 四类：fact 事实 / pref 偏好 / constraint 约束 / event 事件。
+  const NOTE_TYPES = ['fact', 'pref', 'constraint', 'event'];
+  const noteType = NOTE_TYPES.includes(String(type || '').trim().toLowerCase())
+    ? String(type).trim().toLowerCase() : '';
   const tagList = String(tags || '').split(',').map((t) => t.trim()).filter(Boolean);
   const fmTags = ['source', ...tagList].join(', ');
   const slugSrc = slugOf(clean);
@@ -1155,12 +1230,14 @@ export async function cmdNote({ dir, text, tags, when }) {
     `author: ${who}`,
     `updated: ${today()}`,
     'status: draft',
+    ...(noteType ? [`type: ${noteType}`] : []),
     '---',
     '',
     `# 来源：${heading}`,
     '',
     `TITLE: ${clean}`,
     ...(whenText ? ['', `WHEN: ${whenText}`] : []),
+    ...(impactText ? ['', '## 影响面（本机 CodeGraph 自动带出）', '```', impactText, '```'] : []),
     '',
     `## 记录（实时暂存，Teardown 时提炼进 concepts/ 后本页可删）`,
     `- ${clean}`,
@@ -1325,6 +1402,8 @@ export async function registerInIndex(root, section, slug, desc) {
     const next = after === -1
       ? `${index.replace(/\s*$/, '')}\n${line}\n`
       : index.slice(0, after) + `\n${line}` + index.slice(after);
-    return { text: next };
+    // 归一空行：历史手工编辑会留 3+ 空行（load 时 collapseIndex 会压掉，但文件本身没清）。
+    // 追加新条目的同时顺手压一次，既清旧债又不改内容（与 collapseIndex 同一判据）。
+    return { text: next.replace(/\n{3,}/g, '\n\n') };
   });
 }

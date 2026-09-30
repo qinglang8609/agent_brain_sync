@@ -822,11 +822,11 @@ async function installPi({ withMcp, withSkill, log }) {
   const p = join(dir, 'abs.ts');
   await atomicWrite(p, piPluginSource()); // Pi 用专用模板, 语法与 OpenCode 不同构
   steps.push(`✓ hook(ts extension) → ${p}`);
-  // MCP → ~/.pi/agent/mcp.json 的 mcpServers (stdio)
-  // 曾经只打印「走 extension 内桥接」而没有任何桥接代码 —— 靠 mcp-adapter 的
-  // hostConfigDiscovery 间接读到 claude 注册才"看起来能用"; 没有 claude 宿主的机器上直接缺失。
+  // MCP → ~/.pi/agent/mcp-adapter.json 的 mcpServers (stdio)
+  // 坑（2026-09-30 用户实报）：曾写 mcp.json，但 pi-mcp-adapter 已不再读它
+  //   （pi 自有 mcp.json 被 adapter 忽略，adapter 改读 mcp-adapter.json）→ 写了等于没写。
   if (withMcp) {
-    const mcpP = join(hostConfigRoot('pi'), 'agent', 'mcp.json');
+    const mcpP = join(hostConfigRoot('pi'), 'agent', 'mcp-adapter.json');
     await backup(mcpP);
     const cfg = await readJson(mcpP);
     cfg.mcpServers = cfg.mcpServers || {};
@@ -845,7 +845,7 @@ async function uninstallPi() {
   await fs.rm(join(hostConfigRoot('pi'), 'agent', 'extensions', 'abs.ts'), { force: true });
   steps.push(`✓ extension 已删除`);
   steps.push(...await uninstallSkills('pi'));
-  const mcpP = join(hostConfigRoot('pi'), 'agent', 'mcp.json');
+  const mcpP = join(hostConfigRoot('pi'), 'agent', 'mcp-adapter.json');
   const cfg = await readJson(mcpP, { strict: false });
   if (cfg === null) {
     steps.push(`⚠ ${mcpP} 无法解析为 JSON，已跳过（未改动你的配置）`);

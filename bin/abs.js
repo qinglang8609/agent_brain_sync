@@ -2,7 +2,7 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede } from '../src/store.js';
+import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede, cmdReview } from '../src/store.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
@@ -76,6 +76,13 @@ const FLAG_SPEC = {
   'port': { type: 'string' },
   // note 的触发条件（何时该读这条经验）—— 供 load 的相关页推荐匹配。
   'when': { type: 'string' },
+  // note 可选：借本机 CodeGraph 带出「改某符号会影响哪些代码」。
+  'impact': { type: 'string' },
+  // note 可选：经验类型（fact/pref/constraint/event，对齐 TencentDB L1 四分类）。
+  'type': { type: 'string' },
+  // review 用：--accept / --reject 各跟一个页名列表（逗号分隔或位置参数）。
+  'accept': { type: 'string' },
+  'reject': { type: 'string' },
   // concept 骨架用: 不在 FLAG_SPEC 里的 `--title` 会被静默当布尔 true（见 parseArgv 注释），
   // 于是 `--title "一句话"` 的正文会进位置参数 → 必须在这声明。
   'title': { type: 'string' },
@@ -194,6 +201,7 @@ const usage = `abs — 跨会话记忆工具（.brain/ 图谱）
   query <词…> [--all]       检索知识页 (多词 OR)
   resolve <页名…>            反查页面路径
   supersede <页名> [--by 页] 标经验已失效
+  review [--accept 页…|--reject 页…]  待确认页队列 (draft 升 active/否决)
   lint                       图谱体检 (死链/超限)
   rule [add "一句话"]        硬规则读写
   install|uninstall [--agent <宿主>] [--no-mcp] [--no-skill]
@@ -281,11 +289,13 @@ const subUsage = {
     'abs note — 经验实时暂存 → sources/（幂等去重；先记后提炼）',
     '',
     '用法:',
-    '  abs note "一句话经验" [--tags 坑,docker] [--when "什么时候该读这条"]',
+    '  abs note "一句话经验" [--tags 坑,docker] [--when "什么时候该读这条"] [--impact 符号名] [--type fact|pref|constraint|event]',
     '',
     '说明:',
     '  • --tags 首个标签建议带类别（坑/技巧/决策…），检索按词 OR 命中',
     '  • --when 供 load 的相关页推荐匹配「何时该读」',
+    '  • --impact 借本机 CodeGraph 带出「改该符号会影响哪些代码」（未装则静默跳过）',
+    '  • --type 经验分类：fact 事实 / pref 偏好 / constraint 约束 / event 事件（默认不分类）',
     '  • sources 是暂存区: 提炼成 concept 后应清理',
   ].join('\n'),
   query: [
@@ -447,7 +457,7 @@ async function main() {
         break;
       }
       case 'note': {
-        console.log(await cmdNote({ dir: opts.dir, text: opts._.join(' '), tags: opts.tags, when: opts.when }));
+        console.log(await cmdNote({ dir: opts.dir, text: opts._.join(' '), tags: opts.tags, when: opts.when, impact: opts.impact, type: opts.type }));
         break;
       }
       case 'concept': {
@@ -494,6 +504,15 @@ async function main() {
       }
       case 'resolve': {
         console.log(await cmdResolve({ dir: opts.dir, refs: opts._ }));
+        break;
+      }
+      case 'review': {
+        // 无 --accept/--reject → 列出全部 draft 页；有则对页名列表执行确认/否决。
+        const action = opts.accept ? 'accept' : opts.reject ? 'reject' : '';
+        const refs = action === 'accept' ? (opts.accept || '').split(',').map(s => s.trim()).filter(Boolean)
+          : action === 'reject' ? (opts.reject || '').split(',').map(s => s.trim()).filter(Boolean)
+          : opts._;
+        console.log(await cmdReview({ dir: opts.dir, refs, action }));
         break;
       }
       case 'lint': {

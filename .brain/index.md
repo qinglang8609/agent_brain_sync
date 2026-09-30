@@ -48,15 +48,11 @@
 - [[file-shape-check-on-load]] — load 顺手核对 index/log/todo 形状: 缺分区→自动补建(机械可判定); 无头(H1不符)→只提醒不自动改(结构可能整体脱轨, 机器猜错等于毁数据); 多分区→不管; 正常时零字节
 - [[agents-skills-not-ownerless]] — ~/.agents/skills/ 属 skills CLI(lockfile 所有者), 宿主 skills/ 只是其扇出目标; 判残留副本要三证据齐; 只读检测+告警, 绝不代写代删
 - [[mcp-stale-paths-multi-store]] — MCP 陈旧路径: 适配器把 9 个外部 store 当权威读, 任一处的旧条目会盖过自己写对的那份; 校正须挂 runInstall/runUninstall 层, 并逐处核对宿主实际读到的值
-
 - [[self-authored-evidence]] — 自造证据: 单假设逼你造假(编输入→真实验→真404); 多假设+反证条件才治得住
-
 - [[resource-default-let-os-assign]] — 稀缺全局资源的默认值：让 OS 分配，不写死
 - [[audit-claims-verify-before-fix]] — 审计清单也是待证证据：逐条最小探针确证后再改
 - [[self-reported-reasoning-is-post-hoc]] — 让模型自述思考层≠真思考：实测是知答案后编陪跑
-
 - [[vacuous-test-passes-on-broken-code]] — 空测试：恒真断言，破坏代码也全绿
-
 - [[guard-check-then-set-across-await]] — 守卫的检查与置位跨 await 就会漏：并发调用一起通过
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
