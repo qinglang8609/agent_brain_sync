@@ -54,17 +54,19 @@
 - [[self-reported-reasoning-is-post-hoc]] — 让模型自述思考层≠真思考：实测是知答案后编陪跑
 - [[vacuous-test-passes-on-broken-code]] — 空测试：恒真断言，破坏代码也全绿
 - [[guard-check-then-set-across-await]] — 守卫的检查与置位跨 await 就会漏：并发调用一起通过
+
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 - [[fanchao]] — 使用者；技术栈 / 特点·工作习惯 / 名下踩过的坑
-- [[tester]] — tester — 使用者；技术栈 / 特点 / 名下踩过的坑
 
+- [[张三]] — 张三 — 使用者；技术栈 / 特点 / 名下踩过的坑
 ## Sources
 - [[2026-09-17-对照实验实测-2026-09-16-abs]] — 对照实验实测(2026-09-16): abs 经验确实被读到并改变行为, 但增益集中在'现场验证不出来+失败无信号+错误需求'三类知识。T1 有效对照:…
 - [[2026-09-17-做关键词排序-queryhint]] — queryHint 三条实测: CLI 被大写剥离规则挡在词表外(故 df 重叠论证不成立, 前版已作废) / df 阈值 T=11~15 不起作用 / 剔高频词后 top3 仍噪音; 修复方向未定
 - [[2026-09-18-user-名残留会让新项目任务全标错作者]] — user 名残留会让新项目任务全标错作者：~/.abs/config.json 的 {user} 是单一全局值，一次手动 'abs config set…
 - [[2026-09-18-todo-是-随做随写-的活看板-攒到最后补]] — todo 是'随做随写'的活看板，攒到最后补 = 看板在被人看的时候是空的，跨会话续接丢锚点。abs 的 start/done 是任务行级操作（与已砍掉的…
 - [[2026-09-18-npm-publish-报]] — npm publish 报 '+ pkg@ver' 后 registry 读到 404/E409 不等于发布失败：实测 1.9.4/1.9.5 均成功…
+
 ## Syntheses
 
 ## Sessions

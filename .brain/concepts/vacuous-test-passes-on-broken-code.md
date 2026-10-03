@@ -1,7 +1,7 @@
 ---
 tags: [concept, 测试, 验证, 坑]
 id: vacuous-test-passes-on-broken-code
-author: tester
+author: fanchao
 updated: 2026-09-17
 status: active
 ---
@@ -79,4 +79,4 @@ node --test test/ab.test.js        # 应 pass
 ## 关联连接
 - [[self-authored-evidence]] — 同族但不同层：那条是"没跑就下结论"，这条是"跑了却测不出东西"
 - [[symbol-reference-needs-real-run]] — 同样主张"符号/断言存在 ≠ 它真的被验证过"
-- [[tester]] — 本页沉淀者（2026-09-17 实测，本会话初版即空测试）
+- [[fanchao]] — 本页沉淀者（2026-09-17 实测，本会话初版即空测试）

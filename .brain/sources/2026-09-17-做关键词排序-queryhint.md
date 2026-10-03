@@ -1,7 +1,7 @@
 ---
 tags: [source, 坑, 检索]
 id: 2026-09-17-做关键词排序-queryhint
-author: tester
+author: fanchao
 updated: 2026-09-17
 status: draft
 ---
@@ -49,6 +49,6 @@ TITLE: queryHint 关键词排序的三条实测事实：大写词被剥离、df 
 实测于 2026-09-17，图谱 30 页。
 
 ## 关联连接
-- [[tester]] — 本页沉淀者与第一版错误结论的作者
+- [[fanchao]] — 本页沉淀者与第一版错误结论的作者
 - [[self-authored-evidence]] — 本次三次错误同源：自造推理当证据，未跑即下结论
 （提炼成 concepts 规律页后，在此挂双链到该页）

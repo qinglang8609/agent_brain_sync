@@ -1,7 +1,7 @@
 ---
 tags: [concept, 坑, hook, 静默失效]
 id: guard-check-then-set-across-await
-author: tester
+author: fanchao
 updated: 2026-09-17
 status: active
 ---
@@ -95,4 +95,4 @@ assert.equal(injected.length, 1);   // 期望 1，旧实现实测 5
 - [[self-triggering-hook-loop]] — 同类：主动推必须自带刹车，且刹车要有"能刹住"的键
 - [[vacuous-test-passes-on-broken-code]] — 本页的验证必须靠破坏验证兜底，否则测试是空的
 - [[teardown-automation]] — 收尾自动化的各宿主触发点与注入手段
-- [[tester]] — 本页沉淀者
+- [[fanchao]] — 本页沉淀者
