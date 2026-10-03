@@ -303,8 +303,9 @@ export async function cmdLoad({ dir }) {
   // 未设姓名/姓名是占位名时开场就提醒 —— load 是开机第一屏，不在这里提，
   // 用户要撞到第一次写操作才知道（init/load 一路沉默）。
   // 占位名（历史遗留 tester/foo）必须提：配置里有值 ≠ 名字是对的。
+  // 一次调用拿两者（placeholderWarn 内部也要 getUser）—— 原先分两次读盘（2026-10-03 审查）。
   const who = await getUser();
-  const ph = await placeholderWarn();
+  const ph = who ? await placeholderWarn() : null;
   if (!who) {
     sections.push(
       '⚠ 尚未设置使用者姓名（写操作会先报错）',

@@ -647,7 +647,7 @@ describe('cli: 使用者姓名与作者标记', () => {
   // 之后所有项目每条 todo/log 都标 [[tester]]。配置里有值 ≠ 名字是对的。
   test('config set user 拒绝占位名（tester/foo/aaa），真名照常通过', async () => {
     const env = envNoUser();
-    for (const bad of ['tester', 'Tester', 'foo', 'admin', 'user', 'me', 'aaa']) {
+    for (const bad of ['tester', 'Tester', 'foo', 'admin', 'user', 'me', 'aaa', 'xxx']) {
       const r = await run(['config', 'set', 'user', bad], { env });
       assert.notEqual(r.code, 0, `占位名 "${bad}" 应被拒`);
       assert.match(r.stderr, /占位名|不是名字/, `应说明原因: ${r.stderr}`);
@@ -659,6 +659,21 @@ describe('cli: 使用者姓名与作者标记', () => {
     // 真名通过
     const ok = await run(['config', 'set', 'user', '张三'], { env });
     assert.equal(ok.code, 0, ok.stderr);
+  });
+
+  // 审查发现（2026-10-03）：重复字符规则原本无长度门槛，会把 "oo"/"ee"/"ww"
+  // 这种两字母姓名缩写当垃圾拒掉。堆字垃圾至少得 3 个字符（aaa/xxx）。
+  test('短的双字母名不被当重复垃圾误拒（oo/ee/ww）', async () => {
+    const env = envNoUser();
+    for (const name of ['oo', 'ee', 'ww', 'Li', 'Wu']) {
+      const r = await run(['config', 'set', 'user', name], { env });
+      assert.equal(r.code, 0, `真名 "${name}" 不应被拒: ${r.stderr}`);
+    }
+    // 但 3 个以上的堆字仍要拒
+    for (const bad of ['aaa', 'zzz', '111']) {
+      const r = await run(['config', 'set', 'user', bad], { env });
+      assert.notEqual(r.code, 0, `堆字 "${bad}" 仍应被拒`);
+    }
   });
 
   // ABS_USER 环境变量故意不过占位名校验：它是一次性显式覆盖，且测试套件全程用它。

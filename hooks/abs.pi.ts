@@ -77,8 +77,10 @@ function resetThrottle(): void {
 //   若将来要扩展，也绝不能退化成插话。
 //
 // 关掉即设 ABS_TODO_GUIDE=0。
+// 工具名写 `abs_task`（不带 mcp__abs__ 前缀）—— 2026-10-03 审查发现：MCP 默认
+// exposure=codemode，模型侧看到的就叫 abs_task；写错名字等于让模型去找不存在的工具。
 const TODO_GUIDELINES = [
-  'Use `mcp__abs__abs_task` to track multi-step work **before** you start it, not after: on the first file edit of a task, call action "start" with a short id.',
+  'Use `abs_task` to track multi-step work **before** you start it, not after: on the first file edit of a task, call action "start" with a short id.',
   'Mark a task "done" immediately when it finishes — never batch completions at the end of a session.',
   'Before starting a task, record the checkpoint with action "note" (which file, which step) so a later session can resume.',
 ]
@@ -130,7 +132,11 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
   rows: { state: string; id: string; desc: string; note: string }[]
   hidden: number
 } {
-  const all: { state: string; id: string; desc: string; note: string }[] = []
+  // 两阶段：先无过滤地按序解析（断点归属需要“上一条”是原文里真正的前一条），
+  // 再按作者过滤。若边解析边过滤，被滤掉的条目下方的断点会挂到它上面那一条
+  // —— 实测：别人任务的断点会显示在我的任务下面（2026-10-03 审查发现）。
+  type Row = { state: string; id: string; desc: string; note: string; authors: string[] }
+  const parsed: Row[] = []
   let inTodo = false
   for (const raw of String(md || '').split('\n')) {
     const line = raw.trimEnd()
@@ -140,7 +146,7 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
     // 断点行：`  ↳ 断点: …`（缩进）→ 挂到上一条任务
     const note = line.match(/^\s+↳\s*断点:\s*(.*)$/)
     if (note) {
-      const last = all[all.length - 1]
+      const last = parsed[parsed.length - 1]
       if (last && !last.note) last.note = note[1].trim()
       continue
     }
@@ -150,18 +156,20 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
     const state = m[1] || '进行中'
     const id = m[2]
     const body = m[3] || ''
-    // 作者过滤：抽出所有 [[name]]，有作者且不含 who 则跳过
     const authors = [...body.matchAll(/\[\[([^\]]+)\]\]/g)].map((x) => x[1])
-    if (who && authors.length > 0 && !authors.includes(who)) continue
     // 剥掉作者标记（面板上碍眼且无信息量），再取 `—` 后正文
     const desc = body
       .replace(/\[\[[^\]]+\]\]/g, '')
       .replace(/^\s*—\s*/, '')
       .replace(/\s*\(认领\s*\d{4}-\d{2}-\d{2}\)\s*$/, '')
       .trim()
-    all.push({ state, id, desc, note: '' })
+    parsed.push({ state, id, desc, note: '', authors })
   }
-  return { total: all.length, rows: all.slice(0, max), hidden: Math.max(0, all.length - max) }
+  const mine = who
+    ? parsed.filter((r) => r.authors.length === 0 || r.authors.includes(who))
+    : parsed
+  const rows = mine.map(({ state, id, desc, note }) => ({ state, id, desc, note }))
+  return { total: rows.length, rows: rows.slice(0, max), hidden: Math.max(0, rows.length - max) }
 }
 
 /** 当前使用者名（读 ~/.abs/config.json 的 user，ABS_USER 环境变量优先）。
@@ -262,13 +270,17 @@ export function renderPanelLines(
 
   const lastIdx = data.rows.length - 1
   data.rows.forEach((t, i) => {
-    const branch = i === lastIdx && !t.note ? '└─' : '├─'
+    // `└─` 只给最后一条 —— 不管它有没有断点。
+    // （2026-10-03 审查修正：原条件 `i === lastIdx && !t.note` 会让“末条带断点”时
+    //  全篇没有 └─ 收尾，断点行的 │ 又延伸到视觉底部，看起来像列表被截断。）
+    const isLast = i === lastIdx
+    const branch = isLast ? '└─' : '├─'
     const head = `${fg('dim', branch)} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.note) {
-      // 断点行：挂在父任务下，前缀对齐（首行 ├─ 时用 │ 延伸，末行 └─ 用空格）
-      const cont = branch === '└─' ? '  ' : fg('dim', '│ ')
+      // 断点行：挂在父任务下。末条时用空格对齐（└─ 下方无续）；否则用 │ 延伸。
+      const cont = isLast ? '  ' : fg('dim', '│ ')
       lines.push(clipToWidth(`${cont} ${fg('dim', '↳ ' + t.note)}`, width))
     }
   })
@@ -341,7 +353,9 @@ export default function absPiHook(pi: ExtensionAPI): void {
   })
 
   pi.on("turn_end", (_event: any, ctx: any) => {
-    refreshTodoPanel(ctx?.ui, (ctx && ctx.cwd) || process.cwd()).catch(() => {})
+    const cwd = (ctx && ctx.cwd) || process.cwd()
+    logHook(`turn_end panel refresh cwd=${cwd}`).catch(() => {})
+    refreshTodoPanel(ctx?.ui, cwd).catch(() => {})
   })
 
   // todo 及时性验证（2026-10-03）：往 system prompt 的 Guidelines 段追加静态条目。

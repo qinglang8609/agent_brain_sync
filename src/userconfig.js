@@ -49,8 +49,10 @@ function assertRealName(name) {
       '  请填你本人的名字（如 abs config set user 张三 / alice）'
     );
   }
-  // 无意义重复串：aaa/xxx/111 之类
-  if (/^(.)\1+$/.test(lower)) {
+  // 无意义重复串：aaa/xxx/111 之类。
+  // 长度门槛 ≥3 —— `oo`/`ee`/`ww` 这种两字母是合法的姓名缩写（2026-10-03 审查发现
+  // 原规则会误伤它们），也避免中文叠字小名（如 `中中`）被无故拒绝。
+  if (lower.length >= 3 && /^(.)\1+$/.test(lower)) {
     throw new Error(`✗ "${name}" 看起来不是名字（重复字符）—— 请填你本人的名字`);
   }
   return name;
@@ -99,7 +101,8 @@ export async function placeholderWarn() {
   const u = await getUser();
   if (!u) return null;
   const lower = u.toLowerCase();
-  if (PLACEHOLDER_NAMES.has(lower) || /^(.)\1+$/.test(lower)) return u;
+  // 与 assertRealName 同一规则（含长度门槛 ≥3），两处不能写成不同判据
+  if (PLACEHOLDER_NAMES.has(lower) || (lower.length >= 3 && /^(.)\1+$/.test(lower))) return u;
   return null;
 }
 

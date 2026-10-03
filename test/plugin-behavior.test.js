@@ -521,3 +521,114 @@ describe('插件模板源文件 (hooks/*.ts)', () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// todo 面板（2026-10-03）：解析 + 渲染。
+// 这一层是纯函数测试 —— 面板的 bug 都在“解析/截断/结构符”里，不需要驱 UI。
+// 下列用例都是审查时真实发现的缺陷，锁住它们（不是为盖率而写）。
+describe('pi 扩展 todo 面板 解析与渲染', () => {
+  async function loadPanelFns() {
+    await run(['install', '--agent', 'pi', '--yes']);
+    const p = join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts');
+    return importTsWithLog(p, join(sandbox, 'log'));
+  }
+
+  test('作者过滤：显示自己的 + 无作者的，隐藏别人的', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] mine [[fanchao]] — 我的',
+      '- [ ] other [[bob]] — 别人的',
+      '- [ ] bare — 没标作者',
+      '## Done',
+      '- [x] finished [[fanchao]] — 已完成不计',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    const ids = r.rows.map((t) => t.id);
+    assert.deepEqual(ids, ['mine', 'bare'], `应只显示自己的+无作者的: ${JSON.stringify(ids)}`);
+  });
+
+  // 审查发现的真 bug：原先边解析边过滤，被滤掉的条目下方的断点会挂到它上面那条。
+  test('断点不串台：别人的断点不挂到我的任务下', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] mine-a [[fanchao]] — 我的任务A',
+      '- [ ] other-b [[bob]] — 别人的任务',
+      '  ↳ 断点: 这是别人的断点',
+      '- [ ] mine-c [[fanchao]] — 我的任务C',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    const a = r.rows.find((t) => t.id === 'mine-a');
+    assert.equal(a.note, '', `mine-a 不该拿到别人的断点: ${a.note}`);
+  });
+
+  test('自己的断点正确归到自己名下', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] mine-a [[fanchao]] — 我的',
+      '  ↳ 断点: 改到 hooks/abs.pi.ts:120',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    assert.match(r.rows[0].note, /hooks\/abs\.pi\.ts:120/);
+  });
+
+  test('断点行不单独计为一条任务', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = ['## Todo', '- [ ] a', '  ↳ 断点: x', '- [ ] b'].join('\n');
+    assert.equal(parseOpenTasks(md, 10, '').total, 2);
+  });
+
+  test('宽度截断：CJK 按 2 列，永不溢出且尾部有省略号', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => `\x1b[2m${s}\x1b[0m`;
+    const data = {
+      total: 2,
+      rows: [
+        { state: '进行中', id: 'a', desc: '中文描述测试', note: '' },
+        { state: '进行中', id: 'b', desc: 'x'.repeat(200), note: '很长的断点内容'.repeat(10) },
+      ],
+      hidden: 0,
+    };
+    const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+    const dw = (s) => {
+      let w = 0;
+      for (const ch of strip(s)) {
+        const cp = ch.codePointAt(0) || 0;
+        const wide = (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0x1f300 && cp <= 0x1f64f);
+        w += wide ? 2 : 1;
+      }
+      return w;
+    };
+    for (const width of [40, 80, 120]) {
+      const lines = renderPanelLines(data, 'me', width, fg);
+      for (const l of lines) {
+        assert.ok(dw(l) <= width, `width=${width} 溢出(${dw(l)}): ${strip(l)}`);
+      }
+    }
+  });
+
+  // 审查发现的视觉 bug：末条带断点时原本全篇没有 └─ 收尾，看着像被截断。
+  test('结构符：末条永远用 └─（即使它带断点），其他用 ├─', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const data = {
+      total: 2,
+      rows: [
+        { state: '进行中', id: 'a', desc: 'A', note: '' },
+        { state: '进行中', id: 'b', desc: 'B', note: 'B 的断点' },
+      ],
+      hidden: 0,
+    };
+    const lines = renderPanelLines(data, 'me', 80, fg);
+    const taskLines = lines.filter((l) => l.includes('[进行中]'));
+    assert.ok(taskLines[0].startsWith('├─'), `首条应 ├─: ${taskLines[0]}`);
+    assert.ok(taskLines[1].startsWith('└─'), `末条（带断点）应 └─: ${taskLines[1]}`);
+  });
+
+  test('空任务列表 → 不渲染任何行（面板自动隐藏）', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    assert.equal(renderPanelLines({ total: 0, rows: [], hidden: 0 }, 'me', 80, (c, s) => s).length, 0);
+  });
+});
