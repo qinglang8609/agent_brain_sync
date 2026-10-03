@@ -325,9 +325,21 @@ export default function absPiHook(pi: ExtensionAPI): void {
     return logHook("session_start").catch(() => {})
   })
 
-  // 面板刷新时机：turn_end（一轮一刷）。
-  // 为何不挂 tool_execution_end：abs_task 走 MCP，每次工具调用后刷会白刷很多次；
-  // 一轮结束足以让人看到“刚才做了什么”。
+  // 面板刷新时机：
+  //   session_start —— 启动/重载就读出来
+  //   tool_execution_end —— **仅当刚才是 todo 相关工具**时立即刷（实时）
+  //   turn_end —— 一轮一刷兵底（防其他路径改了 todo.md，如用户手改/CLI）
+  // 为何要 tool_execution_end（2026-10-03 用户提出）：task done 发生在一轮中间，
+  // 只靠 turn_end 就要等我这一轮讲话完才变 —— 看不到“刚刚完成”的反馈。
+  // 只对接相关的刷 → 不会“每次工具调用都重建 widget”。
+  pi.on("tool_execution_end", (event: any, ctx: any) => {
+    const name = String(event?.toolName || event?.name || '')
+    // abs 的 todo 工具（MCP 名可能是 mcp__abs__abs_task，也可能是裸名 abs_task）
+    if (!/abs_(task|board)/.test(name)) return
+    logHook(`tool_execution_end panel refresh tool=${name}`).catch(() => {})
+    refreshTodoPanel(ctx?.ui, (ctx && ctx.cwd) || process.cwd()).catch(() => {})
+  })
+
   pi.on("turn_end", (_event: any, ctx: any) => {
     refreshTodoPanel(ctx?.ui, (ctx && ctx.cwd) || process.cwd()).catch(() => {})
   })
