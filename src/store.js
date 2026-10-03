@@ -3,7 +3,7 @@
 import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
-import { requireUser, atTag, getUser } from './userconfig.js';
+import { requireUser, atTag, getUser, placeholderWarn } from './userconfig.js';
 import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
@@ -300,12 +300,21 @@ export async function cmdLoad({ dir }) {
     if (shape.warn.length) rows.push('  （无头文件不自动改：结构可能整体脱轨，请手工对齐 .brain/ 模板）');
     sections.push('--- 文件形状核对 ---', ...rows, '');
   }
-  // 未设姓名时开场就提醒 —— load 是开机第一屏，不在这里提，
+  // 未设姓名/姓名是占位名时开场就提醒 —— load 是开机第一屏，不在这里提，
   // 用户要撞到第一次写操作才知道（init/load 一路沉默）。
-  if (!(await getUser())) {
+  // 占位名（历史遗留 tester/foo）必须提：配置里有值 ≠ 名字是对的。
+  const who = await getUser();
+  const ph = await placeholderWarn();
+  if (!who) {
     sections.push(
       '⚠ 尚未设置使用者姓名（写操作会先报错）',
       '→ abs config set user <你的名字>    (或临时: ABS_USER=<名字> abs ...)',
+      ''
+    );
+  } else if (ph) {
+    sections.push(
+      `⚠ 当前作者名是占位名 "${ph}" —— 之后所有项目的 todo/log 都会标它。`,
+      '→ abs config set user <你的真名>    (或临时: ABS_USER=<名字> abs ...)',
       ''
     );
   }

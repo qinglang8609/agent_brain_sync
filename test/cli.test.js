@@ -642,6 +642,51 @@ describe('cli: 使用者姓名与作者标记', () => {
     assert.ok(todo.includes('[[envuser]]'), `环境变量应优先: ${todo}`);
     assert.ok(!todo.includes('@fileuser'), `不得用文件里的名字: ${todo}`);
   });
+
+  // 坑（2026-09-18）：一次手动 `abs config set user tester` 就把全局配置钉成占位名，
+  // 之后所有项目每条 todo/log 都标 [[tester]]。配置里有值 ≠ 名字是对的。
+  test('config set user 拒绝占位名（tester/foo/aaa），真名照常通过', async () => {
+    const env = envNoUser();
+    for (const bad of ['tester', 'Tester', 'foo', 'admin', 'user', 'me', 'aaa']) {
+      const r = await run(['config', 'set', 'user', bad], { env });
+      assert.notEqual(r.code, 0, `占位名 "${bad}" 应被拒`);
+      assert.match(r.stderr, /占位名|不是名字/, `应说明原因: ${r.stderr}`);
+    }
+    // 拒绝后不得落盘（否则守卫形同虚设）
+    const cfgPath = join(env.ABS_CONFIG_DIR, 'config.json');
+    const cfg = await fs.readFile(cfgPath, 'utf8').catch(() => '{}');
+    assert.ok(!/tester|foo|admin/.test(cfg), `拒绝的名字不得落盘: ${cfg}`);
+    // 真名通过
+    const ok = await run(['config', 'set', 'user', '张三'], { env });
+    assert.equal(ok.code, 0, ok.stderr);
+  });
+
+  // ABS_USER 环境变量故意不过占位名校验：它是一次性显式覆盖，且测试套件全程用它。
+  test('ABS_USER 环境变量不受占位名校验限制（测试/CI 靠它）', async () => {
+    await run(['init', '--dir', proj], { env: envNoUser() });
+    const env = { ABS_CONFIG_DIR: join(sandbox, 'u-cfg2'), ABS_USER: 'tester' };
+    const r = await run(['todo', 'add', 'T3', '--note', 'x', '--dir', proj], { env });
+    assert.equal(r.code, 0, `env 路径不应被拦: ${r.stderr}`);
+    const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.ok(todo.includes('[[tester]]'), `env 值应原样生效: ${todo}`);
+  });
+
+  // 历史脏配置（已落盘的 tester）靠 load 首屏被看见 —— 否则用户永远不知道。
+  test('load 对已落盘的占位名作者给出警告', async () => {
+    await run(['init', '--dir', proj], { env: envNoUser() });
+    const cfgDir = join(sandbox, 'ph-cfg');
+    await fs.mkdir(cfgDir, { recursive: true });
+    await fs.writeFile(join(cfgDir, 'config.json'), JSON.stringify({ user: 'tester' }), 'utf8');
+    const env = { ABS_CONFIG_DIR: cfgDir, ABS_USER: undefined };
+    const r = await run(['load', '--dir', proj], { env });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /占位名/, `load 应提醒占位名: ${r.stdout}`);
+    assert.match(r.stdout, /config set user/, '应给出改法');
+    // 正常名不得误报
+    await fs.writeFile(join(cfgDir, 'config.json'), JSON.stringify({ user: 'fanchao' }), 'utf8');
+    const r2 = await run(['load', '--dir', proj], { env });
+    assert.doesNotMatch(r2.stdout, /占位名/, `正常名不应报警: ${r2.stdout}`);
+  });
 });
 
 // ---------- 未设姓名时的主动提醒 ----------

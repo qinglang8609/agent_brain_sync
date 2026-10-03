@@ -30,6 +30,32 @@ export async function getUser() {
   }
 }
 
+/** 占位名黑名单：这些名字没有任何正当理由当作者名，写进全局配置会污染之后所有项目。
+ * 教训（2026-09-18）：一次手动 `abs config set user tester` 让新项目每条 todo 都标 [[tester]]。
+ * 注意只拦 setUser（持久配置），**不拦 ABS_USER 环境变量** —— env 是一次性显式覆盖，
+ * 且测试套件全程用 ABS_USER=tester（7 个测试文件），拦它会全线爆掉。 */
+const PLACEHOLDER_NAMES = new Set([
+  'tester', 'test', 'testing', 'foo', 'bar', 'baz', 'foobar',
+  'admin', 'user', 'username', 'me', 'you', 'someone', 'nobody',
+  'example', 'demo', 'sample', 'tmp', 'temp', 'default', 'null', 'none',
+]);
+
+/** 校验是否是像样的人名；不合格抛带指引的错误。setUser 专用（ABS_USER 不过此关）。 */
+function assertRealName(name) {
+  const lower = name.toLowerCase();
+  if (PLACEHOLDER_NAMES.has(lower)) {
+    throw new Error(
+      `✗ "${name}" 是占位名，不是真人姓名 —— 它会成为所有项目的作者标记。\n` +
+      '  请填你本人的名字（如 abs config set user 张三 / alice）'
+    );
+  }
+  // 无意义重复串：aaa/xxx/111 之类
+  if (/^(.)\1+$/.test(lower)) {
+    throw new Error(`✗ "${name}" 看起来不是名字（重复字符）—— 请填你本人的名字`);
+  }
+  return name;
+}
+
 /** 写配置的 user 字段（保留其它键）。 */
 export async function setUser(name) {
   const clean = String(name || '').trim();
@@ -38,6 +64,7 @@ export async function setUser(name) {
   if (!/^[\w\u4e00-\u9fff.-]+$/.test(clean)) {
     throw new Error(`✗ 姓名 "${clean}" 含不支持的字符（只允许字母/数字/中文/._-，且不含空格）`);
   }
+  assertRealName(clean);
   const p = userConfigPath();
   await fs.mkdir(join(p, '..'), { recursive: true });
   let cfg = {};
@@ -64,6 +91,16 @@ export async function requireUser() {
     '    abs config set user <你的名字>     (写入 ~/.abs/config.json, 一次即可)\n' +
     '    ABS_USER=<你的名字> abs ...        (仅本次生效)';
   throw e;
+}
+
+/** 只读体检：当前生效的作者名是否是占位名（脏配置检测）。
+ * 给 load 用 —— 不抛错，返回占位名或 null。历史遗留的 tester 配置靠这条被看见。 */
+export async function placeholderWarn() {
+  const u = await getUser();
+  if (!u) return null;
+  const lower = u.toLowerCase();
+  if (PLACEHOLDER_NAMES.has(lower) || /^(.)\1+$/.test(lower)) return u;
+  return null;
 }
 
 /** 标记串：`[[name]]`（wikilink 到人页 entities/<name>.md）。
