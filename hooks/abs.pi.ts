@@ -119,18 +119,31 @@ function injectTodoGuidelines(options: any): boolean {
 const PANEL_KEY = "abs-todo-panel"
 const PANEL_MAX_ROWS = 10
 
-/** 解析 todo.md 的 ## Todo 区 —— 只收未完成行（- [ ]），Done 区与 ↳ 断点行不计。
+/** 解析 todo.md 的 ## Todo 区 —— 只收未完成行（- [ ]），Done 区不计。
  *
  * who 不为空时只收“我的任务”：行内有 [[who]] 的，或**完全没标作者**的
- * （老任务/手写的没标，漏掉比多显示更糟）。标了别人的则不收。 */
-export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): { total: number; rows: string[]; hidden: number } {
-  const out: string[] = []
+ * （老任务/手写的没标，漏掉比多显示更糟）。标了别人的则不收。
+ *
+ * 断点行（缩进的 ↳）归属到它上一条任务，不单独成条。 */
+export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
+  total: number
+  rows: { state: string; id: string; desc: string; note: string }[]
+  hidden: number
+} {
+  const all: { state: string; id: string; desc: string; note: string }[] = []
   let inTodo = false
   for (const raw of String(md || '').split('\n')) {
     const line = raw.trimEnd()
     if (/^##\s+Todo\s*$/.test(line)) { inTodo = true; continue }
     if (/^##\s+/.test(line)) { inTodo = false; continue }
     if (!inTodo) continue
+    // 断点行：`  ↳ 断点: …`（缩进）→ 挂到上一条任务
+    const note = line.match(/^\s+↳\s*断点:\s*(.*)$/)
+    if (note) {
+      const last = all[all.length - 1]
+      if (last && !last.note) last.note = note[1].trim()
+      continue
+    }
     // `- [ ] [状态] <id> …`；状态标记可能缺省
     const m = line.match(/^-\s+\[\s\]\s+(?:\[([^\]]+)\]\s+)?(\S+)\s*(.*)$/)
     if (!m) continue
@@ -140,15 +153,15 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): { to
     // 作者过滤：抽出所有 [[name]]，有作者且不含 who 则跳过
     const authors = [...body.matchAll(/\[\[([^\]]+)\]\]/g)].map((x) => x[1])
     if (who && authors.length > 0 && !authors.includes(who)) continue
-    // 剥掉作者标记（面板上碍眼且无信息量），再取 `—` 后正文并裁短。
+    // 剥掉作者标记（面板上碍眼且无信息量），再取 `—` 后正文
     const desc = body
       .replace(/\[\[[^\]]+\]\]/g, '')
       .replace(/^\s*—\s*/, '')
       .replace(/\s*\(认领\s*\d{4}-\d{2}-\d{2}\)\s*$/, '')
       .trim()
-    out.push(`[${state}] ${id}${desc ? ' — ' + desc.slice(0, 60) : ''}`)
+    all.push({ state, id, desc, note: '' })
   }
-  return { total: out.length, rows: out.slice(0, max), hidden: Math.max(0, out.length - max) }
+  return { total: all.length, rows: all.slice(0, max), hidden: Math.max(0, all.length - max) }
 }
 
 /** 当前使用者名（读 ~/.abs/config.json 的 user，ABS_USER 环境变量优先）。
@@ -166,7 +179,103 @@ async function currentUser(): Promise<string> {
   }
 }
 
-/** 读 todo.md 并渲染面板。失败/空则移除面板（不报错 —— 面板是装饰，不能影响主流程）。 */
+/** 按显示宽度截断（自己实现，不 import @earendil-works/pi-tui）。
+ *
+ * 为何不直接用 pi-tui 的 truncateToWidth（2026-10-03 实测）：那是 pi 内部 alias，
+ * 裸包名只在 pi 的 jiti loader 下能解析 —— 测试环境用原生 node 加载扩展会
+ * ERR_MODULE_NOT_FOUND（实测挂了 6 个测试）。依赖宿主内部 alias 太脆。
+ *
+ * 宽度规则：CJK/全角记 2 列，其余记 1 列。足够让面板不溢出（不能处理 emoji ZWJ 序列，
+ * 但面板里没有—— todo 内容是任务名与说明）。 */
+function dispWidth(s: string): number {
+  let w = 0
+  let i = 0
+  while (i < s.length) {
+    const m = /^\x1b\[[0-9;]*m/.exec(s.slice(i))
+    if (m) { i += m[0].length; continue }
+    const cp = s.codePointAt(i) || 0
+    const ch = String.fromCodePoint(cp)
+    i += ch.length
+    // 常见全角/CJK 区间（足以覆盖中文任务名）
+    const wide =
+      (cp >= 0x1100 && cp <= 0x115f) ||
+      (cp >= 0x2e80 && cp <= 0xa4cf) ||
+      (cp >= 0xac00 && cp <= 0xd7a3) ||
+      (cp >= 0xf900 && cp <= 0xfaff) ||
+      (cp >= 0xfe30 && cp <= 0xfe6f) ||
+      (cp >= 0xff00 && cp <= 0xff60) ||
+      (cp >= 0xffe0 && cp <= 0xffe6) ||
+      (cp >= 0x1f300 && cp <= 0x1f64f) ||
+      (cp >= 0x1f900 && cp <= 0x1f9ff)
+    w += wide ? 2 : 1
+  }
+  return w
+}
+
+/** 去掉 ANSI 转义序列（\x1b[...m 等），否则宽度计算会把颜色码也算进去。 */
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*m/g, '')
+}
+
+/** 控宽截断：超宽则尾部换省略号（省略号算 1 列）。
+ *
+ * 注意：入参可能含 ANSI 颜色码（我们的 head 就是 fg() 拼的）。颜色码占 0 列，
+ * 必须先剥掉再量宽 —— 否则每行都会被误判超宽而截断。
+ * 截断后不再恢复颜色（该行尾会失去颜色，但省略号前的内容色仍在）—— 可接受，
+ * 因为只有超长行才会走到这里。 */
+function clipToWidth(s: string, width: number): string {
+  if (width <= 0) return ''
+  if (dispWidth(stripAnsi(s)) <= width) return s
+  const keep = width - 1
+  let out = ''
+  let w = 0
+  let i = 0
+  // 逐字符扫描，遇到 ANSI 序列原样跳过（不计宽）
+  while (i < s.length) {
+    const m = /^\x1b\[[0-9;]*m/.exec(s.slice(i))
+    if (m) { out += m[0]; i += m[0].length; continue }
+    const cp = s.codePointAt(i) || 0
+    const ch = String.fromCodePoint(cp)
+    i += ch.length
+    const cw = dispWidth(ch)
+    if (w + cw > keep) break
+    out += ch
+    w += cw
+  }
+  return out + '…'
+}
+export function renderPanelLines(
+  data: { total: number; rows: { state: string; id: string; desc: string; note: string }[]; hidden: number },
+  who: string,
+  width: number,
+  fg: (color: string, s: string) => string,
+): string[] {
+  if (data.total === 0) return []
+  const colorOf = (state: string): string => (state === '滞留中' ? 'muted' : state === '讨论中' ? 'dim' : 'accent')
+  const lines: string[] = []
+  // 上描边：一条深灰横线，把面板与上方内容分开。
+  // 留 1 列余量 —— 终端对“恰好占满宽度”的行有时会折行（各终端行为不一致）。
+  lines.push(fg('dim', '─'.repeat(Math.max(0, width - 1))))
+  const title = who ? `📋 todo (${data.total}) — ${who}` : `📋 todo (${data.total})`
+  lines.push(clipToWidth(fg('accent', title), width))
+
+  const lastIdx = data.rows.length - 1
+  data.rows.forEach((t, i) => {
+    const branch = i === lastIdx && !t.note ? '└─' : '├─'
+    const head = `${fg('dim', branch)} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}`
+    const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
+    lines.push(clipToWidth(head + desc, width))
+    if (t.note) {
+      // 断点行：挂在父任务下，前缀对齐（首行 ├─ 时用 │ 延伸，末行 └─ 用空格）
+      const cont = branch === '└─' ? '  ' : fg('dim', '│ ')
+      lines.push(clipToWidth(`${cont} ${fg('dim', '↳ ' + t.note)}`, width))
+    }
+  })
+
+  if (data.hidden > 0) lines.push(clipToWidth(fg('dim', `  +${data.hidden} more`), width))
+  return lines
+}
 async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
   if (String(process.env.ABS_TODO_PANEL || '') === '0') return
   if (!ui || typeof ui.setWidget !== 'function') return
@@ -174,12 +283,23 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
     if (!(await hasBrain(cwd))) { ui.setWidget(PANEL_KEY, undefined); return }
     const md = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8')
     const who = await currentUser()
-    const { total, rows, hidden } = parseOpenTasks(md, PANEL_MAX_ROWS, who)
-    if (total === 0) { ui.setWidget(PANEL_KEY, undefined); return }
-    const title = who ? `📋 todo (${total}) — ${who}` : `📋 todo (${total})`
-    const lines = [title, ...rows.map((r) => '  ' + r)]
-    if (hidden > 0) lines.push(`  +${hidden} more`)
-    ui.setWidget(PANEL_KEY, lines, { placement: 'aboveEditor' })
+    const data = parseOpenTasks(md, PANEL_MAX_ROWS, who)
+    if (data.total === 0) { ui.setWidget(PANEL_KEY, undefined); return }
+    // factory 形式：render(width) 每帧拿真实宽度 → 按宽度截断，不再断字。
+    ui.setWidget(
+      PANEL_KEY,
+      (_tui: any, theme: any) => ({
+        render: (width: number) =>
+          renderPanelLines(
+            data,
+            who,
+            width,
+            (c: string, s: string) => theme.fg(c, s),
+          ),
+        invalidate: () => {},
+      }),
+      { placement: 'aboveEditor' },
+    )
   } catch {
     try { ui.setWidget(PANEL_KEY, undefined) } catch {}
   }
