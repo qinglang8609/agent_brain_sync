@@ -8,6 +8,7 @@
 ## Done
 ### 2026-10-03
 
+- [x] anim-demo [[fanchao]] — 看动画用 —— 这条是进行中，面板上它的三点应该在循环闪动 — 三点循环动画已上线并实测可见: [进行中] 行后缀 ○○○→●○○→●●○→●●● 每 250ms 一帧, 只有进行中的行有, 宽度固定 3 列不抖, 无进行中任务时不跑定时器 【落地】 (完成 2026-10-03)
 - [x] todo-state-blocked-on-user [[fanchao]] — todo 缺「等外部输入」状态: 现在只有 进行中/讨论中/滞留中, 导致'等用户反馈'的任务与被 agent 干着的任务混在一起(实例: verify-todo-guide 等用户日常观察)。候选: 加 [待确认] 或复用 滞留中+断点说明。不着急改——会干扰 todo 及时性验证的观察期 — 评估后不做: 只是状态标签, 不改任何功能; 且 [滞留中] + 断点说明已能表达'等外部输入'(verify-todo-guide 就是这么用的)。加新状态要改 4 处代码 + 测试, 收益不抵成本。用户 2026-10-03 确认不做 【否决】 (完成 2026-10-03)
 - [x] todo-panel [[fanchao]] — pi 编辑器上方显示 .brain/todo.md 未完成任务面板: setWidget(aboveEditor) + session_start/turn_end 刷新, 按当前 user 过滤(含无作者的), 上线 10 行截断 — setWidget(aboveEditor) 显示 .brain/todo.md 未完成项, session_start(startup/reload)+turn_end 刷新, 按当前 user 过滤(含无作者的), 10 行截断 +N more, 无任务/无 .brain 自动隐藏, ABS_TODO_PANEL=0 关。实测用户重启后看到面板(hooks.log: panel drawn reason=reload); 与 rpiv-todo 区别: 不建第二套状态机(数据源在磁盘, 跨会话可续接), 代码 ~50 行 vs ~1800 行 【落地】 (完成 2026-10-03)
 - [x] release-1.9.9 [[fanchao]] — 发版 1.9.9: 3 commit + tag, git 与 npm 均发布 — 踩坑: git/npm 配的代理 127.0.0.1:1082 端口没开, 直连反而通; npm 本地缓存 stale 导致 view 连续 6 次报旧版本+404, 差点误判发布失败重发(实际首次已成功)。实机验收: 从 registry 装全新副本, tester/foo 被拒 【落地】 (完成 2026-10-03)

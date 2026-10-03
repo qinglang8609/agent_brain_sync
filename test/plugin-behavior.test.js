@@ -631,4 +631,50 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const { renderPanelLines } = await loadPanelFns();
     assert.equal(renderPanelLines({ total: 0, rows: [], hidden: 0 }, 'me', 80, (c, s) => s).length, 0);
   });
+
+  // 动画（2026-10-03 用户需求）：三个小符依次由空心变实心，只给「进行中」的行。
+  test('动画：只有「进行中」行带三帧符，其余不带', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const data = {
+      total: 2,
+      rows: [
+        { state: '进行中', id: 'doing', desc: '干活', note: '' },
+        { state: '滞留中', id: 'wait', desc: '等着', note: '' },
+      ],
+      hidden: 0,
+    };
+    const lines = renderPanelLines(data, 'me', 80, fg, 0);
+    const doing = lines.find((l) => l.includes('doing'));
+    const wait = lines.find((l) => l.includes('wait'));
+    assert.match(doing, /[○●]{3}/, `进行中行应有三符动画: ${doing}`);
+    assert.ok(!/[○●]{3}/.test(wait), `滞留中行不该有动画: ${wait}`);
+  });
+
+  test('动画：animPhase=-1 时完全不显示（开关作用）', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', note: '' }], hidden: 0 };
+    const lines = renderPanelLines(data, 'me', 80, fg, -1);
+    assert.ok(!/[○●]{3}/.test(lines.join('\n')), '关闭时不该出现动画符');
+  });
+
+  test('动画帧：6 帧循环且每帧宽度固定（不拖宽面板）', async () => {
+    const { todoAnimFrame } = await loadPanelFns();
+    const seq = [];
+    for (let p = 0; p < 6; p++) {
+      const f = todoAnimFrame(p);
+      assert.equal([...f].length, 3, `帧应为 3 列: ${f}`);
+      seq.push(f);
+    }
+    // 不断言“6 帧各不相同” —— 帧序列含回退（呼吸感），本就该有重复元素。
+    // 断言真实意图：起点全空心、中途全实心、且确实在变化。
+    assert.equal(seq[0], '○○○', `首帧应全空心: ${seq[0]}`);
+    assert.ok(seq.includes('●●●'), `应有一帧全实心: ${seq.join(',')}`);
+    assert.ok(new Set(seq).size >= 3, `帧应有变化: ${seq.join(',')}`);
+    // 循环：第 7 帧回到第 1 帧
+    assert.equal(todoAnimFrame(6), todoAnimFrame(0), '应循环回第 0 帧');
+    // 负数相位不该抛（防御）
+    assert.equal([...todoAnimFrame(-1)].length, 3);
+  });
 });

@@ -258,11 +258,48 @@ function clipToWidth(s: string, width: number): string {
   }
   return out + '…'
 }
+// ---------------------------------------------------------------------------
+// “进行中”行的迷你动画（2026-10-03 用户需求）：三个小符号依次由空心变实心。
+// 帧宽固定 3 列 —— 宽度不变才不会让面板每帧抖动（这也是不用 ⠋⠙⠹ 那种 spinner 的原因：
+// 那个只闪一个符，用户明确要的是“三个点依次点亮”）。
+// 平铺 6 帧：亮→全亮→退回（呼吸感），而不是全亮后硬跳回全空。
+const TODO_ANIM_FRAMES = ['○○○', '●○○', '●●○', '●●●', '●●○', '●○○']
+const TODO_ANIM_MS = 250
+
+/** 动画相位（每 tick +1）。模块级 —— 同 agentEndSeen，闭包 flag 在重复注册时不共享。 */
+let animPhase = 0
+let animTimer: ReturnType<typeof setInterval> | undefined
+
+/** 启动/保持动画定时器。重复调用不会叠加（已存在则不动）。
+ * getTui 是为了每 tick 拿**当前**的 tui 引用 —— widget 可能因刷新被重建，
+ * 持旧的引用会调到一个已被丢弃的 renderer。 */
+function startAnimTimer(getTui: () => any): void {
+  if (animTimer) return
+  animTimer = setInterval(() => {
+    animPhase++
+    try { getTui()?.requestRender?.() } catch {}
+  }, TODO_ANIM_MS)
+  // 别阻止进程退出（扩展是宿主进程的一分子，定时器不该吊住事件循环）
+  ;(animTimer as any)?.unref?.()
+}
+
+function stopAnimTimer(): void {
+  if (animTimer) { clearInterval(animTimer); animTimer = undefined }
+}
+
+/** 取当前动画帧（phase 每 tick +1，由定时器驱动）。非进行中的行不传 phase（不显示）。 */
+export function todoAnimFrame(phase: number): string {
+  const n = TODO_ANIM_FRAMES.length
+  const i = ((Math.floor(phase) % n) + n) % n
+  return TODO_ANIM_FRAMES[i]
+}
+
 export function renderPanelLines(
   data: { total: number; rows: { state: string; id: string; desc: string; note: string }[]; hidden: number },
   who: string,
   width: number,
   fg: (color: string, s: string) => string,
+  animPhase = -1,
 ): string[] {
   if (data.total === 0) return []
   const colorOf = (state: string): string => (state === '滞留中' ? 'muted' : state === '讨论中' ? 'dim' : 'accent')
@@ -280,7 +317,9 @@ export function renderPanelLines(
     //  全篇没有 └─ 收尾，断点行的 │ 又延伸到视觉底部，看起来像列表被截断。）
     const isLast = i === lastIdx
     const branch = isLast ? '└─' : '├─'
-    const head = `${fg('dim', branch)} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}`
+    // 进行中的行带一个小动画（其余行不加，避免满屏都在跳）
+    const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg('accent', todoAnimFrame(animPhase)) : ''
+    const head = `${fg('dim', branch)} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.note) {
@@ -297,28 +336,39 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
   if (String(process.env.ABS_TODO_PANEL || '') === '0') return
   if (!ui || typeof ui.setWidget !== 'function') return
   try {
-    if (!(await hasBrain(cwd))) { ui.setWidget(PANEL_KEY, undefined); return }
+    if (!(await hasBrain(cwd))) { ui.setWidget(PANEL_KEY, undefined); stopAnimTimer(); return }
     const md = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8')
     const who = await currentUser()
     const data = parseOpenTasks(md, PANEL_MAX_ROWS, who)
-    if (data.total === 0) { ui.setWidget(PANEL_KEY, undefined); return }
+    if (data.total === 0) { ui.setWidget(PANEL_KEY, undefined); stopAnimTimer(); return }
     // factory 形式：render(width) 每帧拿真实宽度 → 按宽度截断，不再断字。
+    // 动画：phase 存在模块级，render 时读当前值；定时器只在本帧重绘，不重建 widget。
+    let tuiRef: any = null
     ui.setWidget(
       PANEL_KEY,
-      (_tui: any, theme: any) => ({
-        render: (width: number) =>
-          renderPanelLines(
-            data,
-            who,
-            width,
-            (c: string, s: string) => theme.fg(c, s),
-          ),
-        invalidate: () => {},
-      }),
+      (tui: any, theme: any) => {
+        tuiRef = tui
+        return {
+          render: (width: number) =>
+            renderPanelLines(
+              data,
+              who,
+              width,
+              (c: string, s: string) => theme.fg(c, s),
+              animPhase,
+            ),
+          invalidate: () => {},
+        }
+      },
       { placement: 'aboveEditor' },
     )
+    // 只在真有“进行中”任务时跑定时器 —— 否则白刷 CPU（无动画可播）。
+    const needAnim = data.rows.some((t) => t.state === '进行中')
+    if (needAnim) startAnimTimer(() => tuiRef)
+    else stopAnimTimer()
   } catch {
     try { ui.setWidget(PANEL_KEY, undefined) } catch {}
+    stopAnimTimer()
   }
 }
 
@@ -409,6 +459,7 @@ export default function absPiHook(pi: ExtensionAPI): void {
   })
 
   pi.on("session_shutdown", (_e: any, ctx: any) => {
+    stopAnimTimer() // 面板没了，动画定时器必须一起停（否则残留定时器白刷已丢弃的 tui）
     snapshotWrapup((ctx && ctx.cwd) || process.cwd())
     logHook("session_shutdown").catch(() => {})
   })
