@@ -32,7 +32,7 @@ abs install --agent pi --no-mcp   # 只装 hook + skill，不要 MCP
 | claude-code | `~/.claude/settings.json` hooks | `mcpServers.abs` (stdio) | `~/.claude/skills/abs-agent-brain-sync/` |
 | codex | `~/.codex/hooks.json` | config.toml `[mcp_servers.abs]` | `~/.codex/skills/` |
 | opencode | `~/.config/opencode/plugins/abs.ts` | opencode.json mcp.abs | skills/ |
-| pi | `~/.pi/agent/extensions/abs.ts` | `~/.pi/agent/mcp.json` `mcpServers.abs` | `~/.pi/agent/skills/` |
+| pi | `~/.pi/agent/extensions/abs.ts` | `~/.pi/agent/mcp-adapter.json` `mcpServers.abs` | `~/.pi/agent/skills/` |
 
 > **skill 规则**：`skill/` 下每个含 `SKILL.md` 的子目录 = 一个 skill，
 > **目录名即安装名**（须与 frontmatter `name` 一致，否则 pi 会告警）。
@@ -52,6 +52,44 @@ npm install && npm link        # 之后全局就有 abs
 ---
 
 ## 怎么用
+
+### pi：编辑器上的 todo 面板
+
+pi 宿主额外多一层 UI（其它宿主没有）：**编辑器上方常驻一块 todo 面板**，直接读当前项目 `.brain/todo.md`。
+
+```
+─────────────────────────────────────────────────
+📋 todo (3) — fanchao · ☕ 靠咖啡续命
+├─ [进行中] some-task ●●○ — 干活中
+│  ↳ 断点: hooks/abs.pi.ts:120
+├─ [滞留中] waiting — 等外部输入
+└─ [进行中] another ●●● — …
+```
+
+- **只显示未完成**，Done 归计数不占位（数量在标题里）
+- **按当前使用者过滤**：显示 `[[我]]` 的 + 没标作者的（老任务/手写），别人的不显示
+- **断点行 `↳` 挂在父任务下**；`├─` / `└─` 表结构
+- **「进行中」带三点动画**`○○○ → ●●○ → ●●●`（250ms/帧）—— 一眼看出哪条在跑
+- **实时刷新**：我调 `abs_task` / `abs_board` 后立即重画，不用等我讲完话
+- **上描边与输入框同色满宽**（主题色 `thinkingOff`，跟 pi 输入框的边框一致）
+- 窄终端按显示宽度截断（CJK 计 2 列），不溢出
+
+**每次启动随机昵称**（132 条，附在作者名后）—— 每次打开 pi 换一条；池子分三批：
+日常作息吃喝摸鱼 / 职场抱怨 / 自嘲（`编程全靠蒙`、`AI救我狗命`）。
+
+| 环境变量 | 作用 |
+|---|---|
+| `ABS_TODO_PANEL=0` | 关掉面板 |
+| `ABS_TODO_NICK=0` | 关掉随机昵称 |
+| `ABS_TODO_GUIDE=0` | 关掉 system prompt 里的 todo 登记指引 |
+
+> **设计取舍**：面板是**纯展示层**，只读 `todo.md` 不写任何东西，也不建第二套状态 ——
+> 数据源就是 abs 自己的看板（磁盘文件，跨会话可续接）。所以没有折叠快捷键、没有依赖图，
+> 只有 ~50 行渲染代码；对比 rpiv-todo 的 ~1800 行（它把状态存会话 transcript，新会话会丢）。
+>
+> 另一层是**触发指引**：扩展往 system prompt 的 Guidelines 段注入 3 条静态条目
+> （动手前 `start` / 完成立刻 `done` / 断点及时 `note`）。这是**静态 prompt 内容**，
+> 不是往对话里插消息 —— 本项目删过两次「插话式提醒」（会抢 turn 打断用户）。
 
 ### 项目里开一次
 
@@ -89,6 +127,9 @@ abs update                                # 升级到最新版并刷新四宿主
 > `abs todo start` 与 `abs todo add` 等价（都登记任务）。
 > 旧版 `abs task ...` / `abs board` 已改名，会报错并提示新写法。
 > `abs wrapup` / `abs teardown-check` 是 hook 内部命令，无需手动调用。
+> **作者名要填真的**：`tester` / `foo` / `aaa` 这类占位名会被拒 —— 因为 `{user}` 是全局单值，
+> 填错会污染之后所有项目的 `[[作者]]` 标记（`aaa` 这类堆字也拒，但 `oo`/`ee` 这种两字母缩写放行）。
+> `abs load` 对已落盘的占位名会给出警告，提示改回真名。
 > **升级后分区名自动归一**：`abs load` 每次都会顺手核对 `index/log/todo` 三文件结构，旧的分区名（如 `# 🗂 图谱索引` → `# 🗂 Graph Index`）会被自动改回标准；缺分区自动补建，无头文件只提醒不自动改。
 
 ### 工作流
@@ -151,11 +192,12 @@ agent_brain_sync/
 ├── src/store.js    CLI 命令实现
 ├── src/hosts.js    四宿主接入定义
 ├── src/install.js  安装/卸载（分区共存合并）
-├── src/userconfig.js  使用者姓名配置（作者标记）
+├── src/userconfig.js  使用者姓名配置（作者标记；占位名如 tester/foo 会被拒）
 ├── src/wrapup.js   Stop 收尾快照/归档
 ├── hooks/event.sh  hook 模板
+├── hooks/abs.pi.ts pi 扩展模板（含 todo 面板 / 随机昵称 / 常驻指引）
 ├── skill/<名称>/SKILL.md  技能（每个子目录 = 一个 skill，装到各智能体）
-└── test/           单测
+└── test/           单测（400+，node:test）
 ```
 
 MIT
