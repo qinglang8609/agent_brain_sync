@@ -126,6 +126,156 @@ function injectTodoGuidelines(options: any): boolean {
 const PANEL_KEY = "abs-todo-panel"
 const PANEL_MAX_ROWS = 10
 
+// 标题后缀昵称池（2026-10-03 用户提供）—— 每次**启动会话**随机抽一条，会话内保持不变。
+// 不能每帧随机（panel 每帧都重渲染，那样会疯狂闪烁）。
+const USER_NICKNAMES = [
+  '🛌 昼伏夜出型',
+  '😴 沾枕头就醒',
+  '🌙 熬夜当修仙',
+  '⏰ 闹钟十连败',
+  '🧟 永远睡不醒',
+  '☕ 靠咖啡续命',
+  '🧋 靠奶茶续命',
+  '🍚 干饭第一名',
+  '🥘 吃辣只敢微辣',
+  '🍳 炸厨房常客',
+  '🥗 间歇性减肥',
+  '🍜 深夜爱放毒',
+  '🧊 冰镇式养生',
+  '⌨️ 键盘上摸鱼',
+  '🐟 划水大师',
+  '💻 复制粘贴大师',
+  '🚽 带薪上厕所',
+  '🕕 到点就跑',
+  '📅 明天再说吧',
+  '🐷 坚决不加班',
+  '😇 表面在微笑',
+  '🤯 内心已掀桌',
+  '💸 月月过路财神',
+  '🏦 隐形负翁',
+  '🤑 转发锦鲤求暴富',
+  '📉 钱包越来越瘦',
+  '🛒 购物车首富',
+  '📱 网上冲浪选手',
+  '🛸 意念回复专家',
+  '📞 电话一响就慌',
+  '🙈 已读绝不回',
+  '🤝 只管埋头夹菜',
+  '📝 收藏从不用',
+  '📚 学了就忘',
+  '🧠 记忆力七秒',
+  '🔋 1%才去充电',
+  '🛍️ 拆快递狂魔',
+  '🧳 云旅游专家',
+  '🏋️ 办卡只去洗澡',
+  '🚶 步数常年垫底',
+  '💇 秃飞猛进',
+  '🏴‍☠️ 飞翔荷兰人',
+  '🐌 蜗牛速度选手',
+  '🦥 躺平专业户',
+  '🎮 打完这把就睡',
+  '🍿 吃瓜第一线',
+  '🔍 搜索两小时',
+  '🧩 爱钻牛角尖',
+  '💤 梦里也在编程',
+  '🚀 明早一定做',
+  '🧘 边熬夜边养生',
+  '📺 刷剧不眨眼',
+  '🎧 单曲循环中',
+  // ── 职场抱怨（2026-10-03 第二批）──
+  '🫠 靠不住选手',
+  '🧯 专业背锅侠',
+  '🪑 会议室钉子户',
+  '📎 工具人本人',
+  '🫥 存在感为零',
+  '🥄 打杂一把好手',
+  '🧮 人形Excel',
+  '📋 需求搬运工',
+  '🔧 万能补丁匠',
+  '🗣️ 会议两小时',
+  '💬 一言不合拉会',
+  '📊 对齐一整天',
+  '🌀 讨论没结论',
+  '🎯 追需求成瘾',
+  '📝 纪要孤儿',
+  '🔥 排期永远紧',
+  '⏳ 催到怀疑人生',
+  '🌃 下班天已黑',
+  '📆 周末待命',
+  '🚨 临时插需求',
+  '🧨 上线前改需求',
+  '📈 汇报全靠编',
+  '🎤 PPT大师',
+  '🤡 背锅第一名',
+  '🫡 收到马上办',
+  '🙃 领导说得对',
+  '👏 掌声最热烈',
+  '🏓 甩锅乒乓球',
+  '🙋 不背锅侠',
+  '📮 抄送战斗机',
+  '🧊 已读不回群',
+  '🔕 消息免打扰',
+  '🪫 电量剩5%',
+  '🧓 入行即养老',
+  '🫩 心力耗尽',
+  '😮‍💨 叹气专业户',
+  '🪦 激情已入土',
+  '📤 简历常年挂着',
+  '🧳 随时准备跑路',
+  '💼 骑驴找马中',
+  '🪙 谈薪谈不动',
+  '🥲 涨薪等明年',
+  // ── 自嘲（2026-10-03 第三批）──
+  '🎲 编程全靠蒙',
+  '🙏 AI救我狗命',
+  '🐛 Bug制造机',
+  '🔮 玄学调参',
+  '📿 面向祈祷编程',
+  '🩹 补丁摞补丁',
+  '🤞 能跑就行',
+  '🗿 代码能跑别动',
+  '🎰 随机数人生',
+  '🧙 咒语背诵者',
+  '📖 文档从不看',
+  '⌨️ 只会复制粘贴',
+  '🫠 菜得安详',
+  '🥹 菜狗本狗',
+  '🐣 刚会写Hello',
+  '🧸 删库跑路预备',
+  '🪫 脑子已关机',
+  '🫥 假装很忙',
+  '🎭 专业演技派',
+  '🃏 气氛组组长',
+  '🧊 情绪稳定到麻木',
+  '🐟 摸鱼终身成就',
+  '🛋️ 沙发项目经理',
+  '📺 带薪看视频',
+  '🍵 带薪养生',
+  '💤 工位睡神',
+  '⏳ 明日复明日',
+  '🗓️ 周报最后写',
+  '📉 进度条倒退',
+  '🕳️ 坑是自己挖的',
+  '🧨 技术债主',
+  '💀 穷得响叮当',
+  '📵 社交电池耗尽',
+  '🍼 成年巨婴',
+  '🪞 镜子前叹气',
+  '🧦 袜子不成对',
+  '🥲 笑着活下去',
+]
+
+/** 本会话的昵称 —— 模块级（扩展重复注册时闭包变量不共享，同 agentEndSeen 的坑）。
+ * 空串 = 未抽（或 ABS_TODO_NICK=0 关掉）。 */
+let sessionNickname = ''
+
+/** 抽一条昵称。传 rnd 便于测试注入；默认 Math.random。关掉：ABS_TODO_NICK=0。 */
+export function pickNickname(rnd: () => number = Math.random): string {
+  if (String(process.env.ABS_TODO_NICK || '') === '0') return ''
+  const i = Math.min(USER_NICKNAMES.length - 1, Math.floor(rnd() * USER_NICKNAMES.length))
+  return USER_NICKNAMES[Math.max(0, i)]
+}
+
 /** 解析 todo.md 的 ## Todo 区 —— 只收未完成行（- [ ]），Done 区不计。
  *
  * who 不为空时只收“我的任务”：行内有 [[who]] 的，或**完全没标作者**的
@@ -300,6 +450,7 @@ export function renderPanelLines(
   width: number,
   fg: (color: string, s: string) => string,
   animPhase = -1,
+  nickname = '',
 ): string[] {
   if (data.total === 0) return []
   const colorOf = (state: string): string => (state === '滞留中' ? 'muted' : state === '讨论中' ? 'dim' : 'accent')
@@ -307,7 +458,9 @@ export function renderPanelLines(
   // 上描边：一条深灰横线，把面板与上方内容分开。
   // 留 1 列余量 —— 终端对“恰好占满宽度”的行有时会折行（各终端行为不一致）。
   lines.push(fg('dim', '─'.repeat(Math.max(0, width - 1))))
-  const title = who ? `📋 todo (${data.total}) — ${who}` : `📋 todo (${data.total})`
+  // 昵称附在作者名后（会话内固定，启动时随机抽）。
+  const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
+  const title = whoPart ? `📋 todo (${data.total}) — ${whoPart}` : `📋 todo (${data.total})`
   lines.push(clipToWidth(fg('accent', title), width))
 
   const lastIdx = data.rows.length - 1
@@ -356,6 +509,7 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
               width,
               (c: string, s: string) => theme.fg(c, s),
               animPhase,
+              sessionNickname,
             ),
           invalidate: () => {},
         }
@@ -378,6 +532,10 @@ export default function absPiHook(pi: ExtensionAPI): void {
 
   pi.on("session_start", (event: any, ctx: any) => {
     resetThrottle()
+    // 本会话的随机昵称 —— 在这里抽一次（不是每帧抽，否则面板会疯狂闪）。
+    // 每次 session_start（startup/reload/new/resume/fork）重抽 → “每次打开 pi 都是随机的”。
+    sessionNickname = pickNickname()
+    logHook(`session_start nickname=${sessionNickname || '(off)'}`).catch(() => {})
     // 启动/重载时就画出面板（reason=startup|reload|new|resume|fork）。
     // 时序：pi 在 session_start 时已给 ctx.ui（无 UI 时是 noOp，调了不报错），
     // 但设 setWidget 需真的 TUI —— 故用 hasUI 挡一下并留痕，便于判定“没显示”的原因。

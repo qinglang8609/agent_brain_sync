@@ -659,6 +659,74 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(!/[○●]{3}/.test(lines.join('\n')), '关闭时不该出现动画符');
   });
 
+  // 昵称（2026-10-03 用户需求）：用户给定的俏皮话池里随机抽，附在作者名后。
+  test('昵称：随机抽取且确定性可测（注入 rnd）', async () => {
+    const { pickNickname } = await loadPanelFns();
+    const first = pickNickname(() => 0);
+    const last = pickNickname(() => 0.999999);
+    assert.ok(first.length > 0 && last.length > 0, '应都抽到非空');
+    assert.notEqual(first, last, '边界应取到不同条目');
+    assert.equal(pickNickname(() => 0.5), pickNickname(() => 0.5), '同一 rnd 应得同一结果（确定性）');
+    for (let i = 0; i < 200; i++) {
+      const n = pickNickname();
+      assert.ok(typeof n === 'string' && n.length > 0, `第 ${i} 次抽到空值`);
+    }
+  });
+
+  // 审查发现（2026-10-03）：原池子正文长 9-15 字，标题会被窄终端截断。
+  // 用户定下 4-8 字，并把池子扩到 50+ 条。两条不变式都锁住。
+  test('昵称池：每条以 emoji 开头，正文 4-8 字，总条数 50+', async () => {
+    const { pickNickname } = await loadPanelFns();
+    const seen = new Set();
+    for (let i = 0; i < 500; i++) seen.add(pickNickname());
+    assert.ok(seen.size >= 50, `池子应有 50+ 条: ${seen.size}`);
+    // 每条 = emoji + 空格 + 正文
+    const badEmoji = [...seen].filter((s) => !/^\p{Extended_Pictographic}/u.test(s));
+    assert.equal(badEmoji.length, 0, `以下条目缺 emoji: ${badEmoji.join(' | ')}`);
+    const badLen = [...seen].filter((s) => {
+      const body = s.replace(/^\p{Extended_Pictographic}[\uFE0F\u200D\s]*/u, '').trim();
+      const n = [...body].length;
+      return n < 4 || n > 8;
+    });
+    assert.equal(badLen.length, 0, `以下条目正文不在 4-8 字: ${badLen.join(' | ')}`);
+  });
+
+  test('昵称：ABS_TODO_NICK=0 时关掉', async () => {
+    const { pickNickname } = await loadPanelFns();
+    const old = process.env.ABS_TODO_NICK;
+    process.env.ABS_TODO_NICK = '0';
+    try {
+      assert.equal(pickNickname(), '', '开关开时应返回空串');
+    } finally {
+      if (old === undefined) delete process.env.ABS_TODO_NICK;
+      else process.env.ABS_TODO_NICK = old;
+    }
+  });
+
+  test('昵称：附在作者名后，窄宽度不溢出', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', note: '' }], hidden: 0 };
+    const nick = '📞 听到电话铃响就窒息的接听恐惧症';
+    const wide = renderPanelLines(data, 'fanchao', 200, fg, -1, nick)[1];
+    assert.match(wide, /fanchao/, '应含作者名');
+    assert.match(wide, /接听恐惧症/, `应含昵称: ${wide}`);
+    const narrow = renderPanelLines(data, 'fanchao', 40, fg, -1, nick);
+    const strip2 = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+    const dw2 = (s) => {
+      let w = 0;
+      for (const ch of strip2(s)) {
+        const cp = ch.codePointAt(0) || 0;
+        const wideCh = (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0x1f300 && cp <= 0x1f64f);
+        w += wideCh ? 2 : 1;
+      }
+      return w;
+    };
+    for (const l of narrow) assert.ok(dw2(l) <= 40, `窄宽度溢出(${dw2(l)}): ${strip2(l)}`);
+    const plain = renderPanelLines(data, 'fanchao', 200, fg, -1, '')[1];
+    assert.ok(!plain.includes('·'), `无昵称不该有分隔符: ${plain}`);
+  });
+
   test('动画帧：6 帧循环且每帧宽度固定（不拖宽面板）', async () => {
     const { todoAnimFrame } = await loadPanelFns();
     const seq = [];
