@@ -10,7 +10,7 @@
  * 已删除（2026-09-18）：收尾注入本身（agent_end + sendUserMessage deliverAs=followUp）。
  *   实报「每次干活干一会出来, 任务就中断了」。两次同一个根因：
  *   **往对话里插一句话本身就是设计错误，不是频率问题** —— 改守卫(每轮→每会话)治不了它。
- *   别再加回来。素材锚点(before_agent_start/turn_end)随注入一起删除, 已无消费方。
+ *   别再加回来（指 sendUserMessage 注入；静态 system prompt 内容不在此列，见下方 todo 指引）。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { appendFile, mkdir, stat } from "node:fs/promises"
@@ -63,6 +63,53 @@ function resetThrottle(): void {
   agentEndSeen = false
 }
 
+// ---------------------------------------------------------------------------
+// todo 及时性验证（2026-10-03）：静态 system prompt 指引
+// ---------------------------------------------------------------------------
+// 待验证假设：abs 的 todo「不及时」不是工具问题，是**触发机制**问题 ——
+// `abs_task` 的指引只存在于工具 description 里，模型常忽略；而 pi 原生工具的
+// `promptGuidelines` 会进 system prompt 的 Guidelines 段，每轮都在。
+//
+// 与历史两次失败做法的**分界线**（必须守住）：
+//   删掉的两次都是 `sendUserMessage(deliverAs:"followUp")` —— **往对话里插话**，
+//   抢走一个 turn、打断用户。本次是**静态 prompt 内容**：不新增消息、不抢 turn、
+//   不产生任何对话条目，只是连同其它 Guidelines 一起渲染进 system prompt。
+//   若将来要扩展，也绝不能退化成插话。
+//
+// 关掉即设 ABS_TODO_GUIDE=0。
+const TODO_GUIDELINES = [
+  'Use `mcp__abs__abs_task` to track multi-step work **before** you start it, not after: on the first file edit of a task, call action "start" with a short id.',
+  'Mark a task "done" immediately when it finishes — never batch completions at the end of a session.',
+  'Before starting a task, record the checkpoint with action "note" (which file, which step) so a later session can resume.',
+]
+
+/** 当前项目是否有 .brain 图谱 —— 有才加指引（没图谱的项目里这指引是噪音）。
+ *
+ * 为何不用工具名判断（2026-10-03 两次实测都错）：
+ *   ① event.systemPromptOptions.selectedTools 在 handler 里是**基线值**，真实表要等
+ *      handler 之后（agent-session.js:1573）才回填 → 实测 tools=31 无 abs。
+ *   ② 改用 pi.getActiveTools() 仍为假 —— MCP 默认 exposure=codemode，工具**本就
+ *      不进 active 工具表**（且 pi 的 MCP 是懒连接，实测提示 "lazy: from cache, not
+ *      connected yet"）。
+ * 结论：判断「abs 能不能用」不该看工具注册表，直接看**项目有没有 .brain/**。 */
+async function hasBrain(cwd: string): Promise<boolean> {
+  try {
+    const st = await stat(join(cwd || process.cwd(), '.brain'))
+    return st.isDirectory()
+  } catch {
+    return false
+  }
+}
+
+function injectTodoGuidelines(options: any): boolean {
+  if (String(process.env.ABS_TODO_GUIDE || '') === '0') return false
+  const list: string[] = options.promptGuidelines || (options.promptGuidelines = [])
+  for (const g of TODO_GUIDELINES) {
+    if (!list.includes(g)) list.push(g)
+  }
+  return true
+}
+
 export default function absPiHook(pi: ExtensionAPI): void {
   // 埋点状态同上，故意声明在**模块级**（不在被反复调用的工厂函数里）。
   resetThrottle()
@@ -70,6 +117,26 @@ export default function absPiHook(pi: ExtensionAPI): void {
   pi.on("session_start", (event: any, _ctx: any) => {
     resetThrottle()
     return logHook("session_start").catch(() => {})
+  })
+
+  // todo 及时性验证（2026-10-03）：往 system prompt 的 Guidelines 段追加静态条目。
+  // 不新增消息、不抢 turn、不产生对话条目 —— 与删掉的两次注入做法本质不同（见文件头）。
+  // 留一行日志：否则「有没有生效」只能凭感觉，无法验证。
+  pi.on("before_agent_start", (event: any, ctx: any) => {
+    const cwd = (ctx && ctx.cwd) || process.cwd()
+    // 异步 handler：pi 会 await（emitBeforeAgentStart 是 await 的），故可以查盘。
+    return (async () => {
+      try {
+        if (!(await hasBrain(cwd))) {
+          logHook(`before_agent_start todo_guide=off reason=no_brain`).catch(() => {})
+          return
+        }
+        const ok = injectTodoGuidelines(event?.systemPromptOptions)
+        logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} cwd=${cwd}`).catch(() => {})
+      } catch (e: any) {
+        logHook(`before_agent_start error=${e?.message || 'unknown'}`).catch(() => {})
+      }
+    })()
   })
 
   // 收尾注入已停用（2026-09-18）：sendUserMessage(deliverAs:"followUp") 会在每轮
