@@ -455,9 +455,18 @@ export function renderPanelLines(
   if (data.total === 0) return []
   const colorOf = (state: string): string => (state === '滞留中' ? 'muted' : state === '讨论中' ? 'dim' : 'accent')
   const lines: string[] = []
-  // 上描边：一条深灰横线，把面板与上方内容分开。
-  // 留 1 列余量 —— 终端对“恰好占满宽度”的行有时会折行（各终端行为不一致）。
-  lines.push(fg('dim', '─'.repeat(Math.max(0, width - 1))))
+  // 上描边：用 `thinkingOff` —— 跟 Pi 输入框描边**完全同一个色**。
+  // 排查过程（2026-10-03 用户两轮反馈）：
+  //   ① 用 dim = okhsl(229 8% 56%) → 用户说“太亮”（比输入框亮 7%）
+  //   ② 改 border = okhsl(231 57% 65%) → 用户说“怎么是蓝色的”（高饱和度蓝紫）
+  //   ③ 真相：输入框的描边是 theme.getThinkingBorderColor(level)，level=off 时
+  //      就是 thinkingOff = okhsl(229 8% 49%)（纯灰低饱和）。
+  // 教训：看到“跟宿主某个 UI 元素一致”的需求，必须去宿主源码查那个元素
+  // **实际**用了哪个主题色，不能按名字猜（border 听着像框线，其实不是输入框那个）。
+  // 满宽（不 -1）—— 对齐 pi 自己的 DynamicBorder.render：`"─".repeat(Math.max(1, width))`。
+  // 曾写 width-1 怕折行，但 pi 自己就满宽画，用户实报“右侧缺一小块”。
+  // 且我们传入的 fg() 包了一层 ANSI，ANSI 不占列宽，不会因此溢出。
+  lines.push(fg('thinkingOff', '─'.repeat(Math.max(1, width))))
   // 昵称附在作者名后（会话内固定，启动时随机抽）。
   const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
   const title = whoPart ? `📋 todo (${data.total}) — ${whoPart}` : `📋 todo (${data.total})`

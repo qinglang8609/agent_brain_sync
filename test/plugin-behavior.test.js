@@ -627,6 +627,20 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(taskLines[1].startsWith('└─'), `末条（带断点）应 └─: ${taskLines[1]}`);
   });
 
+  test('上描边满宽（不得留余量，否则右侧缺一块）', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    // 用真 ANSI 包装模拟 pi 的 theme.fg
+    const fg = (c, s) => `\x1b[38;5;240m${s}\x1b[0m`;
+    const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', note: '' }], hidden: 0 };
+    for (const w of [40, 80, 120]) {
+      const line = renderPanelLines(data, 'me', w, fg, 0, '')[0];
+      const got = [...strip(line)].length;
+      // 对齐 pi 自己的 DynamicBorder："─".repeat(Math.max(1, width))
+      assert.equal(got, w, `width=${w} 描边应满宽，实际 ${got}（差了 ${w - got} 列）`);
+    }
+  });
+
   test('空任务列表 → 不渲染任何行（面板自动隐藏）', async () => {
     const { renderPanelLines } = await loadPanelFns();
     assert.equal(renderPanelLines({ total: 0, rows: [], hidden: 0 }, 'me', 80, (c, s) => s).length, 0);
