@@ -13,7 +13,7 @@
  *   别再加回来（指 sendUserMessage 注入；静态 system prompt 内容不在此列，见下方 todo 指引）。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { appendFile, mkdir, stat } from "node:fs/promises"
+import { appendFile, mkdir, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
@@ -110,13 +110,106 @@ function injectTodoGuidelines(options: any): boolean {
   return true
 }
 
+// ---------------------------------------------------------------------------
+// todo 面板（2026-10-03）：把 .brain/todo.md 的未完成任务显示在编辑器上方
+// ---------------------------------------------------------------------------
+// 纯展示层：只读 todo.md，不写任何东西。数据源就是 abs 自己的看板 —— 不做第二套状态。
+// 与 rpiv-todo 的区别：那个把状态存会话 transcript（跨会话丢失），我们用磁盘文件（可续接）。
+// 关掉即设 ABS_TODO_PANEL=0。
+const PANEL_KEY = "abs-todo-panel"
+const PANEL_MAX_ROWS = 10
+
+/** 解析 todo.md 的 ## Todo 区 —— 只收未完成行（- [ ]），Done 区与 ↳ 断点行不计。
+ *
+ * who 不为空时只收“我的任务”：行内有 [[who]] 的，或**完全没标作者**的
+ * （老任务/手写的没标，漏掉比多显示更糟）。标了别人的则不收。 */
+export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): { total: number; rows: string[]; hidden: number } {
+  const out: string[] = []
+  let inTodo = false
+  for (const raw of String(md || '').split('\n')) {
+    const line = raw.trimEnd()
+    if (/^##\s+Todo\s*$/.test(line)) { inTodo = true; continue }
+    if (/^##\s+/.test(line)) { inTodo = false; continue }
+    if (!inTodo) continue
+    // `- [ ] [状态] <id> …`；状态标记可能缺省
+    const m = line.match(/^-\s+\[\s\]\s+(?:\[([^\]]+)\]\s+)?(\S+)\s*(.*)$/)
+    if (!m) continue
+    const state = m[1] || '进行中'
+    const id = m[2]
+    const body = m[3] || ''
+    // 作者过滤：抽出所有 [[name]]，有作者且不含 who 则跳过
+    const authors = [...body.matchAll(/\[\[([^\]]+)\]\]/g)].map((x) => x[1])
+    if (who && authors.length > 0 && !authors.includes(who)) continue
+    // 剥掉作者标记（面板上碍眼且无信息量），再取 `—` 后正文并裁短。
+    const desc = body
+      .replace(/\[\[[^\]]+\]\]/g, '')
+      .replace(/^\s*—\s*/, '')
+      .replace(/\s*\(认领\s*\d{4}-\d{2}-\d{2}\)\s*$/, '')
+      .trim()
+    out.push(`[${state}] ${id}${desc ? ' — ' + desc.slice(0, 60) : ''}`)
+  }
+  return { total: out.length, rows: out.slice(0, max), hidden: Math.max(0, out.length - max) }
+}
+
+/** 当前使用者名（读 ~/.abs/config.json 的 user，ABS_USER 环境变量优先）。
+ * 读不到返回空串 —— 那时不做作者过滤（宁可全显示，也别因配置缺失而面板空白）。 */
+async function currentUser(): Promise<string> {
+  const env = String(process.env.ABS_USER || '').trim()
+  if (env) return env
+  try {
+    const dir = process.env.ABS_CONFIG_DIR || join(homedir(), '.abs')
+    const raw = await readFile(join(dir, 'config.json'), 'utf8')
+    const u = JSON.parse(raw).user
+    return typeof u === 'string' ? u.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+/** 读 todo.md 并渲染面板。失败/空则移除面板（不报错 —— 面板是装饰，不能影响主流程）。 */
+async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
+  if (String(process.env.ABS_TODO_PANEL || '') === '0') return
+  if (!ui || typeof ui.setWidget !== 'function') return
+  try {
+    if (!(await hasBrain(cwd))) { ui.setWidget(PANEL_KEY, undefined); return }
+    const md = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8')
+    const who = await currentUser()
+    const { total, rows, hidden } = parseOpenTasks(md, PANEL_MAX_ROWS, who)
+    if (total === 0) { ui.setWidget(PANEL_KEY, undefined); return }
+    const title = who ? `📋 todo (${total}) — ${who}` : `📋 todo (${total})`
+    const lines = [title, ...rows.map((r) => '  ' + r)]
+    if (hidden > 0) lines.push(`  +${hidden} more`)
+    ui.setWidget(PANEL_KEY, lines, { placement: 'aboveEditor' })
+  } catch {
+    try { ui.setWidget(PANEL_KEY, undefined) } catch {}
+  }
+}
+
 export default function absPiHook(pi: ExtensionAPI): void {
   // 埋点状态同上，故意声明在**模块级**（不在被反复调用的工厂函数里）。
   resetThrottle()
 
-  pi.on("session_start", (event: any, _ctx: any) => {
+  pi.on("session_start", (event: any, ctx: any) => {
     resetThrottle()
+    // 启动/重载时就画出面板（reason=startup|reload|new|resume|fork）。
+    // 时序：pi 在 session_start 时已给 ctx.ui（无 UI 时是 noOp，调了不报错），
+    // 但设 setWidget 需真的 TUI —— 故用 hasUI 挡一下并留痕，便于判定“没显示”的原因。
+    const cwd = (ctx && ctx.cwd) || process.cwd()
+    if (ctx && ctx.hasUI) {
+      refreshTodoPanel(ctx.ui, cwd)
+        .then(() => logHook(`session_start panel drawn reason=${event?.reason}`).catch(() => {}))
+        .catch(() => logHook(`session_start panel error reason=${event?.reason}`).catch(() => {}))
+    } else {
+      logHook(`session_start panel skipped no_ui reason=${event?.reason}`).catch(() => {})
+    }
     return logHook("session_start").catch(() => {})
+  })
+
+  // 面板刷新时机：turn_end（一轮一刷）。
+  // 为何不挂 tool_execution_end：abs_task 走 MCP，每次工具调用后刷会白刷很多次；
+  // 一轮结束足以让人看到“刚才做了什么”。
+  pi.on("turn_end", (_event: any, ctx: any) => {
+    refreshTodoPanel(ctx?.ui, (ctx && ctx.cwd) || process.cwd()).catch(() => {})
   })
 
   // todo 及时性验证（2026-10-03）：往 system prompt 的 Guidelines 段追加静态条目。
