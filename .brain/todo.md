@@ -2,7 +2,7 @@
 
 ## Todo
 - [ ] [滞留中] verify-todo-guide [[fanchao]] — 验证 promptGuidelines 能否治 todo 不及时: 装扩展加静态 system prompt 指引(非插话), 重启后看 hooks.log 有无 before_agent_start todo_guide=on, 再观察动手前是否主动 abs_task start (认领 2026-10-03)
-  ↳ 断点: 【观察期协议】新会话干真任务时验证: 用户不提 todo, 干完跑 abs todo——有记录=机制有效(标 done + 发1.9.10), 空=改走 tool_call 拦截(改文件自动登记)。详见 sources/2026-10-03-todo-常驻指引的-观察期-判定协议
+  ↳ 断点: tool_call 置标记 + tool_execution_end 刷新 验证
 - [ ] [进行中] prompt-guidelines-todo [[fanchao]] — 给 abs 的 todo 加 pi 扩展层常驻指引(治不及时): 在 before_agent_start 往 system prompt 的 Guidelines 段注入 3 条静态指引(动手前 start/完成立刻 done/断点及时 note), 判定条件=项目有 .brain/, 关掉用 ABS_TODO_GUIDE=0 (认领 2026-10-03)
   ↳ 断点: ⚠ 本机现处「官方1.9.9 + 手工同步的 hooks/abs.pi.ts」状态: 指引代码不在 npm 包里。验证通过后必须发新版(1.9.10)并 npm install -g 覆盖 + abs install 重装, 否则下次升级/装包会静默丢掉 todo 指引
 ## Done

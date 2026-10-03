@@ -57,10 +57,15 @@ async function findBrain(cwd: string): Promise<string | null> {
  */
 let agentEndSeen = false
 
+/** “刚才调的是 todo 工具”标记 —— 由 tool_call 置位、tool_execution_end 消费。
+ * 同样在模块级，理由同上（闭包 flag 在重复注册时不共享）。 */
+let pendingTodoTool = false
+
 /** 会话边界重置埋点状态。
  *  不重置 → 同进程第二个会话继承 true 永久不留痕（2026-09-13 实测过的坑）。 */
 function resetThrottle(): void {
   agentEndSeen = false
+  pendingTodoTool = false
 }
 
 // ---------------------------------------------------------------------------
@@ -337,18 +342,28 @@ export default function absPiHook(pi: ExtensionAPI): void {
     return logHook("session_start").catch(() => {})
   })
 
-  // 面板刷新时机：
-  //   session_start —— 启动/重载就读出来
-  //   tool_execution_end —— **仅当刚才是 todo 相关工具**时立即刷（实时）
-  //   turn_end —— 一轮一刷兵底（防其他路径改了 todo.md，如用户手改/CLI）
-  // 为何要 tool_execution_end（2026-10-03 用户提出）：task done 发生在一轮中间，
-  // 只靠 turn_end 就要等我这一轮讲话完才变 —— 看不到“刚刚完成”的反馈。
-  // 只对接相关的刷 → 不会“每次工具调用都重建 widget”。
-  pi.on("tool_execution_end", (event: any, ctx: any) => {
-    const name = String(event?.toolName || event?.name || '')
-    // abs 的 todo 工具（MCP 名可能是 mcp__abs__abs_task，也可能是裸名 abs_task）
-    if (!/abs_(task|board)/.test(name)) return
-    logHook(`tool_execution_end panel refresh tool=${name}`).catch(() => {})
+  // 面板实时刷新（两事件配合）—— 为何不能只用其中一个：
+  //   实测（2026-10-03）MCP 工具在 tool_execution_end 里的 toolName 是代理入口名
+  //   `mcp__abs`，**不是子工具名**，且该事件不带 args → 无法从它分辨是不是 abs_task。
+  //   而 tool_call 带 input，能从里面认出目标工具，但它在**执行前**触发（此刻 todo.md 还没变）。
+  // 故：tool_call 认出“刚才调的是 todo 工具”→ 置标记；tool_execution_end 看到标记就刷 → 清标记。
+  // 始终保留 turn_end 兜底（实测每条 assistant 消息都触发，约 4 秒一次）。
+  // 标记在模块级（重复注册时闭包 flag 不共享 —— 见 agentEndSeen 的注解）。
+  pi.on("tool_call", (event: any) => {
+    const name = String(event?.toolName || '')
+    const input = event?.input || {}
+    // 两种形态：① MCP 代理入口 mcp__abs + input.tool=abs_task；② 直接工具名 abs_task
+    const target = String(input?.tool ?? input?.name ?? '')
+    if (/abs_(task|board)/.test(name) || /abs_(task|board)/.test(target)) {
+      pendingTodoTool = true
+      logHook(`tool_call todo_tool name=${name} target=${target || '-'}`).catch(() => {})
+    }
+  })
+
+  pi.on("tool_execution_end", (_event: any, ctx: any) => {
+    if (!pendingTodoTool) return
+    pendingTodoTool = false
+    logHook(`tool_execution_end panel refresh after todo tool`).catch(() => {})
     refreshTodoPanel(ctx?.ui, (ctx && ctx.cwd) || process.cwd()).catch(() => {})
   })
 
