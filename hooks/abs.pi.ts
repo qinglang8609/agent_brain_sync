@@ -82,10 +82,18 @@ function resetThrottle(): void {
 //   若将来要扩展，也绝不能退化成插话。
 //
 // 关掉即设 ABS_TODO_GUIDE=0。
-// 工具名写 `abs_task`（不带 mcp__abs__ 前缀）—— 2026-10-03 审查发现：MCP 默认
-// exposure=codemode，模型侧看到的就叫 abs_task；写错名字等于让模型去找不存在的工具。
+//
+// 工具名**不能写死**（2026-10-04 实报修正）：abs 走 MCP，而 MCP 工具在模型侧的
+// 名字随宿主的 exposure 配置变，至少三种实测形态 ——
+//   ① pi-mcp-adapter 的 namespace 模式：顶层只有代理入口 `mcp__abs`，
+//      子工具名要作为 `tool` 参数传（namespace-tools.ts 只注册 mcp__<server> 一个）。
+//   ② 内建 MCP 直出：工具名就是 `mcp__abs__abs_task`。
+//   ③ codemode / 直出形态：子工具直接叫 `abs_task`。
+// 上一版写死 `abs_task` → 在 ① 下模型去找一个不存在的顶层工具，指引等于空转
+// （表现：嘴上说"先登记"，实际没落盘）。故改成描述**意图 + 名字规律**，
+// 让模型按当前会话实际可见的形态自己挑，不去猜死一个。
 const TODO_GUIDELINES = [
-  'Use `abs_task` to track multi-step work **before** you start it, not after: on the first file edit of a task, call action "start" with a short id.',
+  'Use the abs task tool to track multi-step work **before** you start it, not after: on the first file edit of a task, call it with action "start" and a short id. (Name varies by host: `mcp__abs` with tool="abs_task", or `mcp__abs__abs_task`, or `abs_task` — use whichever form this session exposes.)',
   'Mark a task "done" immediately when it finishes — never batch completions at the end of a session.',
   'Before starting a task, record the checkpoint with action "note" (which file, which step) so a later session can resume.',
 ]
