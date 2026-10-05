@@ -1,14 +1,15 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] fix-todo-anchor [[fanchao]] — agent 常忘记登记（今天两会话实测：一个登记了一个没登记）。根因不是不自觉，是指引锚点【first file edit】太晚——那一刻注意力在改什么上；且侦察阶段（只读+提问）完全无覆盖。改法：①指引锚点前移到「收到要改代码的指令时」②侦察也算干活③面板加非侵入提示（不写看板不起进程） (认领 2026-10-05)
-- [ ] [进行中] split-store-js [[fanchao]] — 拆 src/store.js（1483 行 / 18 职责 / 33 导出）为按职责分文件：task/log/query/page/lint 等。照 rpiv-todo 单文件 ≤300 行的规模 (认领 2026-10-05)
-  ↳ 断点: 已拆出 page.js(263)/note.js(274)/text.js(0?)，store.js 1509→986 行；余 init/load/wrapup/task 四块内聚性强，继续拆需动 todo.js，风险上升故暂停
-- [ ] [进行中] add-commit-gate [[fanchao]] — 加提交门禁（照 rpiv-mono 的 husky）：pre-commit 跑 lint+语法检查，pre-push 跑全测试。我们现在靠自觉 (认领 2026-10-05)
 - [ ] [进行中] add-test-density [[fanchao]] — 提升测试密度（现 0.92，人家 1.72）：重点补 lint/install/relevant 的边界用例 (认领 2026-10-05)
+  ↳ 断点: 已加 26 测试（448→474）；密度 0.92→0.93。要达到 1.72 需持续补 lint/install/relevant 边界
 ## Done
 
 ### 2026-10-05
+- [x] fix-todo-anchor [[fanchao]] — agent 常忘记登记（今天两会话实测：一个登记了一个没登记）。根因不是不自觉，是指引锚点【first file edit】太晚——那一刻注意力在改什么上；且侦察阶段（只读+提问）完全无覆盖。改法：①指引锚点前移到「收到要改代码的指令时」②侦察也算干活③面板加非侵入提示（不写看板不起进程） — TODO_GUIDELINES 3→6 条：锚点前移到『收到指令时（含侦察）』、加反例、唯一进行中、结语要真实。照 rpiv-todo 改写 【落地】 (完成 2026-10-05)
+- [x] split-store-js [[fanchao]] — 拆 src/store.js（1483 行 / 18 职责 / 33 导出）为按职责分文件：task/log/query/page/lint 等。照 rpiv-todo 单文件 ≤300 行的规模 — 拆出 page.js(263)/note.js(274)/text.js(66)；store.js 1509→986 行。踩坑：export {x} from 只是转发，内部用需先 import（拆分时 200+ 测试红过） 【落地】 (完成 2026-10-05)
+  ↳ 断点: 已拆出 page.js(263)/note.js(274)/text.js(0?)，store.js 1509→986 行；余 init/load/wrapup/task 四块内聚性强，继续拆需动 todo.js，风险上升故暂停
+- [x] add-commit-gate [[fanchao]] — 加提交门禁（照 rpiv-mono 的 husky）：pre-commit 跑 lint+语法检查，pre-push 跑全测试。我们现在靠自觉 — pre-commit 语法检查（双向实测：坏代码拦住 exit 1 + 好代码放行）+ pre-push 全量测试；core.hooksPath=.githooks 【落地】 (完成 2026-10-05)
 - [x] enforce-single-inprogress [[fanchao]] — 加强制约束：同时只能一个 [进行中] 任务（照 rpiv-todo）。第二个 start 时提示或自动把前一个转讨论中 — 第二个 [进行中] 时提示（只提示不擅自改状态）；幂等更新同一任务时不重复提示 【落地】 (完成 2026-10-05)
 - [x] fix-todo-guidelines [[fanchao]] — 照 rpiv-todo 重写 TODO_GUIDELINES：①锚点从『first file edit』前移到『收到要改代码的指令时』②加 JSON 调用示例③加反例（测试不过/实现不全时不许标完成）④同时只能一个 in_progress — 指引从 3 条→6 条：锚点前移到『收到指令时（含侦察）』+ 反例（测试不过不许标完成）+ 唯一进行中 + 结语要真实 【落地】 (完成 2026-10-05)
 - [x] sync-todo-rename-stale-text [[fanchao]] — 清掉指向已删「hook 自动登记」的陈旧文案与死代码：bin/abs.js help 行 + 2 处注释、src/store.js 待命名替换死路径 + 用例；改后 abs install 推落点 — 清掉指向已删 hook 自动登记的陈旧文案 + 待命名死路径：bin/abs.js help/2注释、src/store.js rename 注释+死分支、SKILL.md 尾句、cli 用例改验真实行为；commit 880fd47；cli 67/全量 455 绿、lint 0。另发现并修：全局包未被 install 更新（MCP/abs 走全局路径），已 npm link 打通 【落地】 (完成 2026-10-05)

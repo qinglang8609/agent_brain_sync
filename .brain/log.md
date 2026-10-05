@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-10-05 21:09] [[fanchao]] dev | 照 rpiv-mono（juicesharp）完善四处：①TODO_GUIDELINES 3→6 条（锚点从『first file edit』前移到『收到指令时』+ 反例 + 唯一进行中 + 结语要真实）②加唯一进行中约束（只提示不擅自改状态）③拆 store.js 1509→986 行（拆出 page.js/note.js/text.js）④加提交门禁（pre-commit 语法检查 + pre-push 全测试，双向实测）。测试 448→474 全绿。学到的：他们的指引挂在『收到指令时』而非『改文件时』——这正是我们漏登的根因
 ## [2026-10-05 20:36] [[fanchao]] dev | 同日收尾（落盘）：abs todo 全流程实测两轮（8 子命令 + 11 组边界，用全局 1.15.3 跑）全通过，逼出并修掉 keep-days 静默失效。今日累计发 7 个版本 1.13.3→1.15.3、19 个 commit、4 篇新知识页（hook 分支错位 / 清理杀重绘 / 自动登记失败复盘 / falsy 吃零值）
 ## [2026-10-05 20:31] [[fanchao]] dev | 修 abs todo archive 的 keep-days 静默失效：原写法 Math.max(1, Number(keepDays) || 3) 踩 JS falsy 陷阱——0 || 3 得 3，于是 --keep-days 0 被当成『没传值』静默变成保留 3 天（用户以为归档全部实际一条没动）。改为显式校验，非法值（0/负数/非数/小数）一律明确报错不静默改写。全流程实测 abs todo 8 个子命令 + 11 组边界，另发现并修正该 bug
 ## [2026-10-05 20:22] [[fanchao]] dev | 移除 hook 自动登记（用户实报『卡顿』+『看板冒出大量 auto-TBD-xxx 待命名』）：① agent_end 每轮 spawn 一个 node 进程（autoTaskSeen 置位后守卫恒真，纯对话轮也起进程）② 占位条目直接写看板、用户不会去改名 → 比不登记更糟。教训不是参数没调好而是方向错：三次迭代都在让机器做需要理解的事（判断『这是件事』、起名字）。删掉 hook 三处 + CLI auto-task 命令 + store 实现 + 测试文件；保留两条有价值的产物：面板重绘修复、abs todo rename 通用能力。SKILL.md 改为『登记只能由你主动做』
