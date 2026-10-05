@@ -72,6 +72,44 @@ describe('configRoot — env 覆盖（测试/自定义安装靠它隔离）', ()
   });
 });
 
+describe('hostConfigRoot / hostSkillDir — 落点计算（决定文件装到哪）', () => {
+  // 这两个是 install.js 的入口，抄错 = 静默装到错位置（宿主读不到，装完不报错）。
+  // 原先只有间接覆盖（安装测试里的副作用），没有直接钉住。
+
+  test('hostConfigRoot 等价于 hostByKey(k).configRoot()', async () => {
+    const { hostConfigRoot } = await import('../src/install.js');
+    for (const h of HOSTS) {
+      assert.equal(hostConfigRoot(h.key), h.configRoot(), `${h.key} 应一致`);
+    }
+  });
+
+  test('hostSkillDir = <configRoot>/<skillSub>/abs-agent-brain-sync', async () => {
+    const { hostConfigRoot, hostSkillDir } = await import('../src/install.js');
+    for (const h of HOSTS) {
+      const want = [hostConfigRoot(h.key), h.skillSub, 'abs-agent-brain-sync'].join('/');
+      assert.equal(hostSkillDir(h.key), want, `${h.key} 落点`);
+    }
+  });
+
+  test('pi 的 skill 落点带 agent/ 前缀（不是 <root>/skills）', async () => {
+    const { hostSkillDir } = await import('../src/install.js');
+    const saved = process.env.ABS_PI_HOME;
+    process.env.ABS_PI_HOME = '/tmp/probe-pi';
+    try {
+      assert.equal(hostSkillDir('pi'), '/tmp/probe-pi/agent/skills/abs-agent-brain-sync');
+    } finally {
+      if (saved === undefined) delete process.env.ABS_PI_HOME;
+      else process.env.ABS_PI_HOME = saved;
+    }
+  });
+
+  test('installSummary 列出四个宿主（人看得懂的清单）', async () => {
+    const { installSummary } = await import('../src/install.js');
+    const s = installSummary();
+    for (const h of HOSTS) assert.ok(s.includes(h.key), `应含 ${h.key}`);
+  });
+});
+
 describe('hostByKey — 未知 key', () => {
   test('未知 key 抛错，且提示可用值（别让人猜）', () => {
     assert.throws(
