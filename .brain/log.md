@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-10-05 21:17] [[fanchao]] dev | 修 archive 两个真 bug（今天第 8 个版本）：① 超限放宽时 cutoff 算错（cutoff=今天 → 判断 date>=cutoff 保留 → 今天的组仍不动），改为推到明天 ② 同参数的**第二个调用点**（锁内重算）漏传 maxLines → archived 为空 → SKIP → 命令报『已归档 33 条』但 todo.md 一字未动（只写了 sessions/，两边不一致）。修复后看板 65→17 行、lint 0。补破坏验证过的测试（有 bug 时红、修复后绿）。顺带把行数常量从 lint.js 移到 todo.js 解循环依赖
 ## [2026-10-05 21:09] [[fanchao]] dev | 照 rpiv-mono（juicesharp）完善四处：①TODO_GUIDELINES 3→6 条（锚点从『first file edit』前移到『收到指令时』+ 反例 + 唯一进行中 + 结语要真实）②加唯一进行中约束（只提示不擅自改状态）③拆 store.js 1509→986 行（拆出 page.js/note.js/text.js）④加提交门禁（pre-commit 语法检查 + pre-push 全测试，双向实测）。测试 448→474 全绿。学到的：他们的指引挂在『收到指令时』而非『改文件时』——这正是我们漏登的根因
 ## [2026-10-05 20:36] [[fanchao]] dev | 同日收尾（落盘）：abs todo 全流程实测两轮（8 子命令 + 11 组边界，用全局 1.15.3 跑）全通过，逼出并修掉 keep-days 静默失效。今日累计发 7 个版本 1.13.3→1.15.3、19 个 commit、4 篇新知识页（hook 分支错位 / 清理杀重绘 / 自动登记失败复盘 / falsy 吃零值）
 ## [2026-10-05 20:31] [[fanchao]] dev | 修 abs todo archive 的 keep-days 静默失效：原写法 Math.max(1, Number(keepDays) || 3) 踩 JS falsy 陷阱——0 || 3 得 3，于是 --keep-days 0 被当成『没传值』静默变成保留 3 天（用户以为归档全部实际一条没动）。改为显式校验，非法值（0/负数/非数/小数）一律明确报错不静默改写。全流程实测 abs todo 8 个子命令 + 11 组边界，另发现并修正该 bug
@@ -207,3 +208,4 @@
 ## [2026-09-08 11:15] [[fanchao]] dev | 补分工节: hook机械记log + task/note实时落盘 + skill自觉深提炼; 37测试绿
 ## [2026-09-08 10:45] [[fanchao]] dev | 全局安装 npm link + hook 经 node 调起修复(不依赖 exec 位)
 ## [2026-09-08 10:00] [[fanchao]] dev | D1补全: query/lint CLI+MCP, task幂等, done归位Done, hook sh兼容, 29测试绿
+# 测试

@@ -13,10 +13,19 @@ node --experimental-vm-modules --no-warnings scripts/check-syntax.mjs || exit 1
 
 echo "▸ 图谱 lint（改了 .brain/ 才跑，避免无关提交变慢）..."
 if git diff --cached --name-only | grep -q '^\.brain/'; then
-  node bin/abs.js lint || {
+  # 坑（2026-10-05 实测第一次就踩）：`abs lint` **有问题也返回退出码 0**
+  #   （它把问题打到 stdout，不是失败退出）。只判 $? 会让门禁形同虚设 ——
+  #   实测 lint 报了 ROOT-OVER-SIZE 却照样放行。
+  #   故按**输出内容**判：出现 "problem(s)" / 错误码则拦。
+  LINT_OUT=$(node bin/abs.js lint 2>&1)
+  echo "$LINT_OUT" | tail -3
+  # 判据要排除「0 problem(s)」这个成功形态 —— 首版 `grep -qE 'problem\(s\)'`
+  # 把 "lint: 0 problem(s)." 也判成失败，于是门禁在干净仓库上恒拦。
+  # 正解：出现非零计数，或出现错误码行（大写开头 + 冒号）。
+  if echo "$LINT_OUT" | grep -qE 'lint: [1-9][0-9]* problem' || echo "$LINT_OUT" | grep -qE '^[A-Z][A-Z-]+:'; then
     echo "❌ 图谱 lint 未过。修完再提交（或 --no-verify 跳过）。"
     exit 1
-  }
+  fi
 else
   echo "  （本次未改 .brain/，跳过）"
 fi

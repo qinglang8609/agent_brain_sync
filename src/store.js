@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
 import { requireUser, atTag, getUser, placeholderWarn } from './userconfig.js';
-import { stripStateMark, ensureStateMark, stateOfTaskLine, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, LOG_KINDS, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure, enforceBrainFormat } from './todo.js';
+import { stripStateMark, ensureStateMark, stateOfTaskLine, normalizeTodo, TODO_MAX_LINES, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, LOG_KINDS, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure, enforceBrainFormat } from './todo.js';
 import { setFormatGate, editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 import { keywords, pickRelevant, renderRelevant, recentFiles, rankPage, topicStrength } from './relevant.js';
@@ -664,7 +664,7 @@ export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {})
   const raw = await fs.readFile(todoP, 'utf8').catch(() => '');
   if (!raw.trim()) return '（todo.md 为空）';
 
-  const plan = archiveDoneInText(raw, { keepDays: days, from: today() });
+  const plan = archiveDoneInText(raw, { keepDays: days, from: today(), maxLines: TODO_MAX_LINES });
   const why = plan.skipped.length
     ? `\n  跳过: ${plan.skipped.map((s) => `${s.date}（${s.reason}）`).join('；')}`
     : '';
@@ -692,7 +692,10 @@ export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {})
 
   // 2) todo.md：锁内重算（拿最新内容，避免与并发 done 互相覆盖）
   await editFile(todoP, (cur) => {
-    const p2 = archiveDoneInText(cur ?? '', { keepDays: days, from: today() });
+    // 坑（2026-10-05 实测抓到）: 这里漏传 maxLines → 锁内重算的 archived 为空 →
+    // 返回 SKIP → 磁盘上的 todo.md 一个字没动（而 sessions/ 归档页已经写了，
+    // 两边不一致："说归档了但看板没变"）。**同参数的每个调用点都要一起改**。
+    const p2 = archiveDoneInText(cur ?? '', { keepDays: days, from: today(), maxLines: TODO_MAX_LINES });
     return p2.archived.length ? { text: p2.text } : SKIP;
   });
 

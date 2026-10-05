@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
 import { readRules, idOfPage, statusOfPage, supersededByOf, clip } from './store.js';
-import { doneKindOf, doneDateOf, checkFileShape } from './todo.js';
+import { doneKindOf, doneDateOf, checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo.js';
 
 // ---------- 图谱遍历 ----------
 
@@ -105,9 +105,6 @@ export async function listPages(vault) {
 // 为什么补这段（2026-10-05）：lint 此前只看 PAGE_DIRS 子目录，三个根文件不在扫描范围，
 // OVER-SIZE 也只对 concepts/entities/syntheses 生效。于是「todo.md 涨到上百行、
 // 断点行里塞实施报告」可以 lint 报 0 问题 —— 看着健康，实际已经变成笔记本。
-const TODO_MAX_LINES = 60;
-const LOG_MAX_LINES = 2000;
-const INDEX_MAX_LINES = 200;
 const LINT_BREAKPOINT_MAX = 200;
 
 async function checkRootFiles(vault) {

@@ -4,6 +4,13 @@ import { promises as fs } from 'node:fs';
 import { brainPath } from './index.js';
 import { editFile, SKIP } from './lock.js';
 
+// 根文件行数上限（2026-10-05 从 lint.js 移来）：lint 用它报 ROOT-OVER-SIZE，
+// archive 用它在超限时放宽归档窗口。**放 todo.js 而非 lint.js** ——
+// lint 依赖 todo（checkFileShape），反向导入会成环。
+export const TODO_MAX_LINES = 60;
+export const LOG_MAX_LINES = 2000;
+export const INDEX_MAX_LINES = 200;
+
 // ---------- 本地日期 ----------
 export function today() {
   // 用本地时区取 YYYY-MM-DD（toISOString 是 UTC, 会跨天错一天）
@@ -993,7 +1000,7 @@ function isUndoneLine(l) {
  * 无日期组（### （未标日期））无法判天数，**保守不归档**。
  * @returns {{text:string, archived:{date:string,lines:string[],slug:string,count:number}[], skipped:{date:string,reason:string}[], count:number}}
  */
-export function archiveDoneInText(text, { keepDays = 3, from = today(), slugFor = (d) => `log-${d}` } = {}) {
+export function archiveDoneInText(text, { keepDays = 3, from = today(), maxLines = 0, slugFor = (d) => `log-${d}` } = {}) {
   const lines = String(text || '').split('\n');
   const di = lines.findIndex((l) => l.startsWith('## Done'));
   if (di === -1) return { text, archived: [], skipped: [], count: 0 };
@@ -1004,7 +1011,14 @@ export function archiveDoneInText(text, { keepDays = 3, from = today(), slugFor 
 
   const keep = Math.max(1, Number(keepDays) || 3);
   // 保留 cutoff..from 这 keep 天；比 cutoff 更早的才归档
-  const cutoff = daysAgo(keep - 1, from);
+  let cutoff = daysAgo(keep - 1, from);
+  // 超限放宽（2026-10-05 加）：ROOT-OVER-SIZE 限看板 ≤60 行，而 keepDays≥1 意味着
+  //   密集工作日（一天几十条 Done）必然超限 —— 两条规则打架，且 archive 拒绝动，
+  //   于是每天提交都被 lint 拦一次。修法：**看板已超行数上限时，把 cutoff 推到当天**，
+  //   让「整天已完成」的组可以立刻归档（仍有 ② 未完成则整天不归档 的保护）。
+  // 注意裁到「今天之后」：判断是 `date >= cutoff → 保留`，若 cutoff = 今天，
+  // 今天的组仍被保留（首版就栽在这，dry-run 一看当天没进归档列表）。
+  if (maxLines && lines.length > maxLines) cutoff = daysAgo(-1, from);
 
   const byDate = new Map();
   const undated = [];

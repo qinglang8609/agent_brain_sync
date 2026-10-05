@@ -81,6 +81,30 @@ describe('cli: todo', () => {
     assert.ok(t.stdout.includes('T1'));
   });
 
+  // 坑（2026-10-05 实测抓到）：cmdTodoArchive 里 archiveDoneInText 有**两个调用点**
+  //   （plan 预算 + 锁内重算），只在第一个传了 maxLines → 锁内重算的 archived 为空
+  //   → 返回 SKIP → todo.md 一个字没动，而 sessions/ 归档页已经写了。
+  //   表现：命令说"已归档 33 条"，看板行数纹丝不动、lint 继续报 OVER-SIZE。
+  test('看板超行数上限时，archive 真把条目移出 todo.md（两个调用点都要传 maxLines）', async () => {
+    await run(['init', '--dir', proj]);
+    // 造一个超 60 行的看板：今天 40 条 Done
+    const day = new Date().toISOString().slice(0, 10);
+    const rows = Array.from({ length: 40 }, (_, i) =>
+      `### ${day}\n- [x] t${i} [[tester]] — 事项${i} — 做完了 【落地】 (完成 ${day})`).join('\n');
+    const md = `# 📋 Todo Board\n\n## Todo\n\n## Done\n${rows}\n`;
+    await fs.writeFile(join(proj, '.brain', 'todo.md'), md, 'utf8');
+    const before = (await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8')).split('\n').length;
+    assert.ok(before > 60, `前置条件：应超 60 行（实际 ${before}）`);
+
+    const r = await run(['todo', 'archive']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout + r.stderr, /已归档/, `应报告归档: ${r.stdout}${r.stderr}`);
+
+    const after = (await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8')).split('\n').length;
+    assert.ok(after < before, `todo.md 应真的变短（${before} → ${after}）—— 只写 sessions/ 不算归档`);
+    assert.ok(!/\[x\] t0 /.test(await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8')), '归档的条目不该还在');
+  });
+
   // rename: 改任务 id（v1.15.2 后 hook 不再自动开占位，但这条通用能力保留 ——
   // 人工起错名、或旧 id 不可读时都用得上）。
   test('rename 改 id，旧 id 不残留且描述保留', async () => {

@@ -69,5 +69,6 @@ node bin/abs.js todo archive                   # → 保留近 3 天（默认）
 
 ## 关联连接
 - [[host-plugin-silent-failure]] — 同族静默失效（装上了≠加载了≠触发了）
+- [[param-added-at-one-callsite-only]] — 同族：参数只在一个调用点传入，另一个静默走默认值
 - [[guard-blocks-noninteractive-callers]] — 守卫/校验要顾及各种调用方
 - [[read-side-output-must-not-scale]] — 输出文案要与真实行为一致（本例文案曾撒谎）
