@@ -35,3 +35,4 @@ export function slugOf(text, n = 24) {
   }
   return head.replace(/[^\w一-鿿]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
 }
+// 探针：验证门禁能否拦住「改了代码但没登记」
