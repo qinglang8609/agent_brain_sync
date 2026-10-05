@@ -1230,6 +1230,32 @@ describe('cmdLint', () => {
     assert.equal(out.filter((x) => x.startsWith('LOG-ENTRY')).length, 3, '大类折成 3 条');
   });
 
+  // 回归（2026-10-05 实测）：对 sessions/ 报 DRAFT-STALE 与 DEAD-LINK 都是**误报** ——
+  // 会话快照是历史事实记录（「那天发生什么」），不存在「是否仍然有效」；
+  // 它正文里的 `[[x]]` 常是在谈这个记号本身（如「缺 [[作者]] 这个标记」），
+  // 不承担图谱链接职责。而 sessions 不可改 —— 改它就是改历史。
+  test('sessions/ 不参与 DRAFT-STALE 与 DEAD-LINK（历史快照豁免）', async () => {
+    const p = join(projectA, '.brain', 'sessions', 'log-2020-01-01.md');
+    await fs.writeFile(p,
+      '---\ntags: [session-log]\nupdated: 2020-01-01\nstatus: draft\n---\n\n' +
+      '# 会话 2020-01-01\n\n## 记录\n断点: 剥掉 <id>/[[作者]] 记号；另见 [[wiki]] 页\n',
+      'utf8');
+    // 把 mtime 推到 30 天前，触发 DRAFT-STALE 的时间条件（否则测不出豁免）
+    const old = new Date(Date.now() - 30 * 86400 * 1000);
+    await fs.utimes(p, old, old);
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/DRAFT-STALE[^\n]*log-2020-01-01/.test(out), `sessions 不该报 DRAFT-STALE:\n${out}`);
+    assert.ok(!/DEAD-LINK[^\n]*log-2020-01-01/.test(out), `sessions 不该报 DEAD-LINK:\n${out}`);
+  });
+
+  test('非 sessions 的页仍然照常报（豁免不扩大）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'hasdeadlink.md'),
+      PAGE('# 概念：有断链\n\n## 触发场景\n见 [[不存在的页]]\n\n## 验证\n跑 abs lint\n'),
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/DEAD-LINK[^\n]*hasdeadlink/.test(out), `concepts 仍应报 DEAD-LINK:\n${out}`);
+  });
+
   // 回归: lint 提示里的路径带 .brain/ 前缀。
   // 曾经只给 vault 相对路径（concepts/x.md）→ 用户到项目根找 concepts/ 找不到（真实踩过）。
   // NO-TAIL: concept 只有「头」（触发场景/表现）没「尾」（可执行的东西）→ 只能信，不能验。

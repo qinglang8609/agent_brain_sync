@@ -170,11 +170,20 @@ function checkPage(pg, names, linkedNames, inbound) {
         `引用请用 [[${id}]] 或改回文件名)`);
     }
   }
-  for (const ln of pg.links) {
-    if (/^<.+>$/.test(ln) || /slug|Name|name|Date|页面名$/.test(ln)) {
-      issues.push(`TEMPLATE-LINK: ${pg.rel} -> [[${ln}]]`);
-    } else if (!names.has(ln)) {
-      issues.push(`DEAD-LINK: ${pg.rel} -> [[${ln}]]`);
+  // 链接检查
+  // ★ sessions/ 豁免 DEAD-LINK（2026-10-05 实测）：会话快照正文是「当时的笔记」，
+  //   里面的 `[[x]]` 常是在**谈这个记号本身**（如「缺 [[作者]] 这个标记」、
+  //   「剥掉 <id>/[[作者]] 记号」），不承担图谱链接职责；而 sessions 是不可改的历史，
+  //   改它就是改历史。→ 对快照报断链是规则错，不是数据脏。
+  //   注：sessions 的链接职责只体现在 `## 关联连接` 段，那段的断链仍值得管，
+  //   但对历史快照而言也已无法修正，故一并豁免。
+  if (pg.dir !== 'sessions') {
+    for (const ln of pg.links) {
+      if (/^<.+>$/.test(ln) || /slug|Name|name|Date|页面名$/.test(ln)) {
+        issues.push(`TEMPLATE-LINK: ${pg.rel} -> [[${ln}]]`);
+      } else if (!names.has(ln)) {
+        issues.push(`DEAD-LINK: ${pg.rel} -> [[${ln}]]`);
+      }
     }
   }
   const isTerminal = pg.dir === 'sources'
@@ -270,6 +279,11 @@ async function checkGraph(root, pages) {
   for (const pg of pages) {
     if (pg.status !== 'draft') continue;
     if (pg.dir === 'sources') continue;
+    // ★ sessions/ 也不参与（2026-10-05 实测误报）：会话快照是**历史事实记录**
+    //   （「那天发生什么」），不存在「是否仍然有效」—— 它永远不该被标 active，
+    //   标了反而是撒谎。对快照报「已 N 天停在 draft」是规则错，不是数据脏。
+    //   同理若未来加别的「存档型」目录（归档页等），也该在此豁免。
+    if (pg.dir === 'sessions') continue;
     let ageMs = 0;
     try { ageMs = Date.now() - (await fs.stat(join(root, pg.rel))).mtimeMs; } catch { continue; }
     if (ageMs > DRAFT_STALE_DAYS * 86400 * 1000) {
