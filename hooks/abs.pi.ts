@@ -173,11 +173,69 @@ async function hasBrain(cwd: string): Promise<boolean> {
   }
 }
 
-function injectTodoGuidelines(options: any): boolean {
+/** 看板快照在 guidelines 里的前缀 —— 用于每轮替换上轮快照（内容会变，不能用 includes 去重）。 */
+const BOARD_MARK = '[看板] '
+
+/** 把当前看板拼成 Guidelines 里的一段（对齐用）。
+ *
+ * 设计（用户 2026-10-05 定）：**只对齐，不多说** —— 把「现在看板上有什么」摆在
+ * 面前让 LLM 自己对照，不写「记得登记」这类劝告（那些已证明会被忽略）。
+ *
+ * ★ 铁律（2026-10-05 用户定，别改）：
+ *   - **只做对齐**：把看板内容摆到 LLM 眼前，不做任何判断。
+ *   - **是否添加/完成/删除 todo，由 LLM 自己决定** —— 不替它决定，不自动登记、
+ *     不自动完成、不写看板。
+ *   - **不碎片化**：不加更多提醒、不加更多时机。对齐点越少越好。
+ *   - **不做重任务**：不起进程、不 spawn、不写盘；只读一个本地文件。
+ *   理由：前 11 次尝试（自动登记 3 版、指引 3 版、注入 2 版、面板、Rule）
+ *   都是「让不掌握判据的一方启动动作」，全部失败。判据在 LLM 手里，
+ *   这里只负责保证它看得见。详见 concept auto-todo-register-design。
+ *
+ * 与以前删掉的两种注入的本质区别：那不调 sendUserMessage（不插话、不抢 turn），
+ * 只改 system prompt 内容 —— 和静默的 TODO_GUIDELINES 走同一个通道。
+ *
+ * 看板空或全完成时不拼（没有可对齐的东西，拼个空列表纯占位）。 */
+export function boardGuideline(md: string, who: string): string | null {
+  const { total, rows } = parseOpenTasks(md, PANEL_MAX_ROWS, who)
+  if (!total || !rows.length) return null
+  const lines = rows.map((r) => {
+    // desc 为空时不拖空破折号（MCP 登记只给 id 的常见情形）。
+    const head = `  ${r.state ? `[${r.state}] ` : ''}${r.id}${r.desc ? ` — ${r.desc}` : ''}`
+    // 断点必须带上：它就是「改到哪一步」，丢了等于对齐了也接不上。
+    return r.note ? `${head}\n    ↳ ${r.note}` : head
+  })
+  const more = total > rows.length ? `  …另 ${total - rows.length} 条` : ''
+  return [
+    '当前 .brain/todo.md 看板（开工前对齐：正在做的算哪条？有新任务要加吗？有该删的吗？）:',
+    ...lines,
+    ...(more ? [more] : []),
+  ].join('\n')
+}
+
+/** 读看板拼成对齐段。失败/无图谱/看板空都返 null（静默降级，绝不阻断对话）。 */
+async function readBoardForGuide(cwd: string): Promise<string | null> {
+  try {
+    const md = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8')
+    return boardGuideline(md, await currentUser())
+  } catch {
+    return null
+  }
+}
+
+/** 注入 todo 指引。静态 6 条（行为要求） + 实时看板（对齐用）—— 两者职责不同：
+ * 静态条说「该怎么做」，看板说「现在是什么」。 */
+function injectTodoGuidelines(options: any, board?: string | null): boolean {
   if (String(process.env.ABS_TODO_GUIDE || '') === '0') return false
   const list: string[] = options.promptGuidelines || (options.promptGuidelines = [])
   for (const g of TODO_GUIDELINES) {
     if (!list.includes(g)) list.push(g)
+  }
+  // 看板内容每轮会变（任务增减/状态转换），不能用 includes 去重 —— 先删上轮的旧快照再推。
+  if (board) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].startsWith(BOARD_MARK)) list.splice(i, 1)
+    }
+    list.push(BOARD_MARK + board)
   }
   return true
 }
@@ -690,7 +748,7 @@ export default function absPiHook(pi: ExtensionAPI): void {
           logHook(`before_agent_start todo_guide=off reason=no_brain`).catch(() => {})
           return
         }
-        const ok = injectTodoGuidelines(event?.systemPromptOptions)
+        const ok = injectTodoGuidelines(event?.systemPromptOptions, await readBoardForGuide(cwd))
         logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} cwd=${cwd}`).catch(() => {})
 
         // 自动登记已整体移除（2026-10-05 用户实报两点）：

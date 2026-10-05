@@ -598,6 +598,32 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(parseOpenTasks(md, 10, '').total, 2);
   });
 
+  // ★ 对齐（用户 2026-10-05 定）：注入给 LLM 的看板 与 面板显示 必须一致。
+  //   两者都走 parseOpenTasks（同源），但渲染不同 —— 这条钉住「渲染别漏东西」。
+  //   实测踩过：首版 guidelines 漏了断点（对齐了也接不上），且 desc 空时拖个空破折号。
+  test('guidelines 与面板对齐：任务/状态/断点三项都在', async () => {
+    const { boardGuideline } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] [进行中] t1 [[fanchao]] — 第一件事',
+      '  ↳ 断点: 改到 src/x.js',
+      '- [ ] [讨论中] t2 [[fanchao]]',
+    ].join('\n');
+    const g = boardGuideline(md, 'fanchao');
+    assert.ok(g, '看板非空时应返回内容');
+    for (const frag of ['t1', '进行中', '第一件事', 'src/x.js', 't2', '讨论中']) {
+      assert.ok(g.includes(frag), `guidelines 应含 ${frag}:\n${g}`);
+    }
+    // desc 为空时不拖空破折号（MCP 只给 id 时常见）
+    assert.ok(!/t2 —\s*$/m.test(g), `t2 无描述时不该拖空破折号:\n${g}`);
+  });
+
+  test('看板空 / 全完成时不注入（没东西可对齐）', async () => {
+    const { boardGuideline } = await loadPanelFns();
+    assert.equal(boardGuideline('## Todo\n## Done\n', 'fanchao'), null);
+    assert.equal(boardGuideline('## Todo\n- [ ] x [[fanchao]]', 'bob'), null, '别人的任务不算');
+  });
+
   test('宽度截断：CJK 按 2 列，永不溢出且尾部有省略号', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const fg = (c, s) => `\x1b[2m${s}\x1b[0m`;
