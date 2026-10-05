@@ -117,7 +117,7 @@ tool(
     action: z.enum(['add', 'start', 'done', 'note', 'state']),
     id: z.string().describe('任务幂等键，如 TASK-xxx 或子任务名'),
     cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
-    note: z.string().optional().describe('add/start=做什么; note=断点(文件/到哪步); state=进行中|讨论中|滞留中; done=结语文字'),
+    note: z.string().optional().describe('add/start=做什么; note=断点(文件/到哪步); state=进行中|讨论中|滞留中|搁置（搁置=用户改方向/不做了；滞留中=还要做只是卡住）; done=结语文字'),
     as: z.enum(['落地', '否决', '仅方案']).optional().describe('仅 done：结语类型。默认 落地。做了又撤/评估后不做用 否决，只设计过用 仅方案 —— 别让假【落地】污染看板'),
   },
   async ({ action, id, cwd, note, as }) => {

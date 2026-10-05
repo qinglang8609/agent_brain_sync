@@ -624,6 +624,38 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(boardGuideline('## Todo\n- [ ] x [[fanchao]]', 'bob'), null, '别人的任务不算');
   });
 
+  // ★ 反复对齐（用户 2026-10-05 定）：「对齐永远是反反复复的，不厌其烦」。
+  //   但反复注入不能堆叠，且看板变了要换、空了要清 —— 否则对齐撒谎。
+  test('反复对齐：不堆叠 / 变了就换 / 空了清干净', async () => {
+    const { boardGuideline, injectTodoGuidelines } = await loadPanelFns();
+    const mk = (md) => boardGuideline(md, 'fanchao');
+    const boards = (o) => o.promptGuidelines.filter((g) => g.startsWith('[看板] '));
+    const opts = { promptGuidelines: [] };
+
+    // ① 同一轮/相邻轮反复注入：只保留一份（反复是工作方式，不是堆叠）
+    injectTodoGuidelines(opts, mk('## Todo\n- [ ] [进行中] t1 [[fanchao]] — 干活\n'));
+    injectTodoGuidelines(opts, mk('## Todo\n- [ ] [进行中] t1 [[fanchao]] — 干活\n'));
+    assert.equal(boards(opts).length, 1, `反复注入应只留一份:\n${JSON.stringify(boards(opts))}`);
+
+    // ② 看板变了：旧快照必须换掉（换而不是追加）
+    injectTodoGuidelines(opts, mk('## Todo\n- [ ] [进行中] t2 [[fanchao]] — 新活\n'));
+    assert.ok(boards(opts)[0].includes('t2') && !boards(opts)[0].includes('t1'),
+      `应换成新看板:\n${boards(opts)[0]}`);
+
+    // ③ 看板空了：旧快照必须清掉（曾只清非空分支 → 残留旧任务，对齐撒谎）
+    injectTodoGuidelines(opts, null);
+    assert.equal(boards(opts).length, 0, '看板空后不该残留旧看板');
+
+    // ④ 再次有活：能重新注入
+    injectTodoGuidelines(opts, mk('## Todo\n- [ ] [进行中] t3 [[fanchao]] — 又来\n'));
+    assert.equal(boards(opts).length, 1);
+    assert.ok(boards(opts)[0].includes('t3'));
+
+    // 静态 6 条始终在（不被看板挤掉）
+    assert.equal(opts.promptGuidelines.length - boards(opts).length, 6,
+      '静态指引条数应恒为 6');
+  });
+
   test('宽度截断：CJK 按 2 列，永不溢出且尾部有省略号', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const fg = (c, s) => `\x1b[2m${s}\x1b[0m`;

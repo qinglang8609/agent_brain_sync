@@ -149,8 +149,8 @@ const TODO_GUIDELINES = [
   // ④ 反例（照 rpiv-todo）：明确什么情况【不许】标完成 —— 只给正向要求时，
   //   模型倾向于把"我以为做完了"当成完成，结语失真会污染下个会话的判断。
   'Never mark a task "done" when tests are failing, the implementation is partial, or an error is unresolved — keep it in progress and add a task for the blocker instead.',
-  // ⑤ 唯一进行中（同 rpiv-todo）：看板要能回答"现在在做什么"，多的应转讨论中/滞留中。
-  'Keep exactly one task in "进行中" at a time; use action "state" with 讨论中 or 滞留中 for anything else that is open. If you finish one and another is ready, promote it explicitly.',
+  // ⑤ 唯一进行中（同 rpiv-todo）：看板要能回答"现在在做什么"，多的应转走。
+  'Keep exactly one task in "进行中" at a time; when the user switches direction or drops a task, use action "state" with 搁置 (dropped/not doing it); 滞留中 for still-wanted-but-stuck; 讨论中 for still-open. If you finish one and another is ready, promote it explicitly.',
   // ⑥ 结语要真实：三种结语各有含义，别一律写落地。
   'When completing, pick the honest conclusion via the `as` field: 落地 (built and verified) / 否决 (decided against, or built then reverted) / 仅方案 (designed only). A wrong conclusion makes the next session treat "considered" as "completed".',
 ]
@@ -182,14 +182,17 @@ const BOARD_MARK = '[看板] '
  * 面前让 LLM 自己对照，不写「记得登记」这类劝告（那些已证明会被忽略）。
  *
  * ★ 铁律（2026-10-05 用户定，别改）：
- *   - **只做对齐**：把看板内容摆到 LLM 眼前，不做任何判断。
- *   - **是否添加/完成/删除 todo，由 LLM 自己决定** —— 不替它决定，不自动登记、
- *     不自动完成、不写看板。
- *   - **不碎片化**：不加更多提醒、不加更多时机。对齐点越少越好。
+ *   - **反复对齐，不厌其烦**：不是一次性提示，是**每一轮都摆**。
+ *     用户原话：「对齐永远是反反复复的对齐，不厌其烦」。
+ *     别用节流/去重/「刚说过就不重复」去优化掉它 —— 反复就是它的工作方式。
+ *   - **尺度：只说 todo.md 本身**。不夹带判断、不写劝告、不评价好坏。
+ *     只把「看板上现在有什么」摆出来。
+ *   - **是否添加/完成/删除/转状态，全部由 LLM 自己判断** —— 不替它决定，
+ *     不自动登记、不自动完成、不写看板。
  *   - **不做重任务**：不起进程、不 spawn、不写盘；只读一个本地文件。
- *   理由：前 11 次尝试（自动登记 3 版、指引 3 版、注入 2 版、面板、Rule）
- *   都是「让不掌握判据的一方启动动作」，全部失败。判据在 LLM 手里，
- *   这里只负责保证它看得见。详见 concept auto-todo-register-design。
+ *   理由：前 12 次尝试都失败，根因是「让不掌握判据的一方启动动作」。
+ *   判据在 LLM 手里，这里只负责保证它**每轮都看得见**。
+ *   详见 concept remind-vs-gate（对齐必做 + 门禁兜底）。
  *
  * 与以前删掉的两种注入的本质区别：那不调 sendUserMessage（不插话、不抢 turn），
  * 只改 system prompt 内容 —— 和静默的 TODO_GUIDELINES 走同一个通道。
@@ -224,19 +227,20 @@ async function readBoardForGuide(cwd: string): Promise<string | null> {
 
 /** 注入 todo 指引。静态 6 条（行为要求） + 实时看板（对齐用）—— 两者职责不同：
  * 静态条说「该怎么做」，看板说「现在是什么」。 */
-function injectTodoGuidelines(options: any, board?: string | null): boolean {
+export function injectTodoGuidelines(options: any, board?: string | null): boolean {
   if (String(process.env.ABS_TODO_GUIDE || '') === '0') return false
   const list: string[] = options.promptGuidelines || (options.promptGuidelines = [])
   for (const g of TODO_GUIDELINES) {
     if (!list.includes(g)) list.push(g)
   }
   // 看板内容每轮会变（任务增减/状态转换），不能用 includes 去重 —— 先删上轮的旧快照再推。
-  if (board) {
-    for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i].startsWith(BOARD_MARK)) list.splice(i, 1)
-    }
-    list.push(BOARD_MARK + board)
+  // ★ 必须先删：board 为 null（看板空了/全完成）时同样要删 ——
+  //   曾只在 board 非空时删，结果看板清空后旧快照残留在 prompt 里，
+  //   LLM 会继续看到已经不存在的任务（对齐撒谎）。
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].startsWith(BOARD_MARK)) list.splice(i, 1)
   }
+  if (board) list.push(BOARD_MARK + board)
   return true
 }
 
@@ -576,7 +580,7 @@ export function renderPanelLines(
   nickname = '',
 ): string[] {
   if (data.total === 0) return []
-  const colorOf = (state: string): string => (state === '滞留中' ? 'muted' : state === '讨论中' ? 'dim' : 'accent')
+  const colorOf = (state: string): string => (state === '搁置' ? 'dim' : state === '滞留中' ? 'muted' : state === '讨论中' ? 'dim' : 'accent')
   const lines: string[] = []
   // 上描边：用 `thinkingOff` —— 跟 Pi 输入框描边**完全同一个色**。
   // 排查过程（2026-10-03 用户两轮反馈）：

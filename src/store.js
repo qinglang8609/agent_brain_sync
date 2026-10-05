@@ -859,9 +859,15 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
         return SKIP;
       });
       if (others.length) {
+        // 提示要具体到「该转成哪个」：只报「已有 N 个进行中」实测不够 ——
+        // 用户改方向时，旧任务是「搁置」（不做了），与「滞留中」（还要做）不同，
+        // 选错会让下会话分不清该不该接着干。
         warning = `\n  ⚠ 已有 ${others.length} 个 [进行中]: ${others.join(', ')}\n`
           + '    同时只有一个进行中才说得清"现在在做什么"。\n'
-          + '    把不需要的转走: abs todo state <id> --note 讨论中|滞留中';
+          + `    旧任务怎么处理 ——\n`
+          + `      • 用户改方向了/不做了 → abs todo state <id> --note 搁置\n`
+          + `      • 还要做，只是卡住了   → abs todo state <id> --note 滞留中\n`
+          + `      • 还想商量            → abs todo state <id> --note 讨论中`;
       }
     }
     const r = await upsertTask(root, {
