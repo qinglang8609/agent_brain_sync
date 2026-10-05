@@ -1,0 +1,24 @@
+#!/bin/sh
+# pre-commit — 提交前快速门禁（照 rpiv-mono 的 husky 分层：commit 快、push 全）。
+#
+# 只做「几秒内能跑完」的检查：语法 + 图谱自洽 + 测试门禁脚本自检。
+# 全量测试放 pre-push（那要几十秒，不该卡每次提交）。
+#
+# 跳过（确有急事时）：git commit --no-verify
+
+set -e
+
+echo "▸ 语法检查（所有 src/bin/hooks 的 .js/.ts 能解析）..."
+node --experimental-vm-modules --no-warnings scripts/check-syntax.mjs || exit 1
+
+echo "▸ 图谱 lint（改了 .brain/ 才跑，避免无关提交变慢）..."
+if git diff --cached --name-only | grep -q '^\.brain/'; then
+  node bin/abs.js lint || {
+    echo "❌ 图谱 lint 未过。修完再提交（或 --no-verify 跳过）。"
+    exit 1
+  }
+else
+  echo "  （本次未改 .brain/，跳过）"
+fi
+
+echo "✓ pre-commit 通过"

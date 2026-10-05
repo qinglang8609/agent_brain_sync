@@ -1,10 +1,17 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] sync-todo-rename-stale-text [[fanchao]] — 清掉指向已删「hook 自动登记」的陈旧文案与死代码：bin/abs.js help 行 + 2 处注释、src/store.js 待命名替换死路径 + 用例；改后 abs install 推落点 (认领 2026-10-05)
+- [ ] [进行中] fix-todo-anchor [[fanchao]] — agent 常忘记登记（今天两会话实测：一个登记了一个没登记）。根因不是不自觉，是指引锚点【first file edit】太晚——那一刻注意力在改什么上；且侦察阶段（只读+提问）完全无覆盖。改法：①指引锚点前移到「收到要改代码的指令时」②侦察也算干活③面板加非侵入提示（不写看板不起进程） (认领 2026-10-05)
+- [ ] [进行中] split-store-js [[fanchao]] — 拆 src/store.js（1483 行 / 18 职责 / 33 导出）为按职责分文件：task/log/query/page/lint 等。照 rpiv-todo 单文件 ≤300 行的规模 (认领 2026-10-05)
+  ↳ 断点: 已拆出 page.js(263)/note.js(274)/text.js(0?)，store.js 1509→986 行；余 init/load/wrapup/task 四块内聚性强，继续拆需动 todo.js，风险上升故暂停
+- [ ] [进行中] add-commit-gate [[fanchao]] — 加提交门禁（照 rpiv-mono 的 husky）：pre-commit 跑 lint+语法检查，pre-push 跑全测试。我们现在靠自觉 (认领 2026-10-05)
+- [ ] [进行中] add-test-density [[fanchao]] — 提升测试密度（现 0.92，人家 1.72）：重点补 lint/install/relevant 的边界用例 (认领 2026-10-05)
 ## Done
 
 ### 2026-10-05
+- [x] enforce-single-inprogress [[fanchao]] — 加强制约束：同时只能一个 [进行中] 任务（照 rpiv-todo）。第二个 start 时提示或自动把前一个转讨论中 — 第二个 [进行中] 时提示（只提示不擅自改状态）；幂等更新同一任务时不重复提示 【落地】 (完成 2026-10-05)
+- [x] fix-todo-guidelines [[fanchao]] — 照 rpiv-todo 重写 TODO_GUIDELINES：①锚点从『first file edit』前移到『收到要改代码的指令时』②加 JSON 调用示例③加反例（测试不过/实现不全时不许标完成）④同时只能一个 in_progress — 指引从 3 条→6 条：锚点前移到『收到指令时（含侦察）』+ 反例（测试不过不许标完成）+ 唯一进行中 + 结语要真实 【落地】 (完成 2026-10-05)
+- [x] sync-todo-rename-stale-text [[fanchao]] — 清掉指向已删「hook 自动登记」的陈旧文案与死代码：bin/abs.js help 行 + 2 处注释、src/store.js 待命名替换死路径 + 用例；改后 abs install 推落点 — 清掉指向已删 hook 自动登记的陈旧文案 + 待命名死路径：bin/abs.js help/2注释、src/store.js rename 注释+死分支、SKILL.md 尾句、cli 用例改验真实行为；commit 880fd47；cli 67/全量 455 绿、lint 0。另发现并修：全局包未被 install 更新（MCP/abs 走全局路径），已 npm link 打通 【落地】 (完成 2026-10-05)
 - [x] verify-todo-fullflow [[fanchao]] — abs todo 全流程实测（8 子命令 + 11 组边界）：发现并修 keep-days 静默失效；两次全量复测均通过 — 全局 1.15.3 跑 19 组场景全通过；keep-days 非法值明确报错、结语矛盾检测、断点随迁、归档产物均正确 【落地】 (完成 2026-10-05)
 - [x] keepdays-silent-clamp [[fanchao]] — abs todo archive --keep-days 0 被静默改写成 1（Math.max(1,...)），用户不知道；且报错文案写死『保留近 3 天』与实际用的天数不符（两个 bug：静默失效 + 文案撒谎） — 显式校验替代静默改写；非法值明确报错；补 3 个 CLI 测试（含 0/负数/非数/小数） 【落地】 (完成 2026-10-05)
 - [x] remove-autotask-hook [[fanchao]] — 用户实报两点：①卡顿 ②看板冒出大量 auto-TBD-xxx — 待命名。根因：agent_end 每轮 spawn 一个 node 进程（agentEndSeen 置位后条件恒真）+ 占位条目直接写看板。改法：删掉 hook 自动登记（不 spawn、不写看板），只保留日志留痕；登记回到 agent 主动调 abs task — hook 自动登记整体移除（三处 spawn/写看板 + 死代码 + CLI 命令）；rename 作为通用能力保留 【落地】 (完成 2026-10-05)

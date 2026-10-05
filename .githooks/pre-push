@@ -1,0 +1,17 @@
+#!/bin/sh
+# pre-push — 推送前门禁：跑全量测试。
+#
+# 分层理由（照 rpiv-mono）：commit 要快（每次改都提交），push 可以慢（一天几次）。
+# 测试卡在提交上会让人用 --no-verify 绕过去，那时候门禁就废了。
+#
+# 跳过：git push --no-verify
+
+set -e
+
+echo "▸ 全量测试（约 30-60s）..."
+if ! npm test 2>&1 | tail -20; then
+  echo "❌ 测试未过，推送已拦截。修完再推（或 --no-verify 强行推）。"
+  exit 1
+fi
+
+echo "✓ pre-push 通过"

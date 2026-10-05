@@ -4,11 +4,30 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
 import { requireUser, atTag, getUser, placeholderWarn } from './userconfig.js';
-import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, LOG_KINDS, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure, enforceBrainFormat } from './todo.js';
+import { stripStateMark, ensureStateMark, stateOfTaskLine, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, LOG_KINDS, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure, enforceBrainFormat } from './todo.js';
 import { setFormatGate, editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 import { keywords, pickRelevant, renderRelevant, recentFiles, rankPage, topicStrength } from './relevant.js';
 import { impactOf } from './codegraph.js';
+// 纯文本工具已拆到 text.js（2026-10-05）—— 零依赖，note/log/concept 共用。
+import { clip, slugOf } from './text.js';
+export { clip, slugOf } from './text.js';
+
+// 页面生命周期已拆到 page.js（2026-10-05）。
+// 必须【先 import 再 export】—— 只写 `export {x} from` 只是转发，本文件作用域里
+// 拿不到 x，内部调用会 ReferenceError（拆完先跑测试就抓到了这个）。
+import {
+  idOfPage, backfillPageId, statusOfPage, supersededByOf,
+  cmdSupersede, resolvePage, cmdReview, cmdResolve, collapseIndex,
+} from './page.js';
+export {
+  idOfPage, backfillPageId, PAGE_STATUS, statusOfPage, supersededByOf,
+  cmdSupersede, resolvePage, cmdReview, cmdResolve, collapseIndex,
+} from './page.js';
+
+// 经验暂存/知识页脚手架已拆到 note.js（2026-10-05）—— 同样先 import 再 export。
+import { cmdLog, cmdNote, cmdConcept, ensurePersonPage, registerInIndex } from './note.js';
+export { cmdLog, cmdNote, cmdConcept, ensurePersonPage, registerInIndex } from './note.js';
 
 // Re-export lint.js symbols so external importers (e.g. bin/mcp.js, bin/abs.js) still work.
 export { cmdLint, listPages, hasTail, PAGE_DIRS, foldSameKind } from './lint.js';
@@ -605,255 +624,6 @@ async function readFileOrNull(p) {
  * `## Rules` 也已不在本函数输出——它由 rulesSection 在**上方**单独成段（需要正文）；
  * 这里再原样吐一遍 = 同一段硬规则在首屏出现两次（2026-09-13 实测发现）。
  * 曾另有 `## Roadmap`：AI 自己写的方向总结，会被反复读到并带偏会话，已删。 */
-// ---------- page id: 改名不改引用 ----------
-// 问题：`.brain` 内部引用靠 [[slug]]，而 slug 就是文件名 —— 改一次文件名，
-// 所有指向它的链接静默变成 DEAD-LINK，只能靠 lint 事后抓。
-// 解法（最小代价）：页面 frontmatter 写一行 `id:`，建页时冻结。
-//   • 不发明新编号：id 默认等于建页时的 slug（人可读、可手写、无需迁移）
-//   • 旧页无 id → 回退用 slug，因此存量 31 页零迁移
-//   • 改名后 slug 变而 id 不变 → lint 报 ID-DRIFT，提示改成谁
-// 为什么不上内容哈希/uuid：哈希一改内容就变（比文件名还不稳定），
-// uuid 不可读不可手写且要全量迁移。slug 就是最合适的 id，只要不再跟文件名跑。
-const ID_RE = /^id:\s*(.+)$/m;
-
-/** 读页面 id；无 id 行则回退 slug（存量页零迁移）。 */
-export function idOfPage(body, slug) {
-  const m = String(body || '').match(ID_RE);
-  return m ? m[1].trim() : slug;
-}
-
-/** 给存量页补 id（只在缺时写），落 frontmatter。返回 'added' | 'exists' | 'no-fm'。 */
-export async function backfillPageId(full, slug) {
-  const res = await editFile(full, (cur) => {
-    if (!cur || !cur.startsWith('---\n')) return SKIP;
-    if (ID_RE.test(cur.split('\n---')[0])) return SKIP; // 已有 id 不动
-    const end = cur.indexOf('\n---', 3);
-    if (end === -1) return SKIP;
-    return { text: `${cur.slice(0, end)}\nid: ${slug}${cur.slice(end)}` };
-  });
-  return res === SKIP ? 'exists' : 'added';
-}
-
-// ---------- page status: 经验/知识页的生命周期 ----------
-// 问题：经验写进去就永远躺在那里 —— 推翻时删不掉（skill 里写着"人工内容一律不覆盖"，
-// AI 不敢删）、读的时候又看不见（load 只给分区计数）→ 旧经验持续骗下一个会话。
-// 解法：给已有的 `status:` 字段（字段本来就存在，20 页在用）定死三个值：
-//   active      当前有效（缺字段的默认值 —— 存量 22 页零迁移）
-//   superseded  已被推翻，别再依据它 —— 配 superseded-by 指向取代它的页
-//   draft       待核实（abs note 新落的经验就是这个）
-// 关键：推翻 = 改一行 frontmatter，**不删文件不丢历史** —— AI 敢做，人也能反悔。
-// 为什么不用新字段/新目录：字段已存在且有存量值，重命名会另起一套双轨（同 OPTS-DOUBLE-KEYS 之病）。
-export const PAGE_STATUS = ['active', 'superseded', 'draft'];
-const STATUS_RE = /^status:\s*(\S+)\s*$/m;
-const SUPERSEDED_BY_RE = /^superseded-by:\s*(.+)$/m;
-
-/** 读页面 status；无字段或是未知值时当 active（存量页零迁移）。 */
-export function statusOfPage(body, frontmatter) {
-  const fm = frontmatter !== undefined
-    ? frontmatter
-    : (String(body || '').match(/^---\n([\s\S]*?)\n---/) || ['', ''])[1];
-  const m = String(fm).match(STATUS_RE);
-  const v = m ? m[1].trim() : '';
-  return PAGE_STATUS.includes(v) ? v : 'active';
-}
-
-/** 读 superseded-by（只在 status=superseded 时有意义）。无则空串。 */
-export function supersededByOf(body) {
-  const m = String(body || '').match(SUPERSEDED_BY_RE);
-  return m ? m[1].trim() : '';
-}
-
-// ---------- supersede: 标记一条经验被推翻（回退的写入端） ----------
-// 为什么是标记而不是删除：
-//   ① 删除后下一个会话会重新踩同一个坑并重新记一遍（历史本身是资产）
-//   ② AI 不敢删（人工内容不覆盖），但敢改一行 frontmatter
-//   ③ 反悔只需把 status 改回 active
-export async function cmdSupersede({ dir, refs, by }) {
-  const list = (refs || []).map((r) => String(r).trim()).filter(Boolean);
-  if (!list.length) return '用法: abs supersede <页名或id> [更多…] [--by <取代它的页>]  — 标记经验已失效（不删文件）';
-  let root;
-  try {
-    root = await requireBrain(dir || process.cwd());
-  } catch {
-    return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
-  }
-  const byRef = String(by || '').trim();
-  // 取代者必须先存在 —— 否则写下一个永远悬空的引用（lint 会报，不如现在拒）。
-  if (byRef) {
-    const target = await resolvePage(root, byRef);
-    if (!target) return `✗ --by ${byRef}: 图谱里没有这页（先用 abs resolve 确认页名）`;
-  }
-  const out = [];
-  // 取代者 slug 在循环外解析一次（锁内 mutator 不能 await）
-  const bySlug = byRef ? (await resolvePage(root, byRef)).slug : '';
-  for (const r of list) {
-    const hit = await resolvePage(root, r);
-    if (!hit) { out.push(`✗ ${r}: 未找到（试 abs query <词> 或 abs index 看清单）`); continue; }
-    const res = await editFile(hit.full, (cur) => {
-      if (!cur || !cur.startsWith('---\n')) return SKIP;
-      const end = cur.indexOf('\n---', 3);
-      if (end === -1) return SKIP;
-      let fm = cur.slice(0, end);
-      // 幂等：已是 superseded 且 superseded-by 一致 → 不写盘
-      const curSt = statusOfPage('', fm);
-      const curBy = supersededByOf(cur);
-      if (curSt === 'superseded' && curBy === bySlug) return SKIP;
-      // 去掉旧的 superseded-by（不论换不换取代者，旧值都作废）
-      fm = fm.replace(/\nsuperseded-by:.*(?=\n|$)/g, '');
-      fm = STATUS_RE.test(fm)
-        ? fm.replace(STATUS_RE, 'status: superseded')
-        : `${fm}\nstatus: superseded`;
-      // superseded-by 用 slug（不是 id）：人直接能按名找页，lint 能直接比对文件名
-      if (bySlug) fm = `${fm}\nsuperseded-by: ${bySlug}`;
-      return { text: fm + cur.slice(end) };
-    });
-    out.push(res === SKIP
-      ? `= ${hit.slug}: 已是 superseded（无变化）`
-      : `✓ ${hit.slug} → superseded${byRef ? ` (被 [[${byRef}]] 取代)` : ''}`);
-  }
-  return out.join('\n');
-}
-
-/** 把 id（或 slug）解析为页面路径。命中返回 {slug, dir, full, id}，否则 null。 */
-export async function resolvePage(root, idOrSlug) {
-  const want = String(idOrSlug || '').trim();
-  if (!want) return null;
-  const vault = brainPath(root);
-  for (const d of PAGE_DIRS) {
-    const p = join(vault, d);
-    let files;
-    try { files = await fs.readdir(p); } catch { continue; }
-    for (const f of files) {
-      if (!f.endsWith('.md') || f.startsWith('_')) continue;
-      const slug = f.replace(/\.md$/, '');
-      const full = join(p, f);
-      // slug 直接命中就够快（绝大多数调用走这条），不命中才去读 frontmatter 比 id
-      if (slug === want) return { slug, dir: d, full, id: want };
-      const body = await fs.readFile(full, 'utf8').catch(() => '');
-      const id = idOfPage(body, slug);
-      if (id === want) return { slug, dir: d, full, id };
-    }
-  }
-  return null;
-}
-
-// ---------- review: 待确认页队列（draft → active/superseded） ----------
-// 为何需要：abs note 落的是 status: draft（未经核实），但之前没有「确认」这一步 ——
-//   draft 只是标签，没人管，经验就永远停在「待核实」状态，从不正式化。
-// 借鉴 TencentDB 的 review/route 治理环节：提取后必经审查，防止脏知识进入正式图谱。
-// 本命令只做「把 draft 显式升为 active 或否决为 superseded」，不替人判断内容好坏。
-// 动作收口在一处（editFile 锁内），并发安全同 supersede。
-export async function cmdReview({ dir, refs, action }) {
-  let root;
-  try {
-    root = await requireBrain(dir || process.cwd());
-  } catch {
-    return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
-  }
-  const act = String(action || '').toLowerCase();
-  if (act && !['accept', 'reject'].includes(act)) {
-    return '用法: abs review [--accept <页名…>] [--reject <页名…>]  — 无参数列出全部 draft 页';
-  }
-  // 无动作 → 列出所有 draft 页（待确认队列）
-  if (!act) {
-    const pages = await listPages(brainPath(root));
-    // 只扫经验/知识目录（concepts/sources）。entities 是人页、sessions 是日志，
-    // 它们不是「待核实的经验」，不该进 review 队列（拉进来会把人页/日志当经验误确认）。
-    const REVIEW_DIRS = ['concepts', 'sources'];
-    const drafts = pages.filter((p) => REVIEW_DIRS.includes(p.dir) && statusOfPage(p.body) === 'draft');
-    if (!drafts.length) return '✓ 没有待确认的 draft 页。';
-    const lines = drafts.map((p) => {
-      const t = p.body.match(/^#\s*(.+)$/m);
-      const title = t ? t[1].trim() : p.slug;
-      return `  [draft] ${p.slug} — ${title}`;
-    });
-    return [
-      `待确认 draft 页 ${drafts.length} 条：`,
-      ...lines,
-      '',
-      '确认: abs review --accept <页名> [更多…]    否决: abs review --reject <页名> [更多…]',
-    ].join('\n');
-  }
-  // 有动作 → 对每个 ref 改 status
-  const list = (refs || []).map((r) => String(r).trim()).filter(Boolean);
-  if (!list.length) return `✗ --${act} 需要至少一个页名。用法: abs review --${act} <页名…>`;
-  const target = act === 'accept' ? 'active' : 'superseded';
-  const out = [];
-  for (const r of list) {
-    const hit = await resolvePage(root, r);
-    if (!hit) { out.push(`✗ ${r}: 未找到（试 abs review 看清单）`); continue; }
-    const res = await editFile(hit.full, (cur) => {
-      if (!cur || !cur.startsWith('---\n')) return SKIP;
-      const end = cur.indexOf('\n---', 3);
-      if (end === -1) return SKIP;
-      let fm = cur.slice(0, end);
-      const curSt = statusOfPage('', fm);
-      // 幂等：已是目标状态 → 不写盘
-      if (curSt === target) return SKIP;
-      fm = STATUS_RE.test(fm)
-        ? fm.replace(STATUS_RE, `status: ${target}`)
-        : `${fm}\nstatus: ${target}`;
-      return { text: fm + cur.slice(end) };
-    });
-    out.push(res === SKIP
-      ? `= ${hit.slug}: 已是 ${target}（无变化）`
-      : `✓ ${hit.slug} → ${target}`);
-  }
-  return out.join('\n');
-}
-
-// ---------- resolve: id/slug → 页面路径（引用的反查端） ----------
-// 配合 frontmatter 的 id: 使用。页改名后 id 不变，靠本命令仍能找回来。
-export async function cmdResolve({ dir, refs }) {
-  const list = (refs || []).map((r) => String(r).trim()).filter(Boolean);
-  if (!list.length) return '用法: abs resolve <id-or-slug> [更多…]  — 按 id/页面名反查路径';
-  let root;
-  try {
-    root = await requireBrain(dir || process.cwd());
-  } catch {
-    return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
-  }
-  const lines = [];
-  for (const r of list) {
-    const hit = await resolvePage(root, r);
-    lines.push(hit
-      ? `✓ ${r} → ${BRAIN_DIR}/${hit.dir}/${hit.slug}.md${hit.id !== hit.slug ? `  (id=${hit.id})` : ''}`
-      : `✗ ${r}: 未找到（试 abs index 看完整清单，或 abs query <词> 全文搜）`);
-  }
-  return lines.join('\n');
-}
-
-export function collapseIndex(text) {
-  const s = String(text || '').trim();
-  if (!s) return '';
-  const out = [];
-  let mode = null;      // null=逐行透传（文件头）；字符串=当前在计数的分区名
-  let n = 0;            // mode 非 null 时的清单行计数
-  const flush = () => {
-    if (mode !== null) out.push(n ? `## ${mode}（${n} 页）` : `## ${mode}`);
-    mode = null;
-    n = 0;
-  };
-  let skipping = false; // 跳过 Rules 正文（已在上方单独成段）
-  for (const l of s.split('\n')) {
-    const m = l.match(/^##\s+(.+?)\s*$/);
-    if (m) {
-      flush();
-      const name = m[1].trim();
-      skipping = /Rules?|规则/i.test(name);
-      if (skipping) continue;
-      mode = name;   // 页面清单分区：只计数
-      continue;
-    }
-    if (skipping) continue;
-    if (mode === null) out.push(l);      // 透传区（含文件头 H1）
-    else if (l.trim().startsWith('-')) n++;
-  }
-  flush();
-  // 文件头与首个分区之间可能因跳过 Rules 而留下多余空行
-  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-}
-
 // ---------- wrapup: 滞留快照（B）/ load 内展示由 cmdLoad 完成（A） ----------
 export async function cmdWrapup({ dir }) {
   const root = await requireBrain(dir || process.cwd());
@@ -1048,70 +818,6 @@ function recentLogLines(text, n) {
     .join('\n');
 }
 
-/** 摘要收口：超过 n 码点在**语义边界**收尾（标点 → 空格 → 硬切），加省略号。
- * 坑: 曾直接 `.slice(0, n)` 硬切 → log.md 34/85 条断在词中间(revert-c / file-write-lockin /
- * ~/.cl​aude/ski), 文件名也被切成 ...-decision-blo。而 abs load 开机读的就是这份残句,
- * 用户与后续会话看到的天然是半句 —— "摘要读起来抽象"的真因在写入口, 不在表述能力。 */
-export function clip(text, n) {
-  const s = String(text || '').trim();
-  if (s.length <= n) return s;
-  const head = s.slice(0, n);
-  // 优先在标点处断开（中文句读 + 英文句读），其次空格，最后才硬切
-  const cut = Math.max(
-    head.lastIndexOf('。'), head.lastIndexOf('；'), head.lastIndexOf('！'), head.lastIndexOf('？'),
-    head.lastIndexOf('，'), head.lastIndexOf('、'), head.lastIndexOf(';'), head.lastIndexOf(','),
-    head.lastIndexOf('.'), head.lastIndexOf(' '),
-  );
-  // 边界太靠前（< 一半）说明这一段本就是长句，宁可硬切也不留个残破的短头
-  const keep = cut > n / 2 ? cut : n;
-  return `${s.slice(0, keep).replace(/[\s,，、;；.。]+$/, '')}…`;
-}
-
-/** slug：取前 n 码点 → 非词字符折叠为 '-'。只用于**文件名**，完整标题另存 TITLE 行。
- * 在标点/空格边界收口，不在字中间切断（否则出 `...-硬切-不` 这种残尾）。 */
-function slugOf(text, n = 24) {
-  const s = String(text || '').trim();
-  let head = s.slice(0, n);
-  if (s.length > n) {
-    const cut = Math.max(head.lastIndexOf('，'), head.lastIndexOf('。'), head.lastIndexOf('、'),
-      head.lastIndexOf('：'), head.lastIndexOf(','), head.lastIndexOf('.'), head.lastIndexOf(' '));
-    if (cut > n / 2) head = head.slice(0, cut);
-  }
-  return head.replace(/[^\w一-鿿]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
-}
-
-// ---------- log: 追加工作成果沉淀摘要（用户/AI 主动 abs log "..." 记, 不收工具动作流水） ----------
-export async function cmdLog({ dir, title, kind = 'dev' }) {
-  const root = await requireBrain(dir || process.cwd());
-  const who = await requireUser(); // 写操作守卫
-  // ★ kind 必须是枚举值（2026-10-05 加）：此前无校验，传什么写什么 ——
-  //   实测有测试传 kind:'test' 写进去，而形状闸门上线后才暴露。
-  //   枚举内校在**入口**（这里）比事后 lint 更早，且报错能直接告诉可用值。
-  if (!LOG_KINDS.includes(String(kind))) {
-    throw new Error(
-      `✗ log 的 kind 只能是 ${LOG_KINDS.join(' / ')}（收到 "${kind}"）\n` +
-      `  note=经验/踩坑 / dev=完成的工作 / concept=新建概念页 / ingest=沉淀资料`,
-    );
-  }
-  await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
-  const p = brainPath(root, 'log.md');
-  const stamp = localStamp();
-  // 不硬切: log.md 是人类读的成果摘要, 也是 abs load 的开机入口。600 码点够一条完整小结,
-  // 超出才在语义边界收口（曾 slice(0,100) → 34/85 条断在词中间）
-  const clean = clip(String(title || '').replace(/\n/g, ' '), 600);
-  // 作者前置于 kind：`## [时间] @name dev | 内容`。
-  // 一眼先看到谁做的（与 todo 行 `ID @name — 说明` 排版对齐）。
-  const line = `## [${stamp}] ${atTag(who)} ${kind} | ${clean}`;
-  await editFile(p, (cur) => {
-    const text = cur ?? '# 🗒 Activity Log\n';
-    // 倒序：新行插在标题后（若已是模板占位行则替换它）
-    const lines = text.split('\n');
-    const headerIdx = lines.findIndex((l) => l.startsWith('#'));
-    lines.splice(headerIdx + 1, 0, line);
-    return { text: lines.join('\n') };
-  });
-  return `✓ log → ${p}\n  ${line}`;
-}
 
 // ---------- task: 登记/推进（幂等键 = 行首 id；hook 也调这个） ----------
 // 纪律: task 过程动作(start/done/note/blocked)只改 todo.md, 不写 log.md。
@@ -1124,11 +830,38 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
   if (action === 'start') {
     // 两区制：未完成一律进 Todo，行首带状态标记（默认 进行中）。
     const st = section && TASK_STATES.includes(section) ? section : '进行中';
+    // 唯一进行中约束（2026-10-05 照 rpiv-todo）：看板要能回答"现在在做什么"，
+    // 多个 [进行中] 就答不了。**只提示，不擅自降级别人的任务** ——
+    // 机器替人改状态是静默篡改（同 [[falsy-or-eats-zero]] 的"别悄悄改写意图"）。
+    let warning = '';
+    // 只在**新开**进行中时提示（幂等更新同一条不该重复唠叨）。
+    let alreadyThere = false;
+    await editFile(brainPath(root, 'todo.md'), (cur) => {
+      if (cur === null) return SKIP;
+      alreadyThere = cur.split('\n').some((l) => idOfTaskLine(l) === String(id).replace(/[\u200b\u200c\u200d\ufeff]/g, ''));
+      return SKIP;
+    });
+    if (st === '进行中' && !alreadyThere) {
+      const others = [];
+      await editFile(brainPath(root, 'todo.md'), (cur) => {
+        if (cur === null) return SKIP;
+        for (const l of cur.split('\n')) {
+          const tid = idOfTaskLine(l);
+          if (tid && tid !== id && stateOfTaskLine(l) === '进行中') others.push(tid);
+        }
+        return SKIP;
+      });
+      if (others.length) {
+        warning = `\n  ⚠ 已有 ${others.length} 个 [进行中]: ${others.join(', ')}\n`
+          + '    同时只有一个进行中才说得清"现在在做什么"。\n'
+          + '    把不需要的转走: abs todo state <id> --note 讨论中|滞留中';
+      }
+    }
     const r = await upsertTask(root, {
       section: SEC.todo,
       text: `[${st}] ${id} ${atTag(who)}${note ? ' — ' + note : ''} (认领 ${today()})`,
     });
-    return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  [${st}] ${id} ${atTag(who)}${note ? ' — ' + note : ''}`;
+    return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  [${st}] ${id} ${atTag(who)}${note ? ' — ' + note : ''}${warning}`;
   }
   if (action === 'rename') {
     // 改任务 id（2026-10-05）：人工起错名、或旧 id 不可读时用。
@@ -1251,232 +984,3 @@ export async function cmdShow({ dir, view, full }) {
 
 // Re-export query.js symbols so external importers still work.
 export { cmdQuery } from './query.js';
-
-// ---------- note: 经验实时暂存（source 页，一念一落，防流失） ----------
-const NOTE_DEDUP_MS = 60 * 1000;
-
-export async function cmdNote({ dir, text, tags, when, impact, type }) {
-  const clean = String(text || '').trim();
-  if (!clean) return '用法: abs note "经验/坑/技巧一句话" [--when "何时该读它"]（落 sources/ 暂存页，实时不流失）';
-  let root;
-  try {
-    root = await requireBrain(dir || process.cwd());
-  } catch {
-    return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
-  }
-  const who = await requireUser(); // 写操作守卫
-  await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
-  const srcDir = brainPath(root, 'sources');
-  await fs.mkdir(srcDir, { recursive: true });
-  // 幂等: 同文本 60s 内只落一份
-  const existing = (await fs.readdir(srcDir).catch(() => [])).filter((f) => f.endsWith('.md'));
-  for (const f of existing) {
-    const body = await fs.readFile(join(srcDir, f), 'utf8').catch(() => '');
-    if (body.includes(clean)) {
-      return `• 60s 内已落同文本 → ${f} (跳过重复)`;
-    }
-  }
-  // 影响面（可选）：显式传 --impact <符号> 时，借本机 CodeGraph 拿「改它波及谁」。
-  // 失败/未装 codegraph 静默降级为无，绝不阻断 note 落盘。
-  const impactText = impact ? await impactOf(impact, root) : null;
-  // 类型（可选）：借鉴 TencentDB 的 L1 四分类，把自由文本经验分成可分类的资产。
-  // 默认不强制（自由文本仍是主体）；显式 --type 时才写进 frontmatter，供检索/load 区分。
-  // 合法值对齐 L1 四类：fact 事实 / pref 偏好 / constraint 约束 / event 事件。
-  const NOTE_TYPES = ['fact', 'pref', 'constraint', 'event'];
-  const noteType = NOTE_TYPES.includes(String(type || '').trim().toLowerCase())
-    ? String(type).trim().toLowerCase() : '';
-  const tagList = String(tags || '').split(',').map((t) => t.trim()).filter(Boolean);
-  const fmTags = ['source', ...tagList].join(', ');
-  const slugSrc = slugOf(clean);
-  const file = `${today()}-${slugSrc || 'note'}.md`;
-  const heading = clip(clean, 80); // 页面标题: 完整优先, 超长才收口
-  // 触发条件（2026-09-16）：经验"写入多读得少"的根因之一是存的是结论、不是"何时该看"。
-  // 带上 --when 后，load 的相关页推荐能按当前在做的事匹配，而不是按主题词。
-  const whenText = String(when || '').trim();
-  const body = [
-    '---',
-    `tags: [${fmTags}]`,
-    `id: ${file.replace(/\.md$/, '')}`,
-    `author: ${who}`,
-    `updated: ${today()}`,
-    'status: draft',
-    ...(noteType ? [`type: ${noteType}`] : []),
-    '---',
-    '',
-    `# 来源：${heading}`,
-    '',
-    `TITLE: ${clean}`,
-    ...(whenText ? ['', `WHEN: ${whenText}`] : []),
-    ...(impactText ? ['', '## 影响面（本机 CodeGraph 自动带出）', '```', impactText, '```'] : []),
-    '',
-    `## 记录（实时暂存，Teardown 时提炼进 concepts/ 后本页可删）`,
-    `- ${clean}`,
-    ...(whenText ? [`- 何时读：${whenText}`] : []),
-    '',
-    '## 关联连接',
-    `- ${atTag(who)} — 本页沉淀者`,
-    '（提炼成 concepts 规律页后，在此挂双链到该页）',
-    '',
-  ].join('\n');
-  // 源文件是新写唯一文件：tmp+rename 原子落盘（避免并发读读到半写文件）
-  const srcFile = join(srcDir, file);
-  const tmp = join(srcDir, `.${file}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
-  await fs.writeFile(tmp, body, 'utf8');
-  await fs.rename(tmp, srcFile);
-  // index Sources 区登记（锁内幂等：别页已登记则跳过，防并发重复） + log 一行
-  const slug = file.replace(/\.md$/, '');
-  await registerInIndex(root, 'Sources', slug, heading);
-  await cmdLog({ dir: root, title: clean, kind: 'note' });
-  return `✓ 经验暂存 → sources/${file}\n  ${clean} ${atTag(who)}`;
-}
-
-// ---------- concept: 概念页脚手架（给「写入」定结构，不替人做判断） ----------
-/** 建一张带骨架的概念页。
- *
- * 为何需要它（实测 2026-09-15）: concepts/ 页原来**没有任何代码写入路径** ——
- * 全靠人/AI 手写 markdown，结果 26 页里 2 页完全没有「做完怎么确认」。
- * 而骨架只写在 skill 的**文字里**（"触发场景/表现/解法/验证命令"），没有执行点 → 看运气。
- * 对照: `abs note` 落的 source 页结构整齐，因为模板在**代码里**。
- *
- * 边界（关键）: 它只给**结构**，不给**内容**。
- * 「这条值不值得留 / 归哪一页」仍靠人判断 —— 那是 skill 明写的分工（深提炼不自动化）。
- * 所以本命令不猜语义、不自动提炼，只在你要新建页时把该有的位置摆好。
- *
- * 尾巴用「占位符」而非真实值: 这样 lint 的 NO-TAIL 判据在占位未填时仍会报
- * （骨架≠完成）。填完删掉占位行即可。 */
-export async function cmdConcept({ dir, slug, title, tags, desc }) {
-  let root;
-  try {
-    root = await requireBrain(dir || process.cwd());
-  } catch {
-    return `未找到 .brain/ 图谱。先在项目根运行: abs init`;
-  }
-  const raw = String(slug || '').trim();
-  if (!raw) {
-    return [
-      '用法: abs concept <slug> --title "一句话标题" [--tags a,b] [--desc "index 里的一句话"]',
-      '  例: abs concept docker-prisma-429 --title "Docker 内存超限导致 Prisma 429"',
-      '  说明: 只给骨架（头/中/尾位置），内容仍由你写 —— 判断不自动化。',
-    ].join('\n');
-  }
-  // slug 即文件名（命名即链接）。收口掉路径分隔符与空白，防逃出 concepts/。
-  const name = raw.replace(/[\s/\\]+/g, '-').replace(/[^\w\u4e00-\u9fff.-]/g, '').replace(/^-+|-+$/g, '');
-  if (!name) return `✗ slug 无效（清洗后为空）: ${raw}`;
-  const who = await requireUser();
-  await ensurePersonPage(root, who);
-  const dirP = brainPath(root, 'concepts');
-  await fs.mkdir(dirP, { recursive: true });
-  const file = join(dirP, `${name}.md`);
-  const head = String(title || '').trim() || name;
-  const tagList = ['concept', ...String(tags || '').split(',').map((t) => t.trim()).filter(Boolean)];
-  const body = [
-    '---',
-    `tags: [${tagList.join(', ')}]`,
-    `id: ${name}`,
-    `author: ${who}`,
-    `updated: ${today()}`,
-    'status: draft',
-    '---',
-    '',
-    `# 概念：${head}`,
-    '',
-    '## 触发场景',
-    '<!-- 什么情况下该想起这条？（写可检索的词，别只写“遇到问题”） -->',
-    '',
-    '## ❌ 表现',
-    '<!-- 具体症状 / 贴报错 / 复现条件 -->',
-    '',
-    '## 🛠 解法',
-    '<!-- 根因 + 修复 -->',
-    '',
-    '## 验证',
-    '<!-- 做完怎么确认？跑什么命令 / 看什么信号 / 用什么判据。必须填 —— 没尾巴的经验只能被“相信”，不能被“验证” -->',
-    '',
-    '## 关联连接',
-    `- ${atTag(who)} — 本页沉淀者`,
-    '（在这挂相关页双链，别留孤岛）',
-    '',
-  ].join('\n');
-  // 独占写（wx）：已存在则 EEXIST —— 与 ensurePersonPage 同路数。
-  // 不用「先查后写」：那有 TOCTOU 竞态，且已有人工内容一律不覆盖是本仓硬规则。
-  // 也不走 tmp+rename：rename 会默默覆盖已存在文件，而这里必须「存在就拒绝」。
-  try {
-    await fs.writeFile(file, body, { encoding: 'utf8', flag: 'wx' });
-  } catch (e) {
-    if (e.code === 'EEXIST') {
-      return `• 已存在，不覆盖 → .brain/concepts/${name}.md\n  要改请直接编辑（或先删页）；新建请换个 slug。`;
-    }
-    throw e;
-  }
-  const oneLine = String(desc || '').trim() || clip(head, 60);
-  await registerInIndex(root, 'Concepts', name, oneLine);
-  // 不写 log.md（2026-10-05 用户定）：`新建概念页 x` 是**命令的副作用**不是成果 ——
-  // 38 字符、零信息量，且「该页存在」已由 registerInIndex 落在 index.md 的 Concepts 区
-  // （那是 index 的职责）。同件事落两处，且建 10 个页 = 10 行流水噪声自动重现，
-  // 靠事后清理治不了。故删掉这次调用，不加开关（没人需要读「某页被创建了」）。
-  return `✓ 概念页骨架 → .brain/concepts/${name}.md ${atTag(who)}\n` +
-    '  已给好四段位置；填完内容后：删掉 <!-- --> 占位、按需改 status: active、挂双链。\n' +
-    '  尾部「## 验证」必须填（留空会被 abs lint 报 NO-TAIL）。';
-}
-
-// ---------- person: 使用者实体页（首次需要时创建，已存在则不动） ----------
-/** 确保 entities/<name>.md 存在。已存在一律不动（里面的技术栈/特点是人工沉淀的）。
- * 用 `wx` 独占写：并发下后到者拿到 EEXIST 就静默跳过，不覆盖。
- * 失败不抛：建页是附带动作，不能因为它让 todo/log 写不进去。
- * 返回 'created' | 'exists' | 'skip'。 */
-export async function ensurePersonPage(root, name) {
-  const nm = String(name || '').trim();
-  if (!nm || !/^[\w\u4e00-\u9fff.-]+$/.test(nm)) return 'skip';
-  const dir = brainPath(root, 'entities');
-  const file = join(dir, `${nm}.md`);
-  const body = [
-    '---',
-    'tags: [entity, person]',
-    `id: ${nm}`,
-    `author: ${nm}`,
-    `updated: ${today()}`,
-    'status: draft',
-    '---',
-    '',
-    `# ${nm}`,
-    '',
-    '## 技术栈',
-    '<!-- 沉淀时填: 主力语言/框架/工具链。例: TypeScript + Node, 熟悉 MCP 协议与 CLI 工具链 -->',
-    '',
-    '## 特点 / 工作习惯',
-    '<!-- 沉淀时填: 决策偏好、沟通习惯、反复出现的判断倾向。例: 先要方案后动手; 质疑"这需求是否需要存在" -->',
-    '',
-    '## 名下踩过的坑',
-    '（本页被 [[todo]] / [[log]] 里的作者标记引用；沉淀经验时在此挂双链）',
-    '',
-  ].join('\n');
-  try {
-    await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(file, body, { encoding: 'utf8', flag: 'wx' });
-  } catch (e) {
-    if (e.code === 'EEXIST') return 'exists';
-    return 'skip';
-  }
-  // 只有真建成才登记 index（否则 index 指向不存在的页 → INDEX-DEAD-LINK）。
-  // 放这里而非各调用点：todo/log/note 三条写路径都要登记，抄三遍必漂。
-  await registerInIndex(root, 'Entities', nm, `${nm} — 使用者；技术栈 / 特点 / 名下踩过的坑`);
-  return 'created';
-}
-
-/** 把新页登记进 index.md 的指定分区（幂等）。供人页/其它程序建页用。 */
-export async function registerInIndex(root, section, slug, desc) {
-  const iP = brainPath(root, 'index.md');
-  await editFile(iP, (index) => {
-    if (!index || index.includes(`[[${slug}]]`)) return SKIP;
-    const sIdx = index.indexOf(`## ${section}`);
-    if (sIdx === -1) return SKIP;
-    const after = index.indexOf('\n## ', sIdx + 1);
-    const line = `- [[${slug}]] — ${desc}`;
-    const next = after === -1
-      ? `${index.replace(/\s*$/, '')}\n${line}\n`
-      : index.slice(0, after) + `\n${line}` + index.slice(after);
-    // 归一空行：历史手工编辑会留 3+ 空行（load 时 collapseIndex 会压掉，但文件本身没清）。
-    // 追加新条目的同时顺手压一次，既清旧债又不改内容（与 collapseIndex 同一判据）。
-    return { text: next.replace(/\n{3,}/g, '\n\n') };
-  });
-}

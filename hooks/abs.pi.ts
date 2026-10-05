@@ -136,9 +136,23 @@ function resetThrottle(): void {
 // （表现：嘴上说"先登记"，实际没落盘）。故改成描述**意图 + 名字规律**，
 // 让模型按当前会话实际可见的形态自己挑，不去猜死一个。
 const TODO_GUIDELINES = [
-  'Use the abs task tool to track multi-step work **before** you start it, not after: on the first file edit of a task, call it with action "start" and a short id. (Name varies by host: `mcp__abs` with tool="abs_task", or `mcp__abs__abs_task`, or `abs_task` — use whichever form this session exposes.)',
+  // ① 锚点（2026-10-05 照 rpiv-todo 改写）：原写 `on the first file edit of a task` ——
+  //   实测太晚：那一刻注意力全在"要改什么"上，没人会想起登记。用户实报两次
+  //   （"侦察阶段全漏"、另一个 pi 会话干脆没登）。rpiv-todo 挂在
+  //   `immediately after receiving new instructions`（收到指令时）—— 早得多，且
+  //   侦察/只读工作（读代码、问需求）也落在"收到指令"之后，能被盖住。
+  'Use the abs task tool as soon as you receive instructions that involve changing this project — including investigation work where you read code or ask questions before any edit. Call it with action "start" and a short id before the work itself, not after. Skip it for pure questions about general knowledge, one-line answers, and conversation. (Tool name varies by host: `mcp__abs` with tool="abs_task", or `mcp__abs__abs_task`, or `abs_task` — use whichever form this session exposes.)',
+  // ② 完成即结：不许攒
   'Mark a task "done" immediately when it finishes — never batch completions at the end of a session.',
+  // ③ 断点：跨会话接力靠它
   'Before starting a task, record the checkpoint with action "note" (which file, which step) so a later session can resume.',
+  // ④ 反例（照 rpiv-todo）：明确什么情况【不许】标完成 —— 只给正向要求时，
+  //   模型倾向于把"我以为做完了"当成完成，结语失真会污染下个会话的判断。
+  'Never mark a task "done" when tests are failing, the implementation is partial, or an error is unresolved — keep it in progress and add a task for the blocker instead.',
+  // ⑤ 唯一进行中（同 rpiv-todo）：看板要能回答"现在在做什么"，多的应转讨论中/滞留中。
+  'Keep exactly one task in "进行中" at a time; use action "state" with 讨论中 or 滞留中 for anything else that is open. If you finish one and another is ready, promote it explicitly.',
+  // ⑥ 结语要真实：三种结语各有含义，别一律写落地。
+  'When completing, pick the honest conclusion via the `as` field: 落地 (built and verified) / 否决 (decided against, or built then reverted) / 仅方案 (designed only). A wrong conclusion makes the next session treat "considered" as "completed".',
 ]
 
 /** 当前项目是否有 .brain 图谱 —— 有才加指引（没图谱的项目里这指引是噪音）。
