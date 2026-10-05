@@ -36,7 +36,7 @@ describe('并发写保护', () => {
 
   test('并发的 cmdLog 多条全部落到 log.md（倒序不互相覆盖）', async () => {
     const n = 15;
-    await Promise.all(Array.from({ length: n }, (_, i) => cmdLog({ dir: project, title: `log-${i}`, kind: 'test' })));
+    await Promise.all(Array.from({ length: n }, (_, i) => cmdLog({ dir: project, title: `log-${i}`, kind: 'dev' })));
     const log = await fs.readFile(join(project, '.brain', 'log.md'), 'utf8');
     for (let i = 0; i < n; i++) assert.ok(log.includes(`log-${i}`), `丢失了 log-${i}`);
   });
@@ -54,7 +54,7 @@ describe('并发写保护', () => {
     const log = join(brain, 'log.md');
     await Promise.all([
       cmdTask({ dir: project, action: 'start', id: 'T-A', note: 'a' }),
-      cmdLog({ dir: project, title: 'hello', kind: 'test' }),
+      cmdLog({ dir: project, title: 'hello', kind: 'dev' }),
     ]);
     for (const f of [todo, log]) {
       const lock = join(brain, `.${f.split('/').pop()}.lock`);

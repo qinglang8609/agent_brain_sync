@@ -109,6 +109,224 @@ export function todoTemplate() {
 // 结论：进行时分区是符合直觉但不符合实际工作流的抽象 → 删掉，
 // 未完成的一律进 Todo，状态用**行首标记**表达（不靠分区区分）。
 export const TODO_SECTIONS = ['Todo', 'Done'];
+// todo 的 `###` 级标签（实测真实形态：`## Done` 下按日期分组 `### 2026-09-29`，
+// 归位的进 `### Archived`）。白名单只限这两类：日期组 + Archived。
+// 为什么必须列：`### ` 是 AI 最爱的「自建小节」位置（### 备忘 / ### 计划），
+// 只查 `## ` 会把它放过去。
+export const TODO_SUBSECTIONS = ['Archived'];
+/** `###` 标签是否放行：归档区 / 未标日期组 / 日期组 `YYYY-MM-DD`。
+ *  `Undated` 是 LEGACY_MARKS 里的正式标准名（旧 `### （未标日期）` → `### Undated`），
+ *  漏了它会把存量文件卡死（实测）。 */
+export function isAllowedTodoSub(name) {
+  return TODO_SUBSECTIONS.includes(name) || name === 'Undated' || /^\d{4}-\d{2}-\d{2}$/.test(name);
+}
+
+// ---------- 三份根文件的标签白名单与条目形状（2026-10-05 用户定）----------
+// 用户原话：「index Rules Concepts Entities Sources Syntheses Sessions 包含这些标签
+// 不允许增加新的标签，每个标签写内容的规则都是 - [[xx]]123 不允许乱写，同理 log todo 也是」
+//
+// 为什么需要：闸门只管骨架（分区顺序/H1/空行），**标签白名单与条目形状都没人管**。
+// rebuildStructure 的规矩 3 更是「非标准分区原样保留在末尾」（为了防丢人自加的内容）
+// → AI 新加一个 `## 备忘` 或 `## 计划` 永远合法，且会一直留在文件里。
+//
+// 注意 Rules 区是例外：它放的是**规矩短句**（「写代码前先读 docs/STRUCTURE.md」），
+// 不是页链接 —— 实测 13 条规则全是这个形态。不能拿 [[页名]] 去卡它。
+export const INDEX_SECTIONS = ['Rules', 'Concepts', 'Entities', 'Sources', 'Syntheses', 'Sessions'];
+/** 需要 `- [[页名]] …` 形状的区（Rules 除外）。 */
+export const INDEX_LINK_SECTIONS = ['Concepts', 'Entities', 'Sources', 'Syntheses', 'Sessions'];
+/** log 行的 kind 枚举（与 cmdLog 写入端同源；实测 238 条只有这 4 种）。 */
+export const LOG_KINDS = ['note', 'dev', 'concept', 'ingest'];
+
+/** 条目形状规则表：文件 → 每行的预期形状。
+ *  校验器只报告「不像这个形状」的行，不自动改写内容（机器不猜语义）。 */
+/** 条目形状规则表：文件 → 每行的预期形状。
+ *  校验器只报告「不像这个形状」的行，不自动改写内容（机器不猜语义）。 */
+export const H1_TO_FILE = {
+  '# 🗂 Graph Index': 'index.md',
+  '# 🗒 Activity Log': 'log.md',
+  '# 📋 Todo Board': 'todo.md',
+};
+
+export const ENTRY_SHAPES = {
+  'index.md': [
+    {
+      name: 'INDEX-ENTRY',
+      // 条目行：`- [[页名]] — 一句话`（是 6 个链接区里的一行）
+      test: (l) => {
+        if (!/^-\s/.test(l)) return null; // 非条目行（规则短句/说明）由分区规则另判
+        if (!/^-\s*\[\[[^\]]+\]\]/.test(l)) return '应以 `- [[页名]] …` 开头';
+        if (!/^-\s*\[\[[^\]]+\]\]\s*[—-]\s*\S/.test(l)) return '`[[页名]]` 后要跟 `— 一句话` 描述';
+        return null;
+      },
+    },
+  ],
+  'log.md': [
+    {
+      name: 'LOG-ENTRY',
+      test: (l) => {
+        if (!/^##\s/.test(l)) return null; // 非 `## ` 行（H1/注释）不管
+        // ★ log 没有分区概念：`## ` 开头的只能是条目。
+        //   否则 `## 2026-10-05 随便写点`（缺方括号/作者/竖线）会被当成「分区标题」滑过去 ——
+        //   而 log.md 的标签白名单是 null（不校验），这就是一个漏网口（实测）。
+        // 形状：## [YYYY-MM-DD HH:MM] [[作者]] kind | 正文
+        // ★ 放行历史旧模板的占位行 `## [YYYY-MM-DD] ingest | 沉淀 <slug>`：
+        //   它是早版 logTemplate 造出来的，不是人写的乱，而是模板自身的遗留。
+        //   新模板已改成 HTML 注释（见 store.js logTemplate）。存量这行由 lint 报。
+        if (/^##\s*\[YYYY-MM-DD\]/.test(l)) return null;
+        const m = l.match(/^##\s*\[(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]\s*\[\[([^\]]+)\]\]\s*([A-Za-z]+)\s*\|\s*(\S.*)$/);
+        if (!m) return '应为 `## [YYYY-MM-DD HH:MM] [[作者]] kind | 正文`（log 只能有这种行）';
+        if (!LOG_KINDS.includes(m[3])) return `kind 只能是 ${LOG_KINDS.join('/')}（收到 \`${m[3]}\`）`;
+        // 「正文只有个任务 id」不在这里拒（见下 lintOnly 规则）：它是**内容质量**
+        // 问题不是**结构格式**问题，当写入闸门会把存量脏库锁死（实测：真库仅一条
+        // 就让所有 abs log 失败）。留在此处只会误伤正常短标题（如 `log-0`）。
+        return null;
+      },
+      // 仅在 lint 阶段生效的额外规则（不阻写入，只报存量）。
+      lintOnly: (l) => {
+        const m = l.match(/^##\s*\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*\[\[[^\]]+\]\]\s*[A-Za-z]+\s*\|\s*(\S.*)$/);
+        if (!m) return null;
+        if (/^[A-Z][A-Z0-9-]{2,}$/.test(m[1].trim())) return '正文只写了个任务 id（等于没记内容），补一句发生了什么';
+        return null;
+      },
+    },
+  ],
+  'todo.md': [
+    {
+      name: 'TODO-ENTRY',
+      // 任务行形状（实测）：
+      //   新写入（cmdTask）：`- [ ] [状态] id [[作者]] — 描述 (认领 日期)`
+      //   旧存量（四区制迁移）：`- [ ] 中文描述 (认领 日期)` ← 没有 id / 作者
+      //   已完成：`- [x] id …`（markDone 会 stripStateMark 去掉状态）
+      //
+      // ★ 为什么不强制要求 id：旧存量的 id 缺失是**历史事实**，机器不能凭空编造
+      //   （编了就是静默改写语义）。闸门只确保「结构可解析」：
+      //     未完成必须有 `[状态]`（归一后的标志）；已完成必须有内容。
+      //   而「新写入必须带 id」由 cmdTask 拼装保证 —— 那是入口的职责，
+      //   不是事后逐行猜（猜不出哪行是新的、哪行是旧的）。
+      test: (l) => {
+        if (/^#{1,3}\s/.test(l)) return null; // 标题行（## Done / ### 日期）不是条目
+        if (!/^-\s/.test(l)) return null; // 非条目行（如缩进的 ↳ 断点）由下面单独判
+        // Done 区的归档行是 `- [[log-日期]] 完成任务 N 条`，不是任务行
+        if (/^-\s*\[\[log-\d{4}-\d{2}-\d{2}\]\]/.test(l)) return null;
+        const m = l.match(/^-\s*\[([ x])\]\s*(.*)$/);
+        if (!m) return '应以 `- [ ] ` 或 `- [x] ` 开头';
+        const rest = m[2].trim();
+        if (!rest) return '任务行不能只有复选框，要写做什么（已拒）';
+        // 未完成：必须有状态标记（新写法）——无标记的旧行由 enforceBrainFormat 自动补上，
+        // 走到这里还没标记 = 补不了（不是 `- [ ] ` 形状），报错。
+        if (m[1] === ' ' && !/^\[[^\]]+\]\s*\S/.test(rest)) {
+          return '未完成任务应为 `- [ ] [状态] …`（状态：进行中/讨论中/滞留中）';
+        }
+        // 断点附属行不能挤在同一行（应另起 `  ↳ 断点: `）
+        if (/↳\s*断点:/.test(rest)) return '断点要另起一行写 `  ↳ 断点: …`';
+        return null;
+      },
+    },
+  ], // 任务行/断点行另由 assertTodoContent 卡长度与报告体
+};
+
+/** 校验单个文件的分区标签白名单 + 条目形状。返回问题列表（不抛错，供 lint 与写入闸门共用）。
+ *  reason 文案直接把出路写清楚 —— 报错不给出路等于让人挖坑。 */
+export function checkFileShape(file, text, { lintMode = false } = {}) {
+  const issues = [];
+  const lines = String(text ?? '').split('\n');
+  const allowed = file === 'index.md' ? INDEX_SECTIONS : file === 'todo.md' ? TODO_SECTIONS : null;
+
+  if (allowed) {
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      // `## [` 开头是 log 的条目行，不是分区标签（否则会把 238 条流水全判非法）
+      if (/^##\s+\[/.test(l)) continue;
+      const m = l.match(/^##\s+(\S.*)$/);
+      const sub = l.match(/^###\s+(\S.*)$/);
+      if (!m && !sub) continue;
+      const name = (m ? m[1] : sub[1]).trim();
+      // todo 的 `###` 标签单独判（只许日期组 + Archived）
+      if (sub && file === 'todo.md') {
+        if (!isAllowedTodoSub(name)) {
+          issues.push({
+            code: 'SECTIONS-NOT-ALLOWED',
+            line: i + 1,
+            msg: `todo.md:${i + 1} 不允许的小节 \`### ${name}\`；` +
+              `todo.md 的 ### 只允许 \`### YYYY-MM-DD\`（Done 区日期组）、\`### Undated\` 与 \`### Archived\``,
+          });
+        }
+        continue;
+      }
+      if (!allowed.includes(name)) {
+        issues.push({
+          code: 'SECTIONS-NOT-ALLOWED',
+          line: i + 1,
+          msg: `${file}:${i + 1} 不允许的标签 \`${m ? '##' : '###'} ${name}\`；` +
+            `${file} 只允许 ${allowed.map((s) => `\`## ${s}\``).join(' / ')}${
+              file === 'todo.md' ? '（`###` 只许日期组与 `### Archived`）' : ''}。` +
+            `内容按语义归入现有标签，确实需要例外请先改白名单（见 src/todo.js 的 SECTIONS 常量）`,
+        });
+      }
+    }
+  }
+
+  // 条目形状
+  const shapes = ENTRY_SHAPES[file] || [];
+  if (shapes.length) {
+    // 先算每个行所属分区（形状只对被要求的区生效）
+    let section = null;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      // ★ 分区标题的识别不能吃掉 log 的条目行：log 的条目就是 `## [时间] …`，
+      //   若把它当分区标题就会 continue 掉本行，形状校验形同虚设（实测：
+      //   kind=node / 缺竖线 全部漏放）。判据：`## [` 开头 = 条目，不是分区。
+      // ★ 分区标题的识别不能吃掉 log 的条目行：log 的条目就是 `## [时间] …`，
+      //   若把它当分区标题就会 continue 掉本行，形状校验形同虚设（实测：
+      //   kind=node / 缺竖线 全部漏放）。
+      //   ★ log.md 特殊：它**没有分区**，`## ` 开头的只能是条目（含写错的），
+      //   所以 log 里绝不能把 `## ` 行当分区标题 —— 全交给形状规则判。
+      const sm = file === 'log.md' ? null : (/^##\s+\[/.test(l) ? null : l.match(/^##\s+(\S.*)$/));
+      if (sm) { section = sm[1].trim(); continue; }
+      if (!l.trim()) continue;
+      const needShape = file === 'log.md'
+        ? true
+        : file === 'todo.md'
+          ? true // todo 的任务行形状与分区无关（Todo/Done 都要 `- [ ] …`）
+          : indexLinkSectionNeeds(section);
+      if (!needShape) continue;
+      for (const rule of shapes) {
+        const bad = rule.test(l);
+        if (bad) issues.push({ code: rule.name, line: i + 1, msg: `${file}:${i + 1} ${bad}` });
+        // lintOnly 规则只在体检时跑（不阻写入）—— 用于「内容质量」类问题，
+        // 那些问题当闸门会把存量脏库锁死。
+        if (!lintMode) continue;
+        const bad2 = rule.lintOnly ? rule.lintOnly(l) : null;
+        if (bad2) issues.push({ code: `${rule.name}-QUALITY`, line: i + 1, msg: `${file}:${i + 1} ${bad2}` });
+      }
+    }
+  }
+  // 条目之间的空行（与写入闸门 assertNoStrayBlank 同判据）。
+  // lint 只能「报」，不能抛 —— 体检不能因格式坏而挂。
+  const isEntryLine = (l) => /^-\s/.test(l) || /^#{1,3}\s+\[/.test(l);
+  const isHeadingLine = (l) => /^#{1,3}\s/.test(l);
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim()) continue;
+    if (i > 0 && !lines[i - 1].trim()) continue; // 连续空行只报一次
+    let p = i - 1;
+    while (p >= 0 && !lines[p].trim()) p--;
+    let n = i + 1;
+    while (n < lines.length && !lines[n].trim()) n++;
+    const prev = p >= 0 ? lines[p] : null;
+    const next = n < lines.length ? lines[n] : null;
+    if (!prev || !next) continue;
+    if (isHeadingLine(prev)) continue; // 标签与首条目之间的空行是排版，不算乱
+    if (isEntryLine(prev) && isEntryLine(next)) {
+      issues.push({ code: 'STRAY-BLANK-LINE', line: i + 1, msg: `${file}:${i + 1} 条目之间不允许空行（条目必须紧贴）` });
+    }
+  }
+  return issues;
+}
+
+/** index 的某个区是否要求 `- [[页名]]` 形状（Rules 与未知区不要求）。 */
+function indexLinkSectionNeeds(section) {
+  return section !== null && INDEX_LINK_SECTIONS.includes(section);
+}
 
 /** 任务状态标记（行首，方括号）。替代原 Backlog/Today/Blocked 三区的区分作用。
  * 放在 id **之前**，与 Done 结语的 `【落地】` 形态区分开（那是行尾、结语用）。 */
@@ -268,6 +486,44 @@ function sentenceCount(s) {
     .filter(Boolean).length;
 }
 
+/** 「绝对不允许乱空行」（2026-10-05 用户定）：条目之间不能有空行。
+ *  为什么必须拒而不只是修：旧实现是「自动删」（fixed.push('删除条目之间的空行')），
+ *  但那是**默默改盘** —— 写进去的东西被改了而 AI 不知道，下次又写一遍。
+ *  现在直接报错，让写入方自己写对。
+ *  允许的位置：H1 与首个标签之间、标签与首条目之间、区与区之间（排版需要）。 */
+export function assertNoStrayBlank(text, file) {
+  const lines = String(text ?? '').split('\n');
+  const isEntry = (l) => /^-\s/.test(l) || /^#{1,3}\s+\[/.test(l);
+  const isHeading = (l) => /^#{1,3}\s/.test(l);
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim()) continue;
+    // 找上一个/下一个非空行
+    let p = i - 1;
+    while (p >= 0 && !lines[p].trim()) p--;
+    let n = i + 1;
+    while (n < lines.length && !lines[n].trim()) n++;
+    const prev = p >= 0 ? lines[p] : null;
+    const next = n < lines.length ? lines[n] : null;
+    if (prev === null || next === null) continue; // 文件头尾空行不算
+    // 连续多个空行：报一次就够
+    if (i > 0 && !lines[i - 1].trim()) continue;
+    if (!isEntry(prev) && !isEntry(next)) continue; // 正文段落之间允许
+    // ★ 标题与首个条目之间必留一个空行（排版必需）—— H1/标签后紧跟条目反而难看。
+    //   实测踩坑：log 模板就是 `# H1` + 空行 + `## [日期] …`，不放行会把模板本身卡死。
+    if (isHeading(prev)) continue;
+    // 两个条目之间（含「条目 → 空行 → 条目」）不允许
+    if (isEntry(prev) && isEntry(next)) {
+      throw new Error(
+        `✗ ${file} 不允许条目之间的空行（第 ${i + 1} 行）：\n` +
+        `  上一行: ${prev.slice(0, 50)}\n` +
+        `  下一行: ${next.slice(0, 50)}\n` +
+        `  条目必须紧贴；标签与首条目之间才留一个空行。已拒绝写入 —— 请删掉这个空行再写。`,
+      );
+    }
+  }
+  return true;
+}
+
 /** 校验 todo 全文的条目内容。抛错 = 拒绝写入（不是修正）。 */
 export function assertTodoContent(text) {
   const lines = String(text ?? '').split('\n');
@@ -315,6 +571,25 @@ export function enforceBrainFormat(text, spec) {
   // 内容闸门：形状归一之前先拒掉乱塞（超长断点/报告体），否则下面的 rebuild
   // 会把它当「人自加的正文」好好保留下来 —— 越规整越难发现。
   if (spec?.h1 === '# 📋 Todo Board') assertTodoContent(src);
+  // ★ 标签白名单闸门放在**旧标记归一之后**（见下面 legacy 段之后）——
+  // 旧标签（`## Backlog` / `## Today / In Progress`）是**待迁移**的，不是非法新标签。
+  // 首版把校验放在归一之前，把存量老文件全卡死（7 个测试红，2026-10-05 实测）。
+  const fname = H1_TO_FILE[spec?.h1];
+  let checked = false;
+  const assertShape = (t) => {
+    if (!fname || checked) return;
+    checked = true;
+    const bad = checkFileShape(fname, t);
+    if (bad.length) {
+      throw new Error(
+        `✗ ${fname} 格式不合规（写入被拒）：\n` +
+        bad.map((it) => `  · ${it.msg}`).join('\n') +
+        `\n  出路：内容归入现有标签，或走对应入口（页 → concepts/ 等子目录 + index 登记；流水 → abs log；经验 → abs note）。`,
+      );
+    }
+    // 空行：直接在写入闸门拒（不只靠下面的自动清理）。
+    assertNoStrayBlank(t, fname);
+  };
   const fixed = [];
   // 旧标记 → 标准标记（H1 与分区/分组标题）。与 store.js 的 LEGACY_MARKS 同源，
   // 由调用方通过 spec.renames 注入（todo.js 不反向依赖 store.js）。
@@ -337,6 +612,26 @@ export function enforceBrainFormat(text, spec) {
     }
     body = ls.join('\n');
   }
+
+  // ★ 旧格式自动升级（2026-10-05）：闸门不能只会拒，还得会**修**。
+  //   用户要求「旧版本旧样式要能自动更新为新样式」。
+  //   这里把已知的旧形态归一为新形态，**归一之后再校验白名单** ——
+  //   否则存量老文件（无状态标记的裸任务行）会被当成违规而卡死（实测：
+  //   底层 addTask/upsertTask 传的就是裸文本，它们是内部 API，不是 AI 入口）。
+  if (fname === 'todo.md') {
+    const ls = body.split('\n');
+    for (let i = 0; i < ls.length; i++) {
+      // 裸任务行（`- [ ] id …` 无状态标记）→ 补默认「进行中」
+      if (/^- \[ \] /.test(ls[i]) && !/^- \[ \] \[[^\]]+\]/.test(ls[i])) {
+        const fixed2 = ensureStateMark(ls[i], '进行中');
+        if (fixed2 !== ls[i]) { ls[i] = fixed2; fixed.push('补回缺失的状态标记'); }
+      }
+    }
+    body = ls.join('\n');
+  }
+
+  // ★ 白名单闸门在这里跑：旧格式已升级、旧标记已归一，剩下的非标准标签才是真的新标签。
+  assertShape(body);
 
   // (3) 结构：先补 H1，再按标准重排分区。
   const hasH1 = body.split('\n').some((l) => l.trim().startsWith('# '));

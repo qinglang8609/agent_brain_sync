@@ -944,6 +944,70 @@ describe('cmdTask blocked + note (实时断点)', () => {
   });
 });
 
+describe('根文件形状与标签白名单（2026-10-05 用户定：写死、不允许新增）', () => {
+  test('index 新标签被拒（只允许 6 个）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## 备忘\n- 乱加的东西\n', 'utf8');
+    await assert.rejects(
+      () => cmdRule({ dir: projectA, action: 'add', text: '乙' }),
+      /SECTIONS-NOT-ALLOWED|不允许的标签/,
+    );
+  });
+
+  test('todo 的 ### 只允许日期组 / Undated / Archived', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      '# 📋 Todo Board\n\n## Todo\n## Done\n### 备忘\n- 乱加\n', 'utf8');
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'start', id: 'X1', note: 'x' }),
+      /不允许的小节/,
+    );
+  });
+
+  test('index 条目必须 [[]] 形状（[]() 被 lint 抓住）', async () => {
+    // 注：写入闸门只能校验「本次写入经过的区」，而 cmdRule 只动 Rules 区；
+    // Concepts 区的存量脏行靠 lint 全文件扫出来（真库实测：一次报出 8 条）。
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## Concepts\n- [a](concepts/a.md) — 页a\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('INDEX-ENTRY'), `lint 应报出 []() 格式的条目:\n${out}`);
+  });
+
+  // ★ 关键：旧格式必须能自动升级，不能被闸门卡死（用户 2026-10-05 要求）
+  test('旧四区制文件在下次写入时自动升级为新样式（内容不丢）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '## In Progress', '- [ ] 做事 (认领 2026-09-08)',
+        '## Todo', '- [ ] 老A', '## Blocked', '- [ ] 卡住的 — 原因', '## Done', '- [x] 老完成', ''].join('\n'),
+      'utf8');
+    const r = await cmdTask({ dir: projectA, action: 'start', id: 'NEW-1', note: '新任务' });
+    assert.ok(r.includes('登记'), r);
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('## Todo'), `应归一为两区制:\n${t}`);
+    assert.ok(!t.includes('## In Progress') && !t.includes('## Blocked'), `旧区应消失:\n${t}`);
+    for (const frag of ['做事', '老A', '卡住的', '老完成']) {
+      assert.ok(t.includes(frag), `旧内容不应丢: ${frag}\n${t}`);
+    }
+    assert.match(t, /^- \[ \] \[滞留中\] 卡住的/m, `Blocked 旧行应补滞留中:\n${t}`);
+  });
+
+  // ★ 关键：历史脏数据不能卡死后续写入（实测踩过：真库仅一条脏行就让所有写入失败）
+  test('存量脏行不阻后续写入（降级为 lint 报告）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'log.md'),
+      '# 🗒 Activity Log\n\n## [2026-09-29 23:56] [[tester]] note | APP-DESIGNKIT\n', 'utf8');
+    const r = await cmdLog({ dir: projectA, title: '新流水一句' });
+    assert.ok(r.includes('log'), r);
+    // 但 lint 要能把那条报出来（存量靠体检暴露，不靠写入报错）
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('LOG-ENTRY-QUALITY'), `lint 应报出无内容的旧行:\n${out}`);
+  });
+
+  test('log 的 kind 必须是枚举值（入口就拦）', async () => {
+    await assert.rejects(
+      () => cmdLog({ dir: projectA, title: 'x', kind: 'test' }),
+      /kind 只能是/,
+    );
+  });
+});
+
 // ---------- TODO 内容闸门（2026-10-05）----------
 // 背景：闸门此前只管骨架（分区/H1/空行），不管内容 → AI 把 todo 当笔记本，
 // 实施报告/测试数据/需求清单全塞进断点，文件涨到上百行而 lint 报 0 问题。
@@ -2234,12 +2298,24 @@ describe('写入侧格式闸门: index/todo/log 每次写入都校验', () => {
     assert.match(out, /^- \[ \] \[进行中\] x1/m, out);
   });
 
-  test('index.md: 条目之间的空行被删，且新条目落进正确分区', async () => {
+  test('index.md: 条目之间的空行 → 拒绝写入（2026-10-05 用户定：绝对不允许乱空行）', async () => {
+    const bad = '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n- 乙\n\n## Concepts\n- [[a]] — 页a\n\n- [[b]] — 页b\n';
+    await fs.writeFile(join(projectA, '.brain', 'index.md'), bad, 'utf8');
+    // 旧行为是「自动删空行」（默默改盘）—— 改为直接拒：写的人下次会写对，
+    // 而不是被机器静默修正（静默修正会让人永远学不会格式）。
+    await assert.rejects(
+      () => cmdRule({ dir: projectA, action: 'add', text: '新规则一句' }),
+      /（不）?允许条目之间的空行|条目之间不允许空行|STRAY-BLANK/,
+    );
+    const after = await readP('index.md');
+    assert.equal(after, bad, '被拒的写入不该留下任何改动');
+  });
+
+  test('index.md: 格式本已合规时，新条目落进正确分区', async () => {
     await fs.writeFile(join(projectA, '.brain', 'index.md'),
-      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n- 乙\n\n## Concepts\n- [[a]] — 页a\n\n- [[b]] — 页b\n', 'utf8');
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n- 乙\n\n## Concepts\n- [[a]] — 页a\n- [[b]] — 页b\n', 'utf8');
     await cmdRule({ dir: projectA, action: 'add', text: '新规则一句' });
     const out = await readP('index.md');
-    assert.ok(!/\n\n- /.test(out), `条目之间不该有空行: ${JSON.stringify(out)}`);
     const rules = out.split('## Rules')[1].split('## Concepts')[0];
     assert.equal(rules.split('\n').filter((l) => l.startsWith('- ')).length, 3, rules);
   });
@@ -2303,13 +2379,26 @@ describe('废弃分区: 删过的标准分区不再复活，人自加的分区�
     assert.ok(out.includes('乙规则'), `其它内容不该受影响: ${out}`);
   });
 
-  test('人自加的分区仍原样保留（护栏不动）', async () => {
+  test('人自加的分区不再放行（2026-10-05 用户定：标签写死，不许新增）', async () => {
+    // 旧护栏是「非标准分区原样保留」（防丢人自加内容）；用户 2026-10-05 改为
+    // 「index 只许 6 个标签」—— 所以现在变成**拒绝写入并报错**。
+    // 变动背景：那条护栏让 AI 新加的 `## 备忘`/`## 计划` 永远合法，
+    // 而实测项目（corp_agent）里没人真的自加过 —— 护栏保护的是一个不存在的场景。
     await fs.writeFile(join(projectA, '.brain', 'index.md'),
-      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## 备忘\n人自己加的区，机器不猜语义。\n- 一条备忘\n', 'utf8');
-    await cmdRule({ dir: projectA, action: 'add', text: '乙规则' });
-    const out = await readIndex();
-    assert.ok(out.includes('## 备忘'), `自加分区不该被删: ${out}`);
-    assert.ok(out.includes('一条备忘'), `自加分区内容不该丢: ${out}`);
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## 备忘\n人自己加的区。\n- 一条备忘\n', 'utf8');
+    await assert.rejects(
+      () => cmdRule({ dir: projectA, action: 'add', text: '乙规则' }),
+      /SECTIONS-NOT-ALLOWED|格式不合规/,
+      '非法标签应拒绝写入',
+    );
+  });
+
+  test('非法标签被拒后，内容一字不改（不半途写盘）', async () => {
+    const bad = '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## 备忘\n- 一条备忘\n';
+    await fs.writeFile(join(projectA, '.brain', 'index.md'), bad, 'utf8');
+    await assert.rejects(() => cmdRule({ dir: projectA, action: 'add', text: '乙规则' }));
+    const after = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.equal(after, bad, '被拒的写入不应留下任何改动');
   });
 });
 

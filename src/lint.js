@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
 import { readRules, idOfPage, statusOfPage, supersededByOf, clip } from './store.js';
-import { doneKindOf, doneDateOf } from './todo.js';
+import { doneKindOf, doneDateOf, checkFileShape } from './todo.js';
 
 // ---------- 图谱遍历 ----------
 
@@ -127,6 +127,11 @@ async function checkRootFiles(vault) {
     const lines = body.split('\n');
     if (lines.length > maxLines) {
       issues.push(`ROOT-OVER-SIZE: ${BRAIN_DIR}/${file} (${lines.length}L > ${maxLines}L; ${hint})`);
+    }
+    // 标签白名单 + 条目形状（2026-10-05）：index/log/todo 的标签写死、
+    // 每类内容的行格式固定。与写入闸门同源（checkFileShape）—— lint 抓存量。
+    for (const it of checkFileShape(file, body, { lintMode: true })) {
+      issues.push(`${it.code}: ${it.msg}`);
     }
     // 条目级：todo 的任务行/断点行不能是报告（与写入闸门 assertTodoContent 同判据，
     // 但 lint 是「事后发现」—— 历史遗留的乱写靠它暴露，新写入靠闸门拦）。

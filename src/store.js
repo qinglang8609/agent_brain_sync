@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
 import { requireUser, atTag, getUser, placeholderWarn } from './userconfig.js';
-import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure, enforceBrainFormat } from './todo.js';
+import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, LOG_KINDS, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure, enforceBrainFormat } from './todo.js';
 import { setFormatGate, editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 import { keywords, pickRelevant, renderRelevant, recentFiles, rankPage, topicStrength } from './relevant.js';
@@ -149,7 +149,15 @@ export function indexTemplate() {
 }
 
 export function logTemplate() {
-  return ['# 🗒 Activity Log', '', '## [YYYY-MM-DD] ingest | 沉淀 <slug>', ''].join('\n');
+  // ★ 占位符必须是注释形式，不能是真条目形状（2026-10-05 实测）：
+  //   原来写的是 `## [YYYY-MM-DD] ingest | 沉淀 <slug>` —— 看起来像条目，
+  //   但它不是真日期、也不是真 kind，条目形状闸门上线后**模板自己就非法**，
+  //   新条目插到它上面后它掉到第 4 行，直接把写入卡死。
+  //   用 HTML 注释保留「怎么写」的提示，同时不参与任何解析。
+  return [
+    '# 🗒 Activity Log', '',
+    '<!-- 每条一行：## [YYYY-MM-DD HH:MM] [[作者]] kind | 正文（kind: note|dev|concept|ingest） -->', ''
+  ].join('\n');
 }
 
 // ---------- 结构核对: load 每次都读 index/log/todo，顺手核形状 ----------
@@ -1066,6 +1074,15 @@ function slugOf(text, n = 24) {
 export async function cmdLog({ dir, title, kind = 'dev' }) {
   const root = await requireBrain(dir || process.cwd());
   const who = await requireUser(); // 写操作守卫
+  // ★ kind 必须是枚举值（2026-10-05 加）：此前无校验，传什么写什么 ——
+  //   实测有测试传 kind:'test' 写进去，而形状闸门上线后才暴露。
+  //   枚举内校在**入口**（这里）比事后 lint 更早，且报错能直接告诉可用值。
+  if (!LOG_KINDS.includes(String(kind))) {
+    throw new Error(
+      `✗ log 的 kind 只能是 ${LOG_KINDS.join(' / ')}（收到 "${kind}"）\n` +
+      `  note=经验/踩坑 / dev=完成的工作 / concept=新建概念页 / ingest=沉淀资料`,
+    );
+  }
   await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
   const p = brainPath(root, 'log.md');
   const stamp = localStamp();
