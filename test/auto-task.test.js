@@ -11,7 +11,7 @@ import { promises as fs } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { cmdInit, cmdAutoTask, cmdAutoTaskSweep, autoTaskId } from '../src/store.js';
+import { cmdInit, cmdAutoTask, cmdAutoTaskSweep, autoTaskId, autoTaskSlugFromNote } from '../src/store.js';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -74,6 +74,28 @@ describe('autoTaskId — 抽关键词', () => {
     assert.ok(id);
     assert.ok(!/\s/.test(id), `id 不该含空白: ${id}`);
     assert.ok(!/[[\]]/.test(id), `id 不该含方括号: ${id}`);
+  });
+});
+
+describe('autoTaskSlugFromNote — 从断点提文件名', () => {
+  test('断点里的文件名当 slug（"改了" 这种废名要避开）', () => {
+    // 时机改动后: 抽不出用户关键词时用断点兜底。直接取首词会得到 `改了`，
+    // 毫无信息量; 取文件名才有用。
+    assert.equal(autoTaskSlugFromNote('改了 src/store.js'), '改 store');
+    assert.equal(autoTaskSlugFromNote('本轮到 hooks/abs.pi.ts'), '改 abs.pi');
+    assert.equal(autoTaskSlugFromNote('改了 /a/b/panel.test.js'), '改 panel.test');
+  });
+
+  test('断点里没文件名时退回抽关键词', () => {
+    assert.equal(autoTaskSlugFromNote('修复面板刷新'), '修复面板刷新');
+    assert.equal(autoTaskSlugFromNote('开始改文件'), '开始改文件');  // 无文件名但仍是可用的兜底名
+    assert.equal(autoTaskSlugFromNote('在吗'), null);               // 纯寒暄 → 抽不出 → null
+  });
+
+  test('空/畸形输入不炸', () => {
+    assert.equal(autoTaskSlugFromNote(''), null);
+    assert.equal(autoTaskSlugFromNote(null), null);
+    assert.equal(autoTaskSlugFromNote('.'), null);
   });
 });
 

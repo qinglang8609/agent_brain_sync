@@ -833,27 +833,39 @@ describe('pi 扩展 自动登记 (hook 侧, 不靠 agent 自觉)', () => {
   // 空看板时 todo.md 不存在（abs init 不建空文件）—— 当空串处理，别 ENOENT。
   const todoOf = (proj) => fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8').catch(() => '');
 
-  test('收到有实质内容的指令 → 自动登记一条 [进行中]', async () => {
+  test('光下指令不登记；真改文件才登记（时机：真开工，不是一按回车）', async () => {
+    // 用户实报(2026-10-05): 一按回车就登记太早 —— 还在说/聊、需求没成型，
+    // 看板上就已经开出了任务。改为"第一次真改文件"才登记。
     const { proj, handlers, ctx } = await setupAuto();
     await handlers['before_agent_start'][0](
       { prompt: '修复插件加载失败的问题', systemPromptOptions: {} }, ctx);
     await settle();
-    const t = await todoOf(proj);
-    // id 现在是【关键词】（实报过 auto-01a10b96-372d-71 人认不出）；
-    // 会话 id 退成标记里的隐藏幂等键。
+    let t = await todoOf(proj);
+    assert.ok(!/auto-/.test(t), `光下指令不该登记:\n${t}`);
+
+    // 真改文件 → 此刻才登记（带用户指令抽关键词）
+    handlers['tool_call'][0]({ toolName: 'edit', input: { path: 'src/x.js' } }, ctx);
+    await settle();
+    t = await todoOf(proj);
+    // id 用【关键词】（实报过 auto-01a10b96-372d-71 人认不出）；会话 id 退成隐藏幂等键。
     assert.match(t, /\[进行中\] auto-修复插件加载失败/, `id 应是关键词:\n${t}`);
     assert.ok(!/auto-test-session/.test(t.split('—')[0]), 'id 不该用会话 id');
     assert.match(t, /自动登记 test-session-abc/, '会话 id 应作幂等键留在标记里');
   });
 
-  test('纯对话/寒暄不登记（不脏看板）', async () => {
+  test('纯对话/寒暄不登记；之后真改文件才登（此时按改文件那轮算）', async () => {
     const { proj, handlers, ctx } = await setupAuto();
     for (const p of ['在吗', '继续', 'abs']) {
       await handlers['before_agent_start'][0]({ prompt: p, systemPromptOptions: {} }, ctx);
     }
     await settle();
-    const t = await todoOf(proj);
-    assert.ok(!/auto-test-session/.test(t), `不该登记:\n${t}`);
+    let t = await todoOf(proj);
+    assert.ok(!/auto-/.test(t), `纯对话不该登记:\n${t}`);
+    // 寒暄后真改文件 → 仍然登记（此时抽的是最后一轮的指令，寒暄抽不出就无 slug 描述）
+    handlers['tool_call'][0]({ toolName: 'edit', input: { path: 'a.js' } }, ctx);
+    await settle();
+    t = await todoOf(proj);
+    assert.match(t, /自动登记 test-session-abc/, `改文件后应登记:\n${t}`);
   });
 
   test('真正改文件时才记断点；只读命令不记', async () => {
@@ -861,12 +873,13 @@ describe('pi 扩展 自动登记 (hook 侧, 不靠 agent 自觉)', () => {
     await handlers['before_agent_start'][0](
       { prompt: '改一下插件的加载逻辑', systemPromptOptions: {} }, ctx);
     await settle();
-    // 只读(读文件 + 只读 bash) → 不该记
+    // 只读(读文件 + 只读 bash) → 既不该登记也不该记断点
     handlers['tool_call'][0]({ toolName: 'read', input: { path: 'README.md' } }, ctx);
     handlers['tool_call'][0]({ toolName: 'bash', input: { command: 'ls -la && git status' } }, ctx);
     await settle();
     let t = await todoOf(proj);
     assert.ok(!/断点/.test(t), `只读不该记断点:\n${t}`);
+    assert.ok(!/auto-/.test(t), `只读不该登记:\n${t}`);
     // 真写 → 该记
     handlers['tool_call'][0]({ toolName: 'edit', input: { path: 'hooks/abs.opencode.ts' } }, ctx);
     await settle();

@@ -1198,6 +1198,23 @@ export function autoTaskId(text) {
   return slug.length >= 2 ? slug : null;
 }
 
+/** 从断点文本提一个像样的 slug。
+ *
+ * 断点形如 `改了 src/store.js` / `本轮到 hooks/abs.pi.ts`；直接当 slug 会得到
+ * `改了`（首词）这种废名。这里取【文件名】当 slug —— 「改了哪个文件」比「改了」有意义。
+ */
+export function autoTaskSlugFromNote(note) {
+  const s = String(note || '').replace(/[\u200b\u200c\u200d\ufeff]/g, '');
+  // 文件路径优先（含 / 或 . 扩展名）
+  const m = s.match(/[\w./-]*[\w-]+\.[A-Za-z0-9]{1,8}/);
+  if (m) {
+    const base = m[0].split('/').pop().replace(/\.[A-Za-z0-9]{1,8}$/, '');
+    if (base && base.length >= 2) return `改 ${base}`;
+  }
+  // 退而求其次：抽到的关键词（可能为空）
+  return autoTaskId(s);
+}
+
 /** hook 自动登记: 一会话一条 + 断点更新。
  *
  * @param {object} o
@@ -1235,8 +1252,14 @@ export async function cmdAutoTask({ dir, session, prompt, note }) {
     return r?.changed ? `↳ ${existingId} 断点更新` : null;
   }
 
-  // 首次: 抽不出关键词就不登记
-  const slug = autoTaskId(prompt);
+  // 首次登记: 关键词优先从用户指令抽；抽不出（寒暄/提问/无指令）时用断点兜底。
+  //
+  // 为何 note 也能兜底（2026-10-05 时机改动后新增）：登记时机已挪到"第一次真改文件"，
+  // 那一刻【已经动过文件】就是最可靠的"这是件事"的证据 —— 此时因抽不出关键词而放弃，
+  // 等于用户寒暄两句后开始干活却什么都没记。用文件名当兜底 slug 比不登记有用。
+  // 兜底仅在【有断点】时启用 —— 断点的存在本身就意味着"刚动过文件"。
+  // 只有 prompt 而抽不出关键词（纯寒暄/提问、且没动文件）→ 依然不登记（用户实报的那个坑）。
+  const slug = autoTaskId(prompt) || (note ? autoTaskSlugFromNote(note) : null);
   if (!slug) return null;
   // id = 关键词（可读）；同 slug 已存在则加序号，避免两条不同活撞同一个 id。
   let id = `${AUTO_TASK_PREFIX}${slug}`;

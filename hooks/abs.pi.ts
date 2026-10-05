@@ -116,6 +116,10 @@ let autoTaskSeen = false
  *  只存文件名，不存内容 —— 断点是"记到哪"，不是快照。 */
 let lastTouchedFile = ''
 
+/** 最近一轮的用户指令原文。只用于「第一次真改文件时」抽任务关键词 ——
+ *  登记时机已从 before_agent_start 挪到 tool_call（用户实报：一按回车就登记太早）。 */
+let pendingPrompt = ''
+
 /** 最近一次渲染拿到的 tui 引用。hidePanel 用它请求重绘 —— 面板消失时动画
  *  定时器已停，没有别的重绘通道（见 hidePanel 的坑注解）。 */
 let lastTui: any = null
@@ -623,6 +627,7 @@ export default function absPiHook(pi: ExtensionAPI): void {
     // 新会话 = 重新登记：不重置则同进程的第二个会话永远不再落断点
     autoTaskSeen = false
     lastTouchedFile = ''
+    pendingPrompt = ''
     resetThrottle()
     // 本会话的随机昵称 —— 在这里抽一次（不是每帧抽，否则面板会疯狂闪）。
     // 每次 session_start（startup/reload/new/resume/fork）重抽 → “每次打开 pi 都是随机的”。
@@ -667,7 +672,13 @@ export default function absPiHook(pi: ExtensionAPI): void {
       const bp = file ? `改了 ${file.slice(0, 120)}` : '开始改文件'
       if (file) lastTouchedFile = file.slice(0, 120)
       const sid = sessionIdFor(ctx)
-      if (sid) spawnAutoTask(cwd, ['--session', sid, '--note', bp])
+      // 首次真改文件 = "真开工了" → 此刻才登记（带用户指令抽关键词）+ 落断点。
+      // 这是唯一登记入口：光说/说问/讨论都不登记（2026-10-05 用户实报时机太早）。
+      if (sid) {
+        const args = ['--session', sid, '--note', bp]
+        if (pendingPrompt) args.push('--prompt', pendingPrompt)
+        spawnAutoTask(cwd, args)
+      }
       logHook(`tool_call auto_task name=${name} sid=${sid || '-'}`).catch(() => {})
     }
   })
@@ -700,14 +711,10 @@ export default function absPiHook(pi: ExtensionAPI): void {
         const ok = injectTodoGuidelines(event?.systemPromptOptions)
         logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} cwd=${cwd}`).catch(() => {})
 
-        // 自动登记（2026-10-05）：有图谱 + 指令有实质内容 → 先把任务落到看板上。
-        // 抽不出关键词（"在吗"/"继续"）时 abs 侧会静默跳过 —— 宁可不登记也不脏看板。
-        // 一会话一条：同会话后续的 before_agent_start 会命中已有条目，只更新断点。
-        // ★ 位置必须在 no_brain 分支【之后】—— 放到里面等于"只有没图谱时才登记"，逻辑全反。
-        const sid = sessionIdFor(ctx)
-        if (sid && event?.prompt) {
-          spawnAutoTask(cwd, ['--session', sid, '--prompt', String(event.prompt).slice(0, 200)])
-        }
+        // 只【记住】本轮用户指令，不在这里登记（2026-10-05 用户实报时机太早）。
+        // 旧行为: 一按回车就登记 → 用户还在说/聊、需求没成型，看板上就已经开出了任务。
+        // 现在: 留到第一次真改文件时(tool_call)才登记，那时才算"真开工了"。
+        if (event?.prompt) pendingPrompt = String(event.prompt).slice(0, 200)
       } catch (e: any) {
         logHook(`before_agent_start error=${e?.message || 'unknown'}`).catch(() => {})
       }
