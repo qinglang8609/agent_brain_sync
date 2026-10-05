@@ -3,7 +3,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
-import { readRules, idOfPage, statusOfPage, supersededByOf, clip } from './store.js';
+import { readRules, idOfPage, statusOfPage, supersededByOf, clip, RULE_BODY_MAX } from './store.js';
 import { doneKindOf, doneDateOf, checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo.js';
 
 // ---------- 图谱遍历 ----------
@@ -342,9 +342,11 @@ async function checkFiles(vault, pages, indexLinks) {
     if (found && items.length > LINT_RULES_MAX) {
       issues.push(`RULES-PILED-UP: Rules 区 ${items.length} 条 > ${LINT_RULES_MAX}；把长条目提炼成概念页，这里只留一句话`);
     }
-    const longOnes = items.filter((l) => l.trim().length > 160);
+    // 单条长度：与 cmdRule 用同一个阈值（RULE_BODY_MAX）—— 写入侧和体检侧必须同标准，
+    // 否则「手工编辑绕过写入校验」的条目静默通过，而 lint 报 0 问题（假健康）。
+    const longOnes = items.filter((l) => l.trim().length > RULE_BODY_MAX);
     if (longOnes.length) {
-      issues.push(`RULES-TOO-LONG: Rules 区 ${longOnes.length} 条超 160 字符（如 "${clip(longOnes[0].trim(), 40)}"）；展开写进概念页，这里只留一句话（不带链接）`);
+      issues.push(`RULES-TOO-LONG: Rules 区 ${longOnes.length} 条超 ${RULE_BODY_MAX} 字（如 "${clip(longOnes[0].trim(), 40)}"，${longOnes[0].trim().length} 字）；展开写进概念页，这里只留一句话`);
     }
   }
   return issues;

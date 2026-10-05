@@ -523,6 +523,10 @@ async function sourcesCountSection(root) {
 /** index.md 的 `## Rules` 区名与上限。 */
 export const RULES_HEADING = '## Rules';
 export const RULES_MAX = 30; // 超过就 lint 报：它属于“被读到才有价值”的区，不能无界增长
+/** 单条上限（中文按字算）。2026-10-05 从 cmdRule 内联数字抽出：lint 也要查同一个值 ——
+ * 曾经只在「abs rule add」写入时校验，手工编辑 index.md 完全绕过，而 lint 只查条数不查长度
+ * → 89 字的条目静默通过，同一内容用 add 写反而被拒（两个口子标准不一致）。 */
+export const RULE_BODY_MAX = 42;
 
 
 /** 提取 index.md 里的 Rules 区条目（不含标题）。返回 { items:[行], body, found }。 */
@@ -575,8 +579,8 @@ export async function cmdRule({ dir, action, text }) {
   // 门槛：**纪律不是记事本**。Rules 是最前面的项目铁律，每条必须一眼扫完。
   // 2026-09-13 用户定：不带链接、不带解释、不写细节 —— 细节进概念页，Rules 只留结论。
   // 宽严：中文一字信息量大，按 40 字算（≈ 英文 80 字符的量）。实测现有 12 条最长 56 字符。
-  if (clean.length > 42) {
-    return `✗ 太长（${clean.length} > 42）—— Rules 是纪律不是记事本：\n`
+  if (clean.length > RULE_BODY_MAX) {
+    return `✗ 太长（${clean.length} > ${RULE_BODY_MAX}）—— Rules 是纪律不是记事本：\n`
       + `  每条要一眼扫完。细节/出处/例子 → 写进 concepts/ 概念页，这里只留一句话结论。`;
   }
   if (/\[\[|\]\]|https?:\/\//.test(clean)) {

@@ -1,6 +1,8 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] rule-preflight [[fanchao]] — 把「动手前先停」三问加进 Rules 第一位，让 abs_load 每次强制读到 (认领 2026-10-05)
+  ↳ 断点: 改到 src/lint.js 的 Rules 区检查，加单条 42 字校验；再想拦截机制
 ## Done
 
 ### 2026-10-05

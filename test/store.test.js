@@ -969,6 +969,20 @@ describe('根文件形状与标签白名单（2026-10-05 用户定：写死、�
     assert.ok(out.includes('不允许的小节'), `lint 应报出非法小节:\n${out}`);
   });
 
+  // ★ 对偶：写入侧与体检侧必须同标准。曾只查条数不查单条长度，
+  //   手工编辑绕过写入校验 → 89 字的条目静默通过，lint 报 0 问题（假健康）。
+  test('超长 Rule：写入被拒 + 存量 lint 能报（两侧同标准）', async () => {
+    const long = '动手前先停，自问三条：① 需求明确吗（不明确先问，别猜）② 登记 todo 了吗（要改文件就先 start）③ 怎么验证（跑什么、什么算过）。问完再改文件。';
+    // 侧一：写入必须拒
+    const r = await cmdRule({ dir: projectA, action: 'add', text: long });
+    assert.ok(/太长/.test(r), `写入侧应拒超长 Rule（${long.length} 字）: ${r}`);
+    // 侧二：手工写入的同一条，lint 必须能报（存量靠体检暴露）
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      `# 🗂 Graph Index\n\n## Rules\n- ${long}\n`, 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('RULES-TOO-LONG'), `lint 应报出超长 Rule（修前报 0 问题）:\n${out}`);
+  });
+
   test('index 条目 [[]] 形状（存量 []() 由 lint 报）', async () => {
     // 注：写入闸门只能校验「本次写入经过的区」，而 cmdRule 只动 Rules 区；
     // Concepts 区的存量脏行靠 lint 全文件扫出来（真库实测：一次报出 8 条）。
