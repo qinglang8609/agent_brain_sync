@@ -1,8 +1,8 @@
 ---
 tags: [entity, person]
 author: fanchao
-updated: 2026-09-12
-status: draft
+updated: 2026-10-05
+status: active
 ---
 
 # fanchao

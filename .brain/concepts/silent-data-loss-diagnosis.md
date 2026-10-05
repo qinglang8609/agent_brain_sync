@@ -73,4 +73,6 @@ WRITE 50d73b1 19 -> a55bfc4 19     ← ⚠ 19 → 19, 条数没增长！
 - [[host-plugin-silent-failure]] — 同属"静默失效"家族（不报错、无痕、靠猜必错）
 - [[self-triggering-hook-loop]] — 同为"守卫写错导致行为静默异常"
 - [[self-authored-evidence]] — 同族方法论：排查时不能用自己造的输入当证据（单假设→编输入→"实测"出假结论）
+- [[pi-extension-api-traps]] — 同族：API 字段值是基线而非真实（靠字段名猜必错，且无报错）
+- [[global-config-contaminates-projects]] — 同族：全局单值配置污染所有项目（症状在别处爆）
 - [[AgentBrainSync]] — 项目实体页
