@@ -879,7 +879,17 @@ export async function cmdWrapup({ dir }) {
 export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {}) {
   let root;
   try { root = await requireBrain(dir || process.cwd()); } catch { return '未找到 .brain/ 图谱。先在项目根运行: abs init'; }
-  const days = Math.max(1, Number(keepDays) || 3);
+  // 坑（2026-10-05 实测）：原写法 `Math.max(1, Number(keepDays) || 3)` 有两个问题 ——
+  //   ① JS falsy 陷阱：`0 || 3` 得 3，于是 `--keep-days 0` 被当成"没传值"，静默变成
+  //      保留 3 天（用户以为归档了全部，实际一条没动，且输出还理直气壮说"保留近 3 天"）。
+  //   ② `Math.max(1, ...)` 会静默把 0 抬成 1 —— 即使修好 ①，用户也不知道自己被改了。
+  // 改为：显式校验 + 明确报错。宁可让用户改参数，也不静默改写他的意图。
+  const rawDays = Number(keepDays);
+  if (!Number.isFinite(rawDays) || rawDays < 1 || !Number.isInteger(rawDays)) {
+    return `✗ --keep-days 需为 ≥1 的整数（收到 "${keepDays}"）\n`
+      + '  下限 1 天是为了不误删今天刚完成的记录；要清空 Done 请先确认后手动编辑 todo.md。';
+  }
+  const days = rawDays;
   const todoP = brainPath(root, 'todo.md');
   const raw = await fs.readFile(todoP, 'utf8').catch(() => '');
   if (!raw.trim()) return '（todo.md 为空）';

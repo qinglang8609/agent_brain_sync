@@ -449,6 +449,31 @@ describe('cli: argv 解析', () => {
     assert.ok(!r.stderr.includes('不认识多余参数'), `--keep-days 的值不得被当位置参数: ${r.stderr}`);
   });
 
+  // 坑（2026-10-05 实测）：原写法 `Math.max(1, Number(keepDays) || 3)` ——
+  //   JS falsy 陷阱让 `0 || 3` 得 3，于是 `--keep-days 0` 被当成"没传值"，
+  //   静默变成保留 3 天（用户以为归档了全部，实际一条没动）。
+  //   改为显式校验：非法值明确报错，不静默改写用户意图。
+  test('--keep-days 传 0 明确报错（不得静默当成"没传"）', async () => {
+    await run(['init', '--dir', proj]);
+    const r = await run(['todo', 'archive', '--keep-days', '0']);
+    assert.match(r.stdout + r.stderr, /≥1 的整数/, `应明确拒绝 0: ${r.stdout}${r.stderr}`);
+    assert.ok(!/保留近 3 天/.test(r.stdout), '不得静默落到默认 3 天');
+  });
+
+  test('--keep-days 非法值（负数/非数/小数）一律拒绝', async () => {
+    await run(['init', '--dir', proj]);
+    for (const v of ['-1', 'abc', '2.5']) {
+      const r = await run(['todo', 'archive', '--keep-days', v]);
+      assert.match(r.stdout + r.stderr, /≥1 的整数/, `"${v}" 应被拒绝`);
+    }
+  });
+
+  test('--keep-days 合法值照常工作（文案跟随参数）', async () => {
+    await run(['init', '--dir', proj]);
+    const r = await run(['todo', 'archive', '--keep-days', '5']);
+    assert.match(r.stdout, /保留近 5 天/, `文案应跟随参数: ${r.stdout}`);
+  });
+
   // help 结构（2026-09-16）：首次使用者打开终端要知道先输什么。
   // 原 help 从"读:"开始，19 个命令平铺 —— 新用户不知道从哪开始。
   test('help 常用四条，且四条都真存在 (或 --help 可用)', async () => {

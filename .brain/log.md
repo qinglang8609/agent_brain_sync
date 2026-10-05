@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-10-05 20:31] [[fanchao]] dev | 修 abs todo archive 的 keep-days 静默失效：原写法 Math.max(1, Number(keepDays) || 3) 踩 JS falsy 陷阱——0 || 3 得 3，于是 --keep-days 0 被当成『没传值』静默变成保留 3 天（用户以为归档全部实际一条没动）。改为显式校验，非法值（0/负数/非数/小数）一律明确报错不静默改写。全流程实测 abs todo 8 个子命令 + 11 组边界，另发现并修正该 bug
 ## [2026-10-05 20:22] [[fanchao]] dev | 移除 hook 自动登记（用户实报『卡顿』+『看板冒出大量 auto-TBD-xxx 待命名』）：① agent_end 每轮 spawn 一个 node 进程（autoTaskSeen 置位后守卫恒真，纯对话轮也起进程）② 占位条目直接写看板、用户不会去改名 → 比不登记更糟。教训不是参数没调好而是方向错：三次迭代都在让机器做需要理解的事（判断『这是件事』、起名字）。删掉 hook 三处 + CLI auto-task 命令 + store 实现 + 测试文件；保留两条有价值的产物：面板重绘修复、abs todo rename 通用能力。SKILL.md 改为『登记只能由你主动做』
 ## [2026-10-05 20:10] [[fanchao]] dev | 同日收尾：SKILL.md 补「hook 自动开 TBD 占位 → 看到就改名」的约定（原先功能做完了但 skill 没写，换会话的 agent 看到占位不知道怎么处理）。今天发 5 个版本（1.13.3→1.15.0），19 个 commit
 ## [2026-10-05 20:03] [[fanchao]] dev | 改自动登记命名为 TBD 占位制（用户实报『关键词还是不对，不能像 fix-skill-trigger 那样吗』）：机器抽用户话天生不可靠——实测抽出过『我已经重启测试一下』（开场白）和『本轮有改动』（hook 自己生成的断点文本，等于把机器的话当用户意图）。而 fix-skill-trigger 那种名字是理解『在干什么』之后起的，不是抽出来的。故分工：hook 只开 auto-TBD-<会话> 占位，真名由 abs todo rename 补。通则：让机器做它有信息的事，别让它猜它没有的信息

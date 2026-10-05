@@ -114,5 +114,6 @@ grep -c 'nudge' ~/.abs/log/hooks.log    # >0 → 真生效
 - [[teardown-automation]] — 收尾自动化的注入机制（本坑的发现场景）
 - [[abs-install-layout]] — 四宿主安装器与 hook 配置
 - [[skill-trigger-invisible-killers]] — skill 侧同构失效: 描述无触发词 / symlink 指向陈旧副本
+- [[falsy-or-eats-zero]] — 同族静默失效: `x || 默认值` 吃掉合法零值，用户以为参数生效了
 - [[hook-code-in-wrong-branch]] — 第四坑：代码插错分支（handler 跑了但新逻辑在错误路径里）
 - [[auto-todo-register-design]] — 用 hook 自动登记 todo 的设计约束（指引治不了的场景）

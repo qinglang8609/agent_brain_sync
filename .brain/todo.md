@@ -4,6 +4,7 @@
 ## Done
 
 ### 2026-10-05
+- [x] keepdays-silent-clamp [[fanchao]] — abs todo archive --keep-days 0 被静默改写成 1（Math.max(1,...)），用户不知道；且报错文案写死『保留近 3 天』与实际用的天数不符（两个 bug：静默失效 + 文案撒谎） — 显式校验替代静默改写；非法值明确报错；补 3 个 CLI 测试（含 0/负数/非数/小数） 【落地】 (完成 2026-10-05)
 - [x] remove-autotask-hook [[fanchao]] — 用户实报两点：①卡顿 ②看板冒出大量 auto-TBD-xxx — 待命名。根因：agent_end 每轮 spawn 一个 node 进程（agentEndSeen 置位后条件恒真）+ 占位条目直接写看板。改法：删掉 hook 自动登记（不 spawn、不写看板），只保留日志留痕；登记回到 agent 主动调 abs task — hook 自动登记整体移除（三处 spawn/写看板 + 死代码 + CLI 命令）；rename 作为通用能力保留 【落地】 (完成 2026-10-05)
 - [x] sweep-kills-adopted-task [[fanchao]] — rename 后 sweep 仍按『自动登记』标记认领，把已被人明确接管的任务扫成 done（结语+『自动登记未接管』= 状态失真）。实测复现。改法：rename 时去掉『自动登记 <sid>』标记（改名=接管，标记随之失效） — 随自动登记一起消失（sweep 已删，不再有认领误杀） 【否决】 (完成 2026-10-05)
 - [x] auto-TBD-01a10b96-372d-71 [[fanchao]] — 待命名 (自动登记 01a10b96-372d-71) — 占位条目清理：hook 自动登记已按用户要求移除（卡顿 + 刷屏） 【否决】 (完成 2026-10-05)
