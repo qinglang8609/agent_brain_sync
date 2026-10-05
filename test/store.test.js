@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 
 import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, upsertArchiveSection, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
+import { editFile } from '../src/lock.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
 
@@ -945,25 +946,30 @@ describe('cmdTask blocked + note (实时断点)', () => {
 });
 
 describe('根文件形状与标签白名单（2026-10-05 用户定：写死、不允许新增）', () => {
-  test('index 新标签被拒（只允许 6 个）', async () => {
+  // ★ 存量 vs 新增的分界（2026-10-05 真机实测定案）：
+  //   写入前就存在的脏行 → **不阻写入**（否则一条历史脏行就把整个库锁成只读，
+  //   实测真库 corp_agent 就因一条超长断点 + 8 条 []() 条目，连 abs rule add 都做不到），
+  //   改由 lint 报出；只有**本次写入引入**的违规才拒。
+  //   代价：「预先往文件里塞脏行」造不出拒绝场景 —— 那本身就是存量，放行是对的。
+  test('存量非法标签不阻写入（降级为 lint 报告）', async () => {
     await fs.writeFile(join(projectA, '.brain', 'index.md'),
       '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## 备忘\n- 乱加的东西\n', 'utf8');
-    await assert.rejects(
-      () => cmdRule({ dir: projectA, action: 'add', text: '乙' }),
-      /SECTIONS-NOT-ALLOWED|不允许的标签/,
-    );
+    const r = await cmdRule({ dir: projectA, action: 'add', text: '乙' });
+    assert.ok(r.includes('乙'), r); // 写入必须成功
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('SECTIONS-NOT-ALLOWED'), `lint 应报出非法标签:\n${out}`);
   });
 
-  test('todo 的 ### 只允许日期组 / Undated / Archived', async () => {
+  test('todo 的存量 ### 非法小节也不阻写入', async () => {
     await fs.writeFile(join(projectA, '.brain', 'todo.md'),
       '# 📋 Todo Board\n\n## Todo\n## Done\n### 备忘\n- 乱加\n', 'utf8');
-    await assert.rejects(
-      () => cmdTask({ dir: projectA, action: 'start', id: 'X1', note: 'x' }),
-      /不允许的小节/,
-    );
+    const r = await cmdTask({ dir: projectA, action: 'start', id: 'X1', note: 'x' });
+    assert.ok(r.includes('登记'), r);
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('不允许的小节'), `lint 应报出非法小节:\n${out}`);
   });
 
-  test('index 条目必须 [[]] 形状（[]() 被 lint 抓住）', async () => {
+  test('index 条目 [[]] 形状（存量 []() 由 lint 报）', async () => {
     // 注：写入闸门只能校验「本次写入经过的区」，而 cmdRule 只动 Rules 区；
     // Concepts 区的存量脏行靠 lint 全文件扫出来（真库实测：一次报出 8 条）。
     await fs.writeFile(join(projectA, '.brain', 'index.md'),
@@ -1004,6 +1010,35 @@ describe('根文件形状与标签白名单（2026-10-05 用户定：写死、�
     await assert.rejects(
       () => cmdLog({ dir: projectA, title: 'x', kind: 'test' }),
       /kind 只能是/,
+    );
+  });
+
+  // ★ 关键对偶：存量放行 ≠ 什么都不拦。本次写入引入的违规必须被拒。
+  //   这三个用例走真实写入路径（不是预置脏文件），所以 prev == 写入前原文，
+  //   违规行不在 prev 里 → 属于「新引入」→ 拒。
+  test('本次写入引入的超长断点被拒', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'NEW-A', note: '做A' });
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'note', id: 'NEW-A', note: '报告'.repeat(120) }),
+      /断点太长/,
+    );
+  });
+
+  test('本次写入引入的报告体断点被拒', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'NEW-B', note: '做B' });
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'note', id: 'NEW-B', note: '① 先做X ② 再做Y ③ 最后做Z' }),
+      /报告\/清单/,
+    );
+  });
+
+  test('本次写入引入的脏条目被拒（走 editFile 闸门直写）', async () => {
+    const p = brainPath(projectA, 'index.md');
+    const before = await fs.readFile(p, 'utf8');
+    const bad = before.replace('## Concepts', '## Concepts\n- 没有方括号的裸条目');
+    await assert.rejects(
+      () => editFile(p, () => ({ text: bad })),
+      /应以 `- \[\[页名\]\] …` 开头/,
     );
   });
 });
@@ -2298,17 +2333,17 @@ describe('写入侧格式闸门: index/todo/log 每次写入都校验', () => {
     assert.match(out, /^- \[ \] \[进行中\] x1/m, out);
   });
 
-  test('index.md: 条目之间的空行 → 拒绝写入（2026-10-05 用户定：绝对不允许乱空行）', async () => {
-    const bad = '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n- 乙\n\n## Concepts\n- [[a]] — 页a\n\n- [[b]] — 页b\n';
-    await fs.writeFile(join(projectA, '.brain', 'index.md'), bad, 'utf8');
-    // 旧行为是「自动删空行」（默默改盘）—— 改为直接拒：写的人下次会写对，
-    // 而不是被机器静默修正（静默修正会让人永远学不会格式）。
-    await assert.rejects(
-      () => cmdRule({ dir: projectA, action: 'add', text: '新规则一句' }),
-      /（不）?允许条目之间的空行|条目之间不允许空行|STRAY-BLANK/,
-    );
-    const after = await readP('index.md');
-    assert.equal(after, bad, '被拒的写入不该留下任何改动');
+  test('index.md: 条目之间的空行被自动清除（存量升级，不阻写入）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n- 乙\n\n## Concepts\n- [[a]] — 页a\n\n- [[b]] — 页b\n', 'utf8');
+    // 空行不携带信息 → 直接清掉（而不是拒绝）。
+    // 为何空行与其它违规区别对待：超长断点/[]() 条目截断或改格式会丢/改语义，
+    // 只能拒；空行删了不丢任何东西，可以安全自动升级。
+    await cmdRule({ dir: projectA, action: 'add', text: '新规则一句' });
+    const out = await readP('index.md');
+    assert.ok(!/\n\n- /.test(out), `条目之间不应留空行: ${JSON.stringify(out)}`);
+    const rules = out.split('## Rules')[1].split('## Concepts')[0];
+    assert.equal(rules.split('\n').filter((l) => l.startsWith('- ')).length, 3, rules);
   });
 
   test('index.md: 格式本已合规时，新条目落进正确分区', async () => {
@@ -2379,26 +2414,13 @@ describe('废弃分区: 删过的标准分区不再复活，人自加的分区�
     assert.ok(out.includes('乙规则'), `其它内容不该受影响: ${out}`);
   });
 
-  test('人自加的分区不再放行（2026-10-05 用户定：标签写死，不许新增）', async () => {
-    // 旧护栏是「非标准分区原样保留」（防丢人自加内容）；用户 2026-10-05 改为
-    // 「index 只许 6 个标签」—— 所以现在变成**拒绝写入并报错**。
-    // 变动背景：那条护栏让 AI 新加的 `## 备忘`/`## 计划` 永远合法，
-    // 而实测项目（corp_agent）里没人真的自加过 —— 护栏保护的是一个不存在的场景。
-    await fs.writeFile(join(projectA, '.brain', 'index.md'),
-      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## 备忘\n人自己加的区。\n- 一条备忘\n', 'utf8');
-    await assert.rejects(
-      () => cmdRule({ dir: projectA, action: 'add', text: '乙规则' }),
-      /SECTIONS-NOT-ALLOWED|格式不合规/,
-      '非法标签应拒绝写入',
-    );
-  });
-
-  test('非法标签被拒后，内容一字不改（不半途写盘）', async () => {
+  test('存量非法标签不阻写入且内容不被改（不半途写盘）', async () => {
     const bad = '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## 备忘\n- 一条备忘\n';
     await fs.writeFile(join(projectA, '.brain', 'index.md'), bad, 'utf8');
-    await assert.rejects(() => cmdRule({ dir: projectA, action: 'add', text: '乙规则' }));
+    await cmdRule({ dir: projectA, action: 'add', text: '乙规则' });
     const after = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
-    assert.equal(after, bad, '被拒的写入不应留下任何改动');
+    assert.ok(after.includes('一条备忘'), `存量内容不应丢: ${after}`);
+    assert.ok(after.includes('乙规则'), `新规则应写入: ${after}`);
   });
 });
 

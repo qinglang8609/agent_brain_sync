@@ -212,6 +212,27 @@ describe('cli: log 带参=写 / 无参=看', () => {
     assert.equal(r.code, 0, r.stderr);
     assert.ok(r.stdout.includes('完成一轮收尾'), r.stdout);
   });
+
+  // 回归（2026-10-05 本机实现实测）：`--kind` 未在 FLAG_SPEC 声明 → 静默被丢掉，
+  // 所有 log 全写成默认的 dev，而 cmdLog 的枚举校验看不见它。
+  test('log --kind 真的生效（不是被静默丢掉）', async () => {
+    await run(['init', '--dir', proj]);
+    for (const k of ['note', 'concept', 'ingest', 'dev']) {
+      const w = await run(['log', `测试${k}`, '--kind', k, '--dir', proj]);
+      assert.equal(w.code, 0, w.stderr);
+    }
+    const log = await fs.readFile(join(proj, '.brain', 'log.md'), 'utf8');
+    for (const k of ['note', 'concept', 'ingest', 'dev']) {
+      assert.ok(log.includes(`]] ${k} | 测试${k}`), `kind=${k} 应写进 log:\n${log}`);
+    }
+  });
+
+  test('log --kind 非枚举值时非零退出', async () => {
+    await run(['init', '--dir', proj]);
+    const w = await run(['log', '乱写', '--kind', '乱写', '--dir', proj]);
+    assert.equal(w.code, 1, `应非零退出: ${JSON.stringify(w)}`);
+    assert.ok(/kind 只能是/.test(w.stderr), w.stderr);
+  });
 });
 
 // ---------- 未知命令 ----------

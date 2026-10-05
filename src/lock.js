@@ -76,7 +76,7 @@ export async function editFile(file, mutator, { maxWaitMs = LOCK_MAX_WAIT_MS } =
     let write = typeof res === 'string' ? res : res && typeof res.text === 'string' ? res.text : null;
     // 格式闸门：所有写 index/todo/log 的路径（CLI/MCP/hook 共 ~15 处）都在此收口，
     // 不必逐个改调用点 —— 破坏格式的写入在这里被整理回标准形态（见 todo.js）。
-    if (write && formatGate) write = formatGate(file, write) ?? write;
+    if (write && formatGate) write = formatGate(file, write, current) ?? write;
     if (write && write !== current) {
       await fs.writeFile(file, write, 'utf8');
     }

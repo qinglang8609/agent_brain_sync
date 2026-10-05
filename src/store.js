@@ -123,11 +123,11 @@ const legacyRenames = () => LEGACY_MARKS;
 /** 注册写入侧格式闸门：lock.js 的 editFile 是所有写入的唯一收口，
  * 这里把「哪个文件名用哪套标准」告诉它 —— 三个目标文件之外的写入一律放行。
  * 直接 mutate 传入的 text 再返回；非目标文件返回 null 表示不管。 */
-setFormatGate((file, text) => {
+setFormatGate((file, text, current) => {
   const name = file.split('/').pop();
   const spec = BRAIN_SHAPE[name];
   if (!spec) return null;
-  const r = enforceBrainFormat(text, { ...spec, renames: legacyRenames() });
+  const r = enforceBrainFormat(text, { ...spec, renames: legacyRenames() }, current);
   return name === 'todo.md'
     ? r.text.split('\n').map((l) => (l.startsWith('- [ ] ') ? ensureStateMark(l, '进行中') : l)).join('\n')
     : r.text;

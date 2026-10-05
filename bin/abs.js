@@ -88,6 +88,10 @@ const FLAG_SPEC = {
   'title': { type: 'string' },
   'desc': { type: 'string' },
   'state': { type: 'string' },
+  // log 流水类型：note|dev|concept|ingest（cmdLog 会校枚举，非枚举直接报错）。
+  // ★ 漏声明就是真 bug（2026-10-05 本机实测）：不在 FLAG_SPEC 的选项会被静默丢掉，
+  //   于是 `abs log "x" --kind note` 全写成默认的 dev，而 cmdLog 的枚举校验看不见它。
+  'kind': { type: 'string' },
   'by': { type: 'string' },
   'all': { type: 'boolean' },
   'keep-days': { type: 'string' },
@@ -407,7 +411,7 @@ async function main() {
       case 'log': {
         // 无参=查看 log.md；带参=追加一行 (用户/AI 主动记; hook 生命周期事件走技术日志 hooks.log, 不经这里)
         if (opts._.length) {
-          console.log(await cmdLog({ dir: opts.dir, title: opts._.join(' ') }));
+          console.log(await cmdLog({ dir: opts.dir, title: opts._.join(' '), kind: opts.kind }));
         } else {
           console.log(await cmdShow({ dir: opts.dir, view: 'log' }));
         }

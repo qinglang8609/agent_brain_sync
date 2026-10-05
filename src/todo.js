@@ -467,6 +467,34 @@ export function dropRetiredSections(text) {
 // 注意：**超长一律抛错，不静默截断**。截断会丢数据且无声 —— 正是要防的那种失效。
 export const BREAKPOINT_MAX = 200;
 export const TASK_LINE_MAX = 400;
+
+/** 一行的「违规签名」：去空白、截前 120 字。
+ *  用途：比对「这条违规是不是写入前就有的」——新增的拒，存量的放。
+ *  不按行号比对：插入一行会让后面所有行号位移，按行号会误判。 */
+function sigOfLine(l) {
+  return String(l).replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+/** 把一份文本里所有「违规行」的签名收成集合（供存量/新增比对）。
+ *  只有三个根文件用得上；非目标文件直接返回空集。
+ *  ★ 空行特殊：签名取「上下两行拼接」不可靠 —— 插入一行就会让空行的
+ *   相邻行变样，导致存量空行被当成新引入（实测：cmdNote 插一行后，
+ *   同一处空行的签名就对不上了）。所以空行只记一个存在标记：
+ *   入库前就有「条目间空行」这个毛病 → 后续写入全放行（lint 报）。 */
+export function violationSignatures(text) {
+  const set = new Set();
+  const lines = String(text ?? '').split('\n');
+  for (const l of lines) set.add(sigOfLine(l));
+  const isEntry = (l) => /^-\s/.test(l) || /^#{1,3}\s+\[/.test(l);
+  for (let i = 1; i < lines.length - 1; i++) {
+    if (lines[i].trim()) continue;
+    if (isEntry(lines[i - 1]) && isEntry(lines[i + 1])) {
+      set.add('HAS-STRAY-BLANK');
+      break;
+    }
+  }
+  return set;
+}
 /** 断点里出现这些 = 明显是在塞报告（列表/代码块/表格）。 */
 const REPORT_MARKERS = [
   /^\s{0,4}[-*]\s+\S/m, // 列表项
@@ -491,7 +519,7 @@ function sentenceCount(s) {
  *  但那是**默默改盘** —— 写进去的东西被改了而 AI 不知道，下次又写一遍。
  *  现在直接报错，让写入方自己写对。
  *  允许的位置：H1 与首个标签之间、标签与首条目之间、区与区之间（排版需要）。 */
-export function assertNoStrayBlank(text, file) {
+export function assertNoStrayBlank(text, file, prevSig = null) {
   const lines = String(text ?? '').split('\n');
   const isEntry = (l) => /^-\s/.test(l) || /^#{1,3}\s+\[/.test(l);
   const isHeading = (l) => /^#{1,3}\s/.test(l);
@@ -513,6 +541,8 @@ export function assertNoStrayBlank(text, file) {
     if (isHeading(prev)) continue;
     // 两个条目之间（含「条目 → 空行 → 条目」）不允许
     if (isEntry(prev) && isEntry(next)) {
+      // 存量空行（写入前就有）→ 放行，交给 lint 报
+      if (prevSig !== null && prevSig.has('HAS-STRAY-BLANK')) continue;
       throw new Error(
         `✗ ${file} 不允许条目之间的空行（第 ${i + 1} 行）：\n` +
         `  上一行: ${prev.slice(0, 50)}\n` +
@@ -525,15 +555,17 @@ export function assertNoStrayBlank(text, file) {
 }
 
 /** 校验 todo 全文的条目内容。抛错 = 拒绝写入（不是修正）。 */
-export function assertTodoContent(text) {
+export function assertTodoContent(text, prevSig = null) {
   const lines = String(text ?? '').split('\n');
+  /** 存量行（写入前就存在）→ 放行，交给 lint 报。 */
+  const isLegacy = (l) => prevSig !== null && prevSig.has(sigOfLine(l));
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     const lineNo = i + 1;
     if (l.startsWith('## ')) continue;
     // 任务行
     if (isTaskLine(l)) {
-      if (l.length > TASK_LINE_MAX) {
+      if (l.length > TASK_LINE_MAX && !isLegacy(l)) {
         throw new Error(
           `✗ 任务行太长（第 ${lineNo} 行 ${l.length} 字 > ${TASK_LINE_MAX}）—— todo 只放「要做什么」，一句话。\n` +
           `  这么长的内容要么拆成多条任务，要么走 abs note（经验）/ abs log（流水）。\n` +
@@ -544,6 +576,7 @@ export function assertTodoContent(text) {
     }
     // 断点附属行
     if (l.trimStart().startsWith('↳ 断点:')) {
+      if (isLegacy(l)) continue; // 存量超长断点：不阻写入（lint 报）
       const body = l.trimStart().slice('↳ 断点:'.length).trim();
       if (body.length > BREAKPOINT_MAX) {
         throw new Error(
@@ -565,12 +598,45 @@ export function assertTodoContent(text) {
   return true;
 }
 
-export function enforceBrainFormat(text, spec) {
+/** 删掉「条目之间的空行」（条目前后紧贴才是标准形态）。
+ *  在 enforceBrainFormat 里跑两次：assertShape 前（清存量，否则存量空行会把写入全卡死）、
+ *  重建后（重排会新建邻接关系）。幂等 —— 第二次通常零改动。
+ *  为什么删而不是拒：空行不携带信息，删了不丢东西；而断点/条目形状带着内容，
+ *  没有安全的自动修法，只能拒并让人处理。 */
+function stripStrayBlanks(body, fixed) {
+  const lines = String(body).split('\n');
+  const kept = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.trim()) {
+      const prev = kept[kept.length - 1];
+      // 前瞻要跳过连续空行，否则「两个空行」里只有第一个被删（两个空行是常见形态，
+      // 首版留下一个 → 规则形同虚设）。
+      let j = i + 1;
+      while (j < lines.length && !lines[j].trim()) j++;
+      const next = lines[j];
+      if (prev !== undefined && next !== undefined && isLeafEntry(prev) && isLeafEntry(next)) {
+        fixed.push('删除条目之间的空行');
+        continue;
+      }
+    }
+    kept.push(l);
+  }
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '') + '\n';
+}
+
+export function enforceBrainFormat(text, spec, prev) {
   const src = String(text ?? '');
   if (!src.trim()) return { text: src, fixed: [] };
   // 内容闸门：形状归一之前先拒掉乱塞（超长断点/报告体），否则下面的 rebuild
   // 会把它当「人自加的正文」好好保留下来 —— 越规整越难发现。
-  if (spec?.h1 === '# 📋 Todo Board') assertTodoContent(src);
+  // ★ 存量宽容（2026-10-05 本机实测踩到）：只拒「本次写入新引入」的违规；
+  //   写入前就存在的违规放行（由 lint 报出）。
+  //   为什么：不做这个区分，库里只要有一条历史脏行，**所有写入全部失败** ——
+  //   实测真库（corp_agent）就因一条超长断点 + 8 条 `[]()` 条目，
+  //   连 `abs rule add` 都做不到，整个图谱变成只读。
+  const prevSig = prev == null ? null : violationSignatures(String(prev));
+  if (spec?.h1 === '# 📋 Todo Board') assertTodoContent(src, prevSig);
   // ★ 标签白名单闸门放在**旧标记归一之后**（见下面 legacy 段之后）——
   // 旧标签（`## Backlog` / `## Today / In Progress`）是**待迁移**的，不是非法新标签。
   // 首版把校验放在归一之前，把存量老文件全卡死（7 个测试红，2026-10-05 实测）。
@@ -579,7 +645,18 @@ export function enforceBrainFormat(text, spec) {
   const assertShape = (t) => {
     if (!fname || checked) return;
     checked = true;
-    const bad = checkFileShape(fname, t);
+    // ★ 空行：直接拒绝（用户 2026-10-05：「绝对不允许乱空行」）。
+    //   存量库里本来就有空行的，在**写入前**先被归一清除（见 enforceBrainFormat 尾部），
+    //   所以走到这里仍有空行 = 本次写入引入的 → 拒。
+    assertNoStrayBlank(t, fname);
+    // ★ 标签/条目形状：存量脏行放行（不因历史数据锁死库），新增的拒。
+    //   为什么这类要宽容而空行不要：超长断点/`[]()` 条目**没有安全的自动修法**
+    //   （截断会丢数据、改格式会改语义），只能报给人看；而空行删了不丢任何信息。
+    const tLines = t.split('\n');
+    const bad = checkFileShape(fname, t).filter(
+      (it) => it.code !== 'STRAY-BLANK-LINE' &&
+              !(prevSig !== null && prevSig.has(sigOfLine(tLines[it.line - 1] || ''))),
+    );
     if (bad.length) {
       throw new Error(
         `✗ ${fname} 格式不合规（写入被拒）：\n` +
@@ -587,8 +664,6 @@ export function enforceBrainFormat(text, spec) {
         `\n  出路：内容归入现有标签，或走对应入口（页 → concepts/ 等子目录 + index 登记；流水 → abs log；经验 → abs note）。`,
       );
     }
-    // 空行：直接在写入闸门拒（不只靠下面的自动清理）。
-    assertNoStrayBlank(t, fname);
   };
   const fixed = [];
   // 旧标记 → 标准标记（H1 与分区/分组标题）。与 store.js 的 LEGACY_MARKS 同源，
@@ -630,7 +705,13 @@ export function enforceBrainFormat(text, spec) {
     body = ls.join('\n');
   }
 
-  // ★ 白名单闸门在这里跑：旧格式已升级、旧标记已归一，剩下的非标准标签才是真的新标签。
+  // ★ 存量空行先清掉（2026-10-05）：必须跑在 assertShape **之前** ——
+  //   否则 assertShape 会看到存量空行而拒绝写入（实测把整个脏库锁成只读）。
+  //   删空行不丢任何信息，所以这里直接修，而不是报错。
+  body = stripStrayBlanks(body, fixed);
+
+  // ★ 白名单闸门在这里跑：旧格式已升级、旧标记已归一、存量空行已清，
+  //   剩下的违规才是真的本次引入。
   assertShape(body);
 
   // (3) 结构：先补 H1，再按标准重排分区。
@@ -645,26 +726,8 @@ export function enforceBrainFormat(text, spec) {
     body = r.text;
   }
 
-  // (2) 去条目间空行：只在「空行两侧都是条目行/标题行」时删，正文分段保留。
-  const lines = body.split('\n');
-  const kept = [];
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    if (!l.trim()) {
-      const prev = kept[kept.length - 1];
-      // 前瞻要跳过连续空行，否则「两个空行」里只有第一个被删（两个空行是常见形态，
-      // 首版留下一个 → 规则形同虚设）。
-      let j = i + 1;
-      while (j < lines.length && !lines[j].trim()) j++;
-      const next = lines[j];
-      if (prev !== undefined && next !== undefined && isLeafEntry(prev) && isLeafEntry(next)) {
-        fixed.push('删除条目之间的空行');
-        continue;
-      }
-    }
-    kept.push(l);
-  }
-  const out = kept.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '') + '\n';
+  // (2) 去条目间空行：同 stripStrayBlanks，但重建后再跑一次（重排会新建邻接关系）。
+  const out = stripStrayBlanks(body, fixed);
   return { text: out, fixed };
 }
 
