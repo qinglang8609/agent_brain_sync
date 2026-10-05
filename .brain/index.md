@@ -22,6 +22,7 @@
 - 体检输出必须按类型折叠计数，同类超限只报条数+样例
 
 ## Concepts
+- [[remind-vs-gate]] — todo 对齐两层：对齐（必做，让我看见）+ 门禁（兜底，漏了跑不掉）
 - [[naming-contract-and-judge-precision]] — 目录契约(一天一文件)+判据精度(看结构不看关键词/正则词边界陷阱)+存量迁移方法
 - [[feature-delete-not-patch]] — 触发频率错是设计错误不是实现错误：功能该删不该补（4 例实证 + YAGNI 判据）
 - [[borrowed-protocol-designs]] — 抄协议不抄依赖：manifest 分层/fallback 自救/id 抗改名（含不抄 uuid/哈希的理由）
@@ -65,6 +66,7 @@
 - [[validation-gate-on-shared-write-path]] — 共享写入路径加校验必须先问：存量有反例吗、能无损失自动修吗、值真传到校验点了吗
 - [[pi-extension-api-traps]] — 写 pi 扩展时的 API 陷阱：字段值是基线非真实、MCP 工具不进 active 表、宿主内部包不可 import
 - [[global-config-contaminates-projects]] — ~/.abs/config.json 的 user 是全局单值：一次手动设值会永久污染之后所有项目的作者标记
+- [[remind-vs-gate]] — 治「todo 不及时」12 次尝试的总结论：靠 LLM 记得的全失败，不做就过不去的全管用
 
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
