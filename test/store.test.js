@@ -2316,3 +2316,54 @@ describe('结构重建: H1 后恒有一个空行', () => {
     assert.ok(after.startsWith(before.slice(0, before.indexOf('## Entities'))), after);
   });
 });
+
+// ---------- log.md 写入不被闸门破坏（用户 2026-10-05 追问） ----------
+// 闸门跑在 log 的每次写入上，所以要钉住它【只整理排版、不动正文语义】。
+describe('格式闸门对 log.md 的写入无副作用', () => {
+  const readLog = () => fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
+
+  test('连写多条：条条完整、倒序、正文一字不改', async () => {
+    for (const t of ['甲成果含关键信息', '乙成果含关键信息', '丙成果含关键信息']) {
+      await cmdLog({ dir: projectA, title: t });
+    }
+    const out = await readLog();
+    // 排除模板占位行（它也以 `## [` 开头，是 init 留下的骨架，不是真条目）
+    const entries = out.split('\n').filter((l) => l.startsWith('## [') && !l.includes('YYYY-MM-DD'));
+    assert.equal(entries.length, 3, out);
+    // 倒序：最后写的在最前
+    assert.ok(entries[0].includes('丙成果'), out);
+    assert.ok(entries[2].includes('甲成果'), out);
+    // 正文逐字保留
+    for (const t of ['甲成果含关键信息', '乙成果含关键信息', '丙成果含关键信息']) {
+      assert.ok(out.includes(`dev | ${t}\n`) || out.includes(`dev | ${t}`), `「${t}」正文被改: ${out}`);
+    }
+  });
+
+  test('正文里带 ##/-/空行样内容不被当结构处理', async () => {
+    await cmdLog({ dir: projectA, title: '重构 ## Roadmap 区：已删除' });
+    const out = await readLog();
+    // 独立行才是分区；正文里出现 ## 不触发删除
+    assert.ok(out.includes('重构 ## Roadmap 区：已删除'), `正文被误删: ${out}`);
+    assert.equal(out.split('\n').filter((l) => l.trim() === '## Roadmap').length, 0, out);
+  });
+
+  test('note 走同一闸门：log 行与 source 页都在，正文完整', async () => {
+    const text = '经验条目：需要完整保留的长正文，确认闸门不截断不吞内容';
+    await cmdNote({ dir: projectA, text });
+    const out = await readLog();
+    assert.ok(out.includes(text), `note 正文被改: ${out}`);
+    const srcs = await fs.readdir(join(projectA, '.brain', 'sources'));
+    assert.equal(srcs.filter((f) => f.endsWith('.md')).length, 1, srcs.join(','));
+  });
+
+  test('幂等：已规范的 log 再写一条，旧条目一字不动', async () => {
+    await cmdLog({ dir: projectA, title: '第一条' });
+    const before = await readLog();
+    await cmdLog({ dir: projectA, title: '第二条' });
+    const after = await readLog();
+    // 旧条目原样保留（第二遍不再被重排/改动）
+    for (const line of before.split('\n').filter((l) => l.startsWith('## ['))) {
+      assert.ok(after.includes(line), `旧条目被改动: ${line}`);
+    }
+  });
+});
