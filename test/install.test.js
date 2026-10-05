@@ -414,25 +414,29 @@ describe('install opencode / pi', () => {
 
   // 回归: opencode 插件曾把 event 回调入参写成 ({ name }), 但官方 API 是 ({ event }) 且事件名在
   // event.type —— 导致 name 恒 undefined, 插件从未触发(0 条日志) 静默失效。
-  test('opencode 插件用正确的 event 回调签名与事件名 (event.type, 非 name)', async () => {
+  test('opencode 插件用事件的正确读取方式与事件名 (event.type, 非 name; v2 走 subscribe)', async () => {
     await run(['install', '--agent', 'opencode', '--yes']);
     const src = await fs.readFile(join(sandbox, 'opencode', 'plugins', 'abs.ts'), 'utf8');
-    assert.ok(/event:\s*async\s*\(\{\s*event\s*\}\)/.test(src), 'event 回调应解构 { event }');
+    // v2 契约: setup(api) 里 api.event.subscribe(fn), fn 直接收 event 对象(不解构 { event })
+    assert.ok(/api\.event\.subscribe\(/.test(src), 'v2 应通过 api.event.subscribe 订阅');
+    assert.ok(!/event:\s*async\s*\(\{\s*event\s*\}\)/.test(src), 'v1 的 return { event } 形态不得残留');
     assert.ok(!/event:\s*async\s*\(\{\s*name\s*\}\)/.test(src), '不得再用错误的 ({ name }) 签名');
     assert.ok(src.includes('event.type') || src.includes('event && event.type'), '应从 event.type 取事件名');
     assert.ok(!src.includes('"session.start"') && !src.includes('"session.end"'), 'opencode 事件名不是 session.start/end');
     assert.ok(src.includes('session.idle'), '应用 session.idle 作为每轮结束信号');
   });
 
-  // 回归: opencode 加载器取 default 导出; 用 export const 命名导出会被静默忽略
-  // (实际踩过: 签名/事件名都修对了, 但导出方式错 → 插件仍不加载, 日志恒 0 条)。
-  test('opencode 插件用 default 导出 (mod.default.server), 非命名导出', async () => {
+  // 回归: opencode 加载器取 default 导出; 用 export const 命名导出会被静默忽略。
+  // 2026-10-05: opencode v2 把插件契约从 { id, server } 改成 { id, setup } —— 旧写法会让
+  //   插件加载失败, TUI 报 "Plugin failed: .../plugins/abs.ts"。见 concept host-plugin-silent-failure。
+  test('opencode 插件用 default 导出 (mod.default.setup, v2 契约), 非命名导出', async () => {
     await run(['install', '--agent', 'opencode', '--yes']);
     const src = await fs.readFile(join(sandbox, 'opencode', 'plugins', 'abs.ts'), 'utf8');
-    assert.ok(/export default \{/.test(src), '应有 export default { id, server }');
-    assert.ok(/^\s*server,?\s*$/m.test(src), 'default 应挂 server 字段');
+    assert.ok(/export default \{/.test(src), '应有 export default { id, setup }');
+    assert.ok(/^\s*setup,?\s*$/m.test(src), 'default 应挂 setup 字段');
+    assert.ok(!/^\s*server,?\s*$/m.test(src), 'v1 的 server 字段不得残留');
     assert.ok(!/export const AbsPlugin/.test(src), '不得用命名导出(加载器取 default, 命名导出被忽略)');
-    assert.ok(/const server = async \(\{[^}]*directory[^}]*\}\)/.test(src), 'server 应接收 { directory }');
+    assert.ok(/const setup = async \(api\)/.test(src), 'v2 的 setup 应接收 api');
   });
 
   // 2026-09-18: 收尾注入已删除(同 pi 侧), 连同 tool.execute.after/wroteFiles/nudged/promptAsync。

@@ -4,6 +4,10 @@
 ## Done
 
 ### 2026-10-05
+- [x] fix-skill-trigger [[fanchao]] — skill 不自动触发: 两个杀手 —— description 是主题描述没写触发词(匹配不上), 且 ~/.agents 陈旧副本被 symlink 绕过 install 管理(读到的永远是旧文件); 另补 SKILL.md 总则的 abs 明确例外 — skill 触发修复完成: description 加触发词 + 总则加 abs 例外, 清除 symlink 指向的陈旧副本, 四宿主落点重装验证均新描述 【落地】 (完成 2026-10-05)
+  ↳ 断点: SKILL.md description 加 USE FOR abs 触发词 + 总则加 abs 明确例外; 删 .agents 孤儿副本 + 拆 pi symlink; 四宿主落点重装验证均新描述; lint 0
+- [x] fix-opencode-v2-plugin [[fanchao]] — opencode v2 插件契约 {id,server}→{id,setup}: 插件报 'Plugin failed' 加载失败。改 hooks/abs.opencode.ts 模板 + 全局副本 + 宿主落点三处(改一份不算改, install 会覆盖); test 里 v1 契约断言同步迁移 — opencode v2 契约迁移完成: setup(api)+api.event.subscribe, 三处同步改(模板/全局副本/落点), 重启后加载失败 0 条, 448/448 全绿 【落地】 (完成 2026-10-05)
+  ↳ 断点: 改了 hooks/abs.opencode.ts + 全局副本 + 宿主落点(三处); test 两文件 v1 断言迁 v2; 验证: 重启后 failed to load 0 条 + 448/448 全绿
 - [x] verify-todo-guide [[fanchao]] — 验证 promptGuidelines 能否治 todo 不及时: 装扩展加静态 system prompt 指引(非插话), 重启后看 hooks.log 有无 before_agent_start todo_guide=on, 再观察动手前是否主动 abs_task start — pi 扩展用 before_agent_start 的 promptGuidelines 注入常驻指引（非插话），已装并验证 hooks.log 落痕 【落地】 (完成 2026-10-05)
   ↳ 断点: tool_call 置标记 + tool_execution_end 刷新 验证
 - [x] LINT-DEDUP [[fanchao]] — lint 同类问题折叠计数：102 条 LOG-ENTRY(存量旧 log 缺作者) 淹没其它 12 条真问题，体检退化成不可读。改法：lint 输出按问题类型折叠，同类超阈值(如 >10)只报「N 条同类 + 前 3 条样例 + 提示批量查看方式」 — lint 输出按错误码折叠：同类>10 只报前3条+计数，全量留 --all；真机 114行→14行 【落地】 (完成 2026-10-05)

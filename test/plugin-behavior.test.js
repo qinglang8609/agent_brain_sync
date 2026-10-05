@@ -5,7 +5,7 @@
 //   插件却从未触发。教训: "装上了" ≠ "加载了" ≠ "触发了", 必须真 import 生成的产物并驱动它。
 //
 // 本层直接 import 生成后的真实 .ts (Node 24 原生剥类型), 驱动真实事件序列, 断言:
-//   1. 导出契约可被宿主加载 (pi: default 是函数; op​encode: default.server 是函数)
+//   1. 导出契约可被宿主加载 (pi: default 是函数; opencode: default.setup 是函数, v2 契约)
 //   2. 注入条件正确 (只读不注入 / 写后注入一次 / 节流 / 今日已收尾不注入 / 无图谱不注入)
 //   3. 技术日志有真实落痕 (证伪"静默失效"的唯一硬证据)
 import { test, describe, beforeEach, afterEach } from 'node:test';
@@ -182,28 +182,49 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
 
 // ============================ op​encode ============================
 describe('op​encode 插件 行为级', () => {
+
+// opencode v2: setup(api) 里订阅事件, 不再返回 hooks 对象。
+// 测试沿用"拿到一个 dispatch(event) 函数"的写法, 这里做等价适配。
+async function ocDispatch(mod, { directory, logDir, injected } = {}) {
+  const handlers = [];
+  const api = {
+    event: { subscribe: (fn) => handlers.push(fn) },
+    location: { directory },
+    client: injected ? { session: { promptAsync: async (a) => injected.push(a) } } : undefined,
+  };
+  await mod.default.setup(api);
+  return (type) => handlers[0]({ type, properties: { sessionID: 's1' } });
+}
+
   async function loadOc(logDir) {
     await run(['install', '--agent', 'opencode', '--yes']);
     const p = join(sandbox, 'opencode', 'plugins', 'abs.ts');
     return importTsWithLog(p, logDir);
   }
 
-  test('导出契约: 有 default 且 default.server 是函数 (命名导出会被加载器忽略)', async () => {
+  test('导出契约: 有 default 且 default.setup 是函数 (opencode v2 契约)', async () => {
     const mod = await loadOc(join(sandbox, 'log'));
     assert.ok('default' in mod, '必须有 default 导出(加载器取 default)');
-    assert.equal(typeof mod.default.server, 'function', 'default.server 必须是函数');
+    // opencode v2 只认 { id, effect } 或 { id, setup }; v1 的 { id, server } 已移除,
+    // 用 server 会让插件加载失败并在 TUI 报 "Plugin failed"。
+    assert.equal(typeof mod.default.setup, 'function', 'default.setup 必须是函数(v2 契约)');
     assert.equal(mod.default.id, 'abs');
+    assert.equal(mod.default.server, undefined, 'v1 的 server 字段不得残留');
     assert.ok(!mod.AbsPlugin, '不应存在命名导出 AbsPlugin');
   });
 
   // 2026-09-18: 收尾注入已停用(用户实报「干活干一会就中断」), 连同 tool.execute.after
   // (唯一用途是给注入置 wroteFiles) 一起删除。插件现在只剩 event 一个钩子。
-  test('server 只返回 event 钩子(注入相关的 tool.execute.after 已删除)', async () => {
+  test('setup 只注册 event 订阅一个通道(注入相关的 tool.execute.after 已删除)', async () => {
     const mod = await loadOc(join(sandbox, 'log'));
     const proj = await makeProject('oc-hooks');
-    const hooks = await mod.default.server({ directory: proj });
-    assert.equal(typeof hooks.event, 'function');
-    assert.equal(hooks['tool.execute.after'], undefined, '已无消费方, 不得残留');
+    const handlers = [];
+    await mod.default.setup({
+      event: { subscribe: (fn) => handlers.push(fn) },
+      location: { directory: proj },
+    });
+    assert.equal(handlers.length, 1, '只应注册一个事件订阅');
+    assert.equal(typeof handlers[0], 'function');
   });
 
   test('任何事件都不得注入; session.idle 留 seen 痕; 事件名不得 undefined', async () => {
@@ -211,14 +232,11 @@ describe('op​encode 插件 行为级', () => {
     const mod = await loadOc(logDir);
     const proj = await makeProject('oc-write');
     const injected = [];
-    const hooks = await mod.default.server({
-      client: { session: { promptAsync: async (a) => injected.push(a) } },
-      directory: proj,
-    });
-    await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's1' } } });
-    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    await hooks.event({ event: { type: 'session.deleted', properties: { sessionID: 's1' } } });
+    const dispatch = await ocDispatch(mod, { directory: proj, injected });
+    await dispatch('session.created');
+    await dispatch('session.idle');
+    await dispatch('session.idle');
+    await dispatch('session.deleted');
     assert.equal(injected.length, 0, '不得再往对话里注入打断用户');
     const log = await hooksLog(logDir);
     assert.match(log, /session\.created/, 'session.created 应落痕');
@@ -231,11 +249,11 @@ describe('op​encode 插件 行为级', () => {
     const logDir = join(sandbox, 'log');
     const mod = await loadOc(logDir);
     const proj = await makeProject('oc-reset');
-    const hooks = await mod.default.server({ directory: proj });
-    await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's1' } } });
-    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's1' } } });
-    await hooks.event({ event: { type: 'session.created', properties: { sessionID: 's2' } } });
-    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's2' } } });
+    const dispatch = await ocDispatch(mod, { directory: proj });
+    await dispatch('session.created');
+    await dispatch('session.idle');
+    await dispatch('session.created');
+    await dispatch('session.idle');
     const log = await hooksLog(logDir);
     assert.equal((log.match(/session\.idle:seen/g) || []).length, 2, '每个会话各留一次 seen 痕');
   });

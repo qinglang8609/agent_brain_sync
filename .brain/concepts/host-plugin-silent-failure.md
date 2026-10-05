@@ -1,6 +1,6 @@
 ---
 tags: [concept, 宿主插件, 坑, 可观测性]
-updated: 2026-09-10
+updated: 2026-10-05
 status: active
 ---
 
@@ -38,9 +38,44 @@ export default { id: "abs", server }
 ```
 官方类型已明示：`PluginModule = { id?: string; server: Plugin; tui?: never }`。
 
+## 🔁 复发（2026-10-05）：宿主 API 升级后，坑 2 换了个形状回来
+
+op​encode 升到 **v2**，插件契约从 `{ id, server }`（server 返回 hooks 对象）
+改成 **`{ id, setup }`**（setup 收 api，用 `api.event.subscribe(fn)` 订阅）。
+旧写法报：
+
+```
+Plugin failed: /Users/fanchao/.config/opencode/plugins/abs.ts
+(日志) Plugin must export a default definition with an id and an effect or setup function.
+       Missing key at ["default"]["effect"] / ["default"]["setup"]
+```
+
+**为什么没早发现**：`test/install.test.js` 与 `test/plugin-behavior.test.js`
+两处测试**把 v1 契约写死成了断言**（`default.server 是函数`），于是 API 变了、
+测试还全绿 —— 断言锁定旧实现，等于给回归发了通行证。
+
+**修法**（三处必须同改，少一处就复发）：
+
+| # | 位置 | 说明 |
+|---|---|---|
+| ① | `<repo>/hooks/abs.opencode.ts` | 模板源头 |
+| ② | `$(npm root -g)/@fanchao8609/agent_brain_sync/hooks/` | `abs install` 实际读的那份（[[deploy-artifact-copies]] 的第四份） |
+| ③ | `~/.config/opencode/plugins/abs.ts` | 宿主落点 |
+
+**最阴的一刀**：只改 ③ 不改 ①② ，下次 `abs install` 会用旧模板**静默覆盖**掉宿主落点。
+本次就是这样先修好、又被 install 冲掉、复发一轮。
+
+**验证**：op​encode 侧不看语法，看服务端日志有没有 `failed to load plugin`：
+```bash
+awk '/plugin reconciliation/{p=1} p' ~/.local/share/opencode/log/opencode.log | grep -c "failed to load plugin"   # 0 = 好
+```
+（重启 `opencode service restart` 才会重新加载；watcher 只盯文件变更。）
+
+
 ## 纪律
 
-1. **按官方 `.d.ts` 实核**，不凭印象写插件 API。
+1. **按官方 `.d.ts` 实核**，不凭印象写插件 API。**宿主大版本升级后必须重核一遍** ——
+   官方改了契约，己方代码不会自己知道（v2 的 `{id,setup}` 就吃掉了 v1 的 `{id,server}`）。
 2. **三层分开证**：文件在 → `default` 能 import 出 `server` → 日志有落痕。
    仅语法检查/契约检查会放过导出方式错误。
 3. **字符串断言不够**：`install.test.js` 只 grep 源码文本，于是坑 1 和坑 2 **两次全绿**。
@@ -78,3 +113,4 @@ grep -c 'nudge' ~/.abs/log/hooks.log    # >0 → 真生效
 ## 关联连接
 - [[teardown-automation]] — 收尾自动化的注入机制（本坑的发现场景）
 - [[abs-install-layout]] — 四宿主安装器与 hook 配置
+- [[skill-trigger-invisible-killers]] — skill 侧同构失效: 描述无触发词 / symlink 指向陈旧副本
