@@ -183,6 +183,125 @@ function trimBlank(arr) {
   return a;
 }
 
+/** 叶子条目行：log 的 `## [时间] …` 条目、todo/index 的 `- …` 行。
+ * 空行落在两个叶子条目之间 = 人为排版漂移，会随条目增长把文件撑成两倍行数。
+ * 注意（踩坑）：标题行不算 —— `## Done` 与 `### 日期` 之间的空行是分区排版，
+ * 删了会把 Done 区挤成一片（首版误删）。 */
+const isLeafEntry = (l) => /^- |^#{1,3}\s+\[/.test(l);
+
+/** 已废弃的标准分区（2026-10-05 用户定，白名单只一条）。
+ * `## Roadmap` 是 2026-09-13 用户亲手删的分区（`store.js` 注释写明原因：
+ * “AI 自己写的方向总结，会被 load 反复读到并带偏后续会话”）。
+ * 但 `rebuildStructure` 的规矩 3 是「非标准分区原样保留在末尾」——那条护栏是为了
+ * 防丢失人自加的区（如 `## 备忘`），机器不猜语义。结果是 Roadmap 被当成“人自加的区”
+ * 留了下来，而且 AI 每次重写 index 都能把它加回来：删一个分区的决策根本没生效。
+ * 所以这里单列一张白名单，只放**被正式删过的标准分区**——它们进闸门就被整段丢弃；
+ * 从没见过的（`## 备忘` 类）仍按护栏原样保留。不做通用机制，出现第二个再添。 */
+export const RETIRED_SECTIONS = ['## Roadmap'];
+
+/** 删除废弃分区的整段（标题到下一个同级/更高级标题前）。
+ * 返回 { text, removed:[区名] }；只按整行精确匹配标题，不碰正文。 */
+export function dropRetiredSections(text) {
+  const lines = String(text ?? '').split('\n');
+  const removed = [];
+  const out = [];
+  let dropping = false;
+  let dropLevel = 0;
+  for (const l of lines) {
+    const m = l.match(/^(#{2,3})\s+(.*)$/);
+    if (m) {
+      const title = `${m[1]} ${m[2].trim()}`;
+      if (RETIRED_SECTIONS.includes(title)) {
+        removed.push(title);
+        dropping = true;
+        dropLevel = m[1].length;
+        continue;
+      }
+      // 遇到同级或更高级的标题 = 废弃区结束
+      if (dropping && m[1].length <= dropLevel) dropping = false;
+    }
+    if (!dropping) out.push(l);
+  }
+  return { text: out.join('\n'), removed };
+}
+
+/** 写入侧格式闸门：三个文件在**每次写盘前**都过这里，不是只在 load 时修。
+ *
+ * 规则（用户 2026-10-05 定）：
+ *   1. 固定样式 — 标题/分区名必须逐字对标准，不符按 LEGACY_MARKS 归一；
+ *   2. 不允许空行 — 条目之间不留空行（正文段落内的空行保留）；
+ *   3. 结构固定 — 无 H1 的「无头文件」补回标准 H1，分区按标准顺序重排（rebuildStructure）。
+ *
+ * 入参 spec 与 checkBrainShape 的 BRAIN_SHAPE 同源（见 store.js）。
+ * log.md 无分区（order 为空）→ 只做 H1/归一/去空行，不重排条目顺序（时间倒序自带语义）。
+ * 返回 { text, fixed:[描述] }；fixed 为空 = 无需改盘。 */
+export function enforceBrainFormat(text, spec) {
+  const src = String(text ?? '');
+  if (!src.trim()) return { text: src, fixed: [] };
+  const fixed = [];
+  // 旧标记 → 标准标记（H1 与分区/分组标题）。与 store.js 的 LEGACY_MARKS 同源，
+  // 由调用方通过 spec.renames 注入（todo.js 不反向依赖 store.js）。
+
+  // (0) 废弃分区：被正式删过的标准分区（如 Roadmap）整段丢弃，不等 rebuildStructure
+  // 把它当“人自加的区”留到末尾 —— 否则删分区的决策每次都被 AI 重写覆盖回去。
+  const retired = dropRetiredSections(src);
+  if (retired.removed.length) {
+    fixed.push(`删除已废弃分区: ${retired.removed.join(', ')}`);
+  }
+  // (1) 样式：旧标题名先归一到标准（LOG 无分区、不走 rebuildStructure，这条是它的唯一归一者）。
+  let body = retired.text;
+  const renames = spec.renames || [];
+  if (renames.length) {
+    const ls = body.split('\n');
+    for (let i = 0; i < ls.length; i++) {
+      const t = ls[i].trim();
+      const hit = renames.find(([o]) => o === t);
+      if (hit && ls[i] !== hit[1]) { ls[i] = hit[1]; fixed.push(`${hit[0]} → ${hit[1]}`); }
+    }
+    body = ls.join('\n');
+  }
+
+  // (3) 结构：先补 H1，再按标准重排分区。
+  const hasH1 = body.split('\n').some((l) => l.trim().startsWith('# '));
+  if (!hasH1) {
+    body = [spec.h1, '', body.replace(/^\n+/, '')].join('\n');
+    fixed.push(`补回缺失的 H1: ${spec.h1}`);
+  }
+  if (spec.order?.length) {
+    const r = rebuildStructure(normalizeTodoIf(body, spec), spec);
+    if (r.changed.length) fixed.push(...r.changed);
+    body = r.text;
+  }
+
+  // (2) 去条目间空行：只在「空行两侧都是条目行/标题行」时删，正文分段保留。
+  const lines = body.split('\n');
+  const kept = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.trim()) {
+      const prev = kept[kept.length - 1];
+      // 前瞻要跳过连续空行，否则「两个空行」里只有第一个被删（两个空行是常见形态，
+      // 首版留下一个 → 规则形同虚设）。
+      let j = i + 1;
+      while (j < lines.length && !lines[j].trim()) j++;
+      const next = lines[j];
+      if (prev !== undefined && next !== undefined && isLeafEntry(prev) && isLeafEntry(next)) {
+        fixed.push('删除条目之间的空行');
+        continue;
+      }
+    }
+    kept.push(l);
+  }
+  const out = kept.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '') + '\n';
+  return { text: out, fixed };
+}
+
+/** todo.md 在重排前必须先走 normalizeTodo（知道旧的 Blocked → 滞留中 语义），
+ * 其余文件原样进（rebuildStructure 自带旧分区名归一）。 */
+function normalizeTodoIf(body, spec) {
+  return spec.h1 === '# 📋 Todo Board' && spec.order?.[0] === '## Todo' ? normalizeTodo(body) : body;
+}
+
 export function normalizeTodo(text) {
   const lines = text.split('\n');
   const has = (name) => lines.some((l) => l.trim() === `## ${name}`);

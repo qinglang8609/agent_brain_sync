@@ -617,17 +617,21 @@ describe('board/load/status', () => {
 
 
 
-  test('indexTemplate 不含 Roadmap（旧项目的 Roadmap 会被归为非标准分区留末尾）', async () => {
+  test('indexTemplate 不含 Roadmap；存量 Roadmap 被删除（2026-10-05 用户定：先搬内容再删区）', async () => {
     const t = indexTemplate();
     assert.ok(!t.includes('Roadmap'), `模板不应再有 Roadmap: ${t}`);
     assert.ok(t.includes('## Rules') && t.includes('## Concepts'), `模板分区应完整: ${t}`);
-    // 存量项目带 Roadmap：结构核对不得弄丢其正文
+    // 决策变更（2026-10-05）：原行为是「归为非标准分区留末尾」（护栏防丢失），
+    // 但结果是删分区的决策从未生效 —— AI 每次重写 index 都能把 Roadmap 加回来。
+    // 现改为：Roadmap 进废弃白名单，整段删除。前提是内容已先归位
+    // （实测 ~/.brain：范围约定→index 正文，herdr 同步项→实体页，归档计数→log）。
     await fs.writeFile(join(projectA, '.brain', 'index.md'),
       '# 🗂 Graph Index\n\n## Roadmap\n\n**已落地**：X。\n\n## Rules\n\n- 一条。\n', 'utf8');
     await checkBrainShape(projectA);
     const after = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
-    assert.ok(after.includes('**已落地**：X。'), `旧 Roadmap 正文不得丢: ${after}`);
-    assert.ok(after.includes('## Rules'), `标准分区保留: ${after}`);
+    assert.ok(!after.includes('## Roadmap'), `废弃分区该被删除: ${after}`);
+    assert.ok(!after.includes('**已落地**：X。'), `Roadmap 正文随之删除: ${after}`);
+    assert.ok(after.includes('## Rules') && after.includes('- 一条。'), `标准分区与正文保留: ${after}`);
   });
 
   test('rule add 门槛：纪律不是记事本（长度≤42 且不带链接）', async () => {
@@ -2153,5 +2157,135 @@ describe('SESSIONS-NAMING: 旧命名单独存在', () => {
       '---\ntags: [session-log, archive]\nupdated: 2026-09-28\nstatus: reviewed\n---\n# 全文归档\n', 'utf8');
     const out = await cmdLint({ dir: projectA });
     assert.ok(!/SESSIONS-(NAMING|SPLIT)[^\n]*2026-09-28/.test(out), `archive 应豁免: ${out}`);
+  });
+});
+
+// ---------- 写入侧格式闸门（2026-10-05 用户定） ----------
+// 三个入口文件 index.md / todo.md / log.md 在**每次写盘前**过格式校验：
+//   1 固定样式（标题/分区名逐字对标准，旧名归一）
+//   2 不允许空行（条目之间不留空行）
+//   3 结构固定、不允许无头（缺 H1 补回，分区按标准顺序重排）
+// 收口在 lock.js 的 editFile（所有写入的唯一通道），故 CLI/MCP/hook 三条路径共用同一条闸门。
+describe('写入侧格式闸门: index/todo/log 每次写入都校验', () => {
+  const readP = (f) => fs.readFile(join(projectA, '.brain', f), 'utf8');
+
+  test('log.md: 条目之间的空行被删（两个空行也是空行）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'log.md'),
+      '# 🗒 Activity Log\n\n## [2026-10-05 10:00] [[tester]] dev | 甲\n\n\n## [2026-10-05 10:01] [[tester]] dev | 乙\n', 'utf8');
+    await cmdLog({ dir: projectA, title: '丙' });
+    const out = await readP('log.md');
+    assert.ok(!/\n\n## \[/.test(out), `条目之间不该有空行: ${JSON.stringify(out)}`);
+    assert.ok(out.includes('甲') && out.includes('乙') && out.includes('丙'), out);
+  });
+
+  test('todo.md: 无头文件（缺 H1）写回时补回标准 H1', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'), '## Todo\n\n## Done\n', 'utf8');
+    await cmdTask({ dir: projectA, action: 'start', id: 'x1' });
+    const out = await readP('todo.md');
+    assert.ok(out.startsWith('# 📋 Todo Board'), out);
+    assert.match(out, /^- \[ \] \[进行中\] x1/m, out);
+  });
+
+  test('index.md: 条目之间的空行被删，且新条目落进正确分区', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n- 乙\n\n## Concepts\n- [[a]] — 页a\n\n- [[b]] — 页b\n', 'utf8');
+    await cmdRule({ dir: projectA, action: 'add', text: '新规则一句' });
+    const out = await readP('index.md');
+    assert.ok(!/\n\n- /.test(out), `条目之间不该有空行: ${JSON.stringify(out)}`);
+    const rules = out.split('## Rules')[1].split('## Concepts')[0];
+    assert.equal(rules.split('\n').filter((l) => l.startsWith('- ')).length, 3, rules);
+  });
+
+  test('正文段落之间的空行保留（闸门不吞人写的分段）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n第一段说明。\n\n第二段说明。\n\n## Rules\n- 甲\n', 'utf8');
+    await cmdRule({ dir: projectA, action: 'add', text: '乙规则' });
+    const out = await readP('index.md');
+    assert.match(out, /第一段说明。\n\n第二段说明。/, `分段被吞了: ${JSON.stringify(out)}`);
+  });
+
+  test('非目标页不受影响（concepts/ 页写入原样落盘）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'c1.md'),
+      '---\nid: c1\ntags: [concept]\n---\n\n# 标题\n\n正文第一段。\n\n正文第二段。\n', 'utf8');
+    await cmdSupersede({ dir: projectA, refs: ['c1'], by: 'c2' });
+    const out = await fs.readFile(join(projectA, '.brain', 'concepts', 'c1.md'), 'utf8');
+    assert.match(out, /正文第一段。\n\n正文第二段。/, `概念页不该被格式闸门改: ${out}`);
+  });
+});
+
+// ---------- log.md 只记成果，不记「命令副作用」 ----------
+describe('abs concept 不往 log.md 写流水', () => {
+  test('建页后 log.md 零新增（该页存在已由 index.md 承接）', async () => {
+    const logP = join(projectA, '.brain', 'log.md');
+    const before = await fs.readFile(logP, 'utf8');
+    const out = await cmdConcept({ dir: projectA, slug: 'no-log-line', title: '不写流水的页' });
+    assert.ok(out.includes('概念页骨架'), out);           // 页确实建了
+    assert.ok((await fs.readFile(logP, 'utf8')) === before, '建页不该在 log.md 留行');
+    // 而 index.md 该有它（存在性由 index 承接，不是丢失了记录）
+    assert.match(await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8'), /\[\[no-log-line\]\]/);
+  });
+
+  test('abs note 仍写 log（经验正文是真内容，砍了才是丢东西）', async () => {
+    const logP = join(projectA, '.brain', 'log.md');
+    const before = await fs.readFile(logP, 'utf8');
+    // 文本要唯一：cmdNote 的 60s 幂等按 includes 判重，与前面用例的文本撞了会被静默跳过。
+    const unique = 'note-keeps-log-line-唯一文本-7f3a';
+    await cmdNote({ dir: projectA, text: unique });
+    const after = await fs.readFile(logP, 'utf8');
+    // 按【条目数】判，不按行数：格式闸门会顺手删掉条目间的空行（文件行数可能反而变少）。
+    const entries = (t) => t.split('\n').filter((l) => l.startsWith('## [')).length;
+    assert.ok(entries(after) > entries(before), 'note 该留一条');
+    assert.match(after, new RegExp(unique));
+  });
+});
+
+// ---------- 废弃分区白名单（2026-10-05 用户定） ----------
+// ## Roadmap 是 2026-09-13 用户亲手删的分区，但 rebuildStructure 的「非标准分区原样保留」
+// 护栏把它当人自加的区留了下来 —— 删分区的决策从未生效，AI 每次重写 index 都能加回来。
+describe('废弃分区: 删过的标准分区不再复活，人自加的分区仍保留', () => {
+  const readIndex = () => fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+
+  test('index.md 里的 ## Roadmap 被整段删除（含其下条目）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## Concepts\n- [[a]] — 页a\n\n## Roadmap\n未来计划一段话。\n- 已落地的事\n', 'utf8');
+    await cmdRule({ dir: projectA, action: 'add', text: '乙规则' });
+    const out = await readIndex();
+    assert.ok(!out.includes('## Roadmap'), `Roadmap 该被删: ${out}`);
+    assert.ok(!out.includes('未来计划一段话'), `Roadmap 正文该随之删除: ${out}`);
+    assert.ok(out.includes('乙规则'), `其它内容不该受影响: ${out}`);
+  });
+
+  test('人自加的分区仍原样保留（护栏不动）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## 备忘\n人自己加的区，机器不猜语义。\n- 一条备忘\n', 'utf8');
+    await cmdRule({ dir: projectA, action: 'add', text: '乙规则' });
+    const out = await readIndex();
+    assert.ok(out.includes('## 备忘'), `自加分区不该被删: ${out}`);
+    assert.ok(out.includes('一条备忘'), `自加分区内容不该丢: ${out}`);
+  });
+});
+
+// ---------- 回归：旧 H1 经【写入侧】也要归一（2026-10-05 实测漏网） ----------
+// 坑：格式闸门初版只把 `## `/`### ` 开头的旧名传给 enforceBrainFormat，因为 H1 归一
+// 当时归 rebuildStructure 管。但 log.md 的 order 为空、根本不走 rebuildStructure ——
+// 于是「# 🗒 操作日志」成了唯一无人归一的路径，永不修正（todo/index 因走重排而正常，
+// 所以只测两者会漏掉这条）。
+describe('写入侧格式闸门: 旧 H1 归一（log 无分区，是唯一漏网路径）', () => {
+  test('log.md 旧 H1 在下次写入时归一，内容不丢', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'log.md'),
+      '# 🗒 操作日志\n\n## [2026-10-05 10:00] [[tester]] dev | 旧H1测试\n', 'utf8');
+    await cmdLog({ dir: projectA, title: '新条目' });
+    const out = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
+    assert.ok(out.startsWith('# 🗒 Activity Log'), `旧 H1 该归一: ${out.slice(0, 60)}`);
+    assert.ok(out.includes('旧H1测试'), `旧内容不该丢: ${out}`);
+  });
+
+  test('index.md 旧 H1 在下次写入时归一', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 图谱索引\n\n## Rules\n- 甲\n', 'utf8');
+    await cmdRule({ dir: projectA, action: 'add', text: '乙规则' });
+    const out = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(out.startsWith('# 🗂 Graph Index'), `旧 H1 该归一: ${out.slice(0, 60)}`);
+    assert.ok(out.includes('- 甲'), `旧内容不该丢: ${out}`);
   });
 });

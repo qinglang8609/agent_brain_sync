@@ -4,8 +4,8 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
 import { requireUser, atTag, getUser, placeholderWarn } from './userconfig.js';
-import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure } from './todo.js';
-import { editFile, SKIP } from './lock.js';
+import { stripStateMark, ensureStateMark, normalizeTodo, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure, enforceBrainFormat } from './todo.js';
+import { setFormatGate, editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 import { keywords, pickRelevant, renderRelevant, recentFiles, rankPage, topicStrength } from './relevant.js';
 import { impactOf } from './codegraph.js';
@@ -112,6 +112,26 @@ function resolveProjectDir(dir) {
   // 不带 --dir 全部变成裸栈崩溃。
   return resolve(dir || process.cwd());
 }
+
+/** 全套旧标记 → 标准标记（含 H1）。enforceBrainFormat 按整行精确匹配，
+ * 所以 H1 也得在表里 —— 曾经只传 `## `/`### ` 前缀的那部分，
+ * 因为 H1 归一当时归 rebuildStructure 管；但 log.md 的 order 为空、不走 rebuildStructure，
+ * 于是它的旧 H1 成了唯一没人归一的路径（实测「# 🗒 操作日志」永不修正）。
+ * 现在统一由 enforceBrainFormat 归一，表就给全套。 */
+const legacyRenames = () => LEGACY_MARKS;
+
+/** 注册写入侧格式闸门：lock.js 的 editFile 是所有写入的唯一收口，
+ * 这里把「哪个文件名用哪套标准」告诉它 —— 三个目标文件之外的写入一律放行。
+ * 直接 mutate 传入的 text 再返回；非目标文件返回 null 表示不管。 */
+setFormatGate((file, text) => {
+  const name = file.split('/').pop();
+  const spec = BRAIN_SHAPE[name];
+  if (!spec) return null;
+  const r = enforceBrainFormat(text, { ...spec, renames: legacyRenames() });
+  return name === 'todo.md'
+    ? r.text.split('\n').map((l) => (l.startsWith('- [ ] ') ? ensureStateMark(l, '进行中') : l)).join('\n')
+    : r.text;
+});
 
 export function indexTemplate() {
   // 同 todoTemplate：由 rebuildStructure 生成，模板 = 重排结果，不会来回抖。
@@ -220,27 +240,17 @@ export async function checkBrainShape(root) {
     let changed = [];
     await editFile(p, (cur) => {
       if (cur === null) return SKIP;
-      let next2 = cur;
-      if (spec.order.length) {
-        // todo.md 的四区 → 两区迁移**必须先走 normalizeTodo**：只有它知道
-        // `## Blocked` 区的任务该标 [滞留中]（语义信息），而 rebuildStructure 只按
-        // renames 改标题、看不到来源分区，只能一律给 [进行中]。
-        // 2026-09-13 实测坑：cmdLoad 先跑 checkBrainShape、后跑 readTodo，于是
-        // normalizeTodo 的 [滞留中] 映射在 load 路径上永远走不到 → 卡住的任务
-        // 被静默标成进行中，两条路径语义不一致。
-        const srcText = file === 'todo.md' ? normalizeTodo(cur) : cur;
-        const r0 = rebuildStructure(srcText, { ...spec, renames: LEGACY_MARKS.filter(([o]) => o.startsWith('## ') || o.startsWith('### ')) });
-        // 兜底：仍无状态标记的未完成任务补默认值（新格式文件本就有标记，此处不触发）。
-        next2 = file === 'todo.md'
-          ? r0.text.split('\n').map((l) => (l.startsWith('- [ ] ') ? ensureStateMark(l, '进行中') : l)).join('\n')
-          : r0.text;
-      } else {
-        next2 = fixMarks(cur, spec).text;
-      }
-      const r = { text: next2, changed: next2 === cur ? [] : ['结构按标准重排'] };
-      if (!r.changed.length) return SKIP;
-      changed = r.changed;
-      return { text: r.text };
+      // 格式闸门收口在一处（见 todo.js enforceBrainFormat）：样式/空行/无头 三条规则
+      // 与写入侧共用同一实现，写盘前顺手把破坏格式的部分整理回标准形态。
+      // 走 normalizeTodo 的语义（Blocked → [滞留中]）由 enforceBrainFormat 内部保证。
+      const r = enforceBrainFormat(cur, { ...spec, renames: legacyRenames() });
+      // 兜底：仍无状态标记的未完成任务补默认值（新格式文件本就有标记，此处不触发）。
+      const next2 = file === 'todo.md'
+        ? r.text.split('\n').map((l) => (l.startsWith('- [ ] ') ? ensureStateMark(l, '进行中') : l)).join('\n')
+        : r.text;
+      if (next2 === cur) return SKIP;
+      changed = r.fixed.length ? r.fixed : ['结构按标准重排'];
+      return { text: next2 };
     }).catch(() => {});
     if (changed.length) fixed.push(`${file}: ${changed.join('; ')}`);
     if (!knownH1) warn.push(`${file}: 标题非标准（读到 "${clip(l1, 24) || '(空)'}"）`);
@@ -1350,7 +1360,10 @@ export async function cmdConcept({ dir, slug, title, tags, desc }) {
   }
   const oneLine = String(desc || '').trim() || clip(head, 60);
   await registerInIndex(root, 'Concepts', name, oneLine);
-  await cmdLog({ dir: root, title: `新建概念页 ${name}`, kind: 'concept' });
+  // 不写 log.md（2026-10-05 用户定）：`新建概念页 x` 是**命令的副作用**不是成果 ——
+  // 38 字符、零信息量，且「该页存在」已由 registerInIndex 落在 index.md 的 Concepts 区
+  // （那是 index 的职责）。同件事落两处，且建 10 个页 = 10 行流水噪声自动重现，
+  // 靠事后清理治不了。故删掉这次调用，不加开关（没人需要读「某页被创建了」）。
   return `✓ 概念页骨架 → .brain/concepts/${name}.md ${atTag(who)}\n` +
     '  已给好四段位置；填完内容后：删掉 <!-- --> 占位、按需改 status: active、挂双链。\n' +
     '  尾部「## 验证」必须填（留空会被 abs lint 报 NO-TAIL）。';

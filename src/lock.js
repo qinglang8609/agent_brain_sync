@@ -8,6 +8,12 @@ import { join, dirname, basename } from 'node:path';
 export const SKIP = Symbol('editFile.skip');
 
 export class LockTimeout extends Error {}
+
+/** 写入侧格式闸门（由 todo.js 注入，避免循环依赖）。
+ * 对 .brain 的 index/todo/log 三个文件，写盘前统一过一遍格式校验。
+ * 返回 null = 该文件不归闸门管；否则返回整理后的 text。 */
+let formatGate = null;
+export function setFormatGate(fn) { formatGate = fn; }
 const LOCK_WAIT_BASE_MS = 15;  // 指数退避起始重试间隔
 const LOCK_WAIT_MAX_MS = 150;  // 指数退避上限
 // 抢锁总预算：排队等锁的进程须依次排完。多进程高并发(CLI/MCP/hook 同刻抢一文件)下,
@@ -67,7 +73,10 @@ export async function editFile(file, mutator, { maxWaitMs = LOCK_MAX_WAIT_MS } =
     try { current = await fs.readFile(file, 'utf8'); } catch { /* 尚无文件 */ }
     const res = await mutator(current);
     if (res === SKIP) return SKIP;
-    const write = typeof res === 'string' ? res : res && typeof res.text === 'string' ? res.text : null;
+    let write = typeof res === 'string' ? res : res && typeof res.text === 'string' ? res.text : null;
+    // 格式闸门：所有写 index/todo/log 的路径（CLI/MCP/hook 共 ~15 处）都在此收口，
+    // 不必逐个改调用点 —— 破坏格式的写入在这里被整理回标准形态（见 todo.js）。
+    if (write && formatGate) write = formatGate(file, write) ?? write;
     if (write && write !== current) {
       await fs.writeFile(file, write, 'utf8');
     }
