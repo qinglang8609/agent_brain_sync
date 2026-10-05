@@ -2,7 +2,6 @@
 .pi-glla/
 node_modules/
 backup-legacy-*/
-tmp-replace.mjs
 .codegraph/
 .omo/
 
