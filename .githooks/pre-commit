@@ -31,3 +31,35 @@ else
 fi
 
 echo "✓ pre-commit 通过"
+
+# ---------------------------------------------------------------------------
+# todo 对齐门（2026-10-05 用户要求验证）
+#
+# 为何加在这里：前 12 次尝试（自动登记 3 版 / 指引 3 版 / 注入提醒 2 版 /
+# 面板 / Rule / 每轮摆看板）全部失败 —— 共同点是「靠提醒」，而提醒会被忽略。
+# 唯一被证明有效的是**门禁**（不提交就发不出去，今晚跑了 4 次零抱怨）。
+#
+# 关键：**不猜「这是不是任务」**（auto-todo 三版的教训），只做
+# **客观对比**：这次提交里有没有代码，有没有 todo 变更。
+# 判断权仍在 LLM/人手里 —— 门禁只负责把这两件事摆在一起，逼一次显式决定。
+#
+# 逃生口：确有纯重构/纯测试不需要记的，加 --no-todo（或 ABS_NO_TODO=1）。
+# ---------------------------------------------------------------------------
+if [ -z "$ABS_NO_TODO" ]; then
+  STAGED=$(git diff --cached --name-only)
+  CODE_CHANGED=$(echo "$STAGED" | grep -cE '^(src/|bin/|hooks/)' || true)
+  TODO_CHANGED=$(echo "$STAGED" | grep -c '^\.brain/todo\.md' || true)
+  if [ "$CODE_CHANGED" -gt 0 ] && [ "$TODO_CHANGED" -eq 0 ]; then
+    echo ""
+    echo "⚠ 本次提交改了代码，但 .brain/todo.md 没动。"
+    echo "  问自己：这次改的算哪条任务？"
+    echo "    · 是某条的推进 → abs todo note <id> --note \"<到哪步>\""
+    echo "    · 是新任务       → abs todo add <id> --note \"<做什么>\""
+    echo "    · 做完了         → abs todo done <id> --as 落地 \"<结论>\""
+    echo "    · 确实不用记     → ABS_NO_TODO=1 git commit ...  （显式跳过）"
+    echo ""
+    echo "  （不阻塞 —— 机器不知道这是不是任务，只把两件事摆在一起）"
+    echo ""
+    # 不 exit 1：判断权在 LLM/人。只提示，但要看得见（空行隔开，不被其它输出淹没）。
+  fi
+fi
