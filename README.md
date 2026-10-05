@@ -125,7 +125,7 @@ abs update                                # 升级到最新版并刷新四宿主
 ```
 
 > `abs todo start` 与 `abs todo add` 等价（都登记任务）。
-> 旧版 `abs task ...` / `abs board` 已改名，会报错并提示新写法。
+> 旧版 `abs task ...` / `abs board` 已废，打它们会报「未知命令」并退出码 1。
 > `abs wrapup` / `abs teardown-check` 是 hook 内部命令，无需手动调用。
 > **作者名要填真的**：`tester` / `foo` / `aaa` 这类占位名会被拒 —— 因为 `{user}` 是全局单值，
 > 填错会污染之后所有项目的 `[[作者]]` 标记（`aaa` 这类堆字也拒，但 `oo`/`ee` 这种两字母缩写放行）。

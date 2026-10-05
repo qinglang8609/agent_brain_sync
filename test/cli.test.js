@@ -155,13 +155,15 @@ describe('cli: todo', () => {
     assert.ok(t.includes('EQ-B'), 'start 应仍可用');
   });
 
-  test('已改名命令 task/board 报错并提示新写法', async () => {
-    const r1 = await run(['task', 'start', 'X']);
-    assert.notEqual(r1.code, 0);
-    assert.ok(/已改名/.test(r1.stderr) && /abs todo/.test(r1.stderr), r1.stderr);
-    const r2 = await run(['board']);
-    assert.notEqual(r2.code, 0);
-    assert.ok(/abs todo/.test(r2.stderr), r2.stderr);
+  // 2026-10-05: 旧的 task/board 死别名已删（只报错不干活，维护成本白付）。
+  // 删后它们走未知命令分支 —— 同样报错+退出码 1，而且直接给帮助，信息更多。
+  test('废弃命令 task/board 走未知命令分支（报错 + 退出码非 0 + 给帮助）', async () => {
+    for (const c of ['task', 'board']) {
+      const r = await run([c]);
+      assert.notEqual(r.code, 0, `abs ${c} 应报错`);
+      assert.ok(/未知命令/.test(r.stderr), `${c}: ${r.stderr}`);
+      assert.ok(/abs todo/.test(r.stderr), `${c} 应给出正确写法: ${r.stderr}`);
+    }
   });
 
   // 回归: 只读命令以前静默吞掉多余参数

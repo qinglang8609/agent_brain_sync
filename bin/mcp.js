@@ -112,7 +112,7 @@ tool(
 
 tool(
   'abs_task',
-  '任务实时落盘（幂等键 = id）。start 登记进 Todo / note 补断点(改到哪文件哪行) / state 改状态 / done 完成归位 Done（done 时 note=结语文字，as=结语类型：落地|否决|仅方案）。',
+  '任务实时落盘（幂等键 = id）。start 登记进 Todo / note 补断点(改到哪文件哪行) / state 改状态 / done 完成归位 Done（done 时 note=结语文字，as=结语类型：落地|否决|仅方案）。必填: cwd, action, id。',
   {
     action: z.enum(['add', 'start', 'done', 'note', 'state']),
     id: z.string().describe('任务幂等键，如 TASK-xxx 或子任务名'),
@@ -131,7 +131,7 @@ tool(
 
 tool(
   'abs_resolve',
-  '按页面 id（或页面名 slug）反查文件路径。页改名后 id 不变，引用请用返回的路径/id。',
+  '按页面 id（或页面名 slug）反查文件路径。页改名后 id 不变，引用请用返回的路径/id。必填: cwd, refs（数组，一次可查多个）。',
   {
     cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
     refs: z.array(z.string()).min(1).describe('页面 id 或页面名，如 "file-write-locking"'),
@@ -151,7 +151,7 @@ tool(
 
 tool(
   'abs_supersede',
-  '标记一条经验/知识页已失效（被推翻），不删文件、保留历史。之后 abs_query 默认不再返回它。核实后发现仍有效可手动把 status 改回 active。',
+  '标记一条经验/知识页已失效（被推翻），不删文件、保留历史。之后 abs_query 默认不再返回它。核实后发现仍有效可手动把 status 改回 active。必填: cwd, refs（数组）。',
   {
     cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
     refs: z.array(z.string()).min(1).describe('页名或 id，如 "old-approach"'),
@@ -181,7 +181,7 @@ tool(
 
 tool(
   'abs_query',
-  '检索当前项目 .brain/ 知识页（多词 OR）：以前踩过什么坑、哪页记了 X。',
+  '检索当前项目 .brain/ 知识页（多词 OR）：以前踩过什么坑、哪页记了 X。必填: cwd, terms（数组，不是 query；可传多个词）。',
   { cwd: z.string().describe('项目根目录（.brain/ 所在处）'), terms: z.array(z.string()).min(1).describe('检索词'), include_superseded: z.boolean().optional().describe('true=连已标记失效的经验一起返回（默认隐藏）') },
   async ({ cwd, terms, include_superseded }) => {
     const root = await findBrainRoot(cwd || process.cwd());
@@ -233,7 +233,7 @@ tool(
 
 tool(
   'abs_note',
-  '经验实时暂存：把刚踩的坑/技巧/结论一句话落进 sources/（防 context 断了流失）。Teardown 时再提炼进 concepts/。',
+  '经验实时暂存：把刚踩的坑/技巧/结论一句话落进 sources/（防 context 断了流失）。Teardown 时再提炼进 concepts/。必填: cwd, text。',
   {
     cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
     text: z.string().min(1).describe('经验/坑/技巧一句话'),
@@ -248,7 +248,7 @@ tool(
 
 tool(
   'abs_concept',
-  '建概念页骨架（给写入定结构：触发场景/表现/解法/验证）。只给结构不给内容 —— 值不值得留、归哪页仍靠人判断。',
+  '建概念页骨架（给写入定结构：触发场景/表现/解法/验证）。只给结构不给内容 —— 值不值得留、归哪页仍靠人判断。必填: cwd, slug。',
   {
     cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
     slug: z.string().min(1).describe('文件名/slug，如 "docker-prisma-429"（命名即链接）'),

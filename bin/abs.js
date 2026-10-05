@@ -336,11 +336,9 @@ function rejectExtra(extra, fix) {
   throw new Error(`✗ 不认识多余参数 ${q}\n  正确用法: ${fix}`);
 }
 
-// 已改名/已废弃命令 → 新写法（报错而非静默，避免用户白跑一趟）
-const RENAMED = {
-  task: () => '命令已改名: abs task → abs todo\n  例: abs todo add <id> --note "…"  /  abs todo done <id>',
-  board: () => '命令已改名: abs board → abs todo',
-};
+// 已废弃命令 → 报错（而非静默）。曾用 RENAMED 表做"已改名"提示，
+// 2026-10-05 删掉 task/board 两条：未知命令分支本来就报错+退出码 1+打印帮助，
+// 别名不提供额外信息，只多一处要维护的文案。
 
 // task/todo 共用的子命令 → 归一化后的 action
 const TODO_ACTIONS = {
@@ -387,7 +385,6 @@ async function cmdConfig({ sub, value }) {
 async function main() {
   try {
     const opts = parseArgv(rest);
-    if (RENAMED[cmd]) throw new Error(RENAMED[cmd]());
     // 子命令级 --help: 有用法页的命令在此一处拦截（此前只在 install/uninstall 分支里判,
     // 其余命令的 --help 被忽略 —— 曾出现子命令 --help 直接执行动作、挂住终端）。
     if (opts.help && subUsage[cmd] && !(cmd === 'todo' && opts._.length)) {
