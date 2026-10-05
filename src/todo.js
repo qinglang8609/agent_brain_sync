@@ -161,10 +161,15 @@ export function rebuildStructure(text, spec) {
   // 空分区之间不插空行（否则每次首跑都会“把空行加进去”而写盘一次，
   // 而 load 是好读命令 —— 不该因纯排版差异去改文件）。
   // 有内容的第一个分区与前言之间保留一个空行（排版），其余紧凑。
+  // 但 H1 后必须恒有一个空行（2026-10-05 实测漏网）：前言为空且首个分区为空时
+  // （如 H1 缺失被补回、而 `## Rules` 还没条目），两个条件都不满足 → `# H1`
+  // 和 `## Rules` 直接相贴。首行是这个文件的门面，不容忍这种粘贴。
+  let first = true;
   for (const [idx, name] of spec.order.entries()) {
     const body = trimBlank(bucket.get(name) || []);
-    if (body.length || (idx === 0 && pre.length)) out.push('', name, ...body);
+    if (body.length || first) out.push('', name, ...body);
     else out.push(name);
+    first = false;
   }
   for (const e of extras) {
     const body = trimBlank(e.lines);

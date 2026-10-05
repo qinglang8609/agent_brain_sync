@@ -2289,3 +2289,30 @@ describe('写入侧格式闸门: 旧 H1 归一（log 无分区，是唯一漏网
     assert.ok(out.includes('- 甲'), `旧内容不该丢: ${out}`);
   });
 });
+
+// ---------- 回归：H1 后必须恒有空行（2026-10-05 实测漏网） ----------
+// 坑：rebuildStructure 原条件「有内容 或 (首个分区 且 有前言)」才 push 前导空行。
+// 当【前言为空】且【首个分区为空】时（H1 缺失被补回、而 ## Rules 还没条目），
+// 两个条件都不满足 → `# H1` 与 `## Rules` 直接相贴。首行是文件门面，不容忍。
+describe('结构重建: H1 后恒有一个空行', () => {
+  test('前言为空 + 首个分区为空（H1 补回场景）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '## Concepts\n- [[a]] — 甲\n', 'utf8');
+    await cmdConcept({ dir: projectA, slug: 'b', title: '页b' });   // 触发写盘
+    const out = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    const L = out.split('\n');
+    assert.equal(L[0], '# 🗂 Graph Index', out);
+    assert.equal(L[1], '', `H1 后该有空行: ${JSON.stringify(L.slice(0, 4))}`);
+    assert.equal(L[2], '## Rules', `空行后该是首个分区: ${JSON.stringify(L.slice(0, 4))}`);
+  });
+
+  test('幂等：已规范的产物再写一次不产生变更', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n\n## Concepts\n- [[a]] — 甲\n', 'utf8');
+    const before = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    await cmdConcept({ dir: projectA, slug: 'c', title: '页c' });
+    const after = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.match(after, /^# 🗂 Graph Index\n\n## Rules\n\n## Concepts\n/, `前导结构不该抖: ${after}`);
+    assert.ok(after.startsWith(before.slice(0, before.indexOf('## Entities'))), after);
+  });
+});
