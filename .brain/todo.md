@@ -4,6 +4,10 @@
 ## Done
 
 ### 2026-10-05
+- [x] fix-autotask-id [[fanchao]] — 自动登记两个缺陷: ①疑问句被当任务（'为什么任务是这个啊'被登了）②id 用会话 uuid 人认不出。改法: 疑问句不登记 + id 换成指令关键词, 会话 id 退为隐藏幂等键 — 疑问句过滤 + id 改关键词（会话 id 退为标记里的隐藏幂等键）；sweep 改按标记认领防误杀；测试 +疑问句用例 【落地】 (完成 2026-10-05)
+- [x] auto-01a10b96-372d-71 [[fanchao]] — 为什么任务是这个啊 (自动登记待命名) — 设计缺陷产物：疑问句被误登记 + id 用会话 uuid 认不出。已修为疑问句不登记 + id 用关键词 【否决】 (完成 2026-10-05)
+- [x] auto-01a10b96-372d-71 [[fanchao]] — 好的发版沉淀 (自动登记待命名) — 自动登记未接管，收尾清理 【仅方案】 (完成 2026-10-05)
+- [x] auto-task-register [[fanchao]] — pi 里 todo 总是不自动登记，导致中途换会话断点丢失。现有 promptGuidelines 指引已注入(414次有痕)但行为没变——指引假设 agent 已决定'要开一个任务'，而排查类工作没有清晰起点。改成 hook 自动登记：一会话一条 + 从用户指令抽 id + wrapup 自动收尾，默认开(ABS_AUTO_TASK=0 关) — 自动登记未接管，收尾清理 【仅方案】 (完成 2026-10-05)
 - [x] fix-skill-trigger [[fanchao]] — skill 不自动触发: 两个杀手 —— description 是主题描述没写触发词(匹配不上), 且 ~/.agents 陈旧副本被 symlink 绕过 install 管理(读到的永远是旧文件); 另补 SKILL.md 总则的 abs 明确例外 — skill 触发修复完成: description 加触发词 + 总则加 abs 例外, 清除 symlink 指向的陈旧副本, 四宿主落点重装验证均新描述 【落地】 (完成 2026-10-05)
   ↳ 断点: SKILL.md description 加 USE FOR abs 触发词 + 总则加 abs 明确例外; 删 .agents 孤儿副本 + 拆 pi symlink; 四宿主落点重装验证均新描述; lint 0
 - [x] fix-opencode-v2-plugin [[fanchao]] — opencode v2 插件契约 {id,server}→{id,setup}: 插件报 'Plugin failed' 加载失败。改 hooks/abs.opencode.ts 模板 + 全局副本 + 宿主落点三处(改一份不算改, install 会覆盖); test 里 v1 契约断言同步迁移 — opencode v2 契约迁移完成: setup(api)+api.event.subscribe, 三处同步改(模板/全局副本/落点), 重启后加载失败 0 条, 448/448 全绿 【落地】 (完成 2026-10-05)

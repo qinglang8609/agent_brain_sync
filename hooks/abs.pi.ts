@@ -18,7 +18,9 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
 
-const ABS_BIN = "@@ABS_BIN@@"
+// abs CLI 路径。安装时替换为 stableBinPath（全局优先），
+// 但允许 ABS_BIN_PATH 覆盖 —— 测试需隔离到沙盒副本，开发机也可能同时有多份。
+const ABS_BIN = process.env.ABS_BIN_PATH || "@@ABS_BIN@@"
 
 async function logHook(evt: string): Promise<void> {
   const dir = process.env.ABS_LOG_DIR || join(homedir(), ".abs", "log")
@@ -32,6 +34,51 @@ async function logHook(evt: string): Promise<void> {
 
 // 会话结束时快照当前项目滞留任务到 wrapup.log（detached fire-and-forget，wrapup 自身幂等去重不刷屏）。
 // cwd 用事件 ctx.cwd（当前项目），让 abs 在该目录定位 .brain/。
+
+/** 会话 id（作自动登记的幂等键，一会话一条）。取不到返回空串 —— 那时不登记，
+ *  因为空键会让每条指令都"首次"，看板被刷爆。 */
+function sessionIdFor(ctx: any): string {
+  try {
+    const id = ctx?.sessionManager?.getSessionId?.()
+    return String(id || '').replace(/[^\w-]/g, '').slice(0, 16)
+  } catch { return '' }
+}
+
+/** 调 abs auto-task（hook 自动登记）。detached fire-and-forget，不阻塞 turn。
+ *
+ * 为何走 spawn 而非 import：与 snapshotWrapup 同源 —— 扩展进程里不能阻塞用户 turn，
+ * 且 abs 的写入要经过它自己的文件锁（跨进程锁才有效）。 */
+function spawnAutoTask(cwd: string, args: string[]): void {
+  try {
+    const child = spawn(process.execPath, [ABS_BIN, "auto-task", ...args], {
+      cwd: cwd || process.cwd(), stdio: "ignore", detached: true,
+    })
+    child.unref()
+  } catch {} // fire-and-forget: 登记失败不得影响宿主
+}
+
+/** 会改文件的工具名。用于判定「真的开始干活了」—— 排查类会话先跑一堆读命令，
+ *  若用「第一次 tool_call」当判据，断点会被写在与任务无关的文件上。
+ *
+ * 为何含 bash：大量修改是经 bash 完成的（heredoc / sed -i / > 重定向），
+ * 漏掉它 = 纯 bash 会话永远不记断点（见 concept opencode-inject-channel-verdict
+ * 的同源教训：白名单必须按宿主实际用法穷举，漏一个就把功能静默关掉）。
+ */
+const WRITE_TOOL = /^(write|edit|apply_patch|patch|multiedit|notebookedit|bash|shell)$/i
+
+/** bash 命令里没有写入迹象则不算「干活」—— 否则 `ls`/`git status` 也会记断点。 */
+const BASH_WRITES = /(^|[^\w])(>|>>|sed\s+-i|tee\b|mkdir\b|rm\b|mv\b|cp\b|touch\b|cat\s*>)/
+
+/** 这次 tool_call 是否算「真的动了文件」。 */
+function isWriteCall(name: string, input: any): boolean {
+  if (!WRITE_TOOL.test(String(name || ''))) return false
+  // bash 要额外甄别：只有带写入操作的命令才算
+  if (/^(bash|shell)$/i.test(String(name || ''))) {
+    return BASH_WRITES.test(String(input?.command ?? ''))
+  }
+  return true
+}
+
 function snapshotWrapup(cwd: string): void {
   try {
     const child = spawn(process.execPath, [ABS_BIN, "wrapup"], {
@@ -60,6 +107,18 @@ let agentEndSeen = false
 /** “刚才调的是 todo 工具”标记 —— 由 tool_call 置位、tool_execution_end 消费。
  * 同样在模块级，理由同上（闭包 flag 在重复注册时不共享）。 */
 let pendingTodoTool = false
+
+/** 本会话是否已记过自动任务断点。模块级（重复注册时闭包 flag 不共享 —— 同 agentEndSeen 的坑）。
+ *  只记第一次写文件，不是每次都记：断点是「记到哪」不是流水账。 */
+let autoTaskSeen = false
+
+/** 本会话最后被写到的文件（agent_end 落断点用）。
+ *  只存文件名，不存内容 —— 断点是"记到哪"，不是快照。 */
+let lastTouchedFile = ''
+
+/** 最近一次渲染拿到的 tui 引用。hidePanel 用它请求重绘 —— 面板消失时动画
+ *  定时器已停，没有别的重绘通道（见 hidePanel 的坑注解）。 */
+let lastTui: any = null
 
 /** 会话边界重置埋点状态。
  *  不重置 → 同进程第二个会话继承 true 永久不留痕（2026-09-13 实测过的坑）。 */
@@ -502,15 +561,28 @@ export function renderPanelLines(
   if (data.hidden > 0) lines.push(clipToWidth(fg('dim', `  +${data.hidden} more`), width))
   return lines
 }
+/** 隐藏面板。**必须主动 requestRender** —— 否则数据清了、屏幕还留着旧画面。
+ *
+ * 坑(2026-10-05 用户实报): 任务全标完后面板不消失, 按 ESC 或重启才正常。
+ * 根因: 唯一的重绘入口是动画定时器里的 requestRender, 而"任务全完成"恰好让
+ *   needAnim=false → stopAnimTimer() → 从此没有任何人请求重绘 → 屏幕冻结在旧帧。
+ * 即"消失"这个动作本身把它自己的重绘通道关掉了。
+ * 故消失路径要自己 requestRender 一次。 */
+function hidePanel(ui: any): void {
+  try { ui.setWidget(PANEL_KEY, undefined) } catch {}
+  stopAnimTimer()
+  try { lastTui?.requestRender?.() } catch {}
+}
+
 async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
   if (String(process.env.ABS_TODO_PANEL || '') === '0') return
   if (!ui || typeof ui.setWidget !== 'function') return
   try {
-    if (!(await hasBrain(cwd))) { ui.setWidget(PANEL_KEY, undefined); stopAnimTimer(); return }
+    if (!(await hasBrain(cwd))) { hidePanel(ui); return }
     const md = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8')
     const who = await currentUser()
     const data = parseOpenTasks(md, PANEL_MAX_ROWS, who)
-    if (data.total === 0) { ui.setWidget(PANEL_KEY, undefined); stopAnimTimer(); return }
+    if (data.total === 0) { hidePanel(ui); return }
     // factory 形式：render(width) 每帧拿真实宽度 → 按宽度截断，不再断字。
     // 动画：phase 存在模块级，render 时读当前值；定时器只在本帧重绘，不重建 widget。
     let tuiRef: any = null
@@ -518,6 +590,7 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
       PANEL_KEY,
       (tui: any, theme: any) => {
         tuiRef = tui
+        lastTui = tui   // 供 hidePanel 在"无动画"时也能请求重绘
         return {
           render: (width: number) =>
             renderPanelLines(
@@ -538,8 +611,7 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
     if (needAnim) startAnimTimer(() => tuiRef)
     else stopAnimTimer()
   } catch {
-    try { ui.setWidget(PANEL_KEY, undefined) } catch {}
-    stopAnimTimer()
+    hidePanel(ui)
   }
 }
 
@@ -548,6 +620,9 @@ export default function absPiHook(pi: ExtensionAPI): void {
   resetThrottle()
 
   pi.on("session_start", (event: any, ctx: any) => {
+    // 新会话 = 重新登记：不重置则同进程的第二个会话永远不再落断点
+    autoTaskSeen = false
+    lastTouchedFile = ''
     resetThrottle()
     // 本会话的随机昵称 —— 在这里抽一次（不是每帧抽，否则面板会疯狂闪）。
     // 每次 session_start（startup/reload/new/resume/fork）重抽 → “每次打开 pi 都是随机的”。
@@ -574,7 +649,7 @@ export default function absPiHook(pi: ExtensionAPI): void {
   // 故：tool_call 认出“刚才调的是 todo 工具”→ 置标记；tool_execution_end 看到标记就刷 → 清标记。
   // 始终保留 turn_end 兜底（实测每条 assistant 消息都触发，约 4 秒一次）。
   // 标记在模块级（重复注册时闭包 flag 不共享 —— 见 agentEndSeen 的注解）。
-  pi.on("tool_call", (event: any) => {
+  pi.on("tool_call", (event: any, ctx: any) => {
     const name = String(event?.toolName || '')
     const input = event?.input || {}
     // 两种形态：① MCP 代理入口 mcp__abs + input.tool=abs_task；② 直接工具名 abs_task
@@ -582,6 +657,18 @@ export default function absPiHook(pi: ExtensionAPI): void {
     if (/abs_(task|board)/.test(name) || /abs_(task|board)/.test(target)) {
       pendingTodoTool = true
       logHook(`tool_call todo_tool name=${name} target=${target || '-'}`).catch(() => {})
+    }
+    // 自动登记断点（2026-10-05）：真的动文件时，把「改到哪个」记进本会话的自动任务。
+    // 为何不用「第一次 tool_call」：排查类会话先跑一堆读命令，断点会落在无关文件上。
+    if (!autoTaskSeen && isWriteCall(name, input)) {
+      autoTaskSeen = true
+      const cwd = (ctx && ctx.cwd) || process.cwd()
+      const file = String(input?.path ?? input?.file_path ?? input?.filePath ?? '')
+      const bp = file ? `改了 ${file.slice(0, 120)}` : '开始改文件'
+      if (file) lastTouchedFile = file.slice(0, 120)
+      const sid = sessionIdFor(ctx)
+      if (sid) spawnAutoTask(cwd, ['--session', sid, '--note', bp])
+      logHook(`tool_call auto_task name=${name} sid=${sid || '-'}`).catch(() => {})
     }
   })
 
@@ -612,6 +699,15 @@ export default function absPiHook(pi: ExtensionAPI): void {
         }
         const ok = injectTodoGuidelines(event?.systemPromptOptions)
         logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} cwd=${cwd}`).catch(() => {})
+
+        // 自动登记（2026-10-05）：有图谱 + 指令有实质内容 → 先把任务落到看板上。
+        // 抽不出关键词（"在吗"/"继续"）时 abs 侧会静默跳过 —— 宁可不登记也不脏看板。
+        // 一会话一条：同会话后续的 before_agent_start 会命中已有条目，只更新断点。
+        // ★ 位置必须在 no_brain 分支【之后】—— 放到里面等于"只有没图谱时才登记"，逻辑全反。
+        const sid = sessionIdFor(ctx)
+        if (sid && event?.prompt) {
+          spawnAutoTask(cwd, ['--session', sid, '--prompt', String(event.prompt).slice(0, 200)])
+        }
       } catch (e: any) {
         logHook(`before_agent_start error=${e?.message || 'unknown'}`).catch(() => {})
       }
@@ -626,11 +722,23 @@ export default function absPiHook(pi: ExtensionAPI): void {
   // 每项目弹，都还是在打断用户。故不再有 teardownNudged/inFlight/loggedToday 判据。
   // 只保留 agent_end:seen 埋点：区分「事件没触发」与「被守卫拦下」。
   pi.on("agent_end", async (_event: any, ctx: any) => {
-    if (agentEndSeen) return
-    agentEndSeen = true
     const cwd = (ctx && ctx.cwd) || process.cwd()
     const brain = await findBrain(cwd)
-    await logHook(`agent_end:seen cwd=${cwd} brain=${brain || 'none'}`).catch(() => {})
+    // 可观测性: 每会话首次留一行痕（区分"事件没触发"与"被守卫拦下"）。
+    if (!agentEndSeen) {
+      agentEndSeen = true
+      await logHook(`agent_end:seen cwd=${cwd} brain=${brain || 'none'}`).catch(() => {})
+    }
+    // 每轮结束落一次断点（2026-10-05）: 本会话若真动过文件, 把"干到哪"推进到最新。
+    // 为何只在动过文件后: 纯对话/查询轮不需要推进断点, 否则白 spawn 一堆进程。
+    // 为何不放在 session_shutdown: 那是进程退出, 而"一轮干完"才是自然的落盘点 ——
+    //   用户可能一直开着 pi 跨很多轮, 断点必须活着的时候就已经是最新的。
+    if (!brain || !autoTaskSeen) return
+    const sid = sessionIdFor(ctx)
+    if (!sid) return
+    const last = lastTouchedFile
+    spawnAutoTask(cwd, ['--session', sid, '--note', last ? `本轮到 ${last}` : '本轮有改动'])
+    logHook(`agent_end auto_task breakpoint sid=${sid}`).catch(() => {})
   })
 
   pi.on("session_shutdown", (_e: any, ctx: any) => {

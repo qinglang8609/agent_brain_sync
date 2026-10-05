@@ -1162,6 +1162,127 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
   throw new Error(`unknown task action: ${action}`);
 }
 
+// ---------- 自动登记（hook 专用，2026-10-05） ----------
+// 背景: pi 的 promptGuidelines 常驻指引已注入(实检 414 次有痕), 但行为没变 ——
+//   指引假设 agent 已决定"要开一个任务", 而排查类工作没有清晰起点("我先看看怎么回事"
+//   看明白了活儿已经干完一半)。故改为 hook 侧自动登记, 不靠 agent 自觉。
+//
+// 粒度: **一会话一条**(幂等键 = 会话 id), 后续改动只更新断点 —— 不是一文件一条。
+//   否则一个会话改 20 个文件就塞 20 条, 看板被垃圾淹没(违"读取侧不得随规模增长")。
+const AUTO_TASK_PREFIX = 'auto-';
+
+/** 从用户指令抽任务关键词。抽不到返回 null —— 宁可不登记, 也不脏看板。
+ *
+ * 为何不抽不到就用机器 id: 看板是给人看的, `auto-c3f1` 认不出是什么;
+ * "在吗"/"继续"/"abs" 这类纯对话开头抽出的是噪声, 登了反而增加负担。
+ */
+export function autoTaskId(text) {
+  const s = String(text || '').replace(/[\u200b\u200c\u200d\ufeff]/g, '').trim();
+  if (!s) return null;
+  // 纯对话/寒暄不算指令
+  if (/^(在吗|在不在|你好|hi|hello|ok|好的|收到|继续|谢了|谢谢|abs|嗯|对|是的|行)[\s!！。.~]*$/i.test(s)) return null;
+  // 疑问句不算开工指令（2026-10-05 实报）: 用户问"为什么任务是这个啊"被登记成了任务 ——
+  //   提问/质疑/求助不是"让我动手"，登记它等于把用户的疑问变成待办，很荒唐。
+  //   判据用两档: ①句中有疑问词 ②句尾是问号（含全角）。
+  if (/[?？]\s*$/.test(s)) return null;
+  if (/(为什么|为啥|怎么会|怎么|如何|什么是|是什么|哪里|哪个|能不能|可不可以|是否|吗\s*[?？。!！]?$|呢\s*[?？。!！]?$)/.test(s)) return null;
+  // 取首个意群（标点/换行切）作为 id 来源
+  const head = s.split(/[\n。！？!?;；,，]/)[0].trim();
+  if (head.length < 4) return null;
+  // 中文取字，英文/数字取词；保留可读性，限长
+  const words = head.match(/[A-Za-z0-9_.-]+/g) || [];
+  const cjk = head.replace(/[A-Za-z0-9_.\-\s]+/g, '').slice(0, 12);
+  const slug = (words.length && cjk.length < 2 ? words.slice(0, 4).join('-') : cjk)
+    .replace(/[^\w\u4e00-\u9fa5-]/g, '')
+    .slice(0, 24);
+  return slug.length >= 2 ? slug : null;
+}
+
+/** hook 自动登记: 一会话一条 + 断点更新。
+ *
+ * @param {object} o
+ * @param {string} o.dir    项目目录
+ * @param {string} o.session 会话 id（幂等键）
+ * @param {string} o.prompt  用户指令原文（抽 id 用，仅首次需要）
+ * @param {string} o.note    断点内容（后续调用时更新到同一条）
+ * @returns {Promise<string|null>} 动作说明；无事发生返回 null
+ */
+export async function cmdAutoTask({ dir, session, prompt, note }) {
+  if (String(process.env.ABS_AUTO_TASK || '') === '0') return null;
+  const root = await requireBrain(dir || process.cwd());
+  const sid = String(session || '').replace(/[^\w-]/g, '').slice(0, 16);
+  if (!sid) return null;
+
+  // 幂等键藏在标记里而不是 id 里（2026-10-05 实报）: 原先 id = `auto-<会话uuid前16位>`,
+  //   用户看到 `auto-01a10b96-372d-71` 完全认不出是什么。id 是给人看的，改用关键词；
+  //   会话 id 退成机器用的隐藏键（`(自动登记 <sid>)`），sweep 靠它认领自动条目。
+  const MARK = `自动登记 ${sid}`;
+  const todoPath = brainPath(root, 'todo.md');
+
+  // 已登记过 → 只更新断点（一会话一条）
+  let existingId = null;
+  await editFile(todoPath, (cur) => {
+    if (cur === null) return SKIP;
+    for (const l of cur.split('\n')) {
+      const id = idOfTaskLine(l);
+      if (id && id.startsWith(AUTO_TASK_PREFIX) && l.includes(MARK)) { existingId = id; break; }
+    }
+    return SKIP;
+  });
+  if (existingId) {
+    if (!note) return null;
+    const r = await setBreakpoint(root, { id: existingId, text: note });
+    return r?.changed ? `↳ ${existingId} 断点更新` : null;
+  }
+
+  // 首次: 抽不出关键词就不登记
+  const slug = autoTaskId(prompt);
+  if (!slug) return null;
+  // id = 关键词（可读）；同 slug 已存在则加序号，避免两条不同活撞同一个 id。
+  let id = `${AUTO_TASK_PREFIX}${slug}`;
+  let n = 1;
+  await editFile(todoPath, (cur) => {
+    if (cur === null) return SKIP;
+    const ids = new Set(cur.split('\n').map((l) => idOfTaskLine(l)).filter(Boolean));
+    while (ids.has(id)) id = `${AUTO_TASK_PREFIX}${slug}-${++n}`;
+    return SKIP;
+  });
+  const who = await requireUser();
+  await ensurePersonPage(root, who);
+  await upsertTask(root, {
+    section: SEC.todo,
+    text: `[进行中] ${id} ${atTag(who)} — ${slug} (${MARK})`,
+  });
+  if (note) await setBreakpoint(root, { id, text: note });
+  return `✓ 自动登记 ${id} — ${slug}`;
+}
+
+/** 收尾: 把自动登记的未完成任务标 done（用户没显式接管它们）。
+ *  结语用【仅方案】—— 自动条目本身不代表"成果落地"，不该冒充【落地】。 */
+export async function cmdAutoTaskSweep({ dir }) {
+  const root = await requireBrain(dir || process.cwd());
+  const todoPath = brainPath(root, 'todo.md');
+  const ids = [];
+  await editFile(todoPath, (cur) => {
+    if (cur === null) return SKIP;
+    for (const l of cur.split('\n')) {
+      const id = idOfTaskLine(l);
+      // 自动条目的判据是「自动登记」标记, 不是 id 前缀 —— id 现在是给人看的关键词,
+      //   `auto-fix-panel` 这种名字人工也可能起得出来, 靠前缀认领会误杀真任务。
+      if (id && /自动登记\s+\S+/.test(l)) ids.push(id);
+    }
+    return SKIP;
+  });
+  let n = 0;
+  for (const id of ids) {
+    try {
+      await markDone(todoPath, id, '仅方案', '自动登记未接管，收尾清理');
+      n++;
+    } catch { /* 单条失败不阻塞其余 */ }
+  }
+  return n ? `✓ 自动任务收尾 ${n} 条` : null;
+}
+
 async function markDone(file, id, kind = '落地', conclusion) {
   const res = await editFile(file, (text) => {
     const lines = text.split('\n');

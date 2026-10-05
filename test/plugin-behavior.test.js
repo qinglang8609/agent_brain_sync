@@ -778,3 +778,208 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal([...todoAnimFrame(-1)].length, 3);
   });
 });
+
+// ============================ pi 扩展: 自动登记（2026-10-05） ============================
+// 背景: promptGuidelines 常驻指引已注入(实检 414 次有痕), 但 agent 行为没变 ——
+//   指引说"before you start", 而排查类工作没有清晰起点("我先看看怎么回事",
+//   看明白了活儿已干完一半), 于是永远没人主动登记、断点全丢。
+// 改为 hook 侧自动: 收到有实质内容的指令就登记, 真正改文件时更新断点。
+//
+// 纪律(来自 host-plugin-silent-failure): 必须真驱动事件 + 断言磁盘产物,
+//   字符串断言会放过签名错(本套测试就抓到过 tool_call handler 漏写 ctx 参数)。
+describe('pi 扩展 自动登记 (hook 侧, 不靠 agent 自觉)', () => {
+  /** 造一个干净项目并把扩展装进沙盒。返回 { mod, handlers, ctx }。 */
+  async function setupAuto() {
+    // 扩展 spawn 的子进程继承【测试进程的 process.env】——而 sbEnv() 只喂给 run() 的子进程。
+    // 故这里必须显式把沙盒 env 也压进 process.env，否则：
+    //   ① ABS_BIN 经安装器替换成全局副本路径（stableBinPath 优先全局）→ 写真实图谱
+    //   ② ABS_USER/ABS_CONFIG_DIR 缺失 → 用真实配置
+    // 两个都会让测试"看起来在跑、实际写的是真库"，沙盒里永远空。
+    Object.assign(process.env, sbEnv(), { ABS_BIN_PATH: CLI });
+    const proj = join(sandbox, 'autotask-proj');
+    await fs.rm(proj, { recursive: true, force: true });
+    // 注意: run() 的 cwd 硬编码为 sandbox，传 { cwd } 会被忽略 —— 故直接建图谱，
+    // 不调 run(['init'])。否则图谱建在 sandbox、proj 里没有 .brain，
+    // 扩展 spawn 出的 abs 会因 requireBrain 失败而静默无声（难查）。
+    await mkdirBrain(proj);
+    // 装到沙盒并真 import 产物（loadPi 是别的 describe 的局部函数，这里自备）
+    await run(['install', '--agent', 'pi', '--yes']);
+    const mod = await importTsWithLog(
+      join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'), join(sandbox, 'log'));
+    const handlers = {};
+    mod.default({ on: (e, f) => { (handlers[e] ||= []).push(f) }, getActiveTools: () => [] });
+    const ctx = {
+      cwd: proj,
+      ui: { setWidget: () => {}, requestRender: () => {} },
+      sessionManager: { getSessionId: () => 'test-session-abc' },
+    };
+    return { proj, mod, handlers, ctx };
+  }
+
+  /** 等 detached spawn 落盘。 */
+  const settle = (ms = 2500) => new Promise((r) => setTimeout(r, ms));
+
+  /** 在 proj 下真建一个 .brain 图谱（含三份根文件，够 requireBrain 放行）。 */
+  async function mkdirBrain(proj) {
+    await fs.mkdir(join(proj, '.brain'), { recursive: true });
+    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
+    const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    await fs.writeFile(join(proj, '.brain', 'index.md'),
+      `# 🗂 Graph Index\n\n## Rules\n\n## Concepts\n\n## Entities\n\n## Sources\n\n## Syntheses\n\n## Sessions\n`, 'utf8');
+    await fs.writeFile(join(proj, '.brain', 'log.md'), `# Activity Log\n\n## [${day} 00:00] dev | 建图\n`, 'utf8');
+    await fs.writeFile(join(proj, '.brain', 'todo.md'), '# 📋 Todo Board\n\n## Todo\n\n## Done\n', 'utf8');
+  }
+
+  // 空看板时 todo.md 不存在（abs init 不建空文件）—— 当空串处理，别 ENOENT。
+  const todoOf = (proj) => fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8').catch(() => '');
+
+  test('收到有实质内容的指令 → 自动登记一条 [进行中]', async () => {
+    const { proj, handlers, ctx } = await setupAuto();
+    await handlers['before_agent_start'][0](
+      { prompt: '修复插件加载失败的问题', systemPromptOptions: {} }, ctx);
+    await settle();
+    const t = await todoOf(proj);
+    // id 现在是【关键词】（实报过 auto-01a10b96-372d-71 人认不出）；
+    // 会话 id 退成标记里的隐藏幂等键。
+    assert.match(t, /\[进行中\] auto-修复插件加载失败/, `id 应是关键词:\n${t}`);
+    assert.ok(!/auto-test-session/.test(t.split('—')[0]), 'id 不该用会话 id');
+    assert.match(t, /自动登记 test-session-abc/, '会话 id 应作幂等键留在标记里');
+  });
+
+  test('纯对话/寒暄不登记（不脏看板）', async () => {
+    const { proj, handlers, ctx } = await setupAuto();
+    for (const p of ['在吗', '继续', 'abs']) {
+      await handlers['before_agent_start'][0]({ prompt: p, systemPromptOptions: {} }, ctx);
+    }
+    await settle();
+    const t = await todoOf(proj);
+    assert.ok(!/auto-test-session/.test(t), `不该登记:\n${t}`);
+  });
+
+  test('真正改文件时才记断点；只读命令不记', async () => {
+    const { proj, handlers, ctx } = await setupAuto();
+    await handlers['before_agent_start'][0](
+      { prompt: '改一下插件的加载逻辑', systemPromptOptions: {} }, ctx);
+    await settle();
+    // 只读(读文件 + 只读 bash) → 不该记
+    handlers['tool_call'][0]({ toolName: 'read', input: { path: 'README.md' } }, ctx);
+    handlers['tool_call'][0]({ toolName: 'bash', input: { command: 'ls -la && git status' } }, ctx);
+    await settle();
+    let t = await todoOf(proj);
+    assert.ok(!/断点/.test(t), `只读不该记断点:\n${t}`);
+    // 真写 → 该记
+    handlers['tool_call'][0]({ toolName: 'edit', input: { path: 'hooks/abs.opencode.ts' } }, ctx);
+    await settle();
+    t = await todoOf(proj);
+    assert.match(t, /断点: 改了 hooks\/abs\.opencode\.ts/, `该记断点:\n${t}`);
+  });
+
+  test('sed -i / 重定向 也算干活（bash 写路径不漏）', async () => {
+    for (const cmd of ["sed -i '' 's/a/b/' src/x.js", 'echo hi > out.txt']) {
+      const { proj, handlers, ctx } = await setupAuto();
+      await handlers['before_agent_start'][0](
+        { prompt: '用 bash 改点东西', systemPromptOptions: {} }, ctx);
+      await settle();
+      handlers['tool_call'][0]({ toolName: 'bash', input: { command: cmd } }, ctx);
+      await settle();
+      const t = await todoOf(proj);
+      assert.match(t, /断点/, `"${cmd}" 应算干活:\n${t}`);
+    }
+  });
+
+  test('断点只记第一次（不是流水账）', async () => {
+    const { proj, handlers, ctx } = await setupAuto();
+    await handlers['before_agent_start'][0](
+      { prompt: '连续改好几个文件的任务', systemPromptOptions: {} }, ctx);
+    await settle();
+    handlers['tool_call'][0]({ toolName: 'edit', input: { path: 'first.ts' } }, ctx);
+    await settle();
+    handlers['tool_call'][0]({ toolName: 'write', input: { path: 'second.ts' } }, ctx);
+    await settle();
+    const t = await todoOf(proj);
+    assert.match(t, /first\.ts/, '应记第一次');
+    assert.ok(!/second\.ts/.test(t), '不该被第二次覆盖（断点是"记到哪"非流水账）');
+  });
+
+  test('取不到 session id 时不登记（空键会刷爆看板）', async () => {
+    const { proj, handlers } = await setupAuto();
+    const badCtx = { cwd: proj, ui: { setWidget: () => {} }, sessionManager: {} };
+    await handlers['before_agent_start'][0](
+      { prompt: '一个有实质内容的指令', systemPromptOptions: {} }, badCtx);
+    await settle();
+    const t = await todoOf(proj);
+    assert.ok(!/auto-/.test(t), `无 session id 不该登记:\n${t}`);
+  });
+
+  test('任务全完成后面板消失，且主动请求重绘（否则屏幕冻结在旧帧）', async () => {
+    // 实报坑(2026-10-05): 任务标完后 pi 面板仍显示"进行中", 按 ESC/重启才正常。
+    // 根因: 唯一重绘入口是动画定时器; "全部完成"→ needAnim=false → stopAnimTimer()
+    //   → 从此无人请求重绘 → 数据清了但屏幕没刷。消失路径必须自己 requestRender。
+    const { proj, handlers, ctx } = await setupAuto();
+    // 造一条进行中任务 → 面板应显示
+    await fs.writeFile(join(proj, '.brain', 'todo.md'),
+      '# 📋 Todo Board\n\n## Todo\n- [ ] [进行中] t1 [[tester]] — 干点活\n\n## Done\n', 'utf8');
+
+    let renders = 0, widget = 'unset';
+    // 模拟真实 pi：setWidget 传 factory 时，pi 会调它拿组件（tui 引用由此进入扩展）。
+    // 若假 ui 不调 factory，扩展就永远拿不到 tui，隐藏时的 requestRender 无从发起 ——
+    // 那测的就不是真实行为（本测试第一版就栽在这）。
+    const ui = {
+      setWidget: (k, v) => {
+        widget = v === undefined ? 'hidden' : 'shown';
+        if (typeof v === 'function') v({ requestRender: () => { renders++; } }, { fg: (c2, s) => s });
+      },
+    };
+    const c = { ...ctx, ui };
+    await handlers['turn_end'][0]({}, c);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(widget, 'shown', '有任务时面板应显示');
+
+    // 标完成 → 面板应隐藏, 且必须请求过重绘
+    await fs.writeFile(join(proj, '.brain', 'todo.md'),
+      '# 📋 Todo Board\n\n## Todo\n\n## Done\n### 2026-10-05\n- [x] t1 【落地】\n', 'utf8');
+    const before = renders;
+    await handlers['turn_end'][0]({}, c);
+    await new Promise((r) => setTimeout(r, 800));
+    assert.equal(widget, 'hidden', '任务清空后面板应隐藏');
+    assert.ok(renders > before, `隐藏后必须 requestRender（否则屏幕不刷）: ${before} → ${renders}`);
+  });
+
+  test('agent_end 落断点（一轮干完就把"干到哪"推进）', async () => {
+    const { proj, handlers, ctx } = await setupAuto();
+    await handlers['before_agent_start'][0](
+      { prompt: '改一下这个项目的配置', systemPromptOptions: {} }, ctx);
+    await settle();
+    handlers['tool_call'][0]({ toolName: 'edit', input: { path: 'src/config.js' } }, ctx);
+    await settle();
+    await handlers['agent_end'][0]({}, ctx);
+    await settle();
+    const t = await todoOf(proj);
+    assert.match(t, /本轮到 src\/config\.js/, `agent_end 应推进断点:\n${t}`);
+  });
+
+  test('没动过文件的会话，agent_end 不白 spawn 进程', async () => {
+    const { proj, handlers, ctx } = await setupAuto();
+    await handlers['before_agent_start'][0](
+      { prompt: '只是问个问题不干活', systemPromptOptions: {} }, ctx);
+    await settle();
+    const before = await todoOf(proj);
+    await handlers['agent_end'][0]({}, ctx);
+    await settle();
+    const after = await todoOf(proj);
+    assert.equal(after, before, '未动文件时 agent_end 不应改断点');
+  });
+
+  test('session_start 重置状态 → 新会话重新登记', async () => {
+    const { proj, handlers, ctx } = await setupAuto();
+    await handlers['before_agent_start'][0](
+      { prompt: '第一个会话要做的事', systemPromptOptions: {} }, ctx);
+    await settle();
+    handlers['session_start'].forEach((h) => h({ reason: 'new' }, ctx));
+    handlers['tool_call'][0]({ toolName: 'edit', input: { path: 'reopened.ts' } }, ctx);
+    await settle();
+    const t = await todoOf(proj);
+    // 新会话同 id（测试里 getSessionId 固定）+ 已存在条目 → 只更新断点
+    assert.match(t, /断点: 改了 reopened\.ts/, `新会话应能再记断点:\n${t}`);
+  });
+});

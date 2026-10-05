@@ -2,7 +2,7 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede, cmdReview } from '../src/store.js';
+import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede, cmdReview, cmdAutoTask, cmdAutoTaskSweep } from '../src/store.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
@@ -92,6 +92,10 @@ const FLAG_SPEC = {
   // ★ 漏声明就是真 bug（2026-10-05 本机实测）：不在 FLAG_SPEC 的选项会被静默丢掉，
   //   于是 `abs log "x" --kind note` 全写成默认的 dev，而 cmdLog 的枚举校验看不见它。
   'kind': { type: 'string' },
+  // auto-task 用（hook 调）：--session 作幂等键（一会话一条），--prompt 抽任务关键词。
+  // ★ 同上：不在这声明就会被 parseArgv 静默丢掉，登记变成"永远首次"、闸门形同虚设。
+  'session': { type: 'string' },
+  'prompt': { type: 'string' },
   'by': { type: 'string' },
   'all': { type: 'boolean' },
   'keep-days': { type: 'string' },
@@ -527,7 +531,16 @@ async function main() {
       // 内部命令（hook 专用，不出现在 help）：Stop 时机械快照未完成任务
       case 'wrapup': {
         rejectExtra(opts._, 'abs wrapup（内部命令, 供 hook 调用）');
-        console.log(await cmdWrapup({ dir: opts.dir }));
+        const r = await cmdWrapup({ dir: opts.dir });
+        // 收尾时顺带清理 hook 自动登记的条目（它们不代表人工接管的成果）
+        const swept = await cmdAutoTaskSweep({ dir: opts.dir }).catch(() => null);
+        console.log([r, swept].filter(Boolean).join('\n') || '（无滞留任务）');
+        break;
+      }
+      // hook 自动登记（pi/opencode 侧调）: 一会话一条，同会话只更新断点
+      case 'auto-task': {
+        const r = await cmdAutoTask({ dir: opts.dir, session: opts.session, prompt: opts.prompt, note: opts.note });
+        if (r) console.log(r);   // 无事发生则静默（不制造空动作噪音）
         break;
       }
       // Stop hook 用: 判定是否注入收尾指令。stdout 给 shell (`push:<json>` / `{}`), 无额外输出。

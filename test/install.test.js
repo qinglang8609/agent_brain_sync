@@ -1120,10 +1120,16 @@ describe('入口路径稳定性', () => {
   test('pi 扩展的 ABS_BIN 同样不烧仓库路径', async () => {
     await run(['install', '--agent', 'pi', '--yes']);
     const p = join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts');
-    const m = (await fs.readFile(p, 'utf8')).match(/const ABS_BIN = "([^"]*)"/);
-    assert.ok(m, 'pi 扩展应有 ABS_BIN');
-    if (m[1].includes('node_modules')) {
-      assert.ok(!m[1].includes(REPO), `pi 扩展不得烧仓库路径: ${m[1]}`);
+    // 定义形如 `const ABS_BIN = process.env.ABS_BIN_PATH || "<stableBinPath>"`：
+    // env 覆盖是为测试隔离加的，别让正则卡死在旧格式上（取【最后一个】字面量 = 安装时替换的那个）。
+    const src = await fs.readFile(p, 'utf8');
+    const line = src.split('\n').find((l) => l.includes('const ABS_BIN ='));
+    assert.ok(line, 'pi 扩展应有 ABS_BIN');
+    const m = [...line.matchAll(/"([^"]*)"/g)];
+    assert.ok(m.length, 'ABS_BIN 应有字面量路径');
+    const main = m[m.length - 1][1];
+    if (main.includes('node_modules')) {
+      assert.ok(!main.includes(REPO), `pi 扩展不得烧仓库路径: ${main}`);
     }
   });
 
