@@ -3,9 +3,11 @@
 ## Todo
 - [ ] [滞留中] verify-todo-guide [[fanchao]] — 验证 promptGuidelines 能否治 todo 不及时: 装扩展加静态 system prompt 指引(非插话), 重启后看 hooks.log 有无 before_agent_start todo_guide=on, 再观察动手前是否主动 abs_task start (认领 2026-10-03)
   ↳ 断点: tool_call 置标记 + tool_execution_end 刷新 验证
+- [ ] [进行中] LINT-DEDUP [[fanchao]] — lint 同类问题折叠计数：102 条 LOG-ENTRY(存量旧 log 缺作者) 淹没其它 12 条真问题，体检退化成不可读。改法：lint 输出按问题类型折叠，同类超阈值(如 >10)只报「N 条同类 + 前 3 条样例 + 提示批量查看方式」 (认领 2026-10-05)
+  ↳ 断点: 断点: src/lint.js 的 cmdLint 汇总处(issues 数组拼输出前)；同族约束见 read-side-output-must-not-scale（Done 区已按日期折叠计数，同一思路）。待用户确认是否开工
 ## Done
-### 2026-10-03
 
+### 2026-10-03
 - [x] prompt-guidelines-todo [[fanchao]] — 给 abs 的 todo 加 pi 扩展层常驻指引(治不及时): 在 before_agent_start 往 system prompt 的 Guidelines 段注入 3 条静态指引(动手前 start/完成立刻 done/断点及时 note), 判定条件=项目有 .brain/, 关掉用 ABS_TODO_GUIDE=0 — 3 条静态指引(动手前 start/完成立刻 done/断点及时 note)经 before_agent_start 注入 system prompt 的 Guidelines 段, 判定条件=项目有 .brain/, ABS_TODO_GUIDE=0 可关。实测 hooks.log: todo_guide=on cwd=<项目>; 破坏验证+7 单测。已随 1.10.1 发版(npm+git tag), 官方包含全部代码 → 之前的『手工补丁』风险已消除。注: 指引的**有效性**另由 verify-todo-guide 观察期判定, 与本条(实现完成)分开 【落地】 (完成 2026-10-03)
   ↳ 断点: ⚠ 本机现处「官方1.9.9 + 手工同步的 hooks/abs.pi.ts」状态: 指引代码不在 npm 包里。验证通过后必须发新版(1.9.10)并 npm install -g 覆盖 + abs install 重装, 否则下次升级/装包会静默丢掉 todo 指引
 - [x] anim-demo [[fanchao]] — 看动画用 —— 这条是进行中，面板上它的三点应该在循环闪动 — 三点循环动画已上线并实测可见: [进行中] 行后缀 ○○○→●○○→●●○→●●● 每 250ms 一帧, 只有进行中的行有, 宽度固定 3 列不抖, 无进行中任务时不跑定时器 【落地】 (完成 2026-10-03)

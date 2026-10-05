@@ -54,6 +54,7 @@
 - [[self-reported-reasoning-is-post-hoc]] — 让模型自述思考层≠真思考：实测是知答案后编陪跑
 - [[vacuous-test-passes-on-broken-code]] — 空测试：恒真断言，破坏代码也全绿
 - [[guard-check-then-set-across-await]] — 守卫的检查与置位跨 await 就会漏：并发调用一起通过
+- [[validation-gate-on-shared-write-path]] — 共享写入路径加校验必须先问：存量有反例吗、能无损失自动修吗、值真传到校验点了吗
 
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
@@ -74,6 +75,7 @@
 - [[2026-10-03-pi-扩展不要-import]] — pi 扩展不要 import @earendil-works/pi-tui 等宿主内部包: 那些是 pi jiti loader 的 alias, 只在 pi…
 - [[2026-10-03-pi-扩展里-mcp-工具的]] — pi 扩展里 MCP 工具的 tool_execution_end 事件 toolName 是**代理入口名**(实测 mcp__abs)…
 - [[2026-10-03-给-pi-扩展注入-system-prompt]] — 给 pi 扩展注入 system prompt 常驻指引的正确姿势: 用 pi.on('before_agent_start') 改 event…
+- [[2026-10-05-lint-输出会被同类存量问题淹没]] — lint 输出会被同类存量问题淹没：给根文件加形状校验后，abs 自己的 log.md 有 102 条历史行缺 [[作者]]（作者标记是 09-18 才加的）…
 ## Syntheses
 
 ## Sessions

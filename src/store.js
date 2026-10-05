@@ -11,7 +11,7 @@ import { keywords, pickRelevant, renderRelevant, recentFiles, rankPage, topicStr
 import { impactOf } from './codegraph.js';
 
 // Re-export lint.js symbols so external importers (e.g. bin/mcp.js, bin/abs.js) still work.
-export { cmdLint, listPages, hasTail, PAGE_DIRS } from './lint.js';
+export { cmdLint, listPages, hasTail, PAGE_DIRS, foldSameKind } from './lint.js';
 import { SOURCES_MAX, PAGE_DIRS, listPages } from './lint.js';
 
 // ---------- init: 建 .brain/ 骨架 ----------

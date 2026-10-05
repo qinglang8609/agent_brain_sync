@@ -145,7 +145,7 @@ async function checkRootFiles(vault) {
           `TODO-BREAKPOINT-BLOAT: ${BRAIN_DIR}/${file}:${i + 1} (断点 ${bp.length} 字 > ${LINT_BREAKPOINT_MAX}；` +
           `断点只写「改到哪个文件哪一步」，报告迁 sessions/ 或 sources/)`,
         );
-      } else if (bp.split(/[。！？；!?;]+|\s*[\u2460-\u2473]\s*/).map((x) => x.trim()).filter(Boolean).length > 2) {
+      } else if (bp.split(/[。！？!?]+|\s*[\u2460-\u2473]\s*/).map((x) => x.trim()).filter(Boolean).length > 2) {
         issues.push(
           `TODO-BREAKPOINT-PROSE: ${BRAIN_DIR}/${file}:${i + 1} (断点写了多句 = 报告体；` +
           `todo 只放待办，长文迁 sessions/ 或 sources/)`,
@@ -345,7 +345,7 @@ async function readFileOrNull(p) {
 
 // ---------- 入口 ----------
 
-export async function cmdLint({ dir }) {
+export async function cmdLint({ dir, all = false }) {
   let root;
   try {
     root = await requireBrain(dir || process.cwd());
@@ -374,10 +374,44 @@ export async function cmdLint({ dir }) {
   issues.push(...await checkRootFiles(vault));
 
   const n = issues.length;
+  // ★ 同类折叠（2026-10-05）：体检输出必须按问题**类型**折叠计数。
+  //   为什么：给根文件加形状校验后，abs 自带的 log.md 有 102 条历史行缺 `[[作者]]`，
+  //   102 条 LOG-ENTRY 淹没了其它 12 条真问题（DRAFT-STALE/DEAD-LINK/NO-INBOUND）——
+  //   lint 的价值是「让人看见该修的」，被噪声淹没就退化成不可读。
+  //   同族约束：既有 Rule `读取侧输出不得随规模增长`、Done 区已按日期折叠计数。
+  //   形态：同类 > THRESHOLD 时只报「N 条同类 + 前 SAMPLE 条样例」。
+  //   注：全量明细仍可用 `abs lint --all` 拿到（不静默丢信息）。
+  const folded = all ? issues : foldSameKind(issues);
+  const n2 = folded.length;
   return [
-    ...(issues.length ? issues : []),
+    ...folded,
     '',
-    `lint: ${n} problem(s).`,
+    `lint: ${n2} problem(s).${n2 !== n ? ` (共 ${n} 条，同类已折叠；全量: abs lint --all)` : ''}`,
     n === 0 ? '✓ 图谱健康' : '',
   ].filter(Boolean).join('\n');
+}
+
+/** 同类问题折叠：按错误码分组，超过阈值只报计数 + 前几条样例。
+ *  错误码 = 首行的 `CODE:` 前缀（checkPage/checkGraph/checkRootFiles 都是这个形态）。
+ *  保序：按「首次出现顺序」输出，不因折叠打乱阅读节奏。 */
+const FOLD_THRESHOLD = 10;
+const FOLD_SAMPLE = 3;
+export function foldSameKind(issues) {
+  const groups = new Map(); // code -> { items, order }
+  for (const it of issues) {
+    const m = String(it).match(/^([A-Z][A-Z0-9-]+):/);
+    const code = m ? m[1] : '(其它)';
+    if (!groups.has(code)) groups.set(code, { items: [] });
+    groups.get(code).items.push(it);
+  }
+  const out = [];
+  for (const [code, g] of groups) {
+    if (g.items.length <= FOLD_THRESHOLD) {
+      out.push(...g.items);
+    } else {
+      out.push(...g.items.slice(0, FOLD_SAMPLE));
+      out.push(`  … 还有 ${g.items.length - FOLD_SAMPLE} 条同类的 ${code}（共 ${g.items.length} 条）`);
+    }
+  }
+  return out;
 }

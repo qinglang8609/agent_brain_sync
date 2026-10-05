@@ -65,4 +65,5 @@ status: active
 - [[read-side-output-must-not-scale]] — 同类：load 是读取侧入口，任何附加输出都必须有界
 - [[todo-rewrite-not-map]] — 补分区不改内容这条纪律的来源
 - [[index-row-not-attribution]] — 同属"什么该由机器决定、什么必须留给人"的边界判断
+- [[validation-gate-on-shared-write-path]] — 反向：写入侧校验的三个必答问题（存量/能否自动修/值真传到了吗）
 - [[fanchao]] — 提出这一需求（"load 总要读这几个文件，顺便核对标准格式"）

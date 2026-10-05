@@ -6,7 +6,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, upsertArchiveSection, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
 import { editFile } from '../src/lock.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
@@ -1077,6 +1077,22 @@ describe('todo 内容闸门（只放 todo）', () => {
     );
   });
 
+  // 回归（2026-10-05 实测误报）：分号被当成句子分隔符，把一条完全正常的
+  // 「改到哪；同类约束见 xx」断点判成 3 句而拒绝写入。中文技术写作里
+  // 分号常用来连接同一个意思的两部分，不是新句子。
+  test('断点里的分号不算多句（不误伤正常断点）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TG-4', note: '做 D' });
+    const r = await cmdTask({
+      dir: projectA,
+      action: 'note',
+      id: 'TG-4',
+      note: '改到 src/lint.js 的汇总处；同族约束见 read-side-output-must-not-scale（Done 区已折叠计数）',
+    });
+    assert.ok(r.includes('断点'), `带分号的正常断点应写下:\n${r}`);
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('汇总处'), `内容应落盘:\n${t}`);
+  });
+
   test('lint 报出历史遗留的臃肿断点与超长根文件', async () => {
     const p = brainPath(projectA, 'todo.md'); // beforeEach 已 init 过骨架
     const bloat = '报告内容'.repeat(60);
@@ -1189,6 +1205,30 @@ describe('cmdShow (todo/index/log 查看)', () => {
 
 describe('cmdLint', () => {
   const PAGE = (body) => `---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n${body}`;
+
+  // 回归（2026-10-05 实测）：体检输出被同类问题淹没 —— abs 自带的 log.md 有 102 条
+  // 历史行缺 [[作者]]，102 条 LOG-ENTRY 遮住了其它 12 条真问题（DRAFT-STALE/DEAD-LINK）。
+  // 同类 > 阈值折叠成「前 3 条 + N 条同类」，全量用 --all 拿。
+  test('同类问题折叠计数（不淹没真问题）', () => {
+    const many = ['# 🗒 Activity Log', ''].concat(
+      Array.from({ length: 20 }, (_, i) => `## [2026-09-0${(i % 9) + 1} 10:0${i % 10}] dev | 旧格式第${i}条`),
+    ).join('\n');
+    const folded = foldSameKind(many.split('\n').filter((l) => l.startsWith('## ['))
+      .map((l) => `LOG-ENTRY: log.md 应为 \`## [YYYY-MM-DD HH:MM] [[作者]] kind | 正文\``));
+    assert.equal(folded.length, 4, `20 条同类应折成 3 条样例 + 1 行计数: ${JSON.stringify(folded)}`);
+    assert.ok(folded[3].includes('还有 17 条'), folded[3]);
+    assert.ok(folded[3].includes('共 20 条'), folded[3]);
+  });
+
+  test('不同类问题各自展开（不混为一类）', () => {
+    const mixed = [
+      ...Array.from({ length: 12 }, () => 'LOG-ENTRY: log.md 格式'),
+      ...Array.from({ length: 2 }, () => 'DEAD-LINK: a -> [[b]]'),
+    ];
+    const out = foldSameKind(mixed);
+    assert.equal(out.filter((x) => x.startsWith('DEAD-LINK')).length, 2, '小类不折');
+    assert.equal(out.filter((x) => x.startsWith('LOG-ENTRY')).length, 3, '大类折成 3 条');
+  });
 
   // 回归: lint 提示里的路径带 .brain/ 前缀。
   // 曾经只给 vault 相对路径（concepts/x.md）→ 用户到项目根找 concepts/ 找不到（真实踩过）。

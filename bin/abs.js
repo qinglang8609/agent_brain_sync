@@ -521,7 +521,7 @@ async function main() {
       }
       case 'lint': {
         rejectExtra(opts._, 'abs lint');
-        console.log(await cmdLint({ dir: opts.dir }));
+        console.log(await cmdLint({ dir: opts.dir, all: opts.all }));
         break;
       }
       // 内部命令（hook 专用，不出现在 help）：Stop 时机械快照未完成任务
