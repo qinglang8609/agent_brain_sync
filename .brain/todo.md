@@ -1,6 +1,7 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] sync-todo-rename-stale-text [[fanchao]] — 清掉指向已删「hook 自动登记」的陈旧文案与死代码：bin/abs.js help 行 + 2 处注释、src/store.js 待命名替换死路径 + 用例；改后 abs install 推落点 (认领 2026-10-05)
 ## Done
 
 ### 2026-10-05

@@ -1131,8 +1131,8 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
     return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  [${st}] ${id} ${atTag(who)}${note ? ' — ' + note : ''}`;
   }
   if (action === 'rename') {
-    // 给任务改名（2026-10-05）：hook 只开 `auto-TBD-<会话>` 占位，真名由理解任务的一方起
-    // （`fix-skill-trigger` 这种不是从用户字面抽出来的，是读懂在干什么之后起的）。
+    // 改任务 id（2026-10-05）：人工起错名、或旧 id 不可读时用。
+    // （`fix-skill-trigger` 这种名字不是从用户字面抽出来的，是读懂在干什么之后起的。）
     // --note 传新 id（沿用既有 CLI 习惯，免得再加一个 flag）。
     if (!note) throw new Error('✗ 用法: abs todo rename <旧id> --note "<新id>"');
     const newId = String(note).replace(/[\u200b\u200c\u200d\ufeff]/g, '').trim();
@@ -1146,8 +1146,6 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
       for (let i = 0; i < lines.length; i++) {
         if (idOfTaskLine(lines[i]) !== want) continue;
         lines[i] = lines[i].replace(want, newId);
-        // 占位描述「待命名」随之换掉 —— 改完名还写着"待命名"会让人以为没改。
-        lines[i] = lines[i].replace(/—\s*待命名\s*/, `— ${newId.replace(/^(auto-|fix-|feat-)/, '')} `);
         done = true;
         break;
       }

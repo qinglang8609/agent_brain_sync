@@ -121,7 +121,7 @@ abs rule [add "一句话"]           # 读写 ## Rules；abs lint 体检；abs t
      结论：hook 只会"看到动过文件"，不知道"这是件什么事"；名字必须由读懂上下文的你起。
    - 名字要像 `fix-skill-trigger` / `fix-opencode-v2-plugin` 那样说清**在干什么**，
      不是抄用户的原话（实测抄出来的是 `我已经重启测试一下` 这种开场白）。
-   - 需要改已有任务的 id：`abs todo rename <旧id> --note "<新id>"`（描述同步换掉）。
+   - 需要改已有任务的 id：`abs todo rename <旧id> --note "<新id>"`。
 2. **一段活儿干完立刻 done** —— 不是等整个需求收尾。宁可拆成 5 条小的，别攒成 1 条大的。
 3. **动手超过两三轮还没登记 = 已在失控路上** —— 立刻补 `start`。
 

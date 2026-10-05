@@ -83,14 +83,15 @@ describe('cli: todo', () => {
 
   // rename: 改任务 id（v1.15.2 后 hook 不再自动开占位，但这条通用能力保留 ——
   // 人工起错名、或旧 id 不可读时都用得上）。
-  test('rename 改 id，描述里残留的"待命名"也随之换掉', async () => {
-    await run(['todo', 'start', 'old-name', '--note', '待命名']);
+  test('rename 改 id，旧 id 不残留且描述保留', async () => {
+    await run(['todo', 'start', 'old-name', '--note', '在做的事']);
     const r = await run(['todo', 'rename', 'old-name', '--note', 'fix-real-thing']);
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /→ fix-real-thing/);
     const t = await run(['todo', '--full']);
     assert.ok(t.stdout.includes('fix-real-thing'), '应出现新 id');
     assert.ok(!t.stdout.includes('old-name'), '旧 id 不该残留');
+    assert.ok(t.stdout.includes('在做的事'), '描述应保留');
   });
 
   test('rename 不存在的 id → 报未找到且不炸', async () => {
