@@ -99,6 +99,31 @@ let pendingTodoTool = false
  *  只记第一次写文件，不是每次都记：断点是「记到哪」不是流水账。 */
 let autoTaskSeen = false
 
+/** 本会话动过的文件（去重，最多记 FILES_SEEN_MAX 个）。
+ *
+ * ★ 定位（用户 2026-10-05 定，别改）：这**是「摆事实」，不是「发现问题」**。
+ *   它只把我自己刚干过的事（改过哪些文件）与看板并列摆出来，
+ *   **不判断这些改动算不算任务、不提醒、不追踪、不逼登记**。
+ *   是否意识到「我干的和看板对不上」、要不要补记 —— 全部由 LLM 自己反思。
+ *
+ * 为何不挂在「改文件/一轮结束」两个时机：那两个钩子改不了 system prompt
+ *   （tool_call/agent_end 拿不到 systemPromptOptions，只有 before_agent_start 有）；
+ *   而 sendUserMessage 插话已被否决（打断用户）。故记在这里、下轮带出。
+ *
+ * 今日最大的教训：**不要用技术手段替 LLM 发现 todo 问题。**
+ *   一侧（摆事实）有效，另一侧（替它发现）十二次全败。详见 concept remind-vs-gate。 */
+const filesSeen = new Set<string>()
+const FILES_SEEN_MAX = 8
+
+/** 写类工具调用的文件路径：edit/write 直接取 input.path，bash 取命令里像路径的片段。 */
+function touchedPath(name: string, input: any): string | null {
+  const p = input?.path ?? input?.file_path ?? input?.filename
+  if (typeof p === 'string' && p.trim()) return p.trim()
+  // bash 的写入靠命令字符串抻出路径（重定向/ sed -i / tee 等）
+  const cmd = String(input?.command ?? '')
+  const m = cmd.match(/(?:>>?|tee|sed -i[^ ]*)\s+([^\s|;&<>]+)/)
+  return m ? m[1] : null
+}
 
 /** 最近一次渲染拿到的 tui 引用。hidePanel 用它请求重绘 —— 面板消失时动画
  *  定时器已停，没有别的重绘通道（见 hidePanel 的坑注解）。 */
@@ -182,6 +207,9 @@ const BOARD_MARK = '[看板] '
  * 面前让 LLM 自己对照，不写「记得登记」这类劝告（那些已证明会被忽略）。
  *
  * ★ 铁律（2026-10-05 用户定，别改）：
+ *   - **只用对齐，不用技术手段替 LLM 发现 todo 问题。**
+ *     今天最大的收获：技术只负责「摆事实」，不负责「发现问题、提醒、追踪、逼补记」。
+ *     让 LLM 自己看到、自己反思、自己决定 —— 这是唯一活下来的方向。
  *   - **反复对齐，不厌其烦**：不是一次性提示，是**每一轮都摆**。
  *     用户原话：「对齐永远是反反复复的对齐，不厌其烦」。
  *     别用节流/去重/「刚说过就不重复」去优化掉它 —— 反复就是它的工作方式。
@@ -198,9 +226,10 @@ const BOARD_MARK = '[看板] '
  * 只改 system prompt 内容 —— 和静默的 TODO_GUIDELINES 走同一个通道。
  *
  * 看板空或全完成时不拼（没有可对齐的东西，拼个空列表纯占位）。 */
-export function boardGuideline(md: string, who: string): string | null {
+export function boardGuideline(md: string, who: string, touched: string[] = []): string | null {
   const { total, rows } = parseOpenTasks(md, PANEL_MAX_ROWS, who)
-  if (!total || !rows.length) return null
+  // 看板空但动过文件：仍要输出（「改了文件却没任务」正是最该对齐的时刻）。
+  if ((!total || !rows.length) && !touched.length) return null
   const lines = rows.map((r) => {
     // desc 为空时不拖空破折号（MCP 登记只给 id 的常见情形）。
     const head = `  ${r.state ? `[${r.state}] ` : ''}${r.id}${r.desc ? ` — ${r.desc}` : ''}`
@@ -208,10 +237,15 @@ export function boardGuideline(md: string, who: string): string | null {
     return r.note ? `${head}\n    ↳ ${r.note}` : head
   })
   const more = total > rows.length ? `  …另 ${total - rows.length} 条` : ''
+  // 本会话动过的文件 —— 与看板并列摆出，让 LLM 自己对照（不判断算不算任务）。
+  const touchLines = touched.length
+    ? ['本会话改过:', ...touched.map((f) => `  ${f}`)]
+    : []
   return [
     '当前 .brain/todo.md 看板（开工前对齐：正在做的算哪条？有新任务要加吗？有该删的吗？）:',
-    ...lines,
+    ...(lines.length ? lines : ['  （空）']),
     ...(more ? [more] : []),
+    ...touchLines,
   ].join('\n')
 }
 
@@ -219,7 +253,7 @@ export function boardGuideline(md: string, who: string): string | null {
 async function readBoardForGuide(cwd: string): Promise<string | null> {
   try {
     const md = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8')
-    return boardGuideline(md, await currentUser())
+    return boardGuideline(md, await currentUser(), [...filesSeen])
   } catch {
     return null
   }
@@ -682,6 +716,7 @@ export default function absPiHook(pi: ExtensionAPI): void {
   pi.on("session_start", (event: any, ctx: any) => {
     // 新会话 = 重新登记：不重置则同进程的第二个会话永远不再落断点
     autoTaskSeen = false
+    filesSeen.clear() // 同理：新会话的文件痕迹不能带到下个会话
     resetThrottle()
     // 本会话的随机昵称 —— 在这里抽一次（不是每帧抽，否则面板会疯狂闪）。
     // 每次 session_start（startup/reload/new/resume/fork）重抽 → “每次打开 pi 都是随机的”。
@@ -724,6 +759,12 @@ export default function absPiHook(pi: ExtensionAPI): void {
       autoTaskSeen = true
       const sid = sessionIdFor(ctx)
       logHook(`tool_call first_write name=${name} sid=${sid || '-'}`).catch(() => {})
+    }
+    // 记下动过的文件（去重）—— 下一轮对齐时摆给 LLM（见 filesSeen 注释）。
+    // 每轮都记（不限首次）：一轮里改多个文件都要能看到。
+    if (isWriteCall(name, input)) {
+      const p = touchedPath(name, input)
+      if (p && filesSeen.size < FILES_SEEN_MAX) filesSeen.add(p)
     }
   })
 
