@@ -34,7 +34,7 @@
 - [[teardown-automation]] — 收尾自动化: hook 必须主动推(注入指令)而非被动记日志; 各宿主 idle/Stop 事件 + 触发条件收窄
 - [[hook-code-in-wrong-branch]] — 加 hook 不生效先查"代码在哪条分支里"：用一行无条件埋点区分"没执行"与"执行了但失败"，别猜环境
 - [[cleanup-kills-own-refresh]] — 清理动作别把重绘通道一起停掉：面板消失后需自己 requestRender（唯一重绘入口是动画定时器）
-- [[auto-todo-register-design]] — 自动登记 todo 的三条约束：一会话一条/疑问句不登记/id 用关键词；指引治不了"没开工时刻"
+- [[auto-todo-register-design]] — 自动登记 todo 的失败复盘：三版迭代后整体移除（卡顿+看板堆占位）；通则=自动化必须挂在"机器确实知道"的判断上
 - [[host-plugin-silent-failure]] — 宿主插件"静默失效"三坑: 可观测性(缺无条件 seen 痕)/回调签名错/导出方式错; 装上了≠加载了≠触发了
 - [[skill-trigger-invisible-killers]] — skill 不触发的两个隐形杀手: description 没写触发词(主题描述匹配不上)/symlink 指向不受管理的陈旧副本; 无报错静默失效
 - [[deploy-artifact-copies]] — hook/插件产物有三份(仓库/宿主落点/进程内存)+全局 npm 副本; 改一份不算改, 删文件对已加载进程无效必须重启宿主

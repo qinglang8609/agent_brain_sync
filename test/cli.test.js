@@ -81,6 +81,30 @@ describe('cli: todo', () => {
     assert.ok(t.stdout.includes('T1'));
   });
 
+  // rename: 改任务 id（v1.15.2 后 hook 不再自动开占位，但这条通用能力保留 ——
+  // 人工起错名、或旧 id 不可读时都用得上）。
+  test('rename 改 id，描述里残留的"待命名"也随之换掉', async () => {
+    await run(['todo', 'start', 'old-name', '--note', '待命名']);
+    const r = await run(['todo', 'rename', 'old-name', '--note', 'fix-real-thing']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /→ fix-real-thing/);
+    const t = await run(['todo', '--full']);
+    assert.ok(t.stdout.includes('fix-real-thing'), '应出现新 id');
+    assert.ok(!t.stdout.includes('old-name'), '旧 id 不该残留');
+  });
+
+  test('rename 不存在的 id → 报未找到且不炸', async () => {
+    const r = await run(['todo', 'rename', 'no-such', '--note', 'x']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /NO_MATCH/);
+  });
+
+  test('rename 的新 id 含空白 → 拒绝（会破坏 todo 行结构）', async () => {
+    await run(['todo', 'start', 'T2', '--note', 'x']);
+    const r = await run(['todo', 'rename', 'T2', '--note', 'has space']);
+    assert.notEqual(r.code, 0, '含空白必须非零退出');
+  });
+
   // abs todo 无参 = 看板(只读), 不再是报错
   test('无子命令 = 看板, 零退出', async () => {
     const r = await run(['todo']);

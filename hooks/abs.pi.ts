@@ -44,19 +44,6 @@ function sessionIdFor(ctx: any): string {
   } catch { return '' }
 }
 
-/** 调 abs auto-task（hook 自动登记）。detached fire-and-forget，不阻塞 turn。
- *
- * 为何走 spawn 而非 import：与 snapshotWrapup 同源 —— 扩展进程里不能阻塞用户 turn，
- * 且 abs 的写入要经过它自己的文件锁（跨进程锁才有效）。 */
-function spawnAutoTask(cwd: string, args: string[]): void {
-  try {
-    const child = spawn(process.execPath, [ABS_BIN, "auto-task", ...args], {
-      cwd: cwd || process.cwd(), stdio: "ignore", detached: true,
-    })
-    child.unref()
-  } catch {} // fire-and-forget: 登记失败不得影响宿主
-}
-
 /** 会改文件的工具名。用于判定「真的开始干活了」—— 排查类会话先跑一堆读命令，
  *  若用「第一次 tool_call」当判据，断点会被写在与任务无关的文件上。
  *
@@ -112,13 +99,6 @@ let pendingTodoTool = false
  *  只记第一次写文件，不是每次都记：断点是「记到哪」不是流水账。 */
 let autoTaskSeen = false
 
-/** 本会话最后被写到的文件（agent_end 落断点用）。
- *  只存文件名，不存内容 —— 断点是"记到哪"，不是快照。 */
-let lastTouchedFile = ''
-
-/** 最近一轮的用户指令原文。只用于「第一次真改文件时」抽任务关键词 ——
- *  登记时机已从 before_agent_start 挪到 tool_call（用户实报：一按回车就登记太早）。 */
-let pendingPrompt = ''
 
 /** 最近一次渲染拿到的 tui 引用。hidePanel 用它请求重绘 —— 面板消失时动画
  *  定时器已停，没有别的重绘通道（见 hidePanel 的坑注解）。 */
@@ -626,8 +606,6 @@ export default function absPiHook(pi: ExtensionAPI): void {
   pi.on("session_start", (event: any, ctx: any) => {
     // 新会话 = 重新登记：不重置则同进程的第二个会话永远不再落断点
     autoTaskSeen = false
-    lastTouchedFile = ''
-    pendingPrompt = ''
     resetThrottle()
     // 本会话的随机昵称 —— 在这里抽一次（不是每帧抽，否则面板会疯狂闪）。
     // 每次 session_start（startup/reload/new/resume/fork）重抽 → “每次打开 pi 都是随机的”。
@@ -665,21 +643,11 @@ export default function absPiHook(pi: ExtensionAPI): void {
     }
     // 自动登记断点（2026-10-05）：真的动文件时，把「改到哪个」记进本会话的自动任务。
     // 为何不用「第一次 tool_call」：排查类会话先跑一堆读命令，断点会落在无关文件上。
+    // 写类工具只留一行痕（可观测），不 spawn、不写看板 —— 见上面的删除说明。
     if (!autoTaskSeen && isWriteCall(name, input)) {
       autoTaskSeen = true
-      const cwd = (ctx && ctx.cwd) || process.cwd()
-      const file = String(input?.path ?? input?.file_path ?? input?.filePath ?? '')
-      const bp = file ? `改了 ${file.slice(0, 120)}` : '开始改文件'
-      if (file) lastTouchedFile = file.slice(0, 120)
       const sid = sessionIdFor(ctx)
-      // 首次真改文件 = "真开工了" → 此刻才登记（带用户指令抽关键词）+ 落断点。
-      // 这是唯一登记入口：光说/说问/讨论都不登记（2026-10-05 用户实报时机太早）。
-      if (sid) {
-        const args = ['--session', sid, '--note', bp]
-        if (pendingPrompt) args.push('--prompt', pendingPrompt)
-        spawnAutoTask(cwd, args)
-      }
-      logHook(`tool_call auto_task name=${name} sid=${sid || '-'}`).catch(() => {})
+      logHook(`tool_call first_write name=${name} sid=${sid || '-'}`).catch(() => {})
     }
   })
 
@@ -711,10 +679,11 @@ export default function absPiHook(pi: ExtensionAPI): void {
         const ok = injectTodoGuidelines(event?.systemPromptOptions)
         logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} cwd=${cwd}`).catch(() => {})
 
-        // 只【记住】本轮用户指令，不在这里登记（2026-10-05 用户实报时机太早）。
-        // 旧行为: 一按回车就登记 → 用户还在说/聊、需求没成型，看板上就已经开出了任务。
-        // 现在: 留到第一次真改文件时(tool_call)才登记，那时才算"真开工了"。
-        if (event?.prompt) pendingPrompt = String(event.prompt).slice(0, 200)
+        // 自动登记已整体移除（2026-10-05 用户实报两点）：
+        //   ① 卡顿 —— agent_end 每轮 spawn 一个 node 进程
+        //   ② 看板冒出大量 `auto-TBD-xxx — 待命名` 占位
+        // 结论: hook 只留【可观测痕迹】，不写看板、不起进程。登记回到 agent 主动调 abs task。
+        // 教训见 concept auto-todo-register-design 的"为什么最后删掉自动登记"一节。
       } catch (e: any) {
         logHook(`before_agent_start error=${e?.message || 'unknown'}`).catch(() => {})
       }
@@ -736,16 +705,9 @@ export default function absPiHook(pi: ExtensionAPI): void {
       agentEndSeen = true
       await logHook(`agent_end:seen cwd=${cwd} brain=${brain || 'none'}`).catch(() => {})
     }
-    // 每轮结束落一次断点（2026-10-05）: 本会话若真动过文件, 把"干到哪"推进到最新。
-    // 为何只在动过文件后: 纯对话/查询轮不需要推进断点, 否则白 spawn 一堆进程。
-    // 为何不放在 session_shutdown: 那是进程退出, 而"一轮干完"才是自然的落盘点 ——
-    //   用户可能一直开着 pi 跨很多轮, 断点必须活着的时候就已经是最新的。
-    if (!brain || !autoTaskSeen) return
-    const sid = sessionIdFor(ctx)
-    if (!sid) return
-    const last = lastTouchedFile
-    spawnAutoTask(cwd, ['--session', sid, '--note', last ? `本轮到 ${last}` : '本轮有改动'])
-    logHook(`agent_end auto_task breakpoint sid=${sid}`).catch(() => {})
+    // 每轮 spawn 已删除（2026-10-05 用户实报"卡顿"）：agentEndSeen 一旦置位，
+    // 下面那个条件就恒真 → 每轮结束都起一个 node 进程，纯属白烧。
+    // 断点改由 agent 在用 abs_task 时自己写（那时它本来就在跑，不额外起进程）。
   })
 
   pi.on("session_shutdown", (_e: any, ctx: any) => {
