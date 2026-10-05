@@ -944,6 +944,54 @@ describe('cmdTask blocked + note (实时断点)', () => {
   });
 });
 
+// ---------- TODO 内容闸门（2026-10-05）----------
+// 背景：闸门此前只管骨架（分区/H1/空行），不管内容 → AI 把 todo 当笔记本，
+// 实施报告/测试数据/需求清单全塞进断点，文件涨到上百行而 lint 报 0 问题。
+// 这几个用例锁住「todo 只能加 todo」：超长/报告体 一律拒绝写入，不静默截断。
+describe('todo 内容闸门（只放 todo）', () => {
+  test('正常短断点照常写入', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TG-1', note: '做 A' });
+    const r = await cmdTask({ dir: projectA, action: 'note', id: 'TG-1', note: '改到 store.js L40，卡在 markDone' });
+    assert.ok(r.includes('断点'), r);
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('↳ 断点: 改到 store.js L40'), `短断点应写入:\n${t}`);
+  });
+
+  test('超长断点被拒（不静默截断）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TG-2', note: '做 B' });
+    const huge = '实施报告内容'.repeat(50); // 300 字 > 200
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'note', id: 'TG-2', note: huge }),
+      /断点太长/,
+    );
+    // 关键：拒了就不能落盘（不能只报错却把截断后的半截写进去）
+    const t = await readTodo(projectA);
+    assert.ok(!t.includes(huge.slice(0, 20)), `被拒的内容不应部分写入:\n${t}`);
+  });
+
+  test('报告体断点被拒（多句 / 编号清单）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TG-3', note: '做 C' });
+    const report = '① tab 位置错了 ② 文字重复两遍 ③ 去掉归档按钮';
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'note', id: 'TG-3', note: report }),
+      /报告\/清单/,
+    );
+  });
+
+  test('lint 报出历史遗留的臃肿断点与超长根文件', async () => {
+    const p = brainPath(projectA, 'todo.md'); // beforeEach 已 init 过骨架
+    const bloat = '报告内容'.repeat(60);
+    await fs.writeFile(
+      p,
+      ['# 📋 Todo Board', '', '## Todo', `- [ ] [进行中] TL-1 [[tester]] — 旧任务 (认领 ${today()})`,
+        `  ↳ 断点: ${bloat}`, '## Done', ''].join('\n'),
+      'utf8',
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('TODO-BREAKPOINT-BLOAT'), `lint 应报臃肿断点:\n${out}`);
+  });
+});
+
 // ---------- 实时化: abs note 经验暂存通道 (TASK-RT) ----------
 describe('cmdNote (经验实时暂存)', () => {
   test('写一条 source 页: 文件名带日期slug、frontmatter 齐、内容含原文', async () => {

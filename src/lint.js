@@ -101,6 +101,56 @@ export async function listPages(vault) {
   return pages;
 }
 
+// ---------- 根文件检查（todo.md / log.md / index.md）----------
+// 为什么补这段（2026-10-05）：lint 此前只看 PAGE_DIRS 子目录，三个根文件不在扫描范围，
+// OVER-SIZE 也只对 concepts/entities/syntheses 生效。于是「todo.md 涨到上百行、
+// 断点行里塞实施报告」可以 lint 报 0 问题 —— 看着健康，实际已经变成笔记本。
+const TODO_MAX_LINES = 60;
+const LOG_MAX_LINES = 2000;
+const INDEX_MAX_LINES = 200;
+const LINT_BREAKPOINT_MAX = 200;
+
+async function checkRootFiles(vault) {
+  const issues = [];
+  const specs = [
+    ['todo.md', TODO_MAX_LINES, '任务看板；长内容迁 sessions/log-<日期>.md 或 sources/'],
+    ['log.md', LOG_MAX_LINES, '流水；旧段按日期切到 sessions/'],
+    ['index.md', INDEX_MAX_LINES, '只做索引；正文归各页'],
+  ];
+  for (const [file, maxLines, hint] of specs) {
+    let body = '';
+    try {
+      body = await fs.readFile(join(vault, file), 'utf8');
+    } catch {
+      continue; // 文件尚未建 = 无内容，不算问题
+    }
+    const lines = body.split('\n');
+    if (lines.length > maxLines) {
+      issues.push(`ROOT-OVER-SIZE: ${BRAIN_DIR}/${file} (${lines.length}L > ${maxLines}L; ${hint})`);
+    }
+    // 条目级：todo 的任务行/断点行不能是报告（与写入闸门 assertTodoContent 同判据，
+    // 但 lint 是「事后发现」—— 历史遗留的乱写靠它暴露，新写入靠闸门拦）。
+    if (file !== 'todo.md') continue;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (!l.trimStart().startsWith('↳ 断点:')) continue;
+      const bp = l.trimStart().slice('↳ 断点:'.length).trim();
+      if (bp.length > LINT_BREAKPOINT_MAX) {
+        issues.push(
+          `TODO-BREAKPOINT-BLOAT: ${BRAIN_DIR}/${file}:${i + 1} (断点 ${bp.length} 字 > ${LINT_BREAKPOINT_MAX}；` +
+          `断点只写「改到哪个文件哪一步」，报告迁 sessions/ 或 sources/)`,
+        );
+      } else if (bp.split(/[。！？；!?;]+|\s*[\u2460-\u2473]\s*/).map((x) => x.trim()).filter(Boolean).length > 2) {
+        issues.push(
+          `TODO-BREAKPOINT-PROSE: ${BRAIN_DIR}/${file}:${i + 1} (断点写了多句 = 报告体；` +
+          `todo 只放待办，长文迁 sessions/ 或 sources/)`,
+        );
+      }
+    }
+  }
+  return issues;
+}
+
 // ---------- 页级检查 ----------
 
 /** 单页检查：frontmatter / 链接 / 容量 / 尾巴 / index 登记。 */
@@ -316,6 +366,7 @@ export async function cmdLint({ dir }) {
   for (const pg of pages) issues.push(...checkPage(pg, names, linkedNames, inbound));
   issues.push(...await checkGraph(root, pages));
   issues.push(...await checkFiles(vault, pages, indexLinks));
+  issues.push(...await checkRootFiles(vault));
 
   const n = issues.length;
   return [

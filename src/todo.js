@@ -240,9 +240,81 @@ export function dropRetiredSections(text) {
  * 入参 spec 与 checkBrainShape 的 BRAIN_SHAPE 同源（见 store.js）。
  * log.md 无分区（order 为空）→ 只做 H1/归一/去空行，不重排条目顺序（时间倒序自带语义）。
  * 返回 { text, fixed:[描述] }；fixed 为空 = 无需改盘。 */
+// ---------- 条目级闸门（2026-10-05 加）----------
+// 为什么加：闸门此前只管**骨架形状**（分区/H1/空行），不管条目**内容**。
+// 于是 AI 把 todo 当笔记本 —— 实施报告、测试数据、需求清单、架构分析全塞进
+// 断点行，文件涨到 232 行/上万字，而闸门与 lint 双双报「0 问题」。
+// 这里补上内容约束：todo 只能放 todo。长内容走 abs note（经验）/ abs log（流水）/ sources 页。
+//
+// 注意：**超长一律抛错，不静默截断**。截断会丢数据且无声 —— 正是要防的那种失效。
+export const BREAKPOINT_MAX = 200;
+export const TASK_LINE_MAX = 400;
+/** 断点里出现这些 = 明显是在塞报告（列表/代码块/表格）。 */
+const REPORT_MARKERS = [
+  /^\s{0,4}[-*]\s+\S/m, // 列表项
+  /^\s{0,4}\d+[.)]\s+\S/m, // 有序列表
+  /```/, // 代码块
+  /^\s*\|.*\|\s*$/m, // 表格行
+];
+
+/** 数一个断点里有几个「句子」—— 断点是一件事，多句 = 在塞报告。
+ *  中文按 。！？；/ 英文按 .!?; 切；带圈编号 ①②③ 也算分隔符。
+ *  为什么不用关键词表：关键词命中不稳（「功能/方案」正常描述也会出现），
+ *  而「一句还是一段」是结构判据 —— 结构判据才可靠。 */
+function sentenceCount(s) {
+  return String(s)
+    .split(/[。！？；!?;]+|\s*[\u2460-\u2473]\s*/)
+    .map((x) => x.trim())
+    .filter(Boolean).length;
+}
+
+/** 校验 todo 全文的条目内容。抛错 = 拒绝写入（不是修正）。 */
+export function assertTodoContent(text) {
+  const lines = String(text ?? '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const lineNo = i + 1;
+    if (l.startsWith('## ')) continue;
+    // 任务行
+    if (isTaskLine(l)) {
+      if (l.length > TASK_LINE_MAX) {
+        throw new Error(
+          `✗ 任务行太长（第 ${lineNo} 行 ${l.length} 字 > ${TASK_LINE_MAX}）—— todo 只放「要做什么」，一句话。\n` +
+          `  这么长的内容要么拆成多条任务，要么走 abs note（经验）/ abs log（流水）。\n` +
+          `  原文开头: ${l.slice(0, 60)}...`,
+        );
+      }
+      continue;
+    }
+    // 断点附属行
+    if (l.trimStart().startsWith('↳ 断点:')) {
+      const body = l.trimStart().slice('↳ 断点:'.length).trim();
+      if (body.length > BREAKPOINT_MAX) {
+        throw new Error(
+          `✗ 断点太长（第 ${lineNo} 行 ${body.length} 字 > ${BREAKPOINT_MAX}）—— 断点只写「改到哪个文件哪一步」。\n` +
+          `  写不下的内容请分流：实施报告/验证数据 → abs log；经验与坑 → abs note；长设计 → .brain/sources/ 页。\n` +
+          `  原文开头: ${body.slice(0, 60)}...`,
+        );
+      }
+      if (REPORT_MARKERS.some((re) => re.test(body)) || sentenceCount(body) > 2) {
+        throw new Error(
+          `✗ 断点里像是塞了报告/清单（第 ${lineNo} 行）—— 断点是一句话（最多两句），不是文档。\n` +
+          `  todo 只能加 todo：要做的拆成任务，做完的写 abs log，经验写 abs note。\n` +
+          `  原文开头: ${body.slice(0, 60)}...`,
+        );
+      }
+      continue;
+    }
+  }
+  return true;
+}
+
 export function enforceBrainFormat(text, spec) {
   const src = String(text ?? '');
   if (!src.trim()) return { text: src, fixed: [] };
+  // 内容闸门：形状归一之前先拒掉乱塞（超长断点/报告体），否则下面的 rebuild
+  // 会把它当「人自加的正文」好好保留下来 —— 越规整越难发现。
+  if (spec?.h1 === '# 📋 Todo Board') assertTodoContent(src);
   const fixed = [];
   // 旧标记 → 标准标记（H1 与分区/分组标题）。与 store.js 的 LEGACY_MARKS 同源，
   // 由调用方通过 spec.renames 注入（todo.js 不反向依赖 store.js）。
