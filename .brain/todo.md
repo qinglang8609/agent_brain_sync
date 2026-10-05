@@ -1,8 +1,8 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [滞留中] add-test-density [[fanchao]] — 提升测试密度（现 0.92，人家 1.72）：重点补 lint/install/relevant 的边界用例 (认领 2026-10-05)
-  ↳ 断点: 已加 26 测试（448→474）；密度 0.92→0.93。要达到 1.72 需持续补 lint/install/relevant 边界
+- [ ] [进行中] add-test-density [[fanchao]] — 提升测试密度（现 0.92，人家 1.72）：重点补 lint/install/relevant 的边界用例 (认领 2026-10-05)
+  ↳ 断点: 密度 0.93到0.99
 ## Done
 
 ### 2026-10-05
