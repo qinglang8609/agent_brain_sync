@@ -105,20 +105,21 @@ describe('cmdAutoTask — 一会话一条', () => {
       dir: project, session: 'sess001',
       prompt: '修复 opencode 插件加载失败', note: '改了 hooks/abs.opencode.ts',
     });
-    assert.ok(r && r.includes('自动登记'), `应返回登记说明: ${r}`);
+    assert.ok(r && r.includes('TBD'), `应返回占位说明: ${r}`);
     const t = await todoText();
-    // id 是给人看的【关键词】，不是会话 uuid（实报过 auto-01a10b96-372d-71 认不出）
-    assert.match(t, /\[进行中\] auto-[^\s]*修复[^\s]*/, `id 应含指令关键词:\n${t}`);
-    assert.ok(!/auto-sess001/.test(t), 'id 不该再用会话 id');
-    assert.match(t, /自动登记 sess001/, '会话 id 应作为隐藏幂等键留在标记里');
+    // id 是明确占位 `auto-TBD-<会话>`，不抽用户话（实报过抽出"我已经重启测试一下"
+    // 这种开场白、"本轮有改动" 这种 hook 自己的断点文本）。
+    assert.match(t, /\[进行中\] auto-TBD-sess001/, `应为 TBD 占位:\n${t}`);
+    assert.match(t, /—\s*待命名/, '占位描述应标"待命名"');
+    assert.match(t, /自动登记 sess001/, '会话 id 作幂等键留在标记里');
     assert.match(t, /tester/, '应带作者标记');
     assert.match(t, /断点: 改了 hooks\/abs\.opencode\.ts/, '应落首次断点');
   });
 
   test('同一会话再调不新增第二条（只更新断点）', async () => {
-    await cmdAutoTask({ dir: project, session: 'sess002', prompt: '做一件事 abcdef' });
-    await cmdAutoTask({ dir: project, session: 'sess002', prompt: '又说了句别的', note: '到第二步了' });
-    await cmdAutoTask({ dir: project, session: 'sess002', prompt: '继续说', note: '到第三步了' });
+    await cmdAutoTask({ dir: project, session: 'sess002', prompt: '做一件事 abcdef', note: '改了 e.js' });
+    await cmdAutoTask({ dir: project, session: 'sess002', note: '到第二步了' });
+    await cmdAutoTask({ dir: project, session: 'sess002', note: '到第三步了' });
     const t = await todoText();
     const n = (t.match(/自动登记 sess002/g) || []).length;
     assert.equal(n, 1, `同会话只应有一条，实际 ${n} 处`);
@@ -128,23 +129,30 @@ describe('cmdAutoTask — 一会话一条', () => {
   });
 
   test('不同会话各登记一条', async () => {
-    await cmdAutoTask({ dir: project, session: 'sessA', prompt: '第一件事 abcdef' });
-    await cmdAutoTask({ dir: project, session: 'sessB', prompt: '第二件事 ghijkl' });
+    await cmdAutoTask({ dir: project, session: 'sessA', prompt: '第一件事 abcdef', note: '改了 a.js' });
+    await cmdAutoTask({ dir: project, session: 'sessB', prompt: '第二件事 ghijkl', note: '改了 b.js' });
     const t = await todoText();
     assert.ok(t.includes('自动登记 sessA') && t.includes('自动登记 sessB'), '两个会话各一条');
     assert.equal((t.match(/^- \[ \]/gm) || []).length, 2, '应为两条未完成');
   });
 
-  test('抽不出关键词 → 不登记（不产生机器 id 垃圾条目）', async () => {
+  test('纯寒暄且没动文件 → 不登记', async () => {
+    // 判据是"动过手"而非"说了话"：只有 prompt、没 note（未改文件）→ 不登记。
     const r = await cmdAutoTask({ dir: project, session: 'sessC', prompt: '在吗' });
     assert.equal(r, null);
     const t = await todoText();
-    assert.ok(!t.includes('auto-sessC'), '不该登记');
+    assert.ok(!t.includes('auto-TBD-sessC'), '不该登记');
+  });
+
+  test('改过文件（有 note）→ 即使抽不出关键词也开占位', async () => {
+    const r = await cmdAutoTask({ dir: project, session: 'sessE', prompt: '在吗', note: '改了 a.js' });
+    assert.ok(r && r.includes('TBD'), '动过文件就该有占位条目');
+    assert.match(await todoText(), /auto-TBD-sessE/);
   });
 
   test('ABS_AUTO_TASK=0 时完全不动（开关有效）', async () => {
     process.env.ABS_AUTO_TASK = '0';
-    const r = await cmdAutoTask({ dir: project, session: 'sessD', prompt: '修 plugin 的 bug abcdef' });
+    const r = await cmdAutoTask({ dir: project, session: 'sessD', prompt: '修 plugin 的 bug abcdef', note: '改了 f.js' });
     assert.equal(r, null);
     assert.ok(!(await todoText()).includes('auto-sessD'));
   });
@@ -153,15 +161,42 @@ describe('cmdAutoTask — 一会话一条', () => {
     const bare = join(sandbox, 'no-brain');
     await fs.mkdir(bare, { recursive: true });
     await assert.rejects(
-      () => cmdAutoTask({ dir: bare, session: 'x', prompt: '修 plugin abcdef' }),
+      () => cmdAutoTask({ dir: bare, session: 'x', prompt: '修 plugin abcdef', note: '改了 g.js' }),
       '无图谱应报错而非静默假成功',
+    );
+  });
+});
+
+describe('todo rename — 给占位条目起真名', () => {
+  test('占位 id 改成真名，描述同步换掉"待命名"', async () => {
+    const { cmdTask } = await import('../src/store.js');
+    await cmdAutoTask({ dir: project, session: 'r1', note: '改了 src/store.js' });
+    const r = await cmdTask({ dir: project, action: 'rename', id: 'auto-TBD-r1', note: 'fix-skill-trigger' });
+    assert.ok(r.includes('→ fix-skill-trigger'), `应改名成功: ${r}`);
+    const t = await todoText();
+    assert.match(t, /\[进行中\] fix-skill-trigger/, 'id 应换成真名');
+    assert.ok(!/TBD-r1/.test(t), '占位 id 不该残留');
+    assert.ok(!/—\s*待命名/.test(t), '描述不该还写着"待命名"');
+  });
+
+  test('改不存在的 id → 报未找到，不炸', async () => {
+    const { cmdTask } = await import('../src/store.js');
+    const r = await cmdTask({ dir: project, action: 'rename', id: 'no-such-id', note: 'x' });
+    assert.match(r, /NO_MATCH/);
+  });
+
+  test('新 id 含空白 → 拒（会破坏 todo 行结构）', async () => {
+    const { cmdTask } = await import('../src/store.js');
+    await cmdAutoTask({ dir: project, session: 'r2', note: '改了 a.js' });
+    await assert.rejects(
+      () => cmdTask({ dir: project, action: 'rename', id: 'auto-TBD-r2', note: '有 空格' }),
     );
   });
 });
 
 describe('cmdAutoTaskSweep — 收尾清理', () => {
   test('把自动条目标 done，结语为【仅方案】不冒充【落地】', async () => {
-    await cmdAutoTask({ dir: project, session: 'sweep1', prompt: '干点活 abcdef' });
+    await cmdAutoTask({ dir: project, session: 'sweep1', prompt: '干点活 abcdef', note: '改了 c.js' });
     const r = await cmdAutoTaskSweep({ dir: project });
     assert.ok(r && r.includes('1 条'), `应清理 1 条: ${r}`);
     const t = await todoText();
@@ -172,7 +207,7 @@ describe('cmdAutoTaskSweep — 收尾清理', () => {
   test('不碰人工登记的真实任务', async () => {
     const { cmdTask } = await import('../src/store.js');
     await cmdTask({ dir: project, action: 'start', id: 'human-task', note: '人登记的真活' });
-    await cmdAutoTask({ dir: project, session: 'sweep2', prompt: '自动的活 abcdef' });
+    await cmdAutoTask({ dir: project, session: 'sweep2', prompt: '自动的活 abcdef', note: '改了 d.js' });
     await cmdAutoTaskSweep({ dir: project });
     const t = await todoText();
     assert.match(t, /\[进行中\] human-task/, '人工任务必须原样留着');

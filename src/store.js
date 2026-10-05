@@ -1120,6 +1120,31 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
     });
     return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  [${st}] ${id} ${atTag(who)}${note ? ' — ' + note : ''}`;
   }
+  if (action === 'rename') {
+    // 给任务改名（2026-10-05）：hook 只开 `auto-TBD-<会话>` 占位，真名由理解任务的一方起
+    // （`fix-skill-trigger` 这种不是从用户字面抽出来的，是读懂在干什么之后起的）。
+    // --note 传新 id（沿用既有 CLI 习惯，免得再加一个 flag）。
+    if (!note) throw new Error('✗ 用法: abs todo rename <旧id> --note "<新id>"');
+    const newId = String(note).replace(/[\u200b\u200c\u200d\ufeff]/g, '').trim();
+    if (!newId || /\s/.test(newId)) throw new Error(`✗ 新 id 不能为空或含空白: "${newId}"`);
+    const f = brainPath(root, 'todo.md');
+    let done = false;
+    await editFile(f, (cur) => {
+      if (cur === null) return SKIP;
+      const lines = cur.split('\n');
+      const want = String(id).replace(/[\u200b\u200c\u200d\ufeff]/g, '');
+      for (let i = 0; i < lines.length; i++) {
+        if (idOfTaskLine(lines[i]) !== want) continue;
+        lines[i] = lines[i].replace(want, newId);
+        // 占位描述「待命名」随之换掉 —— 改完名还写着"待命名"会让人以为没改。
+        lines[i] = lines[i].replace(/—\s*待命名\s*/, `— ${newId.replace(/^(auto-|fix-|feat-)/, '')} `);
+        done = true;
+        break;
+      }
+      return done ? { text: lines.join('\n') } : SKIP;
+    });
+    return done ? `✓ 任务改名 ${id} → ${newId}` : `[NO_MATCH] 未找到含 "${id}" 的未完成任务行`;
+  }
   if (action === 'state') {
     // 改状态标记（原地，不搬区）：进行中 / 讨论中 / 滞留中
     if (!note) throw new Error(`✗ 用法: abs todo state <id> --note "${TASK_STATES.join('|')}"`);
@@ -1252,32 +1277,30 @@ export async function cmdAutoTask({ dir, session, prompt, note }) {
     return r?.changed ? `↳ ${existingId} 断点更新` : null;
   }
 
-  // 首次登记: 关键词优先从用户指令抽；抽不出（寒暄/提问/无指令）时用断点兜底。
+  // 占位登记（2026-10-05 用户实报后重设计）。
   //
-  // 为何 note 也能兜底（2026-10-05 时机改动后新增）：登记时机已挪到"第一次真改文件"，
-  // 那一刻【已经动过文件】就是最可靠的"这是件事"的证据 —— 此时因抽不出关键词而放弃，
-  // 等于用户寒暄两句后开始干活却什么都没记。用文件名当兜底 slug 比不登记有用。
-  // 兜底仅在【有断点】时启用 —— 断点的存在本身就意味着"刚动过文件"。
-  // 只有 prompt 而抽不出关键词（纯寒暄/提问、且没动文件）→ 依然不登记（用户实报的那个坑）。
-  const slug = autoTaskId(prompt) || (note ? autoTaskSlugFromNote(note) : null);
-  if (!slug) return null;
-  // id = 关键词（可读）；同 slug 已存在则加序号，避免两条不同活撞同一个 id。
-  let id = `${AUTO_TASK_PREFIX}${slug}`;
-  let n = 1;
-  await editFile(todoPath, (cur) => {
-    if (cur === null) return SKIP;
-    const ids = new Set(cur.split('\n').map((l) => idOfTaskLine(l)).filter(Boolean));
-    while (ids.has(id)) id = `${AUTO_TASK_PREFIX}${slug}-${++n}`;
-    return SKIP;
-  });
+  // 为何不再抽用户话当名字：机器抽词天生不可靠 —— 实测抽出过
+  //   `我已经重启测试一下`（用户的开场白）、`本轮有改动`（更糟：那是 hook 自己
+  //   生成的断点文本，等于把机器的话当成用户意图）。
+  // 而用户想要的名字长这样：`fix-skill-trigger` / `fix-opencode-v2-plugin` ——
+  //   那**不是从用户的字面上抽出来的**，是理解"在干什么"之后起的名字。
+  //
+  // 故分工改为：hook 只开一个 `TBD-<会话>` 占位（明确标记"未命名"），
+  //   名字留给理解任务的一方改（`abs todo rename` 或直接编辑 todo.md）。
+  //   占位名机器化、一眼可辨，不冒充真任务名。
+  // 开占位的前置条件：**真的动过文件**（hook 传了 --note）。
+  // 只有 prompt 而无 note = 用户说了句话但没动手 → 不开（这是"时机"那条坑的守门，
+  // 改成固定占位后一度丢掉此判断，导致纯寒暄也开条目 —— 单测抓到的）。
+  if (!note) return null;
+  const id = `${AUTO_TASK_PREFIX}TBD-${sid}`;
   const who = await requireUser();
   await ensurePersonPage(root, who);
   await upsertTask(root, {
     section: SEC.todo,
-    text: `[进行中] ${id} ${atTag(who)} — ${slug} (${MARK})`,
+    text: `[进行中] ${id} ${atTag(who)} — 待命名 (${MARK})`,
   });
   if (note) await setBreakpoint(root, { id, text: note });
-  return `✓ 自动登记 ${id} — ${slug}`;
+  return `✓ 自动登记占位 ${id}（待命名，稍后改名）`;
 }
 
 /** 收尾: 把自动登记的未完成任务标 done（用户没显式接管它们）。

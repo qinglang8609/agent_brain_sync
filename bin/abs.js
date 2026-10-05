@@ -284,6 +284,7 @@ const subUsage = {
     '用法:',
     '  abs todo                       看板',
     '  abs todo add <id> [--note "做什么"] [--section 讨论中|滞留中]',
+    '  abs todo rename <旧id> --note "<新id>"   给自动登记的占位条目起真名',
     '  abs todo note <id> --note "断点/进度"',
     '  abs todo state <id> --note 进行中|讨论中|滞留中',
     '  abs todo done <id> [--as 落地|否决|仅方案] [结语文字]',
@@ -351,6 +352,7 @@ const TODO_ACTIONS = {
   start: 'start', // add 的别名(老习惯保留)
   note: 'note',
   state: 'state', // 改行首状态标记：进行中|讨论中|滞留中（原地，不搬区）
+  rename: 'rename', // 改任务 id：hook 只开 auto-TBD-<会话> 占位，真名由此处补
   done: 'done',
 };
 

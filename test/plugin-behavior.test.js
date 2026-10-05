@@ -847,9 +847,10 @@ describe('pi 扩展 自动登记 (hook 侧, 不靠 agent 自觉)', () => {
     handlers['tool_call'][0]({ toolName: 'edit', input: { path: 'src/x.js' } }, ctx);
     await settle();
     t = await todoOf(proj);
-    // id 用【关键词】（实报过 auto-01a10b96-372d-71 人认不出）；会话 id 退成隐藏幂等键。
-    assert.match(t, /\[进行中\] auto-修复插件加载失败/, `id 应是关键词:\n${t}`);
-    assert.ok(!/auto-test-session/.test(t.split('—')[0]), 'id 不该用会话 id');
+    // id 是明确占位 `auto-TBD-<会话>`（不抽用户话 —— 实报过抽出"我已经重启测试一下"
+    // 这种开场白、"本轮有改动" 这种 hook 自己生成的断点文本）。
+    assert.match(t, /\[进行中\] auto-TBD-test-session/, `应为 TBD 占位:\n${t}`);
+    assert.match(t, /—\s*待命名/, '占位描述应标待命名');
     assert.match(t, /自动登记 test-session-abc/, '会话 id 应作幂等键留在标记里');
   });
 
