@@ -67,6 +67,7 @@
 - [[pi-extension-api-traps]] — 写 pi 扩展时的 API 陷阱：字段值是基线非真实、MCP 工具不进 active 表、宿主内部包不可 import
 - [[global-config-contaminates-projects]] — ~/.abs/config.json 的 user 是全局单值：一次手动设值会永久污染之后所有项目的作者标记
 - [[remind-vs-gate]] — 治「todo 不及时」12 次尝试的总结论：靠 LLM 记得的全失败，不做就过不去的全管用
+- [[normalize-branch-forgot-empty]] — 归一/重建的判定分支要覆盖空态；「反复丢」类现象是真库复现出来的，读代码猜不到
 
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
@@ -79,6 +80,7 @@
 - [[2026-10-03-todo-常驻指引的-观察期-判定协议-2026]] — todo 常驻指引的『观察期』判定协议(2026-10-03 起): 背景——abs todo 靠 agent 自觉登记, 实测不可靠(abs_task 调用…
 - [[2026-10-06-看板为空时对齐段静默不注入-而日志仍报]] — 看板为空时对齐段静默不注入，而日志仍报 todo_guide=on（假信号）：injectTodoGuidelines 的返回值含义是「六条常驻指引装进去了」…
 - [[2026-10-06-ctx_batch_execute-的]] — ctx_batch_execute 的 section 是 query 匹配结果，未命中的段显示为空——会被误读成「命令没输出/仓库干净」。实测：git…
+
 ## Syntheses
 
 ## Sessions

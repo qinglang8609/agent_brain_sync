@@ -2554,6 +2554,24 @@ describe('结构重建: H1 后恒有一个空行', () => {
     assert.match(after, /^# 🗂 Graph Index\n\n## Rules\n\n## Concepts\n/, `前导结构不该抖: ${after}`);
     assert.ok(after.startsWith(before.slice(0, before.indexOf('## Entities'))), after);
   });
+
+  // 回归（2026-10-06 实测）：空分区的前置空行被吃 —— 「有内容分区 → 空分区」接缝
+  // 被挤成 `- [[页]] …` 紧贴 `## Sources`。表现为「index 那个空行反复丢」：人工补回、
+  // 下次写操作又归一掉（本机 corp_agent: 17961e5 补、f3f7e84 又丢）。
+  // 根因：rebuildStructure 对空分区走 `else out.push(name)`，不 push 前导 ''。
+  test('空分区前也要有一个空行（且不塌到上一条目上）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n\n## Concepts\n- [[a]] — 甲\n\n## Sources\n\n## Syntheses\n\n## Sessions\n- [[log-1]] — 快照\n', 'utf8');
+    await cmdConcept({ dir: projectA, slug: 'd', title: '页d' });  // 触发写盘
+    const out = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    const L = out.split('\n');
+    for (let i = 0; i < L.length; i++) {
+      if (!/^## /.test(L[i])) continue;
+      assert.equal(L[i - 1], '', `${L[i]} 前该有空行: ${JSON.stringify(L.slice(Math.max(0, i - 3), i + 2))}`);
+    }
+    // 空区（Sources）不蹋到上一条目上：它前面得是空行，不是 `- [[…]]`
+    assert.ok(out.includes('- [[d]] — 页d\n\n## Entities'), `空区不该贴上一条目: ${out}`);
+  });
 });
 
 // ---------- log.md 写入不被闸门破坏（用户 2026-10-05 追问） ----------

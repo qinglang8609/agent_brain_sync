@@ -1,9 +1,11 @@
 # 📋 Todo Board
 
 ## Todo
+
 ## Done
 
 ### 2026-10-06
+- [x] index-blank-lost [[fanchao]] — index.md 空分区前置空行被归一吃掉：rebuildStructure 对空分区不补空行 — rebuildStructure 对空分区不补前导空行，致「有内容区→空区」接缝塌掉；已改为分区标题前恒补空行。真库验证 + 新增回归用例破坏验证通过，545 全绿。 【落地】 (完成 2026-10-06)
 - [x] panel-empty-visible-and-opening-rules [[fanchao]] — 空看板也显示面板 + 首轮3条硬规则 + 无图谱自动init + abs update 方向判断；544全通过、破坏验证过、已commit 65224fa — 空看板说清事实（面板+对齐段）、首轮3条硬规则、无图谱自动init、abs update 方向判断修静默降级；544全通过+三处破坏验证；commit 65224fa 【落地】 (完成 2026-10-06)
 - [x] oversize-exempt [[fanchao]] — 方案已落 docs/plans/20261006-oversize-exempt.md，等拍板后改 src/lint.js（1处+1纯函数） — 超限豁免（keep-oversize 标记）user 2026-10-06 决定不做了 【否决】 (完成 2026-10-06)
 - [x] opening-rules-first-round [[fanchao]] — 已改 hooks/abs.pi.ts 三处；544 全通过、破坏验证过、已 install；待真机新窗口验证 — 首轮3条硬规则（先登记/名字说清/不攒）+ 空看板说清事实 + 无.brain自动init；544全通过、破坏验证过、已install 【落地】 (完成 2026-10-06)

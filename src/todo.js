@@ -392,18 +392,17 @@ export function rebuildStructure(text, spec) {
   const out = [spec.h1];
   const pre = trimBlank(preamble);
   if (pre.length) out.push('', ...pre);
-  // 空分区之间不插空行（否则每次首跑都会“把空行加进去”而写盘一次，
-  // 而 load 是好读命令 —— 不该因纯排版差异去改文件）。
-  // 有内容的第一个分区与前言之间保留一个空行（排版），其余紧凑。
-  // 但 H1 后必须恒有一个空行（2026-10-05 实测漏网）：前言为空且首个分区为空时
-  // （如 H1 缺失被补回、而 `## Rules` 还没条目），两个条件都不满足 → `# H1`
-  // 和 `## Rules` 直接相贴。首行是这个文件的门面，不容忍这种粘贴。
-  let first = true;
+  // 每个分区标题前恒有一个空行（含空分区）。
+  // 坑（2026-10-06 定位）：旧写法对空分区走 `else out.push(name)` —— 不补空行，
+  // 于是「有内容分区 → 空分区」的接缝被挤成 `- [[页]] …` 紧贴 `## Sources`。
+  // 表现成「index 里那个空行反复丢」：人工补回 → 下次任意写操作(过 enforceBrainFormat)
+  // 又归一掉，来回拉锯（本机 corp_agent 实测，17961e5 补、f3f7e84 又丢）。
+  // 原注释担心「每次首跑都写盘一次」——实测不会：归一后自身就是稳定形态，
+  // 第二次跑 fixed 为空、零字节改动（幂等，见 test/todo 的自检）。
+  // H1 后必须恒有空行：`# H1` 与首个分区相贴是门面事故，不容忍。
   for (const [idx, name] of spec.order.entries()) {
     const body = trimBlank(bucket.get(name) || []);
-    if (body.length || first) out.push('', name, ...body);
-    else out.push(name);
-    first = false;
+    out.push('', name, ...body);
   }
   for (const e of extras) {
     const body = trimBlank(e.lines);
