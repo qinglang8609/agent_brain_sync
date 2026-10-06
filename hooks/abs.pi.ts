@@ -5,6 +5,12 @@
  * Pi 事件: session_start / session_shutdown (对应 host hook 的 SessionStart/SessionEnd)。
  * session_shutdown 额外触发 abs wrapup: 把当前项目未完成任务快照到 wrapup.log (跨会话收尾保险)。
  * agent_end 只留可观测性埋点(agent_end:seen), 不再向对话注入任何东西。
+ * 另在 agent_end 确认开局 load 段「送达」（loadPending → loadInjected，2026-10-06 方案 A）：
+ *   注入点在 before_agent_start（prompt 提交后、agent loop 前），此刻对话还没发出去；
+ *   若在那时就置位，被 ESC/中断的那轮会把一次性标记烧掉，之后永远不再注入（日志实证）。
+ *   故标记只在 agent_end 置 —— 没走完就下轮补。
+ * 且标记按 **cwd** 记（load 内容取自 cwd/.brain/）—— 会话级单值会让一个目录
+ *   拿到 load 后、其它目录全被永久跳过（2026-10-06 用户实报，日志有干净复现）。
  *
  * 已删除（2026-09-15）：「写文件即任务开始 → 每轮注入登记提醒」。实报「pi 里一直报 Follow-up」。
  * 已删除（2026-09-18）：收尾注入本身（agent_end + sendUserMessage deliverAs=followUp）。
@@ -198,6 +204,43 @@ async function hasBrain(cwd: string): Promise<boolean> {
   }
 }
 
+/** 已**确认送达**过 load 的目录集合（本会话内）。
+ * “只第一次”：开工那一刻把全套状态摆一次（Rules/图谱/滞留/最近 log），
+ * 之后靠看板段每轮对齐 —— 不重复塞 load（它是全量，每轮塞会随图谱无界膨胀）。
+ * 在 session_start 清空（同 filesSeen）。
+ *
+ * ★ 语义一：是「LLM 真看到了」，不是「我跑过了」（2026-10-06 用户拍板方案 A）。
+ *   病根：原实现注入完立刻置位，但注入发生在 `before_agent_start`（prompt 提交之后、
+ *   agent loop 之前）—— 此时对话**还没发出去**。ESC/中断掉的那轮，标记已烧且不回滚，
+ *   后续全部 skip。日志实证（~/.abs/log/hooks.log 07:06-07:09 一段）：
+ *     session_start → load_guide=on → 之后连续 skip
+ *   修正：只在 `agent_end`（这轮真跑完）置位；中断则保持未置 → 下轮自动补。
+ *   **不要再改回「注入时直接置位」** —— 那就是把「没走完就补」重新关掉。
+ *
+ * ★ 语义二：**按目录分，不是会话级单值**（2026-10-06 用户实报后修的第二个 bug）。
+ *   load 的内容来自 `cwd/.brain/`，**每个目录不同**；而原实现只有一份布尔值。
+ *   后果：任一目录拿到过 load，**其它所有目录被永久跳过**。日志实证（一次干净复现）：
+ *     07:40:08 session_start
+ *     07:40:10 before_agent_start load_guide=on   cwd=~/.agents   ← 注入
+ *     07:40:17 agent_end load_delivered           cwd=~/.agents   ← 置位
+ *     07:40:43 before_agent_start load_guide=skip cwd=agent_brain_sync ← ✗ 被跳过
+ *   而 pi 一个会话里 `turn_end` 会在多个 cwd 间交替（多个项目目录同时挂着）。
+ *   **不要再改回单个布尔量** —— 一改回去就重现「在 A 说过话，B 再也看不到 load」。 */
+const loadInjected = new Set<string>()
+
+/** 本轮已注入 load、正等 `agent_end` 确认送达的 **cwd**（见 loadInjected 的注解）。
+ *  与 loadInjected 的分工：这是「抛出去了」，那是「对方接到了」。
+ *  空串 = 无待确认（不用 null，避免每次都要判空类型）。 */
+let loadPending = ''
+
+/** 本会话是否已送过首轮硬规则（只为日志可观测，不参与注入判断 —— 那个由 loadInjected 守）。
+ *  每会话重置（session_start），同 loadInjected。 */
+let openingRulesLogged = false
+
+/** load 子进程超时（ms）。卡住不能拖死开工 —— 到点杀子进程并当失败（下次不再重试）。
+ * 2s：本机 load 实测 ~50-100ms，2s 已是“明显不对”的阈值。 */
+const LOAD_GUIDE_TIMEOUT_MS = 2000
+
 /** 看板快照在 guidelines 里的前缀 —— 用于每轮替换上轮快照（内容会变，不能用 includes 去重）。 */
 const BOARD_MARK = '[看板] '
 
@@ -225,11 +268,23 @@ const BOARD_MARK = '[看板] '
  * 与以前删掉的两种注入的本质区别：那不调 sendUserMessage（不插话、不抢 turn），
  * 只改 system prompt 内容 —— 和静默的 TODO_GUIDELINES 走同一个通道。
  *
- * 看板空或全完成时不拼（没有可对齐的东西，拼个空列表纯占位）。 */
+ * 看板为空时仍然输出 —— 但**不能只摆「（空）」**（2026-10-06 用户实报后改）：
+ *   实报：在 ~ 目录干活，看板 Todo 区是空的，模型看到「（空）」读成了「一切正常」，
+ *   于是动手却没登记。日志里 todo_guide=on / load_guide=on 都是真的 ——
+ *   **但「注入了」不等于「起作用了」**。空看板摆成一行「（空）」，传达不出「不对齐」。
+ *   故空看板时要把**事实 + 后果**摆出来：你正在开工，而看板一片空白，这就是该登记没登记。
+ *   （仍然不替 LLM 做决定、不自动登记 —— 只把事实摆清楚，判断还是它的。）
+ *
+ * 仍然静默的情形：无图谱/读失败（readBoardForGuide 捕不到 todo.md）；
+ *   **以及看板里全是别人的任务**（那不是空，是「这看板不是我在用」——
+ *   摆个「（空）」会误导成「我可以去登记」，跟真的空看板不是一回事）。 */
 export function boardGuideline(md: string, who: string, touched: string[] = []): string | null {
   const { total, rows } = parseOpenTasks(md, PANEL_MAX_ROWS, who)
-  // 看板空但动过文件：仍要输出（「改了文件却没任务」正是最该对齐的时刻）。
-  if ((!total || !rows.length) && !touched.length) return null
+  // 看板里有没有**任何**未完成条目（不分作者）。用来区分两种“过滤后为空”：
+  //   没有 → 真的空看板（摆「空」这个事实 + 它是异常信号）
+  //   有但都是别人的 → 不是我的看板（该静默，别误导我去登记）
+  const anyOpen = /^\s*- \[ \]/m.test(md)
+  if (!total && anyOpen) return null
   const lines = rows.map((r) => {
     // desc 为空时不拖空破折号（MCP 登记只给 id 的常见情形）。
     const head = `  ${r.state ? `[${r.state}] ` : ''}${r.id}${r.desc ? ` — ${r.desc}` : ''}`
@@ -243,10 +298,94 @@ export function boardGuideline(md: string, who: string, touched: string[] = []):
     : []
   return [
     '当前 .brain/todo.md 看板（开工前对齐：正在做的算哪条？有新任务要加吗？有该删的吗？）:',
-    ...(lines.length ? lines : ['  （空）']),
+    // ★ 空看板不能只摆「（空）」——用户 2026-10-06 实报：看到「（空）」读成了「一切正常」，
+    //   于是动手却没登记（日志证实 todo_guide=on、load_guide=on，即「看见了，照样不做」）。
+    //   故把事实说完整：本目录有图谱、但零未完成任务。
+    // ⚠ 但**不得写劝告**（「请登记」「别忘了」）—— 知识库 remind-vs-gate 记了 12 次全败，
+    //   且本文件自己的用例就在守这条（不得夹带劝告）。只摆事实，判断留给 LLM。
+    ...(lines.length
+      ? lines
+      : ['  （空 —— 本目录有 .brain/ 图谱，但一条未完成任务都没有）']),
     ...(more ? [more] : []),
     ...touchLines,
   ].join('\n')
+}
+
+/** 开工第一轮注入 load 全文（只一次）。
+ *
+ * ★ 用户 2026-10-06 定：「打开 pi 说第一句话就自动 abs load」，且**只第一轮**。
+ *   痛点：我开工时手上什么都没有（Rules/图谱/上会话滞留/最近 log 全缺），
+ *   得靠用户提醒「abs」我才去 load —— 今天这场活就是这么漏掉登记的。
+ *
+ * 为何只第一轮（与看板段的反复对齐是两件事）：
+ *   - 看板：小而关键，**每轮都摆**（反复对齐，不厌其烦）。
+ *   - load：全量（实测 ~2.7k 字符），**只在开工那一次**。若每轮塞，
+ *     会违反项目 Rule「读取侧输出不得随规模增长」—— 图谱越大 prompt 越肿。
+ *
+ * 为何走 ABS_BIN 跑子进程（而非 import 源码）：hook 是被**单文件复制**到
+ *   ~/.pi/agent/extensions/abs.ts 的，那里没有 ../src/ —— import 源码必炸。
+ *   ABS_BIN 是 install 时烧进来的稳定入口路径，本文件 wrapup 已在用同一路子。
+ *
+ * 与删掉的自动登记「每轮 spawn」的差别：**只第一轮一次**，不是每轮。
+ *   每轮 spawn 才是卡顿的根因（见 auto-todo-register-design）。
+ *
+ * 与删掉的两次注入的差别：那两次是 sendUserMessage（往对话里插话、抢 turn）；
+ * 本函数只改 system prompt 内容，与 TODO_GUIDELINES / 看板段同一通道。
+ *
+ * 失败静默：跑子进程/读盘出任何错都不弄坏对话（返回 null）。 */
+async function readLoadForGuide(cwd: string): Promise<string | null> {
+  try {
+    const out = await new Promise<string | null>((resolvePromise) => {
+      let buf = ''
+      const c = spawn(process.execPath, [ABS_BIN, 'load'], {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env },
+      })
+      // 超时保护：load 卡住不能拖住开工（子进程永不返回 = 会话永远开不动）。
+      const t = setTimeout(() => { try { c.kill() } catch {} resolvePromise(null) }, LOAD_GUIDE_TIMEOUT_MS)
+      c.stdout.on('data', (d) => (buf += d))
+      c.on('error', () => { clearTimeout(t); resolvePromise(null) })
+      c.on('close', (code) => {
+        clearTimeout(t)
+        resolvePromise(code === 0 && buf.trim() ? buf.trim() : null)
+      })
+    })
+    return out
+  } catch {
+    return null
+  }
+}
+
+/** 自动建图谱（无 .brain 时）。返回是否成功建出了 .brain/。
+ *
+ * ★ 用户 2026-10-06 拍板方案 A：**任何目录都建**（含 ~、含临时目录）。
+ *   曾考虑「只对有 .git/package.json 的目录建」—— 被用户否定：
+ *   用户认定 ~ 这种也是项目，而 ~ 没有 .git，按项目标志判会误伤。
+ *
+ * 幂等且安全：init 遇到已有内容一律不动（见 `abs init --help` 的「--repair 只补缺不覆盖」），
+ *   所以重复调用无副作用；并且只在 hasBrain 为假时才调。
+ *
+ * 为何走子进程而非 import 源码：hook 被单文件复制到 ~/.pi/agent/extensions/，
+ *   那里没有 ../src/ —— 与 readLoadForGuide 同一原因。
+ *
+ * 超时用同一个 LOAD_GUIDE_TIMEOUT_MS：建图谱就是写几个小文件，卡住即异常。
+ * 失败静默：无权限/只读盘等不能弄坏对话（返回 false，调用方会再查一次 hasBrain 兜底）。 */
+async function autoInit(cwd: string): Promise<boolean> {
+  try {
+    return await new Promise<boolean>((resolvePromise) => {
+      const c = spawn(process.execPath, [ABS_BIN, 'init'], {
+        cwd,
+        stdio: ['ignore', 'ignore', 'ignore'],
+        env: { ...process.env },
+      })
+      const t = setTimeout(() => { try { c.kill() } catch {} resolvePromise(false) }, LOAD_GUIDE_TIMEOUT_MS)
+      c.on('error', () => { clearTimeout(t); resolvePromise(false) })
+      c.on('close', (code) => { clearTimeout(t); resolvePromise(code === 0) })
+    })
+  } catch {
+    return false
+  }
 }
 
 /** 读看板拼成对齐段。失败/无图谱/看板空都返 null（静默降级，绝不阻断对话）。 */
@@ -275,6 +414,68 @@ export function injectTodoGuidelines(options: any, board?: string | null): boole
     if (list[i].startsWith(BOARD_MARK)) list.splice(i, 1)
   }
   if (board) list.push(BOARD_MARK + board)
+  return true
+}
+
+/** 开局 load 段在 guidelines 里的前缀（与看板段区分，两者都挤 promptGuidelines）。 */
+const LOAD_MARK = '[开工] '
+
+/** 从 skill 里挑出的【硬规则】—— 只第一轮送，与 load 同机会。
+ *
+ * ★ 用户 2026-10-06 拍板方案 B：不动 skill 全文（~200 行），只把管「登记」的 3 条硬规矩搬过来。
+ *
+ * 为何不做 A（首轮塞 skill 全文）：撞项目 Rule「读取侧输出不得随规模增长」——
+ *   每次开会话都多塞 200 行，而其中大部分（图谱组织/容量纪律/tesardown 流程）
+ *   只在真正做 abs 维护时才用得上。
+ *
+ * 与【常驻 6 条】TODO_GUIDELINES 的区别（两者职责不同，别合并）：
+ *   - 6 条常驻：行为要求，每轮都在（看板对齐用）。
+ *   - 这 3 条：**只在开工第一轮出现一次** —— 因为它们是「开工那一刻」的触发器，
+ *     每次都说等于噪音（历史教训：静态指引有痕 414 次、行为 0 变化）。
+ *
+ * ⚠ 必读的实证背景（别当作「这次会有用」）：
+ *   知识库 remind-vs-gate 记了 12 次尝试全败 —— 「提醒 LLM」这一类全死于
+ *   「看见了，照样不做」（静态指引有痕 414 次）。本方案属于该类。
+ *   用户知情后仍然选择做，理由：「首轮显式送完整规则」这个形态确实没被试过
+ *   （历史试的是「一直挂着」和「关键词触发」，与「首轮一次性强提示」不同）。
+ *   所以：**不要因为「效果不理想」就反复改这几句** —— 那正是用户说的死循环。
+ *   要改的是机制（找「不做就过不去」的关卡），不是把提醒写得更用力。 */
+export const OPENING_RULES = [
+  // ① skill「新需求受理协议」+「开工前先登记」的核心：先登记，再动手。
+  //   为何强调「第一个文件」：实测漏登记都发生在「先读代码再说」的天真开工上。
+  'This project has a .brain/ board. Before you touch any file or run any command for a task that changes this project, register it first with the abs task tool (action "start" + a short id). Read the first file only after that. A rough name is fine — the name can be fixed later, but an unregistered start cannot be recovered.',
+  // ② 名字要「说清在干什么」，不抄用户原话（实测抄出来的是「我已经重启测试一下」这种开场白）。
+  'Name it so it says what you are doing (e.g. fix-skill-trigger, oversize-exempt) — do not copy the user\'s wording; a greeting or a question is not a task name.',
+  // ③ 「不攒」：一段活干完立刻 done，宁可拆小。
+  'Mark a task "done" as soon as that piece of work ends — do not batch. If you are more than two or three rounds in without a registration, you are already off the rails: register now.',
+]
+
+/** 硬规则段的前缀（与 [开工] load 段 / [看板] 段区分）。 */
+const OPENING_MARK = '[开工规则] '
+
+/** 注入首轮硬规则（只第一轮，由调用方的 loadInjected 守）。与 load 段同一通道。
+ * 关掉即设 ABS_OPENING_RULES=0。 */
+export function injectOpeningRules(options: any): boolean {
+  if (String(process.env.ABS_OPENING_RULES || '') === '0') return false
+  const list: string[] = options.promptGuidelines || (options.promptGuidelines = [])
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].startsWith(OPENING_MARK)) list.splice(i, 1)
+  }
+  list.push(OPENING_MARK + OPENING_RULES.join(' '))
+  return true
+}
+
+/** 注入开局 load 全文。与看板段同一个通道（静态 system prompt 内容）。
+ * 只第一次调（由调用方的 loadInjected 守）；这里只管推入，不自己去重。 */
+export function injectLoadGuideline(options: any, text: string): boolean {
+  if (String(process.env.ABS_LOAD_GUIDE || '') === '0') return false
+  if (!text) return false
+  const list: string[] = options.promptGuidelines || (options.promptGuidelines = [])
+  // 先删旧的：理论上只会调一次，但重入/session 重置边界上不该堆叠。
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].startsWith(LOAD_MARK)) list.splice(i, 1)
+  }
+  list.push(LOAD_MARK + text)
   return true
 }
 
@@ -613,7 +814,9 @@ export function renderPanelLines(
   animPhase = -1,
   nickname = '',
 ): string[] {
-  if (data.total === 0) return []
+  // ★ 空看板不再直接返回空数组（2026-10-06 用户要求：「即便 todo 没有列表，也要在 pi 上显示」）。
+  //   理由与看板段一致：面板是「机制在不在」的常驻指示，进去就看不见 = 不知道机制活着。
+  //   下面仍要画框和标题，所以这里只是不再提前 return。
   const colorOf = (state: string): string => (state === '搁置' ? 'dim' : state === '滞留中' ? 'muted' : state === '讨论中' ? 'dim' : 'accent')
   const lines: string[] = []
   // 上描边：用 `thinkingOff` —— 跟 Pi 输入框描边**完全同一个色**。
@@ -634,6 +837,12 @@ export function renderPanelLines(
   lines.push(clipToWidth(fg('accent', title), width))
 
   const lastIdx = data.rows.length - 1
+  // 空看板：标题下摆一行事实（与 system prompt 里的看板段同口径）。
+  // 只摆事实、不写劝告 —— 「记得登记」那类已被 13 次尝试证明无效（见 OPENING_RULES 注解）。
+  if (data.total === 0) {
+    lines.push(clipToWidth(`  ${fg('dim', '（无未完成任务）')}`, width))
+    return lines
+  }
   data.rows.forEach((t, i) => {
     // `└─` 只给最后一条 —— 不管它有没有断点。
     // （2026-10-03 审查修正：原条件 `i === lastIdx && !t.note` 会让“末条带断点”时
@@ -676,7 +885,8 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
     const md = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8')
     const who = await currentUser()
     const data = parseOpenTasks(md, PANEL_MAX_ROWS, who)
-    if (data.total === 0) { hidePanel(ui); return }
+    // 任务为空**也显示面板**（摆一行「（无未完成任务）」），只有无图谱才隐藏。
+    // 曾写 data.total === 0 → hidePanel；用户 2026-10-06 要求改掉。
     // factory 形式：render(width) 每帧拿真实宽度 → 按宽度截断，不再断字。
     // 动画：phase 存在模块级，render 时读当前值；定时器只在本帧重绘，不重建 widget。
     let tuiRef: any = null
@@ -704,6 +914,12 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
     const needAnim = data.rows.some((t) => t.state === '进行中')
     if (needAnim) startAnimTimer(() => tuiRef)
     else stopAnimTimer()
+    // ★ 无动画时得自己刷一帧（2026-10-06）。
+    //   旧代码靠“任务清空→hidePanel”顺带 requestRender；现在空看板不隐藏了，
+    //   若这里不主动刷，从“有任务”变成“无任务”时屏幕会冻结在旧帧
+    //   （标题还写着旧计数）—— 与 2026-10-05 那个静默 bug 同一族。
+    //   仍在 needAnim 时不用管：定时器每帧会刷。
+    if (!needAnim) try { lastTui?.requestRender?.() } catch {}
   } catch {
     hidePanel(ui)
   }
@@ -717,6 +933,9 @@ export default function absPiHook(pi: ExtensionAPI): void {
     // 新会话 = 重新登记：不重置则同进程的第二个会话永远不再落断点
     autoTaskSeen = false
     filesSeen.clear() // 同理：新会话的文件痕迹不能带到下个会话
+    loadInjected.clear() // 同：新会话的每个目录都要重新摆一次开局状态
+    loadPending = ''     // 同：上一会话末轮未完的“待确认”不得带到新会话
+    openingRulesLogged = false // 同：首轮硬规则的日志标记每会话重算
     resetThrottle()
     // 本会话的随机昵称 —— 在这里抽一次（不是每帧抽，否则面板会疯狂闪）。
     // 每次 session_start（startup/reload/new/resume/fork）重抽 → “每次打开 pi 都是随机的”。
@@ -790,11 +1009,46 @@ export default function absPiHook(pi: ExtensionAPI): void {
     return (async () => {
       try {
         if (!(await hasBrain(cwd))) {
-          logHook(`before_agent_start todo_guide=off reason=no_brain`).catch(() => {})
-          return
+          // 无图谱 → 自动建一个（2026-10-06 用户拍板方案 A：任何目录都建）。
+          // 为何是 A 而非「只对有 .git 的目录建」：用户明确认定 ~ 这种也算项目，
+          //   而 ~ 没有 .git/package.json —— 按项目标志判会把它排除掉，与需求相反。
+          // 子进程跑（与 readLoadForGuide 同一路子）：hook 是被单文件复制到
+          //   ~/.pi/agent/extensions/ 的，那里没有 ../src/，不能 import 源码。
+          // 幂等：init 自带「结构不完整报明细」，已有内容一律不动（见 abs init --help）。
+          // 失败静默：建不出来（无权限/只读盘）不该弄坏对话，只是本轮不注入。
+          const inited = await autoInit(cwd)
+          logHook(`before_agent_start auto_init=${inited ? 'ok' : 'fail'} cwd=${cwd}`).catch(() => {})
+          if (!(await hasBrain(cwd))) {
+            logHook(`before_agent_start todo_guide=off reason=no_brain`).catch(() => {})
+            return
+          }
         }
         const ok = injectTodoGuidelines(event?.systemPromptOptions, await readBoardForGuide(cwd))
-        logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} cwd=${cwd}`).catch(() => {})
+        // 开学每个目录垫一次 load 全文（同目录只一次；之后靠上面那个看板段反复对齐）。
+        // 注意这里**不置 loadInjected** —— 注入点只是在 prompt 提交后、agent loop 前，
+        // 对话还没发出去；此刻置位会让被中断的那轮白烧掉标记（见 loadInjected 注解）。
+        let loadState = 'skip'
+        if (!loadInjected.has(cwd)) {
+          const loadText = await readLoadForGuide(cwd)
+          // 首轮硬规则（方案 B，2026-10-06）—— 与 load 同一机会（同目录只一次）。
+          // 为何挂在这里而不另设 flag：两者都是「开工那一刻只说一次」，
+          //   且共用「送达确认」语义 —— 若这轮被中断，下轮两者一起重送，不会一个送一个不送。
+          const rulesOn = injectOpeningRules(event?.systemPromptOptions)
+          if (loadText) {
+            injectLoadGuideline(event?.systemPromptOptions, loadText)
+            loadPending = cwd // 送达确认交给 agent_end
+            loadState = 'on'
+          } else {
+            loadState = 'empty'
+            loadInjected.add(cwd) // 失败也不重试：不每轮白查一次盘
+          }
+          if (rulesOn) openingRulesLogged = true
+        }
+        // 【临时取证 2026-10-06】seen= 把 Set 内容原样打出来：
+        //   真实环境里 agent_brain_sync 从未 load_delivered 却 still skip → 与「按 cwd 分」矛盾。
+        //   靠这行区分：Set 空（→ 判断写错）vs Set 里已有该 cwd（→ 有东西提前加进去了）。
+        //   定位并修好后删掉这行。
+        logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} load_guide=${loadState} opening_rules=${openingRulesLogged ? 'on' : 'skip'} seen=[${[...loadInjected].join(',')}] pending=[${loadPending}] cwd=${cwd}`).catch(() => {})
 
         // 自动登记已整体移除（2026-10-05 用户实报两点）：
         //   ① 卡顿 —— agent_end 每轮 spawn 一个 node 进程
@@ -821,6 +1075,15 @@ export default function absPiHook(pi: ExtensionAPI): void {
     if (!agentEndSeen) {
       agentEndSeen = true
       await logHook(`agent_end:seen cwd=${cwd} brain=${brain || 'none'}`).catch(() => {})
+    }
+    // 送达确认（2026-10-06 方案 A）：走到这里 = 这轮真跑完了 → 才算“LLM 看到了”。
+    // 中断/ESC 掉的那轮不会到 agent_end → 该 cwd 入不了集合 → 下轮自动补注入。
+    // 这是**唯一**该写 loadInjected 的地方（别挪回 before_agent_start）。
+    if (loadPending) {
+      loadInjected.add(loadPending)
+      const done = loadPending
+      loadPending = ''
+      await logHook(`agent_end load_delivered cwd=${done} seen=[${[...loadInjected].join(',')}]`).catch(() => {})
     }
     // 每轮 spawn 已删除（2026-10-05 用户实报"卡顿"）：agentEndSeen 一旦置位，
     // 下面那个条件就恒真 → 每轮结束都起一个 node 进程，纯属白烧。

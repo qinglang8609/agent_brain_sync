@@ -20,6 +20,21 @@ function pkgVersion() {
   } catch { return 'unknown'; }
 }
 
+/** 比较两个 x.y.z 版本号：a>b 返回 1，a<b 返回 -1，相等返回 0。
+ * 缺位按 0 补（1.2 == 1.2.0）。不引 semver —— 本包版本号只有 x.y.z 一种形态。 */
+function cmpVersion(a, b) {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  // 非 x.y.z（如 'unknown'）→ 不判定。注意必须先查 NaN 再补 0：
+  // NaN 是 falsy，写成 `pa[i] || 0` 会把 'unknown' 静默当成 0.0.0。
+  if ([...pa, ...pb].some(Number.isNaN)) return 0;
+  for (let i = 0; i < 3; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
 /** 跑一个命令并把 stdout 当字符串返回(失败返回 null)。 */
 function runCmd(cmd, args) {
   return new Promise((resolvePromise) => {
@@ -42,10 +57,20 @@ async function cmdUpdate({ yes }) {
     console.error('无法查询 npm registry（网络/代理问题）。手动升级：npm i -g @fanchao8609/agent_brain_sync@latest');
     process.exit(1);
   }
+  const cmp = cmpVersion(cur, latest);
   console.log(`当前: ${cur}`);
   console.log(`最新: ${latest}`);
-  if (latest === cur) {
+  if (cmp === 0) {
     console.log('已是最新，无需升级。');
+    return;
+  }
+  // 本地比 registry 新 —— 典型场景：开发中从源码装过全局，或在改一个未发布的版本。
+  // 此时不能走 npm i -g @latest：那会把本地版**降级**覆盖掉（2026-10-06 实际发生：
+  // 源码 1.16.2 被拉回 registry 的 1.16.1）。只比较 `===` 而没有方向判断，就是这个坑。
+  if (cmp > 0) {
+    console.log('\n本地版本比 registry 上的更新（未发布的开发版？），跳过升级以免被降级。');
+    console.log('  想用本地源码覆盖全局：npm i -g ' + ABS_DIR);
+    console.log('  想把它正式发布：      npm publish（在源码目录，发布后 update 即恢复正常）');
     return;
   }
   console.log(`\n升级 ${cur} → ${latest} …`);

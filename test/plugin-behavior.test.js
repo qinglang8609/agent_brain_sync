@@ -178,6 +178,159 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
     await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
     assert.equal(injected.length, 0, '无图谱不打扰');
   });
+
+  // ---- 开局 load 段「没走完就补」（2026-10-06 方案 A）----
+  // 病根：标记原本在 before_agent_start 里就置了，而那个时点对话还没发出去。
+  // 被 ESC/中断的那轮会把一次性标记烧掉且不回滚 → 之后永远 skip。
+  // 判据：注入出的 [开工] 段（不是日志文本 —— 那只能证「代码跑过」，证不了「注入到了」）。
+  describe('开局 load 段 送达确认', () => {
+    /** 新会话 + 有图谱的项目，返回可驱动 before_agent_start 的上下文。
+     *  每个用例独立 import 一次（模块级 flag 不跨 import 共享），避免用例间串状态。 */
+    async function setupLoad(name, logDir) {
+      const mod = await loadPi(logDir);
+      const { handlers } = harness(mod.default);
+      const proj = await makeProject(name);
+      // 真实 .brain/todo.md，让 load 子进程有东西可读
+      await fs.writeFile(join(proj, '.brain', 'todo.md'),
+        '# Todo\n\n## Todo\n- [ ] t1 [[tester]] — 一条任务\n', 'utf8');
+      const ctx = { cwd: proj };
+      // session_start 重置 flag（真实宿主也会先发这个事件）
+      await handlers.session_start({ reason: 'startup' }, { ...ctx, hasUI: false });
+      // 驱动一轮 before_agent_start，返回本轮 [开工] 段推入与否。
+      // dir 可覆盖 cwd —— 一个 pi 会话里 cwd 会随项目目录变（本插件的第二个坑）。
+      const fireRound = async (dir = proj) => {
+        const options = { promptGuidelines: [] };
+        await handlers.before_agent_start({ prompt: 'hi', systemPromptOptions: options }, { cwd: dir });
+        return options.promptGuidelines.filter((g) => g.startsWith('[开工] ')).length;
+      };
+      // 造第二个有图谱的项目（用于切目录用例）
+      const makeOther = async (otherName) => {
+        const other = await makeProject(otherName);
+        await fs.writeFile(join(other, '.brain', 'todo.md'),
+          '# Todo\n\n## Todo\n- [ ] t2 — 另一个项目的任务\n', 'utf8');
+        return other;
+      };
+      return { handlers, fireRound, ctx, makeOther };
+    }
+
+    test('正常跑完一轮 → 注入一次，后续轮次不再注入', async () => {
+      const { handlers, fireRound, ctx } = await setupLoad('pi-load-ok', join(sandbox, 'log'));
+      assert.equal(await fireRound(), 1, '第一轮必须注入 [开工] 段');
+      await handlers.agent_end({ messages: [] }, ctx); // 这轮真跑完 → 送达确认
+      assert.equal(await fireRound(), 0, '已送达后不该重复注入');
+    });
+
+    test('★ 第一轮被中断(无 agent_end) → 第二轮必须补注入（本次回归点）', async () => {
+      const logDir = join(sandbox, 'log-load-abort');
+      const { fireRound, ctx } = await setupLoad('pi-load-abort', logDir);
+      assert.equal(await fireRound(), 1, '第一轮注入');
+      // 不调 agent_end —— 模拟 ESC / 中断掉的那轮
+      assert.equal(await fireRound(), 1, '中断后必须补注入（改前这里是 0：标记已烧且不回滚）');
+      const log = await hooksLog(logDir);
+      assert.ok(!/load_delivered/.test(log), '没走完就不该有送达痕');
+    });
+
+    test('补注入的这轮跑完 → 之后才真正停', async () => {
+      const logDir = join(sandbox, 'log-load-late');
+      const { handlers, fireRound, ctx } = await setupLoad('pi-load-late', logDir);
+      await fireRound();                 // 第一轮（将被中断）
+      assert.equal(await fireRound(), 1, '补注入');
+      await handlers.agent_end({ messages: [] }, ctx); // 这轮跑完了
+      assert.equal(await fireRound(), 0, '送达后停');
+      assert.match(await hooksLog(logDir), /load_delivered/, '送达必须有痕（可观测）');
+    });
+
+    test('边界: 新会话不得继承上一会话的已送达状态', async () => {
+      const { handlers, fireRound, ctx } = await setupLoad('pi-load-sess', join(sandbox, 'log'));
+      await fireRound();
+      await handlers.agent_end({ messages: [] }, ctx); // 本会话送达
+      assert.equal(await fireRound(), 0, '同会话内已停');
+      await handlers.session_start({ reason: 'new' }, { ...ctx, hasUI: false }); // 开新会话
+      assert.equal(await fireRound(), 1, '新会话必须重新摆一次开局状态');
+    });
+
+    // ★ 第二个 bug（2026-10-06 用户实报）：标记原是【会话级单值】，但 load 内容取自
+    //   cwd/.brain/ —— 每个目录不同。任一目录拿到 load 后，其它目录全被永久跳过。
+    //   日志干净复现：07:40:10 on@~/.agents → 07:40:17 delivered → 07:40:43 skip@agent_brain_sync
+    test('★ 切目录必须重新注入（load 是按目录的，不能被别的目录烧掉标记）', async () => {
+      const { handlers, fireRound, ctx, makeOther } = await setupLoad('pi-load-a', join(sandbox, 'log-cwd'));
+      const other = await makeOther('pi-load-b');
+      assert.equal(await fireRound(), 1, 'A 目录首轮注入');
+      await handlers.agent_end({ messages: [] }, ctx); // A 送达
+      assert.equal(await fireRound(), 0, 'A 目录已送达 → 同目录不再重复');
+      // 切到 B 目录：改前这里是 0（B 看不到自己的 load），改后必须 1
+      assert.equal(await fireRound(other), 1, '★ B 目录必须能拿到自己的 load（改前被 A 烧掉标记 → 0）');
+      // 回 A：已达送 → 不再重复（证明“按目录”而非“一律重注”）
+      assert.equal(await fireRound(), 0, '回到 A 不重复（避免每轮切来切去都重注）');
+    });
+
+    test('切目录后中断 → 那个目录仍要补注入（两条语义叠加）', async () => {
+      const { handlers, fireRound, ctx, makeOther } = await setupLoad('pi-load-c', join(sandbox, 'log-cwd2'));
+      const other = await makeOther('pi-load-d');
+      await fireRound();
+      await handlers.agent_end({ messages: [] }, ctx);   // A 送达
+      assert.equal(await fireRound(other), 1, 'B 首轮注入');
+      // 不调 agent_end —— B 这轮被 ESC/中断
+      assert.equal(await fireRound(other), 1, 'B 没走完 → 下轮仍补（不得因“注入过”就当送达）');
+      await handlers.agent_end({ messages: [] }, { cwd: other }); // B 这轮跑完
+      assert.equal(await fireRound(other), 0, 'B 送达后才停');
+    });
+  });
+
+  // ---- 首轮硬规则（方案 B，2026-10-06）----
+  // 用户拍板：「开一个 pi 的第一次会话」除了 load，还要把 skill 里管「登记」的 3 条硬规则送一次。
+  // 与常驻 6 条的区别：那 6 条每轮都在（已麻木），这 3 条只首轮出现一次。
+  describe('首轮硬规则', () => {
+    async function setup(name, logDir) {
+      const mod = await loadPi(logDir);
+      const { handlers } = harness(mod.default);
+      const proj = await makeProject(name);
+      const ctx = { cwd: proj };
+      await handlers.session_start({ reason: 'startup' }, { ...ctx, hasUI: false });
+      const fire = async () => {
+        const options = { promptGuidelines: [] };
+        await handlers.before_agent_start({ prompt: '帮我看看 git 历史', systemPromptOptions: options }, ctx);
+        return options.promptGuidelines.filter((g) => g.startsWith('[开工规则] '));
+      };
+      return { handlers, fire, ctx };
+    }
+
+    test('★ 首轮送 3 条硬规则（含“先登记再动手”）', async () => {
+      const { fire } = await setup('pi-rules-1', join(sandbox, 'log-rules'));
+      const got = await fire();
+      assert.equal(got.length, 1, '首轮必须送 [开工规则] 段');
+      const text = got[0];
+      // 三条都得在：① 先登记 ② 名字说清在干什么 ③ 不攒/超两轮即失控
+      assert.match(text, /register it first/i, '① 先登记再动手');
+      assert.match(text, /Before you touch any file/i, '① 必须早于碰文件');
+      assert.match(text, /do not copy the user/i, '② 名字不抄原话');
+      assert.match(text, /do not batch/i, '③ 不攒');
+    });
+
+    test('★ 只首轮送一次：送达后不再送（否则就变成噪音）', async () => {
+      const { handlers, fire, ctx } = await setup('pi-rules-2', join(sandbox, 'log-rules'));
+      assert.equal((await fire()).length, 1, '首轮送');
+      await handlers.agent_end({ messages: [] }, ctx); // 送达
+      assert.equal((await fire()).length, 0, '已达送 → 不再送（一次强提示，非常驻）');
+    });
+
+    test('中断那轮则下轮重送（与 load 同一机会）', async () => {
+      const { fire } = await setup('pi-rules-3', join(sandbox, 'log-rules'));
+      await fire(); // 被中断（无 agent_end）
+      assert.equal((await fire()).length, 1, '没走完 → 下轮仍送');
+    });
+
+    test('开关：ABS_OPENING_RULES=0 可关掉', async () => {
+      const prev = process.env.ABS_OPENING_RULES;
+      process.env.ABS_OPENING_RULES = '0';
+      try {
+        const { fire } = await setup('pi-rules-4', join(sandbox, 'log-rules'));
+        assert.equal((await fire()).length, 0, '关掉后不送');
+      } finally {
+        if (prev === undefined) delete process.env.ABS_OPENING_RULES; else process.env.ABS_OPENING_RULES = prev;
+      }
+    });
+  });
 });
 
 // ============================ op​encode ============================
@@ -618,9 +771,27 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(!/t2 —\s*$/m.test(g), `t2 无描述时不该拖空破折号:\n${g}`);
   });
 
-  test('看板空 / 全完成时不注入（没东西可对齐）', async () => {
+  // ★ 2026-10-06 改契约：看板空曾经 return null（不注入）。现已改为**摆出「（空）」这个事实**——
+  //   原因：开工那一刻（用户说第一句话、filesSeen 还空）恰是看板空的时候，=那正是最该对齐的时刻
+  //   却什么都不注入。日志 todo_guide=on 掩盖了它（那个 on 只表示六条常驻指引装了）。
+  test('看板空仍摆出「（空）」这个事实（不是提醒，只是别让开工那刻没东西可看）', async () => {
     const { boardGuideline } = await loadPanelFns();
-    assert.equal(boardGuideline('## Todo\n## Done\n', 'fanchao'), null);
+    const g = boardGuideline('## Todo\n## Done\n', 'fanchao');
+    assert.ok(g, '看板空也该输出（「空」是事实）');
+    assert.ok(g.includes('（空'), `空看板应标明（空）:\n${g}`);
+    // 2026-10-06：空看板要说完整（有图谱但零任务）—— 只摆「（空）」会被读成「一切正常」，
+    // 用户实报就是因此动手没登记。降级成旧的裸「（空）」该被这条拦住。
+    assert.ok(/本目录有.*图谱/.test(g) && /一条未完成任务都没有/.test(g),
+      `空看板应说清「有图谱、零任务」而不是只摆「（空）」:\n${g}`);
+    // 纯事实：不得夹带劝告/催促（那是被删过三次的「提醒」路线）。
+    // 2026-10-06 实测踩过：曾写「若本次要改这个项目，先把它登成一条任务」—— 就是劝告。
+    assert.ok(!/记得|别忘了|请登记|应该登记|先把它登成/.test(g), `不得夹带劝告:\n${g}`);
+  });
+
+  // 作者过滤（另一件事，与本页改动无关）：别人的任务不算我的 → 不注入。
+  // 单独立一条，别被上面「空看板」的改动顺手带走。
+  test('全是别人的任务时不注入（作者过滤）', async () => {
+    const { boardGuideline } = await loadPanelFns();
     assert.equal(boardGuideline('## Todo\n- [ ] x [[fanchao]]', 'bob'), null, '别人的任务不算');
   });
 
@@ -717,9 +888,18 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     }
   });
 
-  test('空任务列表 → 不渲染任何行（面板自动隐藏）', async () => {
+  // ★ 2026-10-06 用户要求反转了旧行为：「即便 todo 没有列表，也要在 pi 上显示」。
+  //   旧行为（空→不渲染任何行→面板自动隐藏）已作废。
+  //   理由：一进 pi 就看不见面板 = 不知道 abs 活着没（跟「看不到 load」同一类问题）。
+  test('空任务列表 → 仍渲染框+标题+（无未完成任务）一行', async () => {
     const { renderPanelLines } = await loadPanelFns();
-    assert.equal(renderPanelLines({ total: 0, rows: [], hidden: 0 }, 'me', 80, (c, s) => s).length, 0);
+    const lines = renderPanelLines({ total: 0, rows: [], hidden: 0 }, 'me', 80, (c, s) => s);
+    assert.ok(lines.length > 0, '空看板也要画面板（不得返回空数组）');
+    const text = lines.join('\n');
+    assert.ok(text.includes('📋 todo'), `标题要在:\n${text}`);
+    assert.ok(text.includes('（无未完成任务）'), `要摆明“无任务”这个事实:\n${text}`);
+    // 纯事实：不得夹带劝告（「记得登记」那类已被 13 次尝试证明无效）。
+    assert.ok(!/记得|别忘了|请登记|应该登记/.test(text), `不得夹带劝告:\n${text}`);
   });
 
   // 动画（2026-10-03 用户需求）：三个小符依次由空心变实心，只给「进行中」的行。
@@ -890,8 +1070,8 @@ describe('pi 扩展 面板重绘', () => {
     const before = renders;
     await handlers['turn_end'][0]({}, c);
     await new Promise((r) => setTimeout(r, 800));
-    assert.equal(widget, 'hidden', '任务清空后面板应隐藏');
-    assert.ok(renders > before, `隐藏后必须 requestRender（否则屏幕不刷）: ${before} → ${renders}`);
+    assert.equal(widget, 'shown', '任务清空后面板仍要显示（2026-10-06 改；旧行为是隐藏）');
+    assert.ok(renders > before, `重绘仍必须发生（否则屏幕不刷）: ${before} → ${renders}`);
   });
 });
 
