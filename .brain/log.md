@@ -1,4 +1,7 @@
 # 🗒 Activity Log
+## [2026-10-06 08:37] [[fanchao]] dev | 完成面板空看板显示 + 首轮硬规则 + 自动 init + update 方向判断：544 全通过，破坏验证过，已 commit 65224fa
+## [2026-10-06 07:09] [[fanchao]] note | ctx_batch_execute 的 section 是 query 匹配结果，未命中的段显示为空——会被误读成「命令没输出/仓库干净」。实测：git status/git log 明明有内容，agent 看到空 section 推断「工作区干净」，差点带错误结论走。判据：batch 工具的空段 ≠ 空输出，要核实得直接跑命令看原始 stdout。
+## [2026-10-06 06:56] [[fanchao]] note | 看板为空时对齐段静默不注入，而日志仍报 todo_guide=on（假信号）：injectTodoGuidelines 的返回值含义是「六条常驻指引装进去了」，与「看板段有没有注入」无关。所以「开工那一刻没 abs」不是 hook 缺失 —— hook 在、时刻对，但看板空 → board=null → 看板段不 push，我没有任何具体事实可对照。空看板恰是新任务刚开始、最该对齐的时刻。查法：不能看日志的 on/off，要 grep promptGuidelines 里有没有 '[看板] ' 前缀。
 ## [2026-10-05 21:17] [[fanchao]] dev | 修 archive 两个真 bug（今天第 8 个版本）：① 超限放宽时 cutoff 算错（cutoff=今天 → 判断 date>=cutoff 保留 → 今天的组仍不动），改为推到明天 ② 同参数的**第二个调用点**（锁内重算）漏传 maxLines → archived 为空 → SKIP → 命令报『已归档 33 条』但 todo.md 一字未动（只写了 sessions/，两边不一致）。修复后看板 65→17 行、lint 0。补破坏验证过的测试（有 bug 时红、修复后绿）。顺带把行数常量从 lint.js 移到 todo.js 解循环依赖
 ## [2026-10-05 21:09] [[fanchao]] dev | 照 rpiv-mono（juicesharp）完善四处：①TODO_GUIDELINES 3→6 条（锚点从『first file edit』前移到『收到指令时』+ 反例 + 唯一进行中 + 结语要真实）②加唯一进行中约束（只提示不擅自改状态）③拆 store.js 1509→986 行（拆出 page.js/note.js/text.js）④加提交门禁（pre-commit 语法检查 + pre-push 全测试，双向实测）。测试 448→474 全绿。学到的：他们的指引挂在『收到指令时』而非『改文件时』——这正是我们漏登的根因
 ## [2026-10-05 20:36] [[fanchao]] dev | 同日收尾（落盘）：abs todo 全流程实测两轮（8 子命令 + 11 组边界，用全局 1.15.3 跑）全通过，逼出并修掉 keep-days 静默失效。今日累计发 7 个版本 1.13.3→1.15.3、19 个 commit、4 篇新知识页（hook 分支错位 / 清理杀重绘 / 自动登记失败复盘 / falsy 吃零值）
