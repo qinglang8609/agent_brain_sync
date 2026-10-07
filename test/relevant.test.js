@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { keywords, scorePage, pickRelevant, digest, renderRelevant, rankPage, tagsOf, hasCJK, topicStrength } from "../src/relevant.js";
+import { keywords, scorePage, pickRelevant, digest, renderRelevant, rankPage, matchPage, tagsOf, hasCJK, topicStrength } from "../src/relevant.js";
 
 test("topicStrength: 只数 tag/页名级命中，正文子串不计", () => {
   // 实测动机: hint 原取词拿词表前几个（无质量信号）→ 提示语变成废词。
@@ -57,6 +57,81 @@ test("rankPage: 标题命中权重介于 tag 与正文之间", () => {
 test("rankPage: 无关短词不产生模糊假阳性", () => {
   // "不存在" 只有 [不存,存在] 两个 gram, 都常见 -> 不得靠模糊命中
   assert.equal(rankPage("随便一段中文正文", "p", ["zzzz不存在"]), null);
+});
+
+// ── 页 gram 缓存（2026-10-07 为修 load 慢而加）───────────────
+//
+// 背景：queryHint 走 topicStrength → 每个词 × 每一页 调 rankPage，
+//   而每次都对同一页重算整页 n-gram。实测 17 词 × 63 页 = 156ms，
+//   CPU profile 显示 matchPage/ngrams 占 load 总耗时 82%。
+//   加缓存后同样规模 23ms，load 端到端 191ms → 80ms。
+//
+// 这三个测试守的是「缓存不能改变结果 + 缓存真的生效」——
+// 性能提升不能以正确性为代价；而正确性测试也抳不住性能退化（缓存写错键→永远 miss，
+// 结果逐字不变，只有耗时变），故需单独一个「缓存确实命中」的测试。
+
+test("页 gram 缓存: 缓存确实生效（防“写错键→永远 miss”的静默性能退化）", () => {
+  // 为何单独要这一条（2026-10-07 实测）：把缓存键写错（如 inner.get(name+'x')）后，
+  // 缓存永远 miss，但**计算结果逐字不变** —— 前两个正确性测试全绿，
+  // 已实测验证过。只有计时能抳住它。
+  //
+  // 为何用相对比较而非绝对毫秒：CI 机器速度差异大，绝对阈值会假阳。
+  // 同一进程内“缓存热”与“每页新 body”的对比，天然消除了机器差异。
+  const q = ["并发写入", "互斥保护", "静默失效", "陈旧路径"];
+  const body = "与查询词无关的中文正文甲乙丙丁戊己庚辛".repeat(300); // 够长，让 ngram 展开有可测开销
+
+  // 冷：每次都换新页名，缓存键不同 → 每次都真算 ngram
+  const tCold = Date.now();
+  for (let i = 0; i < 200; i++) matchPage(body, "p" + i, q);
+  const cold = Date.now() - tCold;
+
+  // 热：固定页名，第二次起均命中缓存
+  const tHot = Date.now();
+  for (let i = 0; i < 200; i++) matchPage(body, "fixed", q);
+  const hot = Date.now() - tHot;
+
+  assert.ok(
+    hot * 2 < cold,
+    `缓存命中应明显快于每次现算（热 ${hot}ms vs 冷 ${cold}ms）` +
+      "；若两者接近，说明缓存未生效（键写错/被清空）"
+  );
+});
+
+test("页 gram 缓存: 同输入重复调用结果完全一致（缓存不改变行为）", () => {
+  const body = "并发写入需要互斥保护" + "数据完整性".repeat(200);
+  const first = rankPage(body, "p", ["并发写"]);
+  const second = rankPage(body, "p", ["并发写"]);
+  const third = rankPage(body, "p", ["并发写"]);
+  assert.deepEqual(second, first, "第二次（已命中缓存）应与第一次相同");
+  assert.deepEqual(third, first, "第三次（已命中缓存）应与第一次相同");
+});
+
+test("页 gram 缓存: 同正文不同页名不串味（页名参与 gram，必须各自算）", () => {
+  // 这是缓存最危险的失效形态：页名的 gram 被写进共享的缓存项，
+  // 下一页同正文就开始拿别人的页名参与匹配。
+  //
+  // ⚠ 夹具必须走 fuzzy（ratio 路径），不能靠 exact ——
+  //  exact 的 `text.includes(q) || name.includes(q)` 在 matchPage 里现算、根本不碰缓存，
+  //  用它写的串味测试会**永远绿**（实测：把两级 Map 改成一级、把缓存值改成被污染，
+  //  两个破坏都照样全绿 —— 空测试）。故这里用 matchPage 直接断言 overlap 数值。
+  //
+  // 夹具实测：正文不含查询词；页名 "lock-并发-page" 含 "并发" → overlap=1，
+  //  其余页名 overlap=0。若两页共用缓存，第二个会拿到第一个的 gram。
+  const body = "这段正文和查询词毫无关系内容甲乙丙丁戊己庚辛";
+  const q = ["并发写入", "互斥保护", "静默失效", "陈旧路径"];
+  const A = "lock-并发-page";
+  const B = "zzz-yyy-page";
+
+  const a1 = matchPage(body, A, q);
+  const b1 = matchPage(body, B, q);
+  assert.equal(a1.overlap, 1, "页名含「并发」→ 应重到 1（这是夹具成立的前提）");
+  assert.equal(b1.overlap, 0, "页名无关 → 应为 0");
+
+  // 交换顺序再跑（此时两边都已在缓存里），结果必须各自不变
+  const b2 = matchPage(body, B, q);
+  const a2 = matchPage(body, A, q);
+  assert.equal(b2.overlap, 0, "命中缓存后 B 仍应为 0（若串味会变成 1）");
+  assert.equal(a2.overlap, 1, "命中缓存后 A 仍应为 1");
 });
 
 test("rankPage: 英文词不走 2-gram 模糊兜底（实测：ratio 恒为 1）", () => {

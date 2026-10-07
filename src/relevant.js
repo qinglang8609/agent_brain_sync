@@ -139,11 +139,51 @@ export function matchPage(body, pageName, queryWords) {
   //   查"zzzz不存在"时 qGrams={zz,不存,存在}, 页里恰好有"存在" → ratio=0.5 误命中。
   //   两个修正: (1) 重复字符的 gram 不算(zz 去重); (2) 至少得命中 2 个不同 gram。
   const qGrams = new Set(queryWords.flatMap((w) => ngrams(String(w).toLowerCase())));
-  const pGrams = new Set(ngrams(text.slice(0, 4000)).concat(ngrams(name)));
+  const pGrams = pageGrams(text, name);
   let overlap = 0;
   for (const g of qGrams) if (pGrams.has(g)) overlap++;
   const ratio = qGrams.size ? overlap / qGrams.size : 0;
   return { exact, overlap, ratio };
+}
+
+/** 页正文侧 2-gram 集合的缓存。
+ *
+ * 为何缓存（2026-10-07 实测）：load 慢的根因就在这里。
+ *   queryHint 走 topicStrength → 对【每个词 × 每一页】调 rankPage → matchPage，
+ *   而每次都对同一页重算 ngrams(text.slice(0,4000))。
+ *   实测规模：17 个活跃词 × 63 页 = 1071 次 matchPage，实测 156ms，
+ *   而不同页只有 63 个 —— 同一次展开算了 17 遍。
+ *   CPU profile：matchPage + ngrams + 那条正则占 load 总耗时的 82%。
+ *   端到端：改看板前 191ms / 空看板 40ms（todo 越大词越多 → 越慢，用户实报的「卡」）。
+ *
+ * 键的构造（关键）：用正文当 Map 的键、页名当二级 Map 的键 —— 两级分开存，
+ *   而不是拼成一个字符串键。好处：「同正文不同页名」天然是两个不同的表项，
+ *   永远不可能互相覆盖（曾用 name+NUL+text 拼串，那是在赌没人会改错键；
+ *   现有 20 个测试实际上抓不住那种错，改成两级后这个 bug 类不存在）。
+ * 缓存值是**只读的 Set**，matchPage 只查不改 —— 避免把页名 gram 写进缓存。
+ *
+ * 为何用普通 Map（非 WeakMap）：字符串是原始值，不能当 WeakMap 键。
+ *   故给容量上限，满了清空（一轮遍历内复用已足够）——
+ *   ponytail: 不做 LRU，清空式淘汰对本场景够用。
+ */
+const PAGE_GRAMS_CACHE = new Map();
+const PAGE_GRAMS_MAX = 500;
+
+/** 取（或算）一页的 2-gram 集合（含页名）。返回的 Set 只读，调用方不得修改。 */
+function pageGrams(text, name) {
+  // 两级 Map：外层按正文、内层按页名。不用拼串键 —— 见上方注释。
+  let inner = PAGE_GRAMS_CACHE.get(text);
+  if (inner) {
+    const hit = inner.get(name);
+    if (hit) return hit;
+  } else {
+    if (PAGE_GRAMS_CACHE.size >= PAGE_GRAMS_MAX) PAGE_GRAMS_CACHE.clear();
+    inner = new Map();
+    PAGE_GRAMS_CACHE.set(text, inner);
+  }
+  const set = new Set(ngrams(text.slice(0, 4000)).concat(ngrams(name)));
+  inner.set(name, set);
+  return set;
 }
 
 /** 拆字符 2-gram（中英文都适用）—— 模糊匹配的最小单位。

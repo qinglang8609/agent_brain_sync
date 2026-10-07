@@ -1,8 +1,16 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] release-1-16-4 [[fanchao]] — 发版：提交两批修复（pre-push 门禁 + load 性能）→ 推送 → npm version → publish → 本地重装验证。发布前过全量测试 + npm pack 解包直跑关键路径 (认领 2026-10-07)
 
 ## Done
+
+### 2026-10-07
+- [x] investigate-abs-lag [[fanchao]] — 排查：改了 .brain/todo.md 之后 pi 运行卡顿。只查不动代码，找根因+证据 — 根因定位：queryHint→topicStrength 每个词×每页重算整页 n-gram（17词×63页=156ms，CPU profile 占 load 82%）。已加页 gram 两级缓存：同规模 156→23ms，load 端到端 191→80ms。23 个 relevant 测试全绿，3 种破坏全被抓，全量 552 通过 【落地】 (完成 2026-10-07)
+- [x] bench-probe-2 [[fanchao]] — bench — bench cleanup 【仅方案】 (完成 2026-10-07)
+- [x] bench-probe-tmp [[fanchao]] — bench — bench cleanup 【仅方案】 (完成 2026-10-07)
+- [x] fix-pre-push-gate [[fanchao]] — pre-push 门禁静默失效：npm test | tail -20 管道取了 tail 的退出码，测试失败也放行。改为不接管道，并补测试守住 — pre-push 管道吞退出码已修（改临时文件取码）；新增 test/hooks-gate.test.js 直接跑真实脚本断言拦截，破坏验证过（注入原 bug→2 红，还原→4 绿）；全量 549 通过 【落地】 (完成 2026-10-07)
+- [x] audit-project-health [[fanchao]] — 全项目代码审查：结构、测试、实现完整度、文档一致性 — 审查出 1 个严重 bug（pre-push 门禁静默失效，测试失败也放行）+ 2 个次要项（--no-todo 未实现、check-syntax 降级路径没写）；545 测试全通过、lint 健康、打包正常 【落地】 (完成 2026-10-07)
 
 ### 2026-10-06
 - [x] index-blank-lost [[fanchao]] — index.md 空分区前置空行被归一吃掉：rebuildStructure 对空分区不补空行 — rebuildStructure 对空分区不补前导空行，致「有内容区→空区」接缝塌掉；已改为分区标题前恒补空行。真库验证 + 新增回归用例破坏验证通过，545 全绿。 【落地】 (完成 2026-10-06)
