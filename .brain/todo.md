@@ -1,11 +1,12 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] release-1-16-4 [[fanchao]] — 发版：提交两批修复（pre-push 门禁 + load 性能）→ 推送 → npm version → publish → 本地重装验证。发布前过全量测试 + npm pack 解包直跑关键路径 (认领 2026-10-07)
+- [ ] [进行中] fix-no-todo-flag [[fanchao]] — pre-commit 注释/提示说可加 --no-todo，但代码只认 ABS_NO_TODO 环境变量，用户照提示敲 git commit --no-todo 会失败。文档与实现必须一致 (认领 2026-10-07)
 
 ## Done
 
 ### 2026-10-07
+- [x] release-1-16-4 [[fanchao]] — 发版：提交两批修复（pre-push 门禁 + load 性能）→ 推送 → npm version → publish → 本地重装验证。发布前过全量测试 + npm pack 解包直跑关键路径 — 1.16.4 已发布：两 commit（pre-push 门禁 + load 性能）已推送(f2cccc2)，registry 确认收录，产物冒烟全过。本机保持 npm link 未动 【落地】 (完成 2026-10-07)
 - [x] investigate-abs-lag [[fanchao]] — 排查：改了 .brain/todo.md 之后 pi 运行卡顿。只查不动代码，找根因+证据 — 根因定位：queryHint→topicStrength 每个词×每页重算整页 n-gram（17词×63页=156ms，CPU profile 占 load 82%）。已加页 gram 两级缓存：同规模 156→23ms，load 端到端 191→80ms。23 个 relevant 测试全绿，3 种破坏全被抓，全量 552 通过 【落地】 (完成 2026-10-07)
 - [x] bench-probe-2 [[fanchao]] — bench — bench cleanup 【仅方案】 (完成 2026-10-07)
 - [x] bench-probe-tmp [[fanchao]] — bench — bench cleanup 【仅方案】 (完成 2026-10-07)

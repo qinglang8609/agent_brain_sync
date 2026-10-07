@@ -43,7 +43,11 @@ echo "✓ pre-commit 通过"
 # **客观对比**：这次提交里有没有代码，有没有 todo 变更。
 # 判断权仍在 LLM/人手里 —— 门禁只负责把这两件事摆在一起，逼一次显式决定。
 #
-# 逃生口：确有纯重构/纯测试不需要记的，加 --no-todo（或 ABS_NO_TODO=1）。
+# 逃生口：确有纯重构/纯测试不需要记的，用环境变量 ABS_NO_TODO=1。
+#   ⚠ 为什么不叫「--no-todo」：pre-commit 收不到 git 的额外参数（hook 无参），
+#    `git commit --no-todo` 会被 git 自己先拒：error: unknown option '--no-todo'，
+#    **根本到不了这里**。想给 hook 传参只能走环境变量 —— 别写不存在的参数，
+#    那会让照提示敲的人撞一脸错。
 # ---------------------------------------------------------------------------
 if [ -z "$ABS_NO_TODO" ]; then
   STAGED=$(git diff --cached --name-only)

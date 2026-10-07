@@ -331,6 +331,129 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
       }
     });
   });
+
+  // ── hooks.log 轮转（2026-10-07）────────────────────────────
+  //
+  // 为何单独立一组：轮转逻辑原先只写在 hooks/event.sh 里（CC/Codex 那条路），
+  // pi 这条路的 logHook 只 append、**没有轮转** —— 实测已攼到 1.22MB 而无人发觉。
+  // 「靠一个副本里的逻辑保护另一条路径」是本项目反复踩的坑类。
+  //
+  // 这些用例驱动**真实插件代码**（写日志走真实的 logHook），不看源码字符串。
+  //
+  // ⚠ 隔离：不能先写好日志再调 loadPi —— loadPi 内部会跑 `abs install`，
+  //   而 install 会重设 ABS_LOG_DIR，导致写入跑到别处（实测踩过：
+  //   .1 里成了新日志、旧内容不变），看着像轮转 bug，实为测试环境串了。
+  //   故改为：装一次插件拿 factory，每个用例自己建环境、自定 ABS_LOG_DIR。
+  describe('hooks.log 轮转', () => {
+    const cleanEnv = () => { delete process.env.ABS_LOG_MAX_BYTES; };
+
+    /** 装一次 pi 插件（拿真实 factory），由各用例自己指定日志目录。 */
+    async function piFactory() {
+      await run(['install', '--agent', 'pi', '--yes']);
+      const p = join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts');
+      return (await importTs(p)).default;
+    }
+
+    /** 在指定日志目录跑一次 session_start（触发真实 logHook）。 */
+    async function fireWithLogDir(factory, logDir) {
+      const prev = process.env.ABS_LOG_DIR;
+      process.env.ABS_LOG_DIR = logDir;
+      try {
+        const handlers = {};
+        factory({ on: (e, f) => { handlers[e] = f }, sendUserMessage: () => {} });
+        await handlers.session_start({}, { cwd: sandbox });
+        // logHook 是 fire-and-forget，等它落盘
+        await new Promise((r) => setTimeout(r, 300));
+      } finally {
+        if (prev === undefined) delete process.env.ABS_LOG_DIR; else process.env.ABS_LOG_DIR = prev;
+      }
+    }
+
+    test('超限 → 轮转成 .1，并重新开始写', async () => {
+      const factory = await piFactory();
+      const logDir = join(sandbox, 'log-rotate-1');
+      await fs.mkdir(logDir, { recursive: true });
+      const big = 1048576 + 100; // 略高于默认 1 MiB
+      await fs.writeFile(join(logDir, 'hooks.log'), 'x'.repeat(big));
+
+      await fireWithLogDir(factory, logDir);
+
+      const rolled = await fs.readFile(join(logDir, 'hooks.log.1'), 'utf8').catch(() => null);
+      assert.ok(rolled, '应生成 hooks.log.1');
+      assert.equal(rolled.length, big, '.1 应原样保留旧内容（不是被截断/覆盖）');
+      assert.ok(rolled.startsWith('xxxx'), '.1 应是那份旧日志（全是 x）');
+
+      const now = await hooksLog(logDir);
+      assert.ok(now.length < 4096, `新日志应重新开始（实际 ${now.length} 字节）`);
+      assert.match(now, /session_start/, '轮转后仍要写本轮日志');
+      cleanEnv();
+    });
+
+    test('未超限 → 不轮转，内容追加', async () => {
+      const factory = await piFactory();
+      const logDir = join(sandbox, 'log-rotate-2');
+      await fs.mkdir(logDir, { recursive: true });
+      await fs.writeFile(join(logDir, 'hooks.log'), '[old] 上次的行\n');
+
+      await fireWithLogDir(factory, logDir);
+
+      assert.equal(await fs.readFile(join(logDir, 'hooks.log.1'), 'utf8').catch(() => null), null, '不应轮转');
+      const now = await hooksLog(logDir);
+      assert.match(now, /上次的行/, '旧内容应保留（append 而非覆盖）');
+      assert.match(now, /session_start/, '新行应追加');
+      cleanEnv();
+    });
+
+    test('ABS_LOG_MAX_BYTES 可覆盖阈值', async () => {
+      const factory = await piFactory();
+      const logDir = join(sandbox, 'log-rotate-3');
+      await fs.mkdir(logDir, { recursive: true });
+      await fs.writeFile(join(logDir, 'hooks.log'), 'y'.repeat(2048));
+
+      process.env.ABS_LOG_MAX_BYTES = '1024'; // 调小，2048 字节就超了
+      try {
+        await fireWithLogDir(factory, logDir);
+        assert.ok(
+          await fs.readFile(join(logDir, 'hooks.log.1'), 'utf8').catch(() => null),
+          '调小阈值后 2048 字节应触发轮转'
+        );
+      } finally {
+        cleanEnv();
+      }
+    });
+
+    test('并发写入不丢旧日志（跨 await 竞态的回归）', async () => {
+      // 为何单独立这条（2026-10-07）：去除串行队列时，上面三个用例仍然全绿 ——
+      //   竞态是时序敏感的，单次触发不一定撞上（破坏验证实测：并发竞态没被抳住）。
+      //   而它的后果是**静默丢历史**：A 刚 rename 完，B 把小文件又移成 .1，
+      //   盖掉真正的 1MiB 旧日志。故这里用并发触发把它确定性撞出来。
+      const factory = await piFactory();
+      const logDir = join(sandbox, 'log-rotate-4');
+      await fs.mkdir(logDir, { recursive: true });
+      const big = 1048576 + 5000;
+      await fs.writeFile(join(logDir, 'hooks.log'), 'x'.repeat(big));
+
+      const prev = process.env.ABS_LOG_DIR;
+      process.env.ABS_LOG_DIR = logDir;
+      try {
+        const handlers = {};
+        factory({ on: (e, f) => { handlers[e] = f }, sendUserMessage: () => {} });
+        // 并发触发多次（不等前一个完成）—— 真实场景下 logHook 就是 fire-and-forget
+        await Promise.all(
+          Array.from({ length: 5 }, () => handlers.session_start({}, { cwd: sandbox }))
+        );
+        await new Promise((r) => setTimeout(r, 500));
+      } finally {
+        if (prev === undefined) delete process.env.ABS_LOG_DIR; else process.env.ABS_LOG_DIR = prev;
+      }
+
+      const rolled = await fs.readFile(join(logDir, 'hooks.log.1'), 'utf8').catch(() => null);
+      assert.ok(rolled, '并发下仍应生成 .1');
+      assert.equal(rolled.length, big, '并发下 .1 必须仍是被替换的那份旧日志（不能被后续写覆盖）');
+      assert.ok(rolled.startsWith('xxxx'), '.1 应是旧内容（全是 x）');
+      cleanEnv();
+    });
+  });
 });
 
 // ============================ op​encode ============================

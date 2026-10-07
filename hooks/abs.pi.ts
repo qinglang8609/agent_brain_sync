@@ -19,7 +19,7 @@
  *   别再加回来（指 sendUserMessage 注入；静态 system prompt 内容不在此列，见下方 todo 指引）。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { appendFile, mkdir, readFile, stat } from "node:fs/promises"
+import { appendFile, mkdir, readFile, rename, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
@@ -28,14 +28,58 @@ import { spawn } from "node:child_process"
 // 但允许 ABS_BIN_PATH 覆盖 —— 测试需隔离到沙盒副本，开发机也可能同时有多份。
 const ABS_BIN = process.env.ABS_BIN_PATH || "@@ABS_BIN@@"
 
+/** 日志写入串行队列。
+ *
+ * 为何需要（2026-10-07 实测）：logHook 是 fire-and-forget 且会并发调用
+ *   （一次 session_start 就调 2-3 次：nickname / panel drawn / panel skipped）。
+ *   而「检查大小 → 重命名 → 写入」跨 await，两个并发调用会交错：
+ *     A: stat(1MiB) 超限 → rename(旧 → .1)
+ *     B: stat 看到的是 A 刚建的小文件 → 不轮转
+ *   反过来则是 B 把 A 刚写好的新文件又移成 .1，**盖掉真正的旧内容**。
+ *   实测症状：.1 里是新日志（百来字节），而 1MiB 的旧内容消失。
+ *   同族坑见 .brain/concepts/guard-check-then-set-across-await.md。
+ *
+ * 修法：把整段「轮转 + 写入」排进一个 promise 链，同一时刻只跑一个。
+ *   日志量小、写入快，串行的代价可忽略；换掉的是「旧日志被静默吃掉」。 */
+let logChain: Promise<void> = Promise.resolve()
+
 async function logHook(evt: string): Promise<void> {
   const dir = process.env.ABS_LOG_DIR || join(homedir(), ".abs", "log")
   const d = new Date()
   const pad = (n: number) => String(n).padStart(2, "0")
   const stamp = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds())
   const line = "[" + stamp + "] pi:" + evt + "\n"
-  await mkdir(dir, { recursive: true })
-  await appendFile(join(dir, "hooks.log"), line)
+  // 排队：前一步出错也不断链（catch 掉再继续），否则后续日志全丢。
+  logChain = logChain
+    .catch(() => {})
+    .then(async () => {
+      await mkdir(dir, { recursive: true })
+      const file = join(dir, "hooks.log")
+      await rotateIfTooBig(file)
+      await appendFile(file, line)
+    })
+  return logChain
+}
+
+/** 日志轮转：hooks.log 是 append-only 热路径，无上限会无限长。
+ *
+ * 为何需要（2026-10-07 实测）：本扩展原先只 append、**没有轮转**，
+ *   而轮转只写在 hooks/event.sh 里（那是 Claude Code / Codex 走的路）。
+ *   后果：pi 这条路上 hooks.log 无上限增长 —— 实测已 1.22MB，
+ *   而同一套阈值（1 MiB）在 event.sh 那边是生效的。
+ *   同族坑：靠一个副本里的逻辑保护另一条路径，等于没保护。
+ *
+ * 阈值与策略对齐 event.sh：ABS_LOG_MAX_BYTES 可覆盖；只留一份 .1。
+ * 失败静默：轮转出任何错都不能弄坏日志写入本身（与 event.sh 同纪律）。 */
+async function rotateIfTooBig(file: string): Promise<void> {
+  try {
+    const max = Number(process.env.ABS_LOG_MAX_BYTES || 1048576) // 1 MiB
+    const st = await stat(file)
+    if (!(max > 0) || st.size <= max) return
+    await rename(file, file + ".1")
+  } catch {
+    // 首次运行（文件不存在）/ 权限不足 / 重命名失败：都不拦日志写入
+  }
 }
 
 // 会话结束时快照当前项目滞留任务到 wrapup.log（detached fire-and-forget，wrapup 自身幂等去重不刷屏）。
