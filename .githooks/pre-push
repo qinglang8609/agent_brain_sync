@@ -5,13 +5,28 @@
 # 测试卡在提交上会让人用 --no-verify 绕过去，那时候门禁就废了。
 #
 # 跳过：git push --no-verify
+#
+# 坑（2026-10-07 审查发现，静默失效已存在多版）：原写法是
+#   if ! npm test 2>&1 | tail -20; then
+# 管道的退出码取**最后一个命令**（tail）的，而 tail 永远成功 —— 于是测试挂
+# 了也照样打「✓ pre-push 通过」并放行。实测：假 npm 打印 fail 3 后 exit 1，
+# pre-push 退出码仍是 0。
+#   修法不是加判断，是**别接管道**（总结行在末尾，全量输出本来就看得见）；
+#   确要截断也不能用管道取码，sh 无 PIPESTATUS，得走临时文件。
+#   同族坑见 .brain/concepts/vacuous-test-passes-on-broken-code.md：
+#   门禁没人守 = 门禁会烂，故 test/hooks-gate.test.js 直接跑本脚本断言拦截。
 
 set -e
 
 echo "▸ 全量测试（约 30-60s）..."
-if ! npm test 2>&1 | tail -20; then
+# 输出落临时文件再截尾：既能只看摘要，又保住 npm 的真实退出码。
+TEST_LOG=$(mktemp -t abs-prepush.XXXXXX)
+trap 'rm -f "$TEST_LOG"' EXIT
+if ! npm test >"$TEST_LOG" 2>&1; then
+  tail -20 "$TEST_LOG"
   echo "❌ 测试未过，推送已拦截。修完再推（或 --no-verify 强行推）。"
   exit 1
 fi
+tail -20 "$TEST_LOG"
 
 echo "✓ pre-push 通过"
