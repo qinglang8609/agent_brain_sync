@@ -1,11 +1,12 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] release-session-sid [[fanchao]] — 发版：提交推送（项目整理 + 会话 sid 功能）→ npm version → publish → 本地重装验证 (认领 2026-10-09)
+- [ ] [进行中] flaky-rules-injection [[fanchao]] — 查清 plugin-behavior「★ 只首轮送一次」在并发负载下低频偶发失败：单跑 5+12 次、6 进程并发 24 次、定向压测 300 次均不复现；已确认是已有 load 注入逻辑，非本次 sid 改动。缺口：未抓到断言细节（不知是首轮≠1 还是二次≠0） (认领 2026-10-09)
 
 ## Done
 
 ### 2026-10-09
+- [x] release-session-sid [[fanchao]] — 发版：提交推送（项目整理 + 会话 sid 功能）→ npm version → publish → 本地重装验证 — 1.17.0 已发布：直查 registry 确认收录（latest→1.17.0）。推送 be4b7d8..65b0c31（pre-push 576 全过）；本地全局软链读 1.17.0 + 插件已重装；冒烟实测带 session 登记/看板归属/done 双 sid 均正常 【落地】 (完成 2026-10-09)
 - [x] verify-live-sid [[fanchao]] — 验证 hook 注入的 sid 真能被用上 — 重启后实测：hook 注入生效（日志 session_guide=on sid=01a11ea9-8a37-74）；但查出真缺口——看板解析把整个 (认领 …) 剥掉，sid 到不了 LLM。已修：Row 加 sid 字段 + 看板标 [本会话]/[会话 xxx]。途中又抓到正则宽松导致公海任务被误标 [会话 日期]，也修了并做破坏验证。576 测试全过 【落地】 (完成 2026-10-09 01a11ea9-8a37-74)
   ↳ 断点: 查出真缺口：看板解析把 (认领 …) 整段剥掉了，sid 到不了 LLM。Row 类型里没 sid 字段，需补
 - [x] other-session-task [[fanchao]] — B 会话在做的事 — 测试造的数据，清掉 【否决】 (完成 2026-10-09 01a11f2a)

@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-10-09 16:52] [[fanchao]] dev | 收尾：沉淀 concept 页 reuse-existing-field-over-new-one（能塞进已有字段就别新增：归档整行搬运自动兼容 + 通配正则零改动；含两个实测陷阱）；登记 flaky-rules-injection 独立任务。lint 0 问题
 ## [2026-10-09 16:45] [[fanchao]] dev | 会话 sid 功能落地 + 项目整理发版：todo 行尾标 (认领 日期 sid) 复用已有字段（归档整行搬运自动跟着走）；CLI --session + MCP abs_task session 双通路；看板标 [本会话]/[会话 xxx] 区分归属；认领≠完成时两个 sid 都留。另：src/todo.js 1305 行拆 6 模块、删 12 处死代码、ESLint 75→0、加 CI。576 测试
 ## [2026-10-09 15:11] [[fanchao]] dev | 项目结构化整理落地：删 12 处真死代码（fixMarks/renameLegacySections/absHookDir/JSON_MARK_KEY/NOTE_DEDUP_MS/rawValues + 11 未用 import + maxWaitMs + 4 未用参数 + resolve/dirname）；src/todo.js 1305 行拆成 6 模块（barrel 保留，55 导出零丢失，依赖单向无环：common←spec←{validate,archive}←structure←tasks）；ESLint 从 75 问题清到 0（Prettier 按用户决定去掉，会重排 40 文件）；加 CI（node 18+22 矩阵）。验证四层：556 测试全过、语法+eslint 全绿、导出清单 55→55 零丢失、npm pack 后空项目实跑 init/todo/lint/load 全正常。途中三个判断被实测纠正：sources/ 是功能目录不是残留（已恢复 8 个被删文件）、todo.js 里没有任何命令（命令在 store.js）、多导出实查后零个可收窄
 ## [2026-10-07 10:39] [[fanchao]] dev | 消化 sources 9 条：归并 6 条到已有页（竞态/门禁/性能/对齐/部署/对照实验），新建 3 页（门禁退出码被管道吞、空结果≠没输出、机制跑了≠起作用）。顺带修 index 3 处重复条目、拆 remind-vs-gate 超限（187L→150L）。lint 0 问题，556 测试全过
