@@ -1,7 +1,7 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] flaky-rules-injection [[fanchao]] — 查清 plugin-behavior「★ 只首轮送一次」在并发负载下低频偶发失败：单跑 5+12 次、6 进程并发 24 次、定向压测 300 次均不复现；已确认是已有 load 注入逻辑，非本次 sid 改动。缺口：未抓到断言细节（不知是首轮≠1 还是二次≠0） (认领 2026-10-09)
+- [ ] [进行中] flaky-rules-injection [[fanchao]] — 查清 plugin-behavior「★ 只首轮送一次」并发负载下低频偶发失败。先给测试加失败诊断（打印 loadPending/loadInjected/promptGuidelines），再全量跑——别再靠跑 N 次碰运气 (认领 2026-10-09 01a11ea9-8a37-74)
 
 ## Done
 
