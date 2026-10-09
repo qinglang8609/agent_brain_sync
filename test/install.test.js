@@ -199,7 +199,7 @@ describe('install codex', () => {
     const r = await run(['install', '--agent', 'codex', '--yes']);
     assert.equal(r.code, 0, r.stderr);
     const toml = await fs.readFile(join(CODEX_CFG, 'config.toml'), 'utf8');
-    const m = toml.match(/\[mcp_servers\.abs\][^\[]*?args\s*=\s*\["([^"]+)"\]/s);
+    const m = toml.match(/\[mcp_servers\.abs\][^[]*?args\s*=\s*\["([^"]+)"\]/s);
     assert.ok(m, `应写入 abs MCP args: ${toml}`);
     const written = m[1];
     assert.ok(written.endsWith('/bin/mcp.js'), `应指向 mcp.js: ${written}`);

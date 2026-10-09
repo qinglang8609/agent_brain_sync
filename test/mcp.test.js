@@ -160,6 +160,30 @@ describe('mcp: 工具调用', () => {
     assert.ok(textOf(b).includes('M1'), textOf(b));
   });
 
+  // ===== 会话 id 走 MCP（2026-10-09）=====
+  // ★ 为何必须测：LLM 平时就是用 MCP 工具认领任务的（不会去敲 CLI）。
+  //   若 schema 不收 session，prompt 里摆的 sid 就白摆了 —— 功能对 LLM 基本失效。
+  //   （本项目已有同类教训：schema 漏字段 → 传了也被静默丢掉，见下面 as 那条。）
+  test('★ abs_task start 带 session → 写进认领段', async () => {
+    await tool('abs_task', { action: 'start', id: 'MS', note: '多会话', cwd: projA, session: '01a11eae' });
+    const md = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
+    assert.match(md, /\(认领 \d{4}-\d{2}-\d{2} 01a11eae\)/, md);
+  });
+
+  test('★ 不传 session 时保持旧格式（向后兼容）', async () => {
+    await tool('abs_task', { action: 'start', id: 'MN', note: '无会话', cwd: projA });
+    const md = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
+    assert.match(md, /MN[^\n]*\(认领 \d{4}-\d{2}-\d{2}\)\s*$/m, md);
+  });
+
+  test('★ MCP 路径：A 认领 B 完成 → 两个 sid 都留', async () => {
+    await tool('abs_task', { action: 'start', id: 'MT', note: 'A 的任务', cwd: projA, session: '01a11eae' });
+    await tool('abs_task', { action: 'done', id: 'MT', note: 'B 收尾', as: '落地', cwd: projA, session: '01a11f2a' });
+    const md = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
+    assert.match(md, /\(认领 \d{4}-\d{2}-\d{2} 01a11eae\)/, `认领者: ${md}`);
+    assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11f2a\)/, `完成者: ${md}`);
+  });
+
   test('abs_task done 归位 Done', async () => {
     await tool('abs_task', { action: 'start', id: 'MD', note: 'x', cwd: projA });
     await tool('abs_task', { action: 'done', id: 'MD', cwd: projA });

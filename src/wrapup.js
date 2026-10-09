@@ -7,7 +7,7 @@
 // wrapup.log 是全局技术日志(~/.abs/log/), 跨项目共用, 故每块带 proj=<root> 归属。
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
-import { brainPath, absLogDir } from './index.js';
+import { absLogDir } from './index.js';
 import { readTodo, localStamp } from './todo.js';
 
 export function wrapupLogPath() {

@@ -1,8 +1,8 @@
 ---
-tags: [concept, todo, 机制, 对齐, 门禁, 复盘]
+tags: [concept, todo, 机制, 对齐, 门禁, 复盘, 验证]
 id: remind-vs-gate
 author: fanchao
-updated: 2026-10-05
+updated: 2026-10-07
 status: active
 ---
 
@@ -129,21 +129,21 @@ LLM 负责「发现与反思」→  这两者对不对得上？要不要补记/�
 `load` 显示「→ 看板无对应任务」）。最后那句就是替 LLM 下判断，
 只是把自动提醒从 hook 挪到了 load，本质没变。三处已撤回。
 
+> ⚠ 验证这些机制时有个独立陷阱（日志报 on ≠ 真起作用；疗效不得自测），
+> 已单开一页：[[mechanism-visible-vs-effective]]。
+
 **门禁的四场景双向验证**（2026-10-05 实测通过）：
 
 ```bash
-cd <项目根>
-# ① 改了代码、没动看板 → 必须有提示
-echo "// probe" >> src/text.js && git add src/text.js
-sh .githooks/pre-commit | grep -c "本次提交改了代码"   # 期望 1
-git checkout HEAD -- src/text.js
-# ② 同时改了代码和 todo.md → 不能提示
-# ③ 只改文档（README）→ 不能提示
-# ④ ABS_NO_TODO=1 sh .githooks/pre-commit → 不能提示
+# 四场景：①改了代码没动看板→必须有提示 ②代码+todo都改→不能提示
+#         ③只改文档→不能提示 ④ABS_NO_TODO=1→不能提示
+sh .githooks/pre-commit | grep -c "本次提交改了代码"   # 场景①期望 1
 ```
 
 ## 关联连接
+- [[mechanism-visible-vs-effective]] — 本页的验证层：怎么确认这些机制真在干活（假信号 + 自测陷阱）
+- [[gate-exit-code-not-piped]] — 门禁实现层的坑：退出码被管道吞掉会让门禁静默放行
 - [[fanchao]] — 本页沉淀者
 - [[auto-todo-register-design]] — 本页是它的续集：那页记「自动登记为什么死」，本页记「12 次尝试后活下来的是什么」
 - [[skill-trigger-invisible-killers]] — 同族：靠「匹配触发」的机制为何静默失效
-- [[todo-rewrite-not-map]] — 相关：todo 的形态改造
+- [[vacuous-test-passes-on-broken-code]] — 同族不同层：一个是测试恒真，一个是日志恒真；同族的「机制跑了≠起作用」见该新页

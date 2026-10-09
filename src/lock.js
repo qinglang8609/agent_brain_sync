@@ -65,7 +65,7 @@ async function releaseLock(lockPath) {
  *   - { text: <新内容>, ...meta } → 同上，把 meta 透传给调用方（结果回传用）
  *   - SKIP                       → 不写盘（幂等命中/未找到目标），返回 SKIP
  * 返回：写盘后=mutator 返回值；SKIP 时原样返回 SKIP。抛错则锁内不落盘、锁释放、上抛。 */
-export async function editFile(file, mutator, { maxWaitMs = LOCK_MAX_WAIT_MS } = {}) {
+export async function editFile(file, mutator) {
   const lockPath = join(dirname(file), `.${basename(file)}.lock`);
   await acquireLock(lockPath);
   try {

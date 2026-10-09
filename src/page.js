@@ -7,7 +7,7 @@
 // 依赖方向：page.js ← store.js（不可反向）。store.js 里的 cmdSupersede /
 // cmdReview / cmdResolve 会 re-export 本文件的实现，保持既有调用面不变。
 import { promises as fs } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { join } from 'node:path';
 import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
 import { editFile, SKIP } from './lock.js';
 // PAGE_DIRS / listPages 早先就在 lint.js（页面清单遍历是 lint 的职责），此处复用而非重写。

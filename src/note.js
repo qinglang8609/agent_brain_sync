@@ -9,12 +9,10 @@ import { requireBrain, brainPath } from './index.js';
 import { requireUser, atTag } from './userconfig.js';
 import { today, localStamp, LOG_KINDS } from './todo.js';
 import { editFile, SKIP } from './lock.js';
-import { collapseIndex } from './page.js';
 import { impactOf } from './codegraph.js';
 import { clip, slugOf } from './text.js';
 
 // ---------- note: 经验实时暂存（source 页，一念一落，防流失） ----------
-const NOTE_DEDUP_MS = 60 * 1000;
 
 export async function cmdNote({ dir, text, tags, when, impact, type }) {
   const clean = String(text || '').trim();
@@ -29,12 +27,12 @@ export async function cmdNote({ dir, text, tags, when, impact, type }) {
   await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
   const srcDir = brainPath(root, 'sources');
   await fs.mkdir(srcDir, { recursive: true });
-  // 幂等: 同文本 60s 内只落一份
+  // 幂等: 同文本已落过就不再落一份（判据是内容包含，不看时间）
   const existing = (await fs.readdir(srcDir).catch(() => [])).filter((f) => f.endsWith('.md'));
   for (const f of existing) {
     const body = await fs.readFile(join(srcDir, f), 'utf8').catch(() => '');
     if (body.includes(clean)) {
-      return `• 60s 内已落同文本 → ${f} (跳过重复)`;
+      return `• 已落过同文本 → ${f} (跳过重复)`;
     }
   }
   // 影响面（可选）：显式传 --impact <符号> 时，借本机 CodeGraph 拿「改它波及谁」。

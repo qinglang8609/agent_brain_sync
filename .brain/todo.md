@@ -1,11 +1,23 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] fix-no-todo-flag [[fanchao]] — pre-commit 注释/提示说可加 --no-todo，但代码只认 ABS_NO_TODO 环境变量，用户照提示敲 git commit --no-todo 会失败。文档与实现必须一致 (认领 2026-10-07)
+- [ ] [进行中] release-session-sid [[fanchao]] — 发版：提交推送（项目整理 + 会话 sid 功能）→ npm version → publish → 本地重装验证 (认领 2026-10-09)
 
 ## Done
 
+### 2026-10-09
+- [x] verify-live-sid [[fanchao]] — 验证 hook 注入的 sid 真能被用上 — 重启后实测：hook 注入生效（日志 session_guide=on sid=01a11ea9-8a37-74）；但查出真缺口——看板解析把整个 (认领 …) 剥掉，sid 到不了 LLM。已修：Row 加 sid 字段 + 看板标 [本会话]/[会话 xxx]。途中又抓到正则宽松导致公海任务被误标 [会话 日期]，也修了并做破坏验证。576 测试全过 【落地】 (完成 2026-10-09 01a11ea9-8a37-74)
+  ↳ 断点: 查出真缺口：看板解析把 (认领 …) 整段剥掉了，sid 到不了 LLM。Row 类型里没 sid 字段，需补
+- [x] other-session-task [[fanchao]] — B 会话在做的事 — 测试造的数据，清掉 【否决】 (完成 2026-10-09 01a11f2a)
+- [x] test-todo-owner [[fanchao]] — 测试：生成一个 todo，验证看板能识别归属 — 测试通过：abs_task 带 session=01a11fc2-769e-72 写入后，todo 行尾记成 (认领 2026-10-09 01a11fc2-769e-72)，sid 可读可比对。据此能区分这条属于本会话、另两条 (01a11ea9-8a37-74 / 01a11f2a) 属于其他会话 【落地】 (完成 2026-10-09 01a11fc2-769e-72)
+- [x] reinstall-pi-plugin [[fanchao]] — 重装 pi 插件让会话 sid 功能生效：已装插件是拷贝的旧版（10-07），缺 injectSessionGuideline 与看板正则修正 — 重装 pi 插件生效：查出三层里只 hook 层断（插件是拷贝不是软链）。重装后实测三项通过：已装插件能加载 + injectSessionGuideline 注入含 sid + 看板正则已改通配。CLI/MCP 层本就走全局软链早已生效。574 测试全过 【落地】 (完成 2026-10-09)
+- [x] session-scoped-tasks [[fanchao]] — 多会话并发时任务串了：两个 pi/opencode 读同一份 .brain/todo.md，A 在做的任务 B 也会拿来执行。要区分「谁在做什么 / 哪些是自己的 / 哪些进行中 / 哪些等执行」 — todo 行标会话 id 落地：复用了已有的 (认领 日期) 字段塞 sid（不新增字段）→ 归档整行搬运自动跟着走。CLI --session + MCP abs_task session 双通路（LLM 平时走 MCP，prompt 注入 [会话] 段让它自己填）。认领≠完成时两个 sid 都留。574 测试全过、eslint 0、图谱健康；破坏验证两处变红。其他文档未标 sid（用户拍定只做 todo） 【落地】 (完成 2026-10-09)
+  ↳ 断点: docs/plans/20261009-session-scoped-tasks.md：认领≠完成已处理（两个 sid 都留）。遗留：其他文档标 sid、opencode 侧未验
+- [x] project-cleanup [[fanchao]] — 全项目结构化+工程化整理：目录结构、死代码（无引用函数/方法/文件）、无用文件清理、知识沉淀归位。先出体检报告再动手 — 全项目整理落地：删 12 处真死代码；src/todo.js 1305行→6模块（55导出零丢失、无环、barrel保留）；ESLint 75问题→0；加 CI（node18/22）。验证：556测试全过 + 语法/eslint 全绿 + 图谱lint 0 + 打包产物空项目实跑 init/todo/lint/load 全正常。方案 docs/plans/20261009-project-cleanup.md，经验落 .brain/concepts/dead-code-vs-over-export.md 【落地】 (完成 2026-10-09)
+  ↳ 断点: docs/plans/20261009-project-cleanup.md：一二阶段已完并过测（556/0，55 导出零丢失，无环）；下一步 ESLint+Prettier + CI
+
 ### 2026-10-07
+- [x] fix-no-todo-flag [[fanchao]] — pre-commit 注释/提示说可加 --no-todo，但代码只认 ABS_NO_TODO 环境变量，用户照提示敲 git commit --no-todo 会失败。文档与实现必须一致 — pre-commit 逃生口对齐（--no-todo 根本做不到，git 先拒；改为说明只能走 ABS_NO_TODO）+ 查出并修复 pi 侧 hooks.log 无轮转（1.22MB）+ 并发竞态吞旧日志。556 测试全过，破坏验证过，已重装并真实验证轮转生效，已推送 be4b7d8 【落地】 (完成 2026-10-07)
 - [x] release-1-16-4 [[fanchao]] — 发版：提交两批修复（pre-push 门禁 + load 性能）→ 推送 → npm version → publish → 本地重装验证。发布前过全量测试 + npm pack 解包直跑关键路径 — 1.16.4 已发布：两 commit（pre-push 门禁 + load 性能）已推送(f2cccc2)，registry 确认收录，产物冒烟全过。本机保持 npm link 未动 【落地】 (完成 2026-10-07)
 - [x] investigate-abs-lag [[fanchao]] — 排查：改了 .brain/todo.md 之后 pi 运行卡顿。只查不动代码，找根因+证据 — 根因定位：queryHint→topicStrength 每个词×每页重算整页 n-gram（17词×63页=156ms，CPU profile 占 load 82%）。已加页 gram 两级缓存：同规模 156→23ms，load 端到端 191→80ms。23 个 relevant 测试全绿，3 种破坏全被抓，全量 552 通过 【落地】 (完成 2026-10-07)
 - [x] bench-probe-2 [[fanchao]] — bench — bench cleanup 【仅方案】 (完成 2026-10-07)
@@ -13,38 +25,9 @@
 - [x] fix-pre-push-gate [[fanchao]] — pre-push 门禁静默失效：npm test | tail -20 管道取了 tail 的退出码，测试失败也放行。改为不接管道，并补测试守住 — pre-push 管道吞退出码已修（改临时文件取码）；新增 test/hooks-gate.test.js 直接跑真实脚本断言拦截，破坏验证过（注入原 bug→2 红，还原→4 绿）；全量 549 通过 【落地】 (完成 2026-10-07)
 - [x] audit-project-health [[fanchao]] — 全项目代码审查：结构、测试、实现完整度、文档一致性 — 审查出 1 个严重 bug（pre-push 门禁静默失效，测试失败也放行）+ 2 个次要项（--no-todo 未实现、check-syntax 降级路径没写）；545 测试全通过、lint 健康、打包正常 【落地】 (完成 2026-10-07)
 
-### 2026-10-06
-- [x] index-blank-lost [[fanchao]] — index.md 空分区前置空行被归一吃掉：rebuildStructure 对空分区不补空行 — rebuildStructure 对空分区不补前导空行，致「有内容区→空区」接缝塌掉；已改为分区标题前恒补空行。真库验证 + 新增回归用例破坏验证通过，545 全绿。 【落地】 (完成 2026-10-06)
-- [x] panel-empty-visible-and-opening-rules [[fanchao]] — 空看板也显示面板 + 首轮3条硬规则 + 无图谱自动init + abs update 方向判断；544全通过、破坏验证过、已commit 65224fa — 空看板说清事实（面板+对齐段）、首轮3条硬规则、无图谱自动init、abs update 方向判断修静默降级；544全通过+三处破坏验证；commit 65224fa 【落地】 (完成 2026-10-06)
-- [x] oversize-exempt [[fanchao]] — 方案已落 docs/plans/20261006-oversize-exempt.md，等拍板后改 src/lint.js（1处+1纯函数） — 超限豁免（keep-oversize 标记）user 2026-10-06 决定不做了 【否决】 (完成 2026-10-06)
-- [x] opening-rules-first-round [[fanchao]] — 已改 hooks/abs.pi.ts 三处；544 全通过、破坏验证过、已 install；待真机新窗口验证 — 首轮3条硬规则（先登记/名字说清/不攒）+ 空看板说清事实 + 无.brain自动init；544全通过、破坏验证过、已install 【落地】 (完成 2026-10-06)
-  ↳ 断点: 改到 hooks/abs.pi.ts：OPENING_RULES 三条（先登记/名字说清/不攒）挂首轮；空看板改成说清「有图谱零任务」；无 .brain 时自动 abs init。544 全通过、破坏验证过、已 install
-- [x] load-reinject-after-abort [[fanchao]] — 方案已落 docs/plans/20261006-load-guide-reinject.md，等拍板后改 hooks/abs.pi.ts — 两个 bug 修完：送达确认移到 agent_end（中断则下轮补）、标记改成按 cwd 集合（切目录不被别的目录烧）；544 全通过、破坏验证过、已 install 【落地】 (完成 2026-10-06)
-  ↳ 断点: 两个 bug 都修好了：送达确认移到 agent_end，标记改成按 cwd 的集合；540 全通过、破坏验证过、已装到 ~/.pi；待真机切目录验证
-- [x] fix-update-downgrade [[fanchao]] — 修 abs update 缺方向判断导致的静默降级（本地版本高于 registry 时被 npm i -g @latest 覆盖）：bin/abs.js 加 cmpVersion 三元组比较 + cmdUpdate 三态分支。改到：bin/abs.js 已完成，三层验证通过（单元自检10例 + 场景1超前拦截 + 场景2相等跳过 + 场景3落后升级）；断点：3文件未 commit（bin/abs.js/src/text.js/.npmignore），1.16.3 未发版（待用户批准） — cmpVersion 三元组比较 + cmdUpdate 三态分支已实现，三层验证通过（单元10例/超前拦截/相等跳过/落后升级）。代码待 commit，1.16.3 未发版 【落地】 (完成 2026-10-06)
-  ↳ 断点: 代码已改+三层验证通过；断点：等用户批准 commit（现共5文件待提交：bin/abs.js / src/text.js / hooks/abs.pi.ts / test/plugin-behavior.test.js / .npmignore），1.16.3 未发版
-- [x] hook-autoload-first-round [[fanchao]] — 开工第一轮自动 abs load（用户 2026-10-06 定：第一轮会话 abs load 自带 todo，其他轮只 todo）：hooks/abs.pi.ts 新增 readLoadForGuide（走 ABS_BIN 跑子进程，2s 超时保护）+ injectLoadGuideline（[开工] 前缀）+ loadInjected flag（session_start 重置）。验证：3轮实测 load段=1/0/0，新会话重置生效，load段自带 Todo Board，534 全量通过 — 真机验证通过：新 pi 窗口 load_guide=on，第二句起 skip；新窗口 agent 主动报出三条滞留任务含断点 【落地】 (完成 2026-10-06)
-- [x] board-empty-align [[fanchao]] — 看板为空时对齐段静默不注入（开工那一刻最该对齐却什么都没摆）：hooks/abs.pi.ts boardGuideline 去掉『空→return null』，改为摆出「（空）」这个事实；并区分两种过滤后为空（真空白 vs 全是别人的任务→仍静默别误导）。测试：拆出作者过滤单独一条 + 破坏验证过；534 全量通过 — 看板空时不再静默：boardGuideline 摆出「（空）」这个事实（以前 return null，开工那刻最该对齐却什么都不摆）。并区分两种过滤后为空——真空白摆（空），全是别人的任务仍静默（别误导）。测试拆出作者过滤单独一条 + 破坏验证过；534 全量通过 【落地】 (完成 2026-10-06)
-- [x] release-1.16.2 [[fanchao]] — 发布 1.16.2 到 registry（源码有而 registry 没有的版本，导致 abs update 把全局从 1.16.2 降级回 1.16.1） — 已发布：清理 skill/.DS_Store（新增 .npmignore）+ 补 src/text.js 尾换行 → npm publish 成功 → registry latest 追平 1.16.2 → abs update 回归验证 1.16.1→1.16.2 正常 + 四宿主 hook/skill 已刷新 【落地】 (完成 2026-10-06)
-
-### 2026-10-05
-- [x] gate-real-test [[fanchao]] — 制造真实触发：改代码不登记→提交→门禁弹提示→我是否去补记 — 用户判定不必留在看板：门禁机制已实测会弹（83654c2），行为层观察无需挂着一条任务盯 【否决】 (完成 2026-10-05)
-- [x] align-4points [[fanchao]] — 对齐补三个缺口：②③下轮带上轮动过的文件、④收尾 wrapup 带看板快照、⑤load 带上会话痕迹 — 越界了：wrapup存痕迹+touchedFor+load显示判断，都是替LLM发现问题。已撤回，只保留纯对齐（摆事实） 【否决】 (完成 2026-10-05)
-  ↳ 断点: 改到 hooks/abs.pi.ts（上轮改动痕迹）+ src/wrapup.js（快照带内容）
-- [x] board-align [[fanchao]] — 每轮把看板摆给 LLM（已装、四场景通过）。是否让我主动登记：待观察，不下结论 — 每轮对齐看板已装并在用：用户一提就能接上、回答基于真实状态而非回忆。之前用「会不会主动登记」评判它是拿错尺子 【落地】 (完成 2026-10-05)
-  ↳ 断点: 观察判据：下次真实提交时门禁弹提示→我是否去登记了。成了标落地，没成标否决
-- [x] add-shelved-state [[fanchao]] — 加状态「搁置」：用户改方向/不做了，与「滞留中」（还要做只是卡住）区分 — 加状态「搁置」+ 转状态提示具体到三种情形；反复对齐铁律写进代码并修一处对齐撒谎（看板清空后旧快照残留） 【落地】 (完成 2026-10-05)
-- [x] commit-todo-gate [[fanchao]] — pre-commit 里加对比：改了 src/bin/hooks 但没动 todo.md → 要求显式决定 — 门禁已装并四场景双向验证通过（改代码+不动todo→提示；动了todo/只改文档/ABS_NO_TODO→不提示）。能否真改变行为待真实提交验证 【落地】 (完成 2026-10-05)
-- [x] verify-board-align [[fanchao]] — 验证 hook 每轮把看板摆给 LLM 后，是否真能让登记与干活对齐（本会话实测） — 结语纠正：机制本身在跑且验证通过（四场景）；仅「靠它让我主动登记」未达成 【仅方案】 (完成 2026-10-05)
-  ↳ 断点: 已装到本地+四场景验证通过；待真实使用验证（本会话已漏两次：查 index 未登记、忘了标记本条进展）
-- [x] rule-preflight [[fanchao]] — 把「动手前先停」三问加进 Rules 第一位，让 abs_load 每次强制读到 — lint 两侧同标准已修（对偶测试+破坏验证），首条 Rule 已上 load。附结论：Rule 文字拦不住 LLM（当晚即被本人违反） 【落地】 (完成 2026-10-05)
-  ↳ 断点: 改到 src/lint.js 的 Rules 区检查，加单条 42 字校验；再想拦截机制
-- [x] add-test-density [[fanchao]] — 提升测试密度（现 0.92，人家 1.72）：重点补 lint/install/relevant 的边界用例 — 密度 0.93→1.00（529 测试），四文件补到 100% 覆盖。结论：密度指标对我们意义有限，该看函数覆盖率 【落地】 (完成 2026-10-05)
-  ↳ 断点: 密度 0.93到0.99
-- [x] archive-vs-oversize [[fanchao]] — ROOT-OVER-SIZE(看板>60行) 与 archive『保留近3天』打架：密集工作日 Done 区必超（今天 33 条=58 行），而 archive 拒绝动近 3 天的。改法：超限时允许提前归档（或把 Done 折叠计数做得更早生效） — archive 超限时放宽到含当天（cutoff 推到明天）；修两个调用点漏传 maxLines（真 bug：只写 sessions 不动 todo.md）；补破坏验证过的测试 【落地】 (完成 2026-10-05)
-
 ### Archived
-- [[log-2026-10-05]] 完成任务 26 条
+- [[log-2026-10-06]] 完成任务 9 条
+- [[log-2026-10-05]] 完成任务 35 条
 - [[log-2026-10-03]] 完成任务 7 条
 - [[log-2026-09-18]] 完成任务 2 条
 - [[log-2026-09-17]] 完成任务 8 条

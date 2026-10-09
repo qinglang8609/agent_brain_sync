@@ -6,8 +6,8 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, supersededByOf, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind } from '../src/store.js';
-import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, upsertArchiveSection, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind } from '../src/store.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
 import { editFile } from '../src/lock.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
@@ -1227,8 +1227,8 @@ describe('cmdLint', () => {
     const many = ['# 🗒 Activity Log', ''].concat(
       Array.from({ length: 20 }, (_, i) => `## [2026-09-0${(i % 9) + 1} 10:0${i % 10}] dev | 旧格式第${i}条`),
     ).join('\n');
-    const folded = foldSameKind(many.split('\n').filter((l) => l.startsWith('## ['))
-      .map((l) => `LOG-ENTRY: log.md 应为 \`## [YYYY-MM-DD HH:MM] [[作者]] kind | 正文\``));
+    const folded = foldSameKind(many.split('\n').filter((x) => x.startsWith('## ['))
+      .map(() => `LOG-ENTRY: log.md 应为 \`## [YYYY-MM-DD HH:MM] [[作者]] kind | 正文\``));
     assert.equal(folded.length, 4, `20 条同类应折成 3 条样例 + 1 行计数: ${JSON.stringify(folded)}`);
     assert.ok(folded[3].includes('还有 17 条'), folded[3]);
     assert.ok(folded[3].includes('共 20 条'), folded[3]);

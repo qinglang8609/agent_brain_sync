@@ -112,20 +112,25 @@ tool(
 
 tool(
   'abs_task',
-  '任务实时落盘（幂等键 = id）。start 登记进 Todo / note 补断点(改到哪文件哪行) / state 改状态 / done 完成归位 Done（done 时 note=结语文字，as=结语类型：落地|否决|仅方案）。必填: cwd, action, id。',
+  '任务实时落盘（幂等键 = id）。start 登记进 Todo / note 补断点(改到哪文件哪行) / state 改状态 / done 完成归位 Done（done 时 note=结语文字，as=结语类型：落地|否决|仅方案）。必填: cwd, action, id。多会话并行时，start/add 带上 session（值见 system prompt 的 [会话] 段）以标记「这条任务谁在做」。',
   {
     action: z.enum(['add', 'start', 'done', 'note', 'state']),
     id: z.string().describe('任务幂等键，如 TASK-xxx 或子任务名'),
     cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
     note: z.string().optional().describe('add/start=做什么; note=断点(文件/到哪步); state=进行中|讨论中|滞留中|搁置（搁置=用户改方向/不做了；滞留中=还要做只是卡住）; done=结语文字'),
     as: z.enum(['落地', '否决', '仅方案']).optional().describe('仅 done：结语类型。默认 落地。做了又撤/评估后不做用 否决，只设计过用 仅方案 —— 别让假【落地】污染看板'),
+    // 会话 id：多会话并行时标记「这条任务是谁在做」。
+    // 值取自 system prompt 里的 `[会话] 本会话 id = xxx`（hook 注入），由模型原样回传。
+    // ★ 为何走这个途径而不让 MCP 自己探测：MCP 进程拿不到宿主的 sessionId
+    //   （协议没有，PI_* 环境变量也没有）；模型本来就知道自己的 sid，直接收下最省。
+    session: z.string().optional().describe('仅 start/add：本会话 id（取自 system prompt 的 [会话] 段）。多会话并行时用来标记「这条任务谁在做」'),
   },
-  async ({ action, id, cwd, note, as }) => {
+  async ({ action, id, cwd, note, as, session }) => {
     const root = await findBrainRoot(cwd || process.cwd());
     if (!root) return errNoBrain(cwd || process.cwd());
     // add 是 start 的别名（与 CLI `abs todo add` 对齐）
     const act = action === 'add' ? 'start' : action;
-    return { content: [{ type: 'text', text: await cmdTask({ dir: root, action: act, id, note, as }) }] };
+    return { content: [{ type: 'text', text: await cmdTask({ dir: root, action: act, id, note, as, session }) }] };
   }
 );
 

@@ -2,13 +2,12 @@
 // 命令: init / board / status / load / task / query / lint
 import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
-import { requireBrain, brainPath, absLogDir, BRAIN_DIR } from './index.js';
+import { requireBrain, brainPath, absLogDir } from './index.js';
 import { requireUser, atTag, getUser, placeholderWarn } from './userconfig.js';
-import { stripStateMark, ensureStateMark, stateOfTaskLine, normalizeTodo, TODO_MAX_LINES, addTask, upsertTask, boardText, readTodo, ensureTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, LOG_KINDS, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, doneKindOf, doneDateOf, collapseDone, SEC, rebuildStructure, enforceBrainFormat } from './todo.js';
+import { stripStateMark, ensureStateMark, stateOfTaskLine, TODO_MAX_LINES, upsertTask, boardText, readTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, collapseDone, SEC, rebuildStructure, enforceBrainFormat, sessionOf } from './todo.js';
 import { setFormatGate, editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
-import { keywords, pickRelevant, renderRelevant, recentFiles, rankPage, topicStrength } from './relevant.js';
-import { impactOf } from './codegraph.js';
+import { keywords, recentFiles, topicStrength } from './relevant.js';
 // 纯文本工具已拆到 text.js（2026-10-05）—— 零依赖，note/log/concept 共用。
 import { clip, slugOf } from './text.js';
 export { clip, slugOf } from './text.js';
@@ -220,27 +219,6 @@ export const LEGACY_MARKS = [
   ['### 归档', '### Archived'],
   ['### （未标日期）', '### Undated'],
 ];
-
-/** 把不符标准的标记改成标准（按整行精确匹配，不碰正文）。
- * log.md 特殊：它没有固定分区，只有条目行 —— 不做结构重排，只改 H1。
- * 返回 { text, changed }；无不一致时 changed 为空。 */
-export function fixMarks(text, spec) {
-  const lines = String(text ?? '').split('\n');
-  const changed = [];
-  const h1At = lines.findIndex((l) => l.trim().startsWith('# '));
-  if (h1At !== -1 && lines[h1At].trim() !== spec.h1) {
-    const cur = lines[h1At].trim();
-    const hit = LEGACY_MARKS.find(([o]) => o === cur && o.startsWith('# '));
-    if (hit) { lines[h1At] = spec.h1; changed.push(`${cur} → ${spec.h1}`); }
-  }
-  for (let i = 0; i < lines.length; i++) {
-    if (i === h1At) continue;
-    const t = lines[i].trim();
-    const hit = LEGACY_MARKS.find(([o]) => o === t && !o.startsWith('# '));
-    if (hit) { lines[i] = hit[1]; changed.push(`${hit[0]} → ${hit[1]}`); }
-  }
-  return { text: lines.join('\n'), changed };
-}
 
 /**
  * 核对 index/log/todo 的结构，不符就按标准重建（B 档：重排分区 + 内容按归属回填）。
@@ -829,10 +807,17 @@ function recentLogLines(text, n) {
 // ---------- task: 登记/推进（幂等键 = 行首 id；hook 也调这个） ----------
 // 纪律: task 过程动作(start/done/note/blocked)只改 todo.md, 不写 log.md。
 // log.md 是「工作成果沉淀摘要」(用户/AI 主动 abs log "..." 记), 不收工具动作流水。
-export async function cmdTask({ dir, action, id, section, note, as }) {
+export async function cmdTask({ dir, action, id, section, note, as, session }) {
   const root = await requireBrain(dir || process.cwd());
   // 写操作守卫：无姓名不落盘（hook 调的 wrapup/teardown-check 不经过这里，不受影响）
   const who = await requireUser();
+  // 会话 id（可缺省）：塞进已有的 `(认领 日期)` 字段而非另开新字段 ——
+  //   归档是整行搬运，塞在旧字段里就能自动跟着走，且 6 处解析里 5 处用的
+  //   是 `\(认领[^)]*\)` 通配，零改动兼容（只剩 hook 那处严格正则要改）。
+  // 取不到就不写：纯加法，旧行为不变。
+  const sid = String(session || process.env.ABS_SESSION_ID || '')
+    .replace(/[^\w-]/g, '').slice(0, 16);
+  const claim = `(认领 ${today()}${sid ? ' ' + sid : ''})`;
   await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
   if (action === 'start') {
     // 两区制：未完成一律进 Todo，行首带状态标记（默认 进行中）。
@@ -870,11 +855,35 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
           + `      • 还想商量            → abs todo state <id> --note 讨论中`;
       }
     }
+    // 接手提示（2026-10-09 用户要求）：该任务已属于另一个会话时，接手要告知 ——
+    //   用户原话：「不属于我的会话的就别乱进行，但是用户强制要进行那也得接手」。
+    //   **只提示不拦截**：接手是允许的，但得让它知道这条原来是谁的、自己接手了；
+    //   否则静默换了 sid，看板上无声无息地易主。
+    let takeover = '';
+    if (sid) {
+      let prevSid = '';
+      await editFile(brainPath(root, 'todo.md'), (cur) => {
+        if (cur === null) return SKIP;
+        for (const l of cur.split('\n')) {
+          if (idOfTaskLine(l) === String(id).replace(/[\u200b\u200c\u200d\ufeff]/g, '')) {
+            prevSid = sessionOf(l);
+            break;
+          }
+        }
+        return SKIP;
+      });
+      if (prevSid && prevSid !== sid) {
+        takeover = `\n  ⚠ 接手 —— 该任务原属会话 ${prevSid}（不是本会话 ${sid}）\n`
+          + `    已把会话标记改为 ${sid}\n`
+          + `    不想接手只想看看 → abs todo state <id> --note 滞留中（释放占用）`;
+      }
+    }
     const r = await upsertTask(root, {
       section: SEC.todo,
-      text: `[${st}] ${id} ${atTag(who)}${note ? ' — ' + note : ''} (认领 ${today()})`,
+      text: `[${st}] ${id} ${atTag(who)}${note ? ' — ' + note : ''} ${claim}`,
+      session: sid,
     });
-    return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  [${st}] ${id} ${atTag(who)}${note ? ' — ' + note : ''}${warning}`;
+    return `✓ 任务${r.updated ? '更新(幂等)' : '登记'} → ${brainPath(root, 'todo.md')}\n  [${st}] ${id} ${atTag(who)}${note ? ' — ' + note : ''}${sid ? ' ' + claim : ''}${takeover}${warning}`;
   }
   if (action === 'rename') {
     // 改任务 id（2026-10-05）：人工起错名、或旧 id 不可读时用。
@@ -935,13 +944,13 @@ export async function cmdTask({ dir, action, id, section, note, as }) {
     if (inlineKind && as && inlineKind !== as) {
       throw new Error(`✗ as="${as}" 与 note 里的【${inlineKind}】矛盾 —— 只留一个（改 as，或改 note 里的【】）`);
     }
-    const res = await markDone(brainPath(root, 'todo.md'), id, as || inlineKind || '落地', conclusion);
+    const res = await markDone(brainPath(root, 'todo.md'), id, as || inlineKind || '落地', conclusion, sid);
     return res;
   }
   throw new Error(`unknown task action: ${action}`);
 }
 
-async function markDone(file, id, kind = '落地', conclusion) {
+async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
   const res = await editFile(file, (text) => {
     const lines = text.split('\n');
     let changed = false;
@@ -954,10 +963,22 @@ async function markDone(file, id, kind = '落地', conclusion) {
         changed = true;
         // 结语（MCP note / CLI 位置参数）拼在日期前 —— 与 CLI `abs todo done <id> [--as ..] <结语>` 同一落点。
         const tail = conclusion ? ` — ${conclusion}` : '';
-        const head = withDoneKind(
-          stripStateMark(l).replace('- [ ]', '- [x]').replace(/\(认领[^)]*\)/, '') + `${tail} (完成 ${today()})`,
-          kind,
-        );
+        // 认领与完成可能是**不同会话**（A 认领、B 收尾）。两个都要留：
+        //   只留完成者 → A 的线索断；只留认领者 → (完成 日期) 配着别人，语义拧。
+        // 规则（2026-10-09 用户定）：
+        //   同一个 sid     → 只写 `(完成 日期 sid)`
+        //   不同 sid       → `(认领 日期 A) (完成 日期 B)`
+        //   认领无 sid     → 只写 `(完成 日期 B)`
+        //   done 未给 sid → 沿用认领的（无新信息，不凭空编）
+        const claimSid = sessionOf(l);
+        const doneSid = bySid || claimSid;
+        const base = stripStateMark(l).replace('- [ ]', '- [x]').replace(/\s*\(认领[^)]*\)/, '');
+        const parts = [];
+        if (claimSid && doneSid && claimSid !== doneSid) {
+          parts.push(`(认领 ${today()} ${claimSid})`);
+        }
+        parts.push(`(完成 ${today()}${doneSid ? ' ' + doneSid : ''})`);
+        const head = withDoneKind(`${base}${tail} ${parts.join(' ')}`, kind);
         const bp = [];
         while (i + 1 < lines.length && lines[i + 1].trimStart().startsWith('↳')) bp.push(lines[++i]);
         moved = [head, ...bp];

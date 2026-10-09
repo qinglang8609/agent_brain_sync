@@ -51,7 +51,7 @@ describe('collapseIndex — 清单区折叠（读取侧不得随规模增长）'
   test('空分区只留标题（不带计数）', () => {
     const r = collapseIndex('## Concepts\n');
     assert.match(r, /## Concepts/);
-    assert.ok(!/\（0 页\）/.test(r), '0 页不该显示计数');
+    assert.ok(!/(0 页)/.test(r), '0 页不该显示计数');
   });
 
   test('空输入不炸', () => {

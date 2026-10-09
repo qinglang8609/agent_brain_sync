@@ -141,7 +141,6 @@ function mcpEntryPath() {
 }
 
 const MARK = '// abs-managed (agent-brain-sync)'; // TS plugin 标记
-const JSON_MARK_KEY = 'abs-managed';             // JSON 内我们的命名空间
 
 // ============================ 宿主 config 根 / skill 落点（统一走 env 或 homedir，测试可注入） ============================
 /** 某宿主的配置根目录（settings.json 所在目录；env 覆盖优先，默认 ~/.<host> 或 ~/.config/<host>）。 */
@@ -245,9 +244,6 @@ async function readJson(p, { strict = true } = {}) {
  * 现在改为精确匹配本工具实际写入的路径前缀: <homedir>/.abs/hooks/<agentKey>/abs-
  * （stageHookScripts 生成的脚本名统一是 abs-<Event>.sh）。
  */
-function absHookDir(agentKey) {
-  return join(homedir(), '.abs', 'hooks', agentKey);
-}
 /** 本工具会生成的 hook 脚本名（与 stageHookScripts 的 abs-<Event>.sh 一致）。 */
 const ABS_SCRIPT_NAMES = new Set(
   [...new Set(HOSTS.flatMap((h) => h.events))].map((ev) => `abs-${ev}.sh`),
@@ -496,7 +492,7 @@ async function removeAbsFromForeignMcpStores() {
   return steps;
 }
 
-async function installClaudeCode({ withMcp, withSkill, log }) {
+async function installClaudeCode({ withMcp, withSkill }) {
   const steps = [];
   // 1) hooks → settings.json (分区合并: 同事件可挂多个 hook 框架, 追加 abs 而非覆盖, 保留 moshi-hook 等)
   const scriptMap = await stageHookScripts('claude-code', HOSTS[0].events);
@@ -565,7 +561,7 @@ async function uninstallClaudeCode() {
 }
 
 // ============================ Codex ============================
-async function installCodex({ withMcp, withSkill, log }) {
+async function installCodex({ withMcp, withSkill }) {
   const steps = [];
   const scriptMap = await stageHookScripts('codex', HOSTS[1].events);
   const p = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'hooks.json');
@@ -768,7 +764,7 @@ function renderPluginTemplate(name, vars) {
   return t;
 }
 
-async function installOpenCode({ withMcp, withSkill, log }) {
+async function installOpenCode({ withMcp, withSkill }) {
   const steps = [];
   const dir = join(hostConfigRoot('opencode'), 'plugins');
   const p = join(dir, 'abs.ts');
@@ -816,7 +812,7 @@ async function uninstallOpenCode() {
   return steps;
 }
 
-async function installPi({ withMcp, withSkill, log }) {
+async function installPi({ withMcp, withSkill }) {
   const steps = [];
   const dir = join(hostConfigRoot('pi'), 'agent', 'extensions');
   const p = join(dir, 'abs.ts');
@@ -910,7 +906,7 @@ export async function runInstall({ agent, mcp = true, skill = true, yes = false 
   console.log('\n完成。项目内运行 abs init 建图谱; 会话里说 "abs load" 续接。');
 }
 
-export async function runUninstall({ agent, yes = false } = {}) {
+export async function runUninstall({ agent } = {}) {
   const targets = agent ? [agent] : Object.keys(INSTALLERS);
   for (const key of targets) {
     const inst = INSTALLERS[key];

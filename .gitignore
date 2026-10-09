@@ -4,6 +4,7 @@ node_modules/
 backup-legacy-*/
 .codegraph/
 .omo/
+.claude/
 
 # npm pack 产物（发布时临时生成）
 *.tgz

@@ -96,6 +96,9 @@ const FLAG_SPEC = {
   'section': { type: 'string' },
   'note': { type: 'string' },
   'as': { type: 'string' },
+  // todo start 用：本会话 id（LLM 自己给，hook 会把当前 sid 摆进 system prompt）。
+  // ★ 必须在这声明 —— 未声明的选项会被静默丢掉（本文件自己的注释写过这个坑）。
+  'session': { type: 'string' },
   'payload': { type: 'string' },
   'tags': { type: 'string' },
   'port': { type: 'string' },
@@ -138,7 +141,7 @@ function parseArgv(args) {
   // 也不能简单地把所有非 `--` token 剔走 —— 那样 `--dir /x` 的值 `/x` 会被误剔。
   // 解法: 先用 tokens 看清每个 token 的 kind，只把「`--` 开头且 name 在 FLAG_SPEC 里」当真选项，
   // 其余（包括 `-x` 与 `--unknown`）一律按原序交回位置参数，复刻旧手写逻辑。
-  const { values: rawValues, tokens } = parseArgs({
+  const { tokens } = parseArgs({
     args,
     options: FLAG_SPEC,
     allowPositionals: true,
@@ -476,12 +479,12 @@ async function main() {
         const usage = `abs todo ${sub} <id>${isDone ? ' [--as 落地|否决|仅方案] [--note "结语"]' : ' --note "…"'}`;
         if (isDone) {
           const note = opts.note || (rest2.length ? rest2.join(' ') : undefined);
-          console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note, as: opts.as }));
+          console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note, as: opts.as, session: opts.session }));
           break;
         }
         rejectExtra(rest2, usage);
         if (!id) throw new Error(`✗ 缺 <id>\n  用法: ${usage}`);
-        console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note: opts.note, as: opts.as }));
+        console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note: opts.note, as: opts.as, session: opts.session }));
         break;
       }
       case 'note': {

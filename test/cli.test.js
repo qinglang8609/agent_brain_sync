@@ -72,6 +72,120 @@ describe('cli: init', () => {
 describe('cli: todo', () => {
   beforeEach(() => run(['init', '--dir', proj]));
 
+  // ===== 会话 id（2026-10-09）=====
+  // 需求：多会话并行时，todo 行要能看出「这条是哪个会话在做的」。
+  // 设计：sid 塞进**已有**的 `(认领 日期)` 字段（不另开字段），
+  //   于是「整行搬运」（归档）与「通配正则」（5/6 处解析）全自动兼容。
+  test('★ --session 写进认领段；不传则保持旧格式', async () => {
+    const a = await run(['todo', 'start', 'T1', '--note', '带会话', '--session', '01a11eae']);
+    assert.equal(a.code, 0, a.stderr);
+    let md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.match(md, /\(认领 \d{4}-\d{2}-\d{2} 01a11eae\)/, '带 sid 的认领段');
+
+    const b = await run(['todo', 'start', 'T2', '--note', '无会话']);
+    assert.equal(b.code, 0, b.stderr);
+    md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.match(md, /T2[^\n]*\(认领 \d{4}-\d{2}-\d{2}\)\s*$/m, '不传 sid → 旧格式，不带多余尾巴');
+  });
+
+  // 为何必须测：upsertTask 原位重建任务行时若不搬旧认领段，
+  // 一次不带 --session 的重复 start 就会把 sid 冲掉（静默丢线索）。
+  test('★ 重复 start 不带 session 时，原 sid 必须保住', async () => {
+    await run(['todo', 'start', 'T1', '--note', '带会话', '--session', '01a11eae']);
+    const again = await run(['todo', 'start', 'T1']);
+    assert.equal(again.code, 0, again.stderr);
+    const md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.match(md, /01a11eae/, '原 sid 不能被冲掉');
+  });
+
+  test('★ 另一个会话接手 → sid 换成新的（用户强制进行的路径）', async () => {
+    await run(['todo', 'start', 'T1', '--note', '原会话', '--session', '01a11eae']);
+    await run(['todo', 'start', 'T1', '--session', '01a11f2a']);
+    const md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.match(md, /01a11f2a/, '接手后是新 sid');
+    assert.ok(!md.includes('01a11eae'), '旧 sid 应被替换');
+  });
+
+  // 用户明确要求「接手要提示」（2026-10-09）。只提示不拦截 ——
+  // 静默换 sid 会让看板上无声无息地易主，接手方不知道这条原来是谁的。
+  test('★ 接手时提示原属会话（不拦截，只告知）', async () => {
+    await run(['todo', 'start', 'T1', '--note', '原会话', '--session', '01a11eae']);
+    const s = await run(['todo', 'start', 'T1', '--session', '01a11f2a']);
+    assert.equal(s.code, 0, '接手不该被拦');
+    assert.ok(s.stdout.includes('接手'), `应提示接手: ${s.stdout}`);
+    assert.ok(s.stdout.includes('01a11eae'), '应告知原属会话');
+  });
+
+  test('同一会话重复 start → 不误报接手', async () => {
+    await run(['todo', 'start', 'T1', '--session', '01a11eae']);
+    const s = await run(['todo', 'start', 'T1', '--session', '01a11eae']);
+    assert.ok(!s.stdout.includes('接手'), '自己的任务不该报接手');
+  });
+
+  // done 会把 `(认领 …)` 换成 `(完成 …)` —— 若不特意保留 sid，
+  // 任务一完成线索就断了（而「已完成的任务是谁做的」恰恰最常被回查）。
+  test('★ done 后 sid 跟着进 (完成 …)，不丢', async () => {
+    await run(['todo', 'start', 'T1', '--note', '带会话', '--session', '01a11eae']);
+    const d = await run(['todo', 'done', 'T1', '--as', '落地', '做完']);
+    assert.equal(d.code, 0, d.stderr);
+    const md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11eae\)/, 'done 后 sid 仍在');
+  });
+
+  // ===== 认领与完成可能是不同会话（2026-10-09 用户提问后加）=====
+  // A 认领、B 收尾是真实场景（换人、换会话、接手别人的活）。
+  // 只留完成者 → A 的线索断；只留认领者 → (完成 日期) 配着别人，语义拧。→ 两个都留。
+  const readTodo = () => fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+
+  test('★ A 认领 B 完成 → 两个 sid 都留', async () => {
+    await run(['todo', 'start', 'T1', '--note', 'A 的任务', '--session', '01a11eae']);
+    await run(['todo', 'done', 'T1', '--as', '落地', 'B 收尾', '--session', '01a11f2a']);
+    const md = await readTodo();
+    assert.match(md, /\(认领 \d{4}-\d{2}-\d{2} 01a11eae\)/, '认领者要留');
+    assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11f2a\)/, '完成者要留');
+  });
+
+  test('★ 同一会话认领+完成 → 只写一个，不重复', async () => {
+    await run(['todo', 'start', 'T2', '--session', '01a11eae']);
+    await run(['todo', 'done', 'T2', '--session', '01a11eae']);
+    const md = await readTodo();
+    const line = md.split('\n').find((l) => l.includes('T2'));
+    assert.match(line, /\(完成 \d{4}-\d{2}-\d{2} 01a11eae\)/, '完成带 sid');
+    assert.ok(!/\(认领/.test(line), `同一个不该留认领段: ${line}`);
+  });
+
+  test('★ done 未给 session → 沿用认领者（不凭空编）', async () => {
+    await run(['todo', 'start', 'T3', '--session', '01a11eae']);
+    await run(['todo', 'done', 'T3']);
+    const md = await readTodo();
+    assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11eae\)/);
+    assert.ok(!/T3[^\n]*\(认领/.test(md), '不重复留认领段');
+  });
+
+  test('无认领但 B 完成 → 只写完成者', async () => {
+    await run(['todo', 'start', 'T4']);
+    await run(['todo', 'done', 'T4', '--session', '01a11f2a']);
+    const md = await readTodo();
+    assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11f2a\)/);
+    assert.ok(!/T4[^\n]*\(认领/.test(md), '无认领则不留认领段');
+  });
+
+  // 需求：归档到 sessions 后 id 也要跟着 —— 这样每条任务都能查到是哪个会话做的。
+  // 归档是整行搬运，理论上自动兼容；这条把它钉住。
+  test('★ 归档到 sessions/ 后 sid 完整保留', async () => {
+    await run(['todo', 'start', 'T1', '--note', '带会话', '--session', '01a11eae']);
+    await run(['todo', 'done', 'T1', '--as', '落地', '做完']);
+    // 把完成日期改成很久以前，让 archive 愿意搬它
+    const p = join(proj, '.brain', 'todo.md');
+    const md = (await fs.readFile(p, 'utf8')).replace(/\(完成 \d{4}-\d{2}-\d{2}/, '(完成 2020-01-01');
+    await fs.writeFile(p, md, 'utf8');
+    const a = await run(['todo', 'archive', '--keep-days', '1']);
+    assert.equal(a.code, 0, a.stderr);
+    const files = await fs.readdir(join(proj, '.brain', 'sessions'));
+    const arch = await fs.readFile(join(proj, '.brain', 'sessions', files[0]), 'utf8');
+    assert.match(arch, /01a11eae/, `归档后 sid 必须还在: ${arch.slice(0, 300)}`);
+  });
+
   test('start 登记 + done 归位 (默认 --dir = 进程 cwd)', async () => {
     const s = await run(['todo', 'start', 'T1', '--note', '做事']);
     assert.equal(s.code, 0, s.stderr);

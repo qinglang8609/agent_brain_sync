@@ -2,7 +2,7 @@
 tags: [concept, 坑, hook, 静默失效]
 id: guard-check-then-set-across-await
 author: fanchao
-updated: 2026-09-17
+updated: 2026-10-07
 status: active
 ---
 
@@ -68,6 +68,44 @@ done = true; inFlight = false
 > 只要两次调用能并发，就有窗口。若 mark 名还含时间戳（如分钟级 `HHMM`），
 > 时间一滚就更认不出自己，窗口进一步退化。
 
+### 变体：不是「漏做一次」，而是「把前一步的成果吃掉」（2026-10-07 实测）
+
+同样的跨 `await` 结构，换一种序列（读→改名→写）会让后果从「重复执行」
+变成**静默丢数据**，比原版更难发现：
+
+```js
+// 日志轮转：检查大小 → 超限则改名 → 追加一行
+await mkdir(dir)                  // ← 让出
+await rotateIfTooBig(file)        // ← 内部：stat 让出 → rename
+await appendFile(file, line)      // ← 让出
+```
+
+`logHook` 是 fire-and-forget 且**并发**调用（一次 `session_start` 就调
+`nickname=` / `panel drawn` / `panel skipped` 共 2-3 次）。两个调用交错时：
+
+```
+A: stat(1MiB) 超限 → rename(旧 → .1)      ← 旧内容暂时安全
+B: stat 看到的是 A 刚建的小文件 → 不轮转
+```
+
+反向交错则是：**B 把 A 刚写好的新文件又 rename 成 `.1`，盖掉真正的 1MiB 旧日志**。
+实测症状：`.1` 只剩百来字节的新日志，旧历史凭空消失，**没有任何报错**。
+
+**判据：凡是「判断用的状态」和「修改的对象」是同一个文件/资源，
+跨 `await` 就同时有「重复」与「吃数据」两种失效——后者更危险，因为不可恢复。**
+
+修法：把整段「判断 + 修改」排进一个 promise 链串行执行（日志量小，代价可忽略）：
+
+```ts
+let chain: Promise<void> = Promise.resolve()
+chain = chain.catch(() => {}).then(async () => {   // catch 先断链，否则一次出错后续日志全丢
+  await mkdir(dir, { recursive: true })
+  await rotateIfTooBig(file)
+  await appendFile(file, line)
+})
+return chain
+```
+
 ## 验证
 
 **必须用并发触发来测**，单次顺序调用测不出（顺序调用时守卫看着完全正常）：
@@ -88,11 +126,17 @@ assert.equal(injected.length, 1);   // 期望 1，旧实现实测 5
 
 本仓回归测试：`test/plugin-behavior.test.js` 的
 「并发 agent_end 只注入一次（跨 await 的检查-置位竞态回归）」与
-「重复注册扩展（多实例）仍共享节流」。
+「重复注册扩展（多实例）仍共享节流」；
+以及「并发写入不丢旧日志」（2026-10-07 补，守上面那个「吃数据」变体）。
+
+> ⚠ **单次触发的测试抳不住竞态**（2026-10-07 破坏验证实测）：去掉串行队列后，
+> 原有的三个轮转用例**全绿** —— 竞态是时序敏感的，单次触发撞不上。
+> 必须专门用并发触发（`Promise.all` 同一 handler 多次）写一条确定性回归。
 
 ## 关联连接
 - [[hook-throttle-alignment]] — 节流判据要对齐「真收尾」；本页补的是**并发**维度的漏
 - [[self-triggering-hook-loop]] — 同类：主动推必须自带刹车，且刹车要有"能刹住"的键
 - [[vacuous-test-passes-on-broken-code]] — 本页的验证必须靠破坏验证兜底，否则测试是空的
+- [[deploy-artifact-copies]] — 同次实测的另一半：轮转只写在 `event.sh` 里，pi 走的 `abs.pi.ts` 就没保护 —— 靠一个副本里的逻辑保护另一条路径等于没保护
 - [[teardown-automation]] — 收尾自动化的各宿主触发点与注入手段
 - [[fanchao]] — 本页沉淀者

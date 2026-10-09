@@ -322,7 +322,7 @@ const BOARD_MARK = '[看板] '
  * 仍然静默的情形：无图谱/读失败（readBoardForGuide 捕不到 todo.md）；
  *   **以及看板里全是别人的任务**（那不是空，是「这看板不是我在用」——
  *   摆个「（空）」会误导成「我可以去登记」，跟真的空看板不是一回事）。 */
-export function boardGuideline(md: string, who: string, touched: string[] = []): string | null {
+export function boardGuideline(md: string, who: string, touched: string[] = [], mySid = ''): string | null {
   const { total, rows } = parseOpenTasks(md, PANEL_MAX_ROWS, who)
   // 看板里有没有**任何**未完成条目（不分作者）。用来区分两种“过滤后为空”：
   //   没有 → 真的空看板（摆「空」这个事实 + 它是异常信号）
@@ -331,7 +331,11 @@ export function boardGuideline(md: string, who: string, touched: string[] = []):
   if (!total && anyOpen) return null
   const lines = rows.map((r) => {
     // desc 为空时不拖空破折号（MCP 登记只给 id 的常见情形）。
-    const head = `  ${r.state ? `[${r.state}] ` : ''}${r.id}${r.desc ? ` — ${r.desc}` : ''}`
+    // ★ 会话归属标在行首：多会话并行时这是「这条能不能动」的唯一依据。
+    //   只摆事实（mine / 无 / 别的 sid），不写「别抢」那类劝告。
+    let tag = ''
+    if (r.sid) tag = r.sid === mySid ? '[本会话] ' : `[会话 ${r.sid}] `
+    const head = `  ${tag}${r.state ? `[${r.state}] ` : ''}${r.id}${r.desc ? ` — ${r.desc}` : ''}`
     // 断点必须带上：它就是「改到哪一步」，丢了等于对齐了也接不上。
     return r.note ? `${head}\n    ↳ ${r.note}` : head
   })
@@ -433,13 +437,36 @@ async function autoInit(cwd: string): Promise<boolean> {
 }
 
 /** 读看板拼成对齐段。失败/无图谱/看板空都返 null（静默降级，绝不阻断对话）。 */
-async function readBoardForGuide(cwd: string): Promise<string | null> {
+async function readBoardForGuide(cwd: string, mySid = ''): Promise<string | null> {
   try {
     const md = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8')
-    return boardGuideline(md, await currentUser(), [...filesSeen])
+    return boardGuideline(md, await currentUser(), [...filesSeen], mySid)
   } catch {
     return null
   }
+}
+
+/** 本会话 id 在 guidelines 里的前缀。
+ *
+ * 为何要摆给 LLM（2026-10-09 用户定）：todo 行尾的 `(认领 日期 <sid>)` 需要
+ * LLM 自己填 —— 用户原话「sid 让 llm 自己给答案吧」。
+ * 所以把本会话的 sid 摆进 system prompt，它登记时就能把这个值传给 `abs todo start --session`。
+ * 取不到 sid 时不注入（不写空值、不伪造）。 */
+export const SESSION_MARK = '[会话] '
+
+/** 注入本会话 id。每轮替换（值不变但保持与看板同构）。 */
+export function injectSessionGuideline(options: any, sid: string): boolean {
+  const list: string[] = options.promptGuidelines || (options.promptGuidelines = [])
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].startsWith(SESSION_MARK)) list.splice(i, 1)
+  }
+  if (!sid) return false
+  list.push(
+    `${SESSION_MARK}本会话 id = ${sid}。登记任务时带上它 —— ` +
+      `MCP 工具：abs_task 的 session 参数；CLI：abs todo start <id> --session ${sid}。` +
+      `任务行尾会记成 \`(认领 日期 ${sid})\`，这样多会话并行时能看出哪条是谁在做。`,
+  )
+  return true
 }
 
 /** 注入 todo 指引。静态 6 条（行为要求） + 实时看板（对齐用）—— 两者职责不同：
@@ -690,13 +717,13 @@ export function pickNickname(rnd: () => number = Math.random): string {
  * 断点行（缩进的 ↳）归属到它上一条任务，不单独成条。 */
 export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
   total: number
-  rows: { state: string; id: string; desc: string; note: string }[]
+  rows: { state: string; id: string; desc: string; note: string; sid: string }[]
   hidden: number
 } {
   // 两阶段：先无过滤地按序解析（断点归属需要“上一条”是原文里真正的前一条），
   // 再按作者过滤。若边解析边过滤，被滤掉的条目下方的断点会挂到它上面那一条
   // —— 实测：别人任务的断点会显示在我的任务下面（2026-10-03 审查发现）。
-  type Row = { state: string; id: string; desc: string; note: string; authors: string[] }
+  type Row = { state: string; id: string; desc: string; note: string; authors: string[]; sid: string }
   const parsed: Row[] = []
   let inTodo = false
   for (const raw of String(md || '').split('\n')) {
@@ -719,17 +746,23 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
     const body = m[3] || ''
     const authors = [...body.matchAll(/\[\[([^\]]+)\]\]/g)].map((x) => x[1])
     // 剥掉作者标记（面板上碍眼且无信息量），再取 `—` 后正文
+    // ★ 会话 id 要单独抽出来：它是「这条任务是谁在做」的唯一标识，
+    //   多会话并行时靠它区分自己的 / 别人的。不能跟认领日期一起被剥掉
+    //   （2026-10-09 实测：只剥不抽 → sid 到不了看板，功能实际是断的）。
+    // 正则必须**先锚住日期再取后面的 token** —— 用宽松的 `[^)]*?\s(\S+)` 会把
+    //   日期本身当成 sid（实测：公海任务被误标成 `[会话 2026-10-09]`）。
+    const sid = (body.match(/\(认领\s*\d{4}-\d{2}-\d{2}\s+([\w-]+)\)/) || [])[1] || ''
     const desc = body
       .replace(/\[\[[^\]]+\]\]/g, '')
       .replace(/^\s*—\s*/, '')
-      .replace(/\s*\(认领\s*\d{4}-\d{2}-\d{2}\)\s*$/, '')
+      .replace(/\s*\(认领[^)]*\)\s*$/, '')
       .trim()
-    parsed.push({ state, id, desc, note: '', authors })
+    parsed.push({ state, id, desc, note: '', authors, sid })
   }
   const mine = who
     ? parsed.filter((r) => r.authors.length === 0 || r.authors.includes(who))
     : parsed
-  const rows = mine.map(({ state, id, desc, note }) => ({ state, id, desc, note }))
+  const rows = mine.map(({ state, id, desc, note, sid }) => ({ state, id, desc, note, sid }))
   return { total: rows.length, rows: rows.slice(0, max), hidden: Math.max(0, rows.length - max) }
 }
 
@@ -1067,7 +1100,11 @@ export default function absPiHook(pi: ExtensionAPI): void {
             return
           }
         }
-        const ok = injectTodoGuidelines(event?.systemPromptOptions, await readBoardForGuide(cwd))
+        const sidNow = sessionIdFor(ctx)
+        const ok = injectTodoGuidelines(event?.systemPromptOptions, await readBoardForGuide(cwd, sidNow))
+        // 本会话 id 也摆进去 —— todo 行尾的 `(认领 日期 <sid>)` 要 LLM 自己填。
+        injectSessionGuideline(event?.systemPromptOptions, sidNow)
+        logHook(`before_agent_start session_guide=${sidNow ? 'on' : 'off'} sid=${sidNow || '-'}`).catch(() => {})
         // 开学每个目录垫一次 load 全文（同目录只一次；之后靠上面那个看板段反复对齐）。
         // 注意这里**不置 loadInjected** —— 注入点只是在 prompt 提交后、agent loop 前，
         // 对话还没发出去；此刻置位会让被中断的那轮白烧掉标记（见 loadInjected 注解）。

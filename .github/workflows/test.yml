@@ -1,0 +1,31 @@
+name: test
+
+# 与本地门禁对齐：pre-commit 跑语法检查，pre-push 跑全量测试。
+# CI 这里把两者都跑一遍 —— 本地 hook 可以被 --no-verify 绕过，CI 不能。
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # engines 声明 >=18，这里验实际能过的最低版本 + 当前 LTS。
+        node: ['18', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: 语法检查（pre-commit 同一道门）
+        run: node --experimental-vm-modules --no-warnings scripts/check-syntax.mjs
+
+      - name: 全量测试
+        run: npm test

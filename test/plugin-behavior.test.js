@@ -461,7 +461,7 @@ describe('op​encode 插件 行为级', () => {
 
 // opencode v2: setup(api) 里订阅事件, 不再返回 hooks 对象。
 // 测试沿用"拿到一个 dispatch(event) 函数"的写法, 这里做等价适配。
-async function ocDispatch(mod, { directory, logDir, injected } = {}) {
+async function ocDispatch(mod, { directory, logDir: _logDir, injected } = {}) {
   const handlers = [];
   const api = {
     event: { subscribe: (fn) => handlers.push(fn) },
@@ -826,6 +826,76 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const p = join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts');
     return importTsWithLog(p, join(sandbox, 'log'));
   }
+
+  // ===== 会话 id 注入（2026-10-09）=====
+  // 为何要测：todo 行尾的 `(认领 日期 <sid>)` 要 LLM 自己填，
+  // 而它填的值来自这里注入的 sid（用户原话：「sid 让 llm 自己给答案吧」）。
+  // 注入断了 = LLM 根本不知道自己的 sid = 功能静默失效。
+  test('★ 注入本会话 sid（LLM 登记时要拿这个值）', async () => {
+    const { injectSessionGuideline, SESSION_MARK } = await loadPanelFns();
+    const opts = {};
+    assert.equal(injectSessionGuideline(opts, '01a11eae'), true);
+    const line = opts.promptGuidelines.find((g) => g.startsWith(SESSION_MARK));
+    assert.ok(line, '必须注入');
+    assert.ok(line.includes('01a11eae'), '必须含真实 sid');
+  });
+
+  test('★ 取不到 sid 时不注入（不写空值、不伪造）', async () => {
+    const { injectSessionGuideline, SESSION_MARK } = await loadPanelFns();
+    const opts = {};
+    assert.equal(injectSessionGuideline(opts, ''), false);
+    assert.equal(opts.promptGuidelines.filter((g) => g.startsWith(SESSION_MARK)).length, 0);
+  });
+
+  test('★ 每轮替换不叠加（与看板段同构）', async () => {
+    const { injectSessionGuideline, SESSION_MARK } = await loadPanelFns();
+    const opts = {};
+    injectSessionGuideline(opts, 'aaa');
+    injectSessionGuideline(opts, 'bbb');
+    const hits = opts.promptGuidelines.filter((g) => g.startsWith(SESSION_MARK));
+    assert.equal(hits.length, 1, '应替换而非堆叠');
+    assert.ok(hits[0].includes('bbb'));
+  });
+
+  // 看板解析必须能吃下带 sid 的 `(认领 日期 sid)` ——
+  // 原正则写死了 \d{4}-\d{2}-\d{2}，多一个 sid 就整个不匹配，desc 会带上整段。
+  test('★ 带 sid 的认领段必须被剥干净（desc 不留残渣）', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] T1 [[fanchao]] — 描述 (认领 2026-10-09 01a11eae)',
+      '- [ ] T2 [[fanchao]] — 无会话描述 (认领 2026-10-09)',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    assert.equal(r.rows[0].desc, '描述', `带 sid 时 desc 应干净: ${JSON.stringify(r.rows[0].desc)}`);
+    assert.equal(r.rows[1].desc, '无会话描述', '无 sid 时 desc 同样干净');
+  });
+
+  // ★ 看板必须显示会话归属（2026-10-09 实测发现的真缺口）——
+  //   写进 todo 的 sid 若不在看板上露出来，LLM 就分不清「哪条是自己的」，
+  //   功能实际是断的（原实现把整个 (认领 …) 连 sid 一起剥掉了）。
+  test('★ 看板标出会话归属：本会话 / 别的会话 / 公海', async () => {
+    const { boardGuideline } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] mine [[fanchao]] — 我的 (认领 2026-10-09 01a11ea9)',
+      '- [ ] other [[fanchao]] — 别人的 (认领 2026-10-09 01a11f2a)',
+      '- [ ] free [[fanchao]] — 公海的 (认领 2026-10-09)',
+    ].join('\n');
+    const g = boardGuideline(md, 'fanchao', [], '01a11ea9');
+    assert.ok(g.includes('[本会话]'), `自己的要标本会话: ${g}`);
+    assert.ok(g.includes('[会话 01a11f2a]'), `别人的要标出 sid: ${g}`);
+    const freeLine = g.split('\n').find((l) => l.includes('free'));
+    assert.ok(!freeLine.includes('[会话'), `公海的不该带会话标: ${freeLine}`);
+  });
+
+  test('★ 没有 mySid（降级）时不标「本会话」，但别人的仍标出 sid', async () => {
+    const { boardGuideline } = await loadPanelFns();
+    const md = ['## Todo', '- [ ] other [[fanchao]] — 别人的 (认领 2026-10-09 01a11f2a)'].join('\n');
+    const g = boardGuideline(md, 'fanchao', [], '');
+    assert.ok(!g.includes('[本会话]'), `无 mySid 不该认领: ${g}`);
+    assert.ok(g.includes('[会话 01a11f2a]'), '别人的 sid 仍要露出来');
+  });
 
   test('作者过滤：显示自己的 + 无作者的，隐藏别人的', async () => {
     const { parseOpenTasks } = await loadPanelFns();

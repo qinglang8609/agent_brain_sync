@@ -30,10 +30,10 @@ afterEach(async () => {
 });
 
 /** 把模板渲染成沙盒里的可执行 hook 脚本(替换占位符, 指向真实 bin), 返回脚本路径。 */
-async function renderHook(event, payloadHookOpts = {}) {
+async function renderHook(event, _payloadHookOpts = {}) {
   const tpl = await fs.readFile(EVENT_TEMPLATE, 'utf8');
   const script = join(sandbox, `abs-${event}.sh`);
-  let s = tpl
+  const s = tpl
     .replaceAll('__ABS_BIN__', join(REPO, 'bin', 'abs.js'))
     .replaceAll('__NODE_BIN__', process.execPath)
     .replaceAll('__EVENT__', event);

@@ -22,6 +22,7 @@
 - 体检输出必须按类型折叠计数，同类超限只报条数+样例
 
 ## Concepts
+- [[dead-code-vs-over-export]] — 三种「看着像问题」分开判：真死代码(剥声明行数0)/多导出(多数别动)/大文件拆分(先画依赖图)；含拆分四步与脚本误报坑
 - [[remind-vs-gate]] — todo 对齐两层：对齐（必做，让我看见）+ 门禁（兜底，漏了跑不掉）
 - [[naming-contract-and-judge-precision]] — 目录契约(一天一文件)+判据精度(看结构不看关键词/正则词边界陷阱)+存量迁移方法
 - [[feature-delete-not-patch]] — 触发频率错是设计错误不是实现错误：功能该删不该补（4 例实证 + YAGNI 判据）
@@ -61,27 +62,19 @@
 - [[resource-default-let-os-assign]] — 稀缺全局资源的默认值：让 OS 分配，不写死
 - [[audit-claims-verify-before-fix]] — 审计清单也是待证证据：逐条最小探针确证后再改
 - [[self-reported-reasoning-is-post-hoc]] — 让模型自述思考层≠真思考：实测是知答案后编陪跑
-- [[vacuous-test-passes-on-broken-code]] — 空测试：恒真断言，破坏代码也全绿
-- [[guard-check-then-set-across-await]] — 守卫的检查与置位跨 await 就会漏：并发调用一起通过
 - [[validation-gate-on-shared-write-path]] — 共享写入路径加校验必须先问：存量有反例吗、能无损失自动修吗、值真传到校验点了吗
 - [[pi-extension-api-traps]] — 写 pi 扩展时的 API 陷阱：字段值是基线非真实、MCP 工具不进 active 表、宿主内部包不可 import
 - [[global-config-contaminates-projects]] — ~/.abs/config.json 的 user 是全局单值：一次手动设值会永久污染之后所有项目的作者标记
-- [[remind-vs-gate]] — 治「todo 不及时」12 次尝试的总结论：靠 LLM 记得的全失败，不做就过不去的全管用
 - [[normalize-branch-forgot-empty]] — 归一/重建的判定分支要覆盖空态；「反复丢」类现象是真库复现出来的，读代码猜不到
+- [[gate-exit-code-not-piped]] — 门禁静默放行：退出码被管道吞掉
+- [[tool-empty-vs-no-output]] — 工具的「空结果」不等于「没有输出」
+- [[mechanism-visible-vs-effective]] — 机制的「跑了」不等于「起作用了」
 
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 - [[fanchao]] — 使用者；技术栈 / 特点·工作习惯 / 名下踩过的坑
 
 ## Sources
-- [[2026-09-17-对照实验实测-2026-09-16-abs]] — 对照实验实测(2026-09-16): abs 经验确实被读到并改变行为, 但增益集中在'现场验证不出来+失败无信号+错误需求'三类知识。T1 有效对照:…
-- [[2026-09-17-做关键词排序-queryhint]] — queryHint 三条实测: CLI 被大写剥离规则挡在词表外(故 df 重叠论证不成立, 前版已作废) / df 阈值 T=11~15 不起作用 / 剔高频词后 top3 仍噪音; 修复方向未定
-- [[2026-10-03-验证前先做可观测埋点-装-改-pi]] — 验证前先做可观测埋点: 装/改 pi 扩展后必须重启才加载, 且'文件写对了'不等于'被加载了' —— 2026-10-03 实测: 装完扩展立刻宣称生效…
-- [[2026-10-03-todo-常驻指引的-观察期-判定协议-2026]] — todo 常驻指引的『观察期』判定协议(2026-10-03 起): 背景——abs todo 靠 agent 自觉登记, 实测不可靠(abs_task 调用…
-- [[2026-10-06-看板为空时对齐段静默不注入-而日志仍报]] — 看板为空时对齐段静默不注入，而日志仍报 todo_guide=on（假信号）：injectTodoGuidelines 的返回值含义是「六条常驻指引装进去了」…
-- [[2026-10-06-ctx_batch_execute-的]] — ctx_batch_execute 的 section 是 query 匹配结果，未命中的段显示为空——会被误读成「命令没输出/仓库干净」。实测：git…
-- [[2026-10-07-shell-里-if-cmd]] — shell 里 `if ! cmd | tail` 取的是 tail 的退出码（永远 0），门禁恒放行且照样打「✓ 通过」——静默失效…
-- [[2026-10-07-每个词-每页-的双层循环里对同一个对象重复做昂]] — 「每个词×每页」的双层循环里对同一个对象重复做昂贵展开，是隐蔽的 N 倍浪费：abs load 慢的根因是 topicStrength 对 17 个词 ×…
 
 ## Syntheses
 
@@ -97,3 +90,4 @@
 - [[log-2026-10-05]] — 2026-10-05（会话快照 + 任务归档）：宿主升级适配 + todo 自动登记三版迭代
 - [[log-2026-09-18]] — 2026-09-18（会话快照 + 任务归档）
 - [[log-2026-10-03]] — 2026-10-03（会话快照 + 任务归档）
+- [[log-2026-10-06]] — 2026-10-06（会话快照 + 任务归档）
