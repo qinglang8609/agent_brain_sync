@@ -52,6 +52,17 @@ export function sigOfLine(l) {
   return String(l).replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
+/** 一行落在 todo.md 的哪个分区（`## Todo` / `## Done`）。
+ *  返回 'Todo' | 'Done' | null。用于「按区判」—— Done/Archived 区的行不该按
+ *  Todo 区的白名单判（日期分组、归档链接都是合法内容）。 */
+export function todoSectionOf(lines, i) {
+  for (let k = i; k >= 0; k--) {
+    const m = String(lines[k]).match(/^##\s+(\S.*)$/);
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+
 /** 把一份文本里所有「违规行」的签名收成集合（供存量/新增比对）。
  *  只有三个根文件用得上；非目标文件直接返回空集。
  *  ★ 空行特殊：签名取「上下两行拼接」不可靠 —— 插入一行就会让空行的
@@ -94,6 +105,24 @@ export function isTaskLine(l) {
 
 export function isChildLine(l) {
   return /^\s*↳/.test(l);
+}
+
+/** Todo 分区里「合法行」以外的东西 = 裸文本（总结/报告/清单）。
+ *  为什么补这个判据（2026-10-11，同一个坑第三次复发）：
+ *  闸门原来只认 `- [ ]` 任务行与 `↳ 断点:` 行，**其余行直接跳过**（无 else 分支）。
+ *  于是把总结写成「紧跟任务行的裸文本行」就三层全部放行：闸门不看、形状规则不管、
+ *  lint 只查断点行 —— 实测 .agents/.brain/todo.md 被塞进 10 行实施报告而 lint 报 0 问题。
+ *  前面的修法都挂在「行的形态」上（先修超长断点、再修多句断点），换个形态就绕过。
+ *  改成白名单：Todo 区里除了任务行/断点/空行/标题，别的都是非法。
+ *  只在 `## Todo` 区生效 —— Done/Archived 区有日期分组与归档链接，判据不同。
+ *  返回 false 才叫非法。 */
+export function isAllowedTodoLine(l) {
+  const t = l.trim();
+  if (!t) return true;                        // 空行
+  if (/^#{1,3}\s/.test(t)) return true;       // `## Todo` / `### …` 标题
+  if (isTaskLine(l)) return true;             // 任务行
+  if (isChildLine(l)) return true;            // ↳ 断点附属行
+  return false;
 }
 
 /** 把 Done 区文本（bodyLines，不含 `## Done` 标题）解析成任务单元 [{ date, lines:[main,...children] }]。

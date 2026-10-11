@@ -1,7 +1,7 @@
 // src/todo/validate.js — 条目级闸门：形状校验、长度限制、空行检查。
 
 import { TODO_SECTIONS, isAllowedTodoSub, INDEX_SECTIONS, ENTRY_SHAPES, indexLinkSectionNeeds, BREAKPOINT_MAX, TASK_LINE_MAX } from './spec.js';
-import { sigOfLine, REPORT_MARKERS, sentenceCount, isTaskLine } from './common.js';
+import { sigOfLine, REPORT_MARKERS, sentenceCount, isTaskLine, isAllowedTodoLine, todoSectionOf } from './common.js';
 
 export function checkFileShape(file, text, { lintMode = false } = {}) {
   const issues = [];
@@ -192,6 +192,18 @@ export function assertTodoContent(text, prevSig = null) {
         );
       }
       continue;
+    }
+    // 裸文本行（2026-10-11）：Todo 区里既不是任务行也不是断点的行 = 总结/报告/清单。
+    // 前面的修法都挂在「行的形态」上（超长断点、多句断点），把总结写成裸文本行就全部绕过
+    // ——同一个坑第三次复发。改成白名单后，换形态也落回这里。
+    // 按区判：Todo 区才管；Done/Archived 区有日期分组与归档链接，判据不同。
+    // 存量行（prevSig）放行，交给 lint 报 —— 否则老库直接被锁死写不进去。
+    if (todoSectionOf(lines, i) === 'Todo' && !isAllowedTodoLine(l) && !isLegacy(l)) {
+      throw new Error(
+        `✗ todo 的 Todo 区不允许裸文本（第 ${lineNo} 行）—— 这里只放任务行（- [ ] …）与断点行（↳ 断点: …）。\n` +
+        `  「总结/实施报告/清单」请分流：流水与测试数据 → abs log；经验与坑 → abs note；长设计与方案 → .brain/sources/ 页。\n` +
+        `  原文开头: ${l.trim().slice(0, 60)}...`,
+      );
     }
   }
   return true;

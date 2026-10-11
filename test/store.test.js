@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 
 import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
+import { assertTodoContent, violationSignatures } from '../src/todo/validate.js';
 import { editFile } from '../src/lock.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
@@ -1118,6 +1119,99 @@ describe('todo 内容闸门（只放 todo）', () => {
     );
     const out = await cmdLint({ dir: projectA });
     assert.ok(out.includes('TODO-BREAKPOINT-BLOAT'), `lint 应报臃肿断点:\n${out}`);
+  });
+});
+
+// ---------- TODO 裸文本闸门（2026-10-11）----------
+// 同一个坑的第三次复发，所以换个测法：不再测「某种写法的报告」，而是测
+// 「任何非任务/非断点的文本行」。
+//
+// 背景：2026-10-05 补的判据挂在**行的形态**上 —— 只查 `↳ 断点:` 行。
+// 于是 AI 把实施报告写成**紧跟任务行下面的裸文本行**（不带 ↳ 前缀），
+// 三层防线全部放行：
+//   · 写入闸门 assertTodoContent：只认任务行/断点行，其余 continue（无 else）
+//   · 形状闸门 checkFileShape：只看标签与分区，裸文本不在形状规则内
+//   · lint checkRootFiles：只查断点行；60 行上限也没到
+// 实测 .agents/.brain/todo.md 被塞进 10 行实施报告（第 4-7、10-15 行），
+// 而 lint 报 0 问题 —— 与 2026-10-05 那次的症状一模一样。
+// 改法是白名单（isAllowedTodoLine）：Todo 区里除了任务行/断点/空行/标题，别的都非法。
+describe('todo 裸文本闸门（Todo 区只放任务）', () => {
+  // 回归（2026-10-11 真库复现）：报告写成裸文本行，必须拒。
+  // 注意要经 enforceBrainFormat —— 闸门是那里调用的（structure.js），
+  // 而它按「本次写入新引入」判：prev = 写入前的内容。
+  test('Todo 区里的裸文本行被拒（真库形态复现）', async () => {
+    const { enforceBrainFormat } = await import('../src/todo/structure.js');
+    const spec = { h1: '# 📋 Todo Board' };
+    const clean = [
+      '# 📋 Todo Board', '', '## Todo',
+      `- [ ] [进行中] TB-1 [[tester]] — 重写看图流程 (认领 ${today()})`, '',
+      '## Done', '',
+    ].join('\n');
+    // 在干净内容上新增一行裸文本报告（= 2026-10-11 真库的形态）
+    const dirty = clean.replace(
+      `(认领 ${today()})`,
+      `(认领 ${today()})\n一、看图要用 preview.py，不要导成 pptx 再 shot_pptx`,
+    );
+    assert.throws(
+      () => enforceBrainFormat(dirty, spec, clean),
+      /不允许裸文本/,
+      '裸文本行应被拒写入',
+    );
+    // 对照：同样位置写合法断点则放行
+    const good = clean.replace(
+      `(认领 ${today()})`,
+      `(认领 ${today()})\n  ↳ 断点: 改到 src/lint.js 的白名单判据`,
+    );
+    assert.doesNotThrow(() => enforceBrainFormat(good, spec, clean));
+  });
+
+  // 按区判：Done/Archived 区的行不该按 Todo 区白名单判。
+  test('Done 区的日期分组与归档链接不算裸文本', async () => {
+    const p = brainPath(projectA, 'todo.md');
+    await fs.writeFile(
+      p,
+      [
+        '# 📋 Todo Board', '', '## Todo', '',
+        '## Done', '', '### 2026-10-11',
+        `- [x] TD-1 [[tester]] — 已完成的事 (完成 ${today()})`,
+        '', '### Archived', '- [[log-2026-10-11]] 完成任务 7 条', '',
+      ].join('\n'),
+      'utf8',
+    );
+    // 加一条正常任务应当放行（Done 区的 `###` 与归档链接不该被判非法）
+    const r = await cmdTask({ dir: projectA, action: 'start', id: 'TD-2', note: '新任务' });
+    assert.ok(r.includes('TD-2'), `Done 区内容不应阻塞新写入:\n${r}`);
+  });
+
+  // 存量放行：老库已经有裸文本时，不能连新任务都写不进去（否则库被锁死）。
+  test('存量裸文本放行（不锁死老库）', async () => {
+    const p = brainPath(projectA, 'todo.md');
+    const dirty = [
+      '# 📋 Todo Board', '', '## Todo',
+      `- [ ] [进行中] TE-1 [[tester]] — 旧任务 (认领 ${today()})`,
+      '一、这是历史遗留的裸文本报告', '', '## Done', '',
+    ].join('\n');
+    await fs.writeFile(p, dirty, 'utf8');
+    // 带 prevSig（= 现有内容签名）时放行
+    assert.doesNotThrow(() => assertTodoContent(dirty, violationSignatures(dirty)));
+    // 不带 prevSig（= 凭空写这份内容）时必须拦住
+    assert.throws(() => assertTodoContent(dirty, null), /不允许裸文本/);
+  });
+
+  // lint 同源：存量脏数据要能被报出来（闸门拦新的，lint 抓老的）。
+  test('lint 报出 Todo 区的裸文本（存量脏数据）', async () => {
+    const p = brainPath(projectA, 'todo.md');
+    await fs.writeFile(
+      p,
+      [
+        '# 📋 Todo Board', '', '## Todo',
+        `- [ ] [进行中] TF-1 [[tester]] — 旧任务 (认领 ${today()})`,
+        '一、历史遗留的实施报告', '', '## Done', '',
+      ].join('\n'),
+      'utf8',
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('TODO-STRAY-PROSE'), `lint 应报裸文本:\n${out}`);
   });
 });
 

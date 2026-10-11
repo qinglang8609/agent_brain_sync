@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
 import { readRules, idOfPage, statusOfPage, supersededByOf, clip, RULE_BODY_MAX } from './store.js';
 import { doneKindOf, doneDateOf, checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo.js';
+import { isAllowedTodoLine, todoSectionOf } from './todo/common.js';
 
 // ---------- 图谱遍历 ----------
 
@@ -135,6 +136,13 @@ async function checkRootFiles(vault) {
     if (file !== 'todo.md') continue;
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
+      // 裸文本行（与闸门 isAllowedTodoLine 同源，2026-10-11）：Todo 区只能有任务行/断点/空行/标题。
+      if (todoSectionOf(lines, i) === 'Todo' && !isAllowedTodoLine(l)) {
+        issues.push(
+          `TODO-STRAY-PROSE: ${BRAIN_DIR}/${file}:${i + 1} (Todo 区里的裸文本，不是任务行也不是断点；` +
+          `总结/报告/清单请分流：流水 → abs log，经验 → abs note，长设计 → sources/)`,
+        );
+      }
       if (!l.trimStart().startsWith('↳ 断点:')) continue;
       const bp = l.trimStart().slice('↳ 断点:'.length).trim();
       if (bp.length > LINT_BREAKPOINT_MAX) {
