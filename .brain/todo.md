@@ -1,12 +1,12 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] release-1-17-1 [[fanchao]] — 提交看板收尾 + 版本号升 1.17.1 + 推送 + npm publish + 本地重装验证 (认领 2026-10-11 01a128f3-5153-74)
-  ↳ 断点: 断点：暂停发布，先做任务内随手记档位（用户已定：断点仍只一句话）
 
 ## Done
 
 ### 2026-10-11
+- [x] release-1-17-1 [[fanchao]] — 提交看板收尾 + 版本号升 1.17.1 + 推送 + npm publish + 本地重装验证 — 1.17.1 已发布：两 commit 推送 c9006ce..a0fe159（pre-push 586 全过）；直查 registry 确认 latest→1.17.1（延迟约 2 分钟）；全局重装读注册表包，实际跑 memo 正常、看板干净。途中按用户追问补做了 abs todo memo（任务随手记落点，治总结塞看板），破坏验证两条都证明能红 【落地】 (完成 2026-10-11 01a128f3-5153-74)
+  ↳ 断点: 断点：暂停发布，先做任务内随手记档位（用户已定：断点仍只一句话）
 - [x] todo-dump-summaries [[fanchao]] — 读 /Users/fanchao/.agents/.brain/todo.md，确认总结/misc 被写进 todo 的形态与来源通路 — 测试结语 【落地】 (完成 2026-10-11 01a128f3-5153-74)
   ↳ 断点: 断点：改 src/todo/validate.js 的 assertTodoContent，下一步先读 src/todo/common.js 的 isTaskLine/sigOfLine
 
