@@ -106,6 +106,7 @@ export function isAllowedTodoLine(l) {
 
 ## 关联连接
 - [[fanchao]] — 本页沉淀者
+- [[gate-needs-outlet-not-just-block]] — 姊妹页：只加闸门不给落点，污染会换形态复发（本页坑的第 3 次复发就是它解释的）
 - [[remind-vs-gate]] — 提醒 vs 闸门：只有闸门被验证有效
 - [[file-shape-check-on-load]] — 同为写入侧校验，职责边界是「补空位」不管迁移
 - [[silent-data-loss-diagnosis]] — 静默失效通用识别法（先分「没写入」还是「写了没人读」）

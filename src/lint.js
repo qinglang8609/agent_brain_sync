@@ -211,7 +211,12 @@ function checkPage(pg, names, linkedNames, inbound) {
   if (pg.dir === 'concepts' && !hasTail(pg.body)) {
     issues.push(`NO-TAIL: ${pg.rel}（无「做完怎么确认」；尾巴写清跑什么/看什么/按什么判据，别只有头）`);
   }
-  if (pg.dir !== 'sources' && !pg.indexed) {
+  // 「任务随手记」（abs todo memo）不登记 index：它是**某任务的过程草稿**，
+  // 数量随任务数增长且生命周期短（任务完就没人看），登记会把 index 冲垮 ——
+  // 而 index 的契约是「可扫描的图谱导航」。与 sources/ 同理豁免（都是「暂存待处理」）。
+  // 判据用 tag 而非文件名：文件名规则将来可能调，tag 是语义标记。
+  const isTaskMemo = pg.dir === 'sessions' && /task-memo/.test(pg.frontmatter);
+  if (pg.dir !== 'sources' && !isTaskMemo && !pg.indexed) {
     issues.push(`INDEX-MISSING: ${pg.rel} not listed as [[${pg.slug}]] in index.md`);
   }
   return issues;

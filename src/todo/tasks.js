@@ -1,9 +1,10 @@
 // src/todo/tasks.js — 任务读写入口：读、加、改状态、断点、看板。
 
 import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
 import { brainPath } from '../index.js';
 import { editFile, SKIP } from '../lock.js';
-import { today, extractId, extractNote, extractAuthor, isLegacyAuthorTag, claimOf } from './common.js';
+import { today, localStamp, extractId, extractNote, extractAuthor, isLegacyAuthorTag, claimOf } from './common.js';
 import { todoTemplate, normalizeTodo, stateOfTaskLine, stripStateMark } from './structure.js';
 import { TASK_STATES } from './spec.js';
 import { collapseDone, groupDoneSection } from './archive.js';
@@ -152,6 +153,76 @@ export async function setBreakpoint(brainRoot, { id, text }) {
   return res === SKIP
     ? { ok: false, msg: `[NO_MATCH] 未找到含 "${id}" 的未完成任务行` }
     : { ok: true, msg: `✓ 断点已落 → ${id}\n  ${bp.trim()}` };
+}
+
+// ---------- 任务随手记（memo）----------
+/** 任务进行中的随手记：多句、不定长、可追加，**不占看板**。
+ *
+ * 为何需要它（2026-10-11，用户定）：断点只该一句话（用户明确要求保持），
+ * 而 `abs log` 要起 kind、进 log.md，对「随手记一句」太重；`abs note` 只管
+ * 经验/坑且落 sources/。于是任务干到一半想记「现在做到哪、发现了什么」时
+ * **没有轻档位**，AI 就顺手塞进 todo.md —— 实测 .agents/.brain/todo.md 被塞进
+ * 10 行实施报告，而清理时发现「原内容只存在 todo.md，删任务时差点永久丢失」。
+ * 堵（白名单闸门）只治标：不给出路，下次还会换个写法再塞。本命令就是那条出路。
+ *
+ * 落点选 sessions/（不是新目录）：那里已有目录遍历/frontmatter/归档机制，
+ * lint 的豁免判据也是现成的（两条契约都已核实）：
+ *   · `archive` tag  → SESSIONS-SPLIT / SESSIONS-NAMING 豁免（它们只算无 archive 的）
+ *   · `log-` 前缀   → ORPHAN-PAGE 豁免（sessions 里非 log- 开头要求有链接）
+ * 所以文件名取 `log-<日期>-<id>.md`，两个条件同时满足，**不改 lint 任何契约**。
+ *
+ * 追加式（不是覆盖）：每次调用多一条带时间戳的条目，与断点的语义有意不同 ——
+ * 断点是「现在到哪了」（旧值就该被替换），memo 是「过程流水」（旧值不能丢）。 */
+export async function setMemo(brainRoot, { id, text, at }) {
+  const stamp = at || localStamp();
+  const dir = brainPath(brainRoot, 'sessions');
+  const file = join(dir, `log-${today()}-${id}.md`);
+  const rel = `sessions/log-${today()}-${id}.md`;
+  const line = `- ${stamp} ${text}`;
+  const head = [
+    '---',
+    'tags: [archive, task-memo]', // archive → 豁免一天一文件；task-memo → 标明用途
+    `id: log-${today()}-${id}`,
+    `updated: ${today()}`,
+    '---',
+    '',
+    `# 任务随手记：${id}`,
+    '',
+    `━━ ${id} 的过程笔记（不上看板；任务结束后随 sessions 留存）`,
+    '',
+  ].join('\n');
+  await fs.mkdir(dir, { recursive: true });
+  // 全程走 editFile 的锁：同一任务的并发 memo 不能丢条目（append 是 read-modify-write）。
+  // 初次创建也走它 —— editFile 对「文件尚不存在」已经处理（current=null），
+  // 自己再写一份 tmp+rename 分支反而绕过锁，首次并发两个 memo 会互相覆盖。
+  await editFile(file, (cur) => {
+    if (cur === null) return { text: `${head}${line}\n` };
+    const t = cur.replace(/\n+$/, '');
+    const next = /^updated:\s*.+$/m.test(t) ? t.replace(/^updated:\s*.+$/m, `updated: ${today()}`) : t;
+    return { text: `${next}\n${line}\n` };
+  });
+  return { ok: true, msg: `✓ 随手记 → ${rel}\n  ${line}` };
+}
+
+/** 读回某任务的随手记（无则空）。供 CLI/MCP 查看与 done 时提醒。
+ *  按**完整文件名后缀**匹配而不是 id 后缀：`endsWith('-${id}.md')` 会让
+ *  `t-1` 误命中 `task-t-1`（同族坑见 idOfTaskLine 的全等比对注释）。
+ *  文件名形如 `log-<日期>-<id>.md`，所以匹配 `-<id>.md` 时必须确认 id 是**最后一段**。 */
+export async function readMemo(brainRoot, id) {
+  const dir = brainPath(brainRoot, 'sessions');
+  const files = await fs.readdir(dir).catch(() => []);
+  const want = String(id).replace(/\u200b/g, '');
+  const hit = files.filter((f) => {
+    const m = f.match(/^log-\d{4}-\d{2}-\d{2}-(.+)\.md$/);
+    return m && m[1] === want;
+  }).sort();
+  if (!hit.length) return '';
+  const parts = [];
+  for (const f of hit) {
+    const body = await fs.readFile(join(dir, f), 'utf8').catch(() => '');
+    parts.push(body.trim());
+  }
+  return parts.join('\n\n');
 }
 
 // ---------- 看板输出 ----------

@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir } from './index.js';
 import { requireUser, atTag, getUser, placeholderWarn } from './userconfig.js';
-import { stripStateMark, ensureStateMark, stateOfTaskLine, TODO_MAX_LINES, upsertTask, boardText, readTodo, todoTemplate, today, localStamp, setBreakpoint, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, collapseDone, SEC, rebuildStructure, enforceBrainFormat, sessionOf } from './todo.js';
+import { stripStateMark, ensureStateMark, stateOfTaskLine, TODO_MAX_LINES, upsertTask, boardText, readTodo, todoTemplate, today, localStamp, setBreakpoint, setMemo, readMemo, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, collapseDone, SEC, rebuildStructure, enforceBrainFormat, sessionOf } from './todo.js';
 import { setFormatGate, editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 import { keywords, recentFiles, topicStrength } from './relevant.js';
@@ -927,6 +927,16 @@ export async function cmdTask({ dir, action, id, section, note, as, session }) {
   if (action === 'note') {
     if (!note) return '用法: abs todo note <id> --note "进度"\n  建议前缀（load 会把它们单独抽出来，让人一眼看到）:\n    验证: <跑过的命令/结果>\n    边界: <这方案治不了什么>\n    阻塞: <在等什么，卡在哪>';
     const r = await setBreakpoint(root, { id, text: note });
+    return r.msg;
+  }
+  if (action === 'memo') {
+    // 任务随手记：多句/不定长/可追加，不占看板。无 note 时 = 查看已有笔记。
+    if (!id) return '用法: abs todo memo <id> "随手记（可多句）"  |  abs todo memo <id>（查看）';
+    if (!note) {
+      const body = await readMemo(root, id);
+      return body || `（${id} 没有随手记）`;
+    }
+    const r = await setMemo(root, { id, text: note });
     return r.msg;
   }
   if (action === 'done') {

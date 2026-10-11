@@ -105,7 +105,8 @@ abs load                       # 开机读状态（Rules + 图谱计数 + 看板
 abs todo                       # 看板 Todo / Done（行首带状态标记）
 
 abs todo add     TASK-1 --note "要做什么"
-abs todo note    TASK-1 --note "改到 X 文件 L40"   # 实时断点
+abs todo note    TASK-1 --note "改到 X 文件 L40"   # 实时断点（一句话，上看板）
+abs todo memo    TASK-1 "随手记一段（可多句，不上看板）"   # 任务笔记 → sessions/；无参=查看
 abs todo state   TASK-1 --note "进行中|讨论中|滞留中"   # 改行首状态标记
 abs todo done    TASK-1
 

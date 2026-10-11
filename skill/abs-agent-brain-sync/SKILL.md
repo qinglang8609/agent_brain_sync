@@ -21,7 +21,7 @@ description: "USE FOR abs / agent-brain-sync 跨会话记忆与任务续接。�
 
 ```bash
 abs load                          # 开机读状态；abs query <词> 检索；abs resolve <页名> 反查路径
-abs todo add <id> --note "做什么"   # 登记（note 补断点 / state 改标记 / done 完成）；abs log "完成 X" 记成果
+abs todo add <id> --note "做什么"   # 登记（note 补断点 / memo 随手记 / state 改标记 / done 完成）；abs log "完成 X" 记成果
 abs note "经验" [--tags a,b]       # 暂存经验；abs concept <slug> --title "…" 建概念页骨架
 abs rule [add "一句话"]           # 读写 ## Rules；abs lint 体检；abs todo archive 归档；abs init 建图谱
 ```
@@ -109,9 +109,34 @@ abs rule [add "一句话"]           # 读写 ## Rules；abs lint 体检；abs t
 | 认领新任务 / 聊出一个话题 | `start` + note 做什么 | Todo `[进行中]` |
 | 只在讨论、还没动手 | `state` + note 讨论中 | 原地改标记 |
 | 卡住了/等人等数据 | `state` + note 滞留中 | 原地改标记 |
-| 被打断/干到一半 | `note` + 改到哪个文件/到哪步 | 原地 ↳断点 |
+| 被打断/干到一半 | `note` + 改到哪个文件/到哪步 | 原地 ↳断点（**一句话**） |
+| 干活中想随手记一段（多句/发现/取舍/测试数据） | **`memo`** + 原文 | `sessions/log-<日期>-<id>.md`，**不上看板** |
 | 子任务做完 | `done` + note 结语 + as 落地\|否决\|仅方案 | Done（别让假【落地】污染看板） |
 | 总结出经验/坑/规律 | 改用 `abs_note` text + tags | sources/ |
+
+**四个落点的分工（选错就会被闸门拒，或被 lint 报）：**
+
+| 想记什么 | 入口 | 形态 | 上看板？ |
+|---|---|---|---|
+| 下一步做什么、卡在哪 | `note` | 一句话，**覆盖式**（旧值就该被替换） | 是 |
+| 过程随手记：发现、取舍、测试数据、为什么这么做 | `memo` | 可多句、不定长，**追加式**（旧值不能丢） | **否** |
+| 提炼过的经验/坑 | `abs_note` | 一句话结论 → sources/ 待提炼 | 否 |
+| 一轮干完的成果流水 | `abs log` | 正式流水行（要带 kind） | 否 |
+
+**为什么要有 `memo`（2026-10-11 用户实报「大量乱七八糟的总结都扔 todo 了」）：**
+断点写不下（设计上就只能一句话，用户明确要求保持），`abs log` 对「随手记一句」太重
+（要起 kind、进 log.md）。结果是干活途中想记一段时**没地方放**，就顺手塞 `todo.md`。
+实测 `.agents/.brain/todo.md` 被塞进 10 行实施报告，而 `abs lint` 报 0 问题；
+更早一次清理时发现「原内容只存在 todo.md，删任务时差点永久丢失」。
+
+现在 `todo.md` 的 Todo 区有**白名单闸门**：只能有任务行（`- [ ]`）、断点行（`↳ 断点:`）、
+空行、标题。其余一律拒写并报错。所以别再试着往里写总结了 —— **走 `memo`**。
+
+```bash
+abs todo memo <id> "第一句：根因是判据极性。第二句：改成白名单就不漏了。"   # 记（可多句）
+abs todo memo <id>                                                    # 查看
+```
+任务 `done` 后笔记文件留在 `sessions/`（随当日归档），不会丢。
 
 **硬规则（开工前触发器，别被状态表漏掉）：**
 

@@ -310,6 +310,7 @@ const subUsage = {
     '  abs todo add <id> [--note "做什么"] [--section 讨论中|滞留中|搁置]',
     '  abs todo rename <旧id> --note "<新id>"   改任务 id（起错名/不可读时）',
     '  abs todo note <id> --note "断点/进度"',
+    '  abs todo memo <id> "随手记（可多句）"  任务笔记 → sessions/，不上看板；无文字=查看',
     '  abs todo state <id> --note 进行中|讨论中|滞留中|搁置',
     '  abs todo done <id> [--as 落地|否决|仅方案] [结语文字]',
     '  abs todo archive [--keep-days N] [--dry-run]',
@@ -373,6 +374,7 @@ const TODO_ACTIONS = {
   add: 'start',
   start: 'start', // add 的别名(老习惯保留)
   note: 'note',
+  memo: 'memo', // 任务随手记：多句/追加/不占看板（无文字时=查看）
   state: 'state', // 改行首状态标记：进行中|讨论中|滞留中|搁置（原地，不搬区）
   rename: 'rename', // 改任务 id：人工起错名、或旧 id 不可读时用
   done: 'done',
@@ -467,7 +469,7 @@ async function main() {
         if (!action) {
           throw new Error(
             `✗ 未知子命令 "${sub}"\n` +
-            `  可用: add / start / note / state / done / archive\n` +
+            `  可用: add / start / note / memo / state / done / archive\n` +
             `  看板: abs todo（不带参数）\n` +
             `  登记任务: abs todo add <id> --note "做什么"`,
           );
@@ -475,11 +477,19 @@ async function main() {
         // done 的结语：--note "结语" 或位置参数（`abs todo done X 验证: 全绿`）都收。
         // 坑(2026-09-16 实测): --help 里写了 [结语文字] 但实现只读 --note，
         // 位置参数被 rejectExtra 当多余参数拒掉 —— 文档与实现不一致。
+        // memo 同：随手记常是多句带空格，位置参数收全段比 --note 顺手。
         const isDone = action === 'done';
+        const isMemo = action === 'memo';
         const usage = `abs todo ${sub} <id>${isDone ? ' [--as 落地|否决|仅方案] [--note "结语"]' : ' --note "…"'}`;
         if (isDone) {
           const note = opts.note || (rest2.length ? rest2.join(' ') : undefined);
           console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note, as: opts.as, session: opts.session }));
+          break;
+        }
+        if (isMemo) {
+          // 无文字 = 查看该任务所有随手记
+          const note = opts.note || (rest2.length ? rest2.join(' ') : undefined);
+          console.log(await cmdTask({ dir: opts.dir, action, id, note, session: opts.session }));
           break;
         }
         rejectExtra(rest2, usage);

@@ -256,7 +256,7 @@ describe('cli: todo', () => {
     const r = await run(['todo', 'frobnicate', 'T1']);
     assert.notEqual(r.code, 0, '未知子命令必须非零退出');
     assert.ok(/未知子命令/.test(r.stderr), r.stderr);
-    assert.ok(/add \/ start \/ note \/ state \/ done/.test(r.stderr), '应列出可用子命令');
+    assert.ok(/add \/ start \/ note \/ memo \/ state \/ done/.test(r.stderr), '应列出可用子命令');
   });
 
   test('add 与 start 等价', async () => {
@@ -308,6 +308,82 @@ describe('cli: todo', () => {
     const t = await run(['todo']);
     const hits = t.stdout.split('\n').filter((l) => l.includes('TIDEM') && l.startsWith('- [ ]'));
     assert.equal(hits.length, 1, `应只一行:\n${t.stdout}`);
+  });
+
+  // 任务随手记 (abs todo memo, 2026-10-11)：给「任务内随手记」一个轻档位。
+  // 为何要有它：断点只能一句话（用户要求保持），abs log 要起 kind 太重，
+  // abs note 只管经验。于是想随手记时没地方放，AI 就塞进 todo.md ——
+  // 实测 .agents/.brain/todo.md 被塞进 10 行实施报告。堵只治标，得给出路。
+  test('memo 追加式落盘（不覆盖上一条）且可多句、不定长', async () => {
+    await run(['todo', 'start', 'TM-1', '--note', '试随手记']);
+    const a = await run(['todo', 'memo', 'TM-1', '第一句：闸门只认任务行和断点行。']);
+    assert.equal(a.code, 0, a.stderr);
+    // 多句 + 超长（断点会拒，memo 不该拒）
+    const long = '第二句：所以裸文本行三层全放行。' + '补充说明。'.repeat(60);
+    const b = await run(['todo', 'memo', 'TM-1', long]);
+    assert.equal(b.code, 0, b.stderr);
+    const view = await run(['todo', 'memo', 'TM-1']);
+    assert.ok(view.stdout.includes('第一句'), '第一条不能被覆盖（memo 是追加式）');
+    assert.ok(view.stdout.includes('第二句'), '第二条应写入');
+    assert.ok(view.stdout.includes('补充说明。'.repeat(5)), '超长内容应完整保留');
+  });
+
+  test('memo 不进看板（看板保持一行）', async () => {
+    await run(['todo', 'start', 'TM-2', '--note', '看板应干净']);
+    await run(['todo', 'memo', 'TM-2', '这条很长的笔记不该出现在看板上'.repeat(5)]);
+    const t = await run(['todo']);
+    assert.ok(t.stdout.includes('TM-2'), '任务行应在');
+    assert.ok(!t.stdout.includes('这条很长的笔记'), `笔记不该上看板:\n${t.stdout}`);
+    const lines = t.stdout.split('\n').filter((l) => l.startsWith('- [ ]'));
+    assert.equal(lines.length, 1, '任务只应占一行（无附属行）');
+  });
+
+  test('memo 无文字 = 查看；无笔记任务给明确空态', async () => {
+    await run(['todo', 'start', 'TM-3', '--note', 'x']);
+    const empty = await run(['todo', 'memo', 'TM-3']);
+    assert.match(empty.stdout, /没有随手记/, `应给空态提示:\n${empty.stdout}`);
+    await run(['todo', 'memo', 'TM-3', '记一句']);
+    const has = await run(['todo', 'memo', 'TM-3']);
+    assert.ok(has.stdout.includes('记一句'), '应能读回');
+  });
+
+  // 新文件形态不能被 lint 判错（这条是实测踩到的：初版漏了 INDEX-MISSING 豁免）
+  test('memo 落的文件不惊动 lint（豁免 index 登记）', async () => {
+    await run(['todo', 'start', 'TM-4', '--note', 'x']);
+    await run(['todo', 'memo', 'TM-4', '随手记一句']);
+    const l = await run(['lint']);
+    assert.ok(!/INDEX-MISSING/.test(l.stdout + l.stderr),
+      `任务随手记不该要求登记 index:\n${l.stdout}${l.stderr}`);
+    assert.ok(!/SESSIONS-/.test(l.stdout + l.stderr),
+      `不该撞一天一文件契约:\n${l.stdout}${l.stderr}`);
+  });
+
+  // 回归（初版 id 后缀匹配的 bug）：`t-1` 不能读到 `task-t-1` 的笔记。
+  // 同族坑见 idOfTaskLine 的全等比对注释（T1 误命中 T11）。
+  test('memo 按完整 id 匹配，前缀不互相污染', async () => {
+    await run(['todo', 'start', 't-1', '--note', '短名']);
+    await run(['todo', 'start', 'task-t-1', '--note', '长名']);
+    await run(['todo', 'memo', 't-1', '这是短名的笔记']);
+    await run(['todo', 'memo', 'task-t-1', '这是长名的笔记']);
+    const short = await run(['todo', 'memo', 't-1']);
+    assert.ok(short.stdout.includes('短名的笔记'), '应读到自己的');
+    assert.ok(!short.stdout.includes('长名的笔记'), `不该串到别的任务:\n${short.stdout}`);
+  });
+
+  // 回归：初版首建走 tmp+rename 绕过了锁，并发首写会互相覆盖（丢条目）。
+  // 为什么要直调 setMemo 而不是跑 CLI：CLI 走独立进程，竞态窗口靠运气（实测
+  // 注入「绕过锁」的 bug 后此用例仍全绿 —— 那种测试守不住东西）。
+  // 同进程 Promise.all 才把并发变成确定事件。
+  test('同一任务并发首写不丢条目（锁覆盖首建）', async () => {
+    const { setMemo, readMemo } = await import('../src/todo/tasks.js');
+    const root = proj;
+    await run(['todo', 'start', 'TM-5', '--note', 'x']);
+    const msgs = ['并发第一条', '并发第二条', '并发第三条', '并发第四条'];
+    await Promise.all(msgs.map((m) => setMemo(root, { id: 'TM-5', text: m })));
+    const got = await readMemo(root, 'TM-5');
+    for (const m of msgs) {
+      assert.ok(got.includes(m), `并发写入丢了「${m}」:\n${got}`);
+    }
   });
 });
 

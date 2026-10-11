@@ -63,6 +63,7 @@
 - [[resource-default-let-os-assign]] — 稀缺全局资源的默认值：让 OS 分配，不写死
 - [[audit-claims-verify-before-fix]] — 审计清单也是待证证据：逐条最小探针确证后再改
 - [[self-reported-reasoning-is-post-hoc]] — 让模型自述思考层≠真思考：实测是知答案后编陪跑
+- [[gate-needs-outlet-not-just-block]] — 加闸门必须同时给出路：todo 总结污染复发三次的真根因是缺落点，不是闸门不严
 - [[validation-gate-on-shared-write-path]] — 共享写入路径加校验必须先问：存量有反例吗、能无损失自动修吗、值真传到校验点了吗
 - [[pi-extension-api-traps]] — 写 pi 扩展时的 API 陷阱：字段值是基线非真实、MCP 工具不进 active 表、宿主内部包不可 import
 - [[global-config-contaminates-projects]] — ~/.abs/config.json 的 user 是全局单值：一次手动设值会永久污染之后所有项目的作者标记
