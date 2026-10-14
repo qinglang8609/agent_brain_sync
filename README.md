@@ -189,7 +189,8 @@ agent_brain_sync/
 ├── bin/mcp.js      MCP server (stdio)
 ├── src/index.js    图谱定位（只认当前目录的 .brain/）+ 全局技术日志目录
 ├── src/lock.js     并发写保护（原子锁 + 排队 + SKIP）
-├── src/todo.js     todo.md 分区读写 + 格式闸门
+├── src/todo.js     todo 对外入口（re-export，实现见 src/todo/）
+├── src/todo/       todo.md 分区读写 + 格式闸门（common/spec/structure/validate/archive/tasks）
 ├── src/store.js    CLI 命令实现
 ├── src/lint.js     图谱体检（死链/孤岛/超尺寸/堆积；同类问题折叠计数）
 ├── src/query.js    检索知识页（多词 OR）
@@ -202,7 +203,10 @@ agent_brain_sync/
 ├── hooks/event.sh  hook 模板
 ├── hooks/abs.pi.ts pi 扩展模板（含 todo 面板 / 随机昵称 / 常驻指引）
 ├── skill/<名称>/SKILL.md  技能（每个子目录 = 一个 skill，装到各智能体）
-└── test/           单测（448，node:test，零外部测试依赖）
+├── scripts/        构建期脚本（语法检查等，不进 npm 包）
+├── docs/plans/     方案文件（YYYYMMDD-<名>.md，不进 npm 包）
+├── .githooks/      pre-commit（语法+图谱 lint）/ pre-push（全量测试）
+└── test/           单测（node:test，零外测试依赖）
 ```
 
 MIT

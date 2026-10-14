@@ -63,7 +63,7 @@ async function createSkeleton(root, brain) {
   // 中间 init/load 都不提，根本不知道该设。
   const who = await getUser();
   const hint = who ? '' : `\n  ⚠ 尚未设置使用者姓名，写操作(todo add/log/note)会先报错。\n    请先设置: abs config set user <你的名字>`;
-  return `✓ 已建图谱 ${brain}\n  (模板见 SKILL.md「文件标准」)${hint}`;
+  return `✓ 已建图谱 ${brain}\n  (模板见 SKILL.md「.brain/ 怎么组织」)${hint}`;
 }
 
 /** 结构体检：6 目录 + 3 文件逐一核对。ok=false 时 problems 列出缺失项。 */
