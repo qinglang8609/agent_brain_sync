@@ -77,17 +77,21 @@ npm audit --omit=dev → 4 漏洞（2 moderate / 1 high / 1 critical）
 
 ### P3 — 超长函数（可读性，非缺陷）
 
-超 80 行的函数 11 个，最长几个：
+超 80 行的函数几个，最长几个（**数据已按真实函数体重算，2026-10-16 复核**）：
 
 | 位置 | 函数 | 行数 |
 |---|---|---|
-| `src/store.js` | `cmdTask` | 153 |
-| `src/todo/spec.js` | `isAllowedTodoSub` | 119 |
-| `src/query.js` | `cmdQuery` | 112 |
-| `src/todo/structure.js` | `enforceBrainFormat` | 109 |
-| `src/store.js` | `cmdLoad` | 108 |
+| `src/store.js` | `cmdTask` | 169 |
+| `src/todo/structure.js` | `enforceBrainFormat` | 105 |
+| `src/query.js` | `cmdQuery` | 103 |
+| `src/store.js` | `cmdLoad` | 99 |
 
-`store.js` 已经把页面生命周期、经验暂存、lint 拆成独立文件（`page.js`/`note.js`/`lint.js`），拆分方向对。剩下的 `cmdTask` / `cmdLoad` 是命令分发主体，拆开收益有限，**不建议为了拆而拆**。仅提示：`isAllowedTodoSub` 119 行占了一个小文件的一半，是将来最值得拆的候选。
+> ⚠ 更正（2026-10-16）：本报告初版这几个数字是用 awk 粗算的，**全部不准**；且把
+> `isAllowedTodoSub` 写成「119 行」——那是它的**行号**不是长度，它实际只有 **3 行**
+> （纯只读谓词）。据此建的那条拆分任务已作废。教训：报函数长度要用「配对花括号扫描」
+> 真算一遍，别拿行号或粗脚本的输出去当结论。
+
+`store.js` 已经把页面生命周期、经验暂存、lint 拆成独立文件（`page.js`/`note.js`/`lint.js`），拆分方向对。剩下的 `cmdTask` / `cmdLoad` 是命令分发主体，拆开收益有限，**不建议为了拆而拆**。
 
 ### P4 — 文档小瑕疵
 
