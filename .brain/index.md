@@ -78,6 +78,7 @@
 
 ## Sources
 - [[2026-10-16-omp-oh-my-pi-18-11-1]] — omp(oh-my-pi 18.11.1) 宿主接入 API 核实（源码 ~/.bun/install/global/node_modules/@oh-my-p…
+- [[2026-10-16-排查-pi-todo-面板-显示但缺任务]] — 排查 pi todo 面板「显示但缺任务」：真因不是面板 bug，而是 ~/.abs/config.json 的 user 被污染成 'audit'…
 
 ## Syntheses
 

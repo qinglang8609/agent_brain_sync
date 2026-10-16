@@ -1112,6 +1112,32 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(taskLines[1].startsWith('└─'), `末条（带断点）应 └─: ${taskLines[1]}`);
   });
 
+  // ★ 2026-10-16 用户要求：面板是 todo.md 的只读视图，就该长成 todo 原貌 ——
+  //   每行前面带 `[ ]` 复选框（任务行 + 断点行）。曾只有 [状态] 标记，读起来不像待办列表。
+  test('★ 任务行与断点行都带 [ ] 复选框（对齐 todo.md 原貌）', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const data = {
+      total: 2,
+      rows: [
+        { state: '进行中', id: 'a', desc: 'A', note: 'A 的断点' },
+        { state: '滞留中', id: 'b', desc: 'B', note: '' },
+      ],
+      hidden: 0,
+    };
+    const lines = renderPanelLines(data, 'me', 80, fg, -1, '');
+    const taskLines = lines.filter((l) => l.includes('[进行中]') || l.includes('[滞留中]'));
+    assert.equal(taskLines.length, 2);
+    for (const l of taskLines) {
+      assert.ok(l.includes('[ ]'), `任务行必须有 [ ] 复选框: ${JSON.stringify(l)}`);
+    }
+    const noteLine = lines.find((l) => l.includes('A 的断点'));
+    assert.ok(noteLine.includes('[ ]'), `断点行也必须带 [ ]: ${JSON.stringify(noteLine)}`);
+    // 复选框在状态标记之前（先勾选框、再状态，与文件里 `- [ ] [进行中]` 同序）
+    assert.ok(taskLines[0].indexOf('[ ]') < taskLines[0].indexOf('[进行中]'),
+      `[ ] 应在 [状态] 之前: ${JSON.stringify(taskLines[0])}`);
+  });
+
   test('上描边满宽（不得留余量，否则右侧缺一块）', async () => {
     const { renderPanelLines } = await loadPanelFns();
     // 用真 ANSI 包装模拟 pi 的 theme.fg

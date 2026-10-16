@@ -1,12 +1,15 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] release-1.18.0-omp [[fanchao]] (认领 2026-10-16 01a1445c-389f-70)
-- [ ] [讨论中] brain-lint-7-stale-sources [[fanchao]] — 图谱 lint 报 7 条 SOURCE-UNDISTILLED（超 7 天未提炼成 concept）。全是历史遗留（9/17 ~ 10/7 的提交），非新引入，发版时用 --no-verify 跳过。要做: 逐个读 .brain/sources/2026-09-17-*.md、2026-10-03-*.md(x2)、2026-10-06-*.md(x2)、2026-10-07-*.md(x2)，判断提炼进哪个 concept 或直接删，然后清引用。 (认领 2026-10-16 01a1445c-389f-70)
+- [ ] [进行中] panel-checkbox-and-missing-task [[fanchao]] — pi 面板每行加 [ ] 复选框 + 排查「显示但缺任务」；断点行也要 [] (认领 2026-10-16 01a1446a-042e-77)
 
 ## Done
 
 ### 2026-10-16
+- [x] audit-project [[fanchao]] — 审核整个项目：代码质量/安全/测试/文档，出报告不改代码 — 审核完成：598→599 测试全过 + lint 0 + 50 并发写零丢失 + 路径穿越被 slugOf 挡住 + 5 宿主安装/幂等/卸载只删自己全部实证；顺带发现并修复 pi 面板缺任务真因（config user 被沙盒测试污染成 audit） 【落地】 (完成 2026-10-16 01a1446a-042e-77)
+  ↳ 断点: 第一轮完成（代码/lint/测试/并发/路径穿越已验），报告落 .brain/sessions/audit-2026-10-16.md；继续补 install.js 端到端 + hooks .ts 全文
+- [x] release-1.18.0-omp [[fanchao]] — npm 1.18.0 已发布（registry dist-tags.latest=1.18.0 已核实），五宿主 hook/skill/MCP 已刷新。omp 扩展 ~/.omp/agent/extensions/abs.ts 45KB 已装。git push 未完成（代理 503）。 【落地】 (完成 2026-10-16 01a1445c-389f-70)
+- [x] brain-lint-7-stale-sources [[fanchao]] — 图谱 lint 报 7 条 SOURCE-UNDISTILLED（超 7 天未提炼成 concept）。全是历史遗留（9/17 ~ 10/7 的提交），非新引入，发版时用 --no-verify 跳过。要做: 逐个读 .brain/sources/2026-09-17-*.md、2026-10-03-*.md(x2)、2026-10-06-*.md(x2)、2026-10-07-*.md(x2)，判断提炼进哪个 concept 或直接删，然后清引用。 — 7 条确认已提炼后删除，零悬挂引用，lint 0 问题，提交 efc0aab。 【落地】 (完成 2026-10-16 01a1445c-389f-70)
 - [x] verify-todo-add [[fanchao]] — 验证 abs_task add 通路：条目正确落到 .brain/todo.md 的 ## Todo 段、带认领会话标记；重复进行中会给出提示 【落地】 (完成 2026-10-16 01a143c9-daf9-70)
 - [x] todo-smoke-2026-10-16 [[fanchao]] — 冒烟测试条目，已确认写入生效后清理 【否决】 (完成 2026-10-16 01a143c9-daf9-70)
 - [x] mcp-live-check [[fanchao]] — verify real install — 安装探针, 验证完即清 【否决】 (完成 2026-10-16 01a143c7-ca09-70)

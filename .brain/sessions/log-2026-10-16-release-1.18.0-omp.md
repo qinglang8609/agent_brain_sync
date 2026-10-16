@@ -18,3 +18,8 @@ updated: 2026-10-16
 已核对: npm test 598/598 通过; npm run lint 0 错; 真机 ~/.omp/agent/extensions/abs.ts 已装(16:14); ~/.omp/agent/mcp.json 里 abs 已注册
 
 步骤: 改 package.json version → commit → tag v1.18.0 → push → npm publish → abs update 刷新五宿主
+- 2026-10-16 19:07 卡点(2026-10-16): push 失败 —— 代理 CONNECT tunnel failed 503。不是认证问题: 钥匙串已锁(-25308 非交互读不到凭证)，但你手动推也是 503；代理常驻在 127.0.0.1:1082 且 git 已配好指向它，是代理到 github 的隧道建不起来(节点/规则/上游问题)。SSH 路(22 与 443)也被代理拦断，走不通。
+
+本地已就绪: commit 21b3ec1(feat omp+断点任务) / ebaf96a(release 1.18.0) / efc0aab(brain 清源); tag v1.18.0 已打; 领先远端 5 个提交; npm test 598/598; lint 0。
+
+待执行(需代理恢复可直连 github): git push origin main && git push origin v1.18.0 && npm publish && abs update

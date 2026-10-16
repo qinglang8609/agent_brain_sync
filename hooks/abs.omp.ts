@@ -521,12 +521,15 @@ export function renderPanelLines(
     const isLast = i === lastIdx
     const branch = isLast ? '└─' : '├─'
     const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg('accent', todoAnimFrame(animPhase)) : ''
-    const head = `${fg('dim', branch)} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
+    // 复选框 `[ ]`：面板是 todo.md 的只读视图，就该长成 todo 原貌。
+    const box = fg('dim', '[ ]')
+    const head = `${fg('dim', branch)} ${box} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.note) {
+      // 缩进对齐父任务的 `[ ]`，断点自身也带 [ ]。
       const cont = isLast ? '  ' : fg('dim', '│ ')
-      lines.push(clipToWidth(`${cont} ${fg('dim', '↳ ' + t.note)}`, width))
+      lines.push(clipToWidth(`${cont}   ${box} ${fg('dim', '↳ ' + t.note)}`, width))
     }
   })
 

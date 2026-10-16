@@ -931,13 +931,18 @@ export function renderPanelLines(
     const branch = isLast ? '└─' : '├─'
     // 进行中的行带一个小动画（其余行不加，避免满屏都在跳）
     const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg('accent', todoAnimFrame(animPhase)) : ''
-    const head = `${fg('dim', branch)} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
+    // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
+    // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
+    // 任务行用 [ ]（未完成才上面板），断点行同样带 [ ]（它是一条待办，不是注释）。
+    const box = fg('dim', '[ ]')
+    const head = `${fg('dim', branch)} ${box} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.note) {
       // 断点行：挂在父任务下。末条时用空格对齐（└─ 下方无续）；否则用 │ 延伸。
+      // 缩进对齐父任务的 `[ ]`（branch 占 2 列 + 空格），断点自身也带 [ ]。
       const cont = isLast ? '  ' : fg('dim', '│ ')
-      lines.push(clipToWidth(`${cont} ${fg('dim', '↳ ' + t.note)}`, width))
+      lines.push(clipToWidth(`${cont}   ${box} ${fg('dim', '↳ ' + t.note)}`, width))
     }
   })
 
