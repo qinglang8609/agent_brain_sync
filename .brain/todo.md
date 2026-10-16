@@ -1,6 +1,10 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] 补-LICENSE文件 [[fanchao]] — package.json 写 MIT 但仓库根没有 LICENSE (认领 2026-10-16)
+- [ ] [进行中] 拆-isAllowedTodoSub [[fanchao]] — src/todo/spec.js 里 119 行，占文件一半 (认领 2026-10-16)
+  - [ ] 不急，等下次碰这块再拆
+- [ ] [进行中] 升级SDK修依赖漏洞 [[fanchao]] — 换了描述 (认领 2026-10-16)
 
 ## Done
 

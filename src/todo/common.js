@@ -196,9 +196,16 @@ export function isPlaceholder(line) {
 
 export function extractId(text) {
   // 先剥行首状态标记（`[进行中] <id>`），否则 id 会取成 "[进行中]"（2026-09-13 实测）。
-  const t = String(text).replace(/^\[[^\]]+\]\s+/, '');
-  const m = t.match(/^([A-Za-z][\w-]*)\b/);
-  return m ? m[1] : null;
+  // 再剥具体的 `- [ ] ` / `↳ [ ] ` 前缀（CLI 传完整行时）。
+  const t = String(text)
+    .replace(/^\s*(?:-\s*\[[ x]\]|↳\s*\[[ x]\])\s*/, '')
+    .replace(/^\[[^\]]+\]\s+/, '');
+  // id = 到第一个空白 / `[` 为止的连续字符（id 不允许含空格或方括号）。
+  // ★ 必须支持**中文 id**（2026-10-16 实测）：原正则 `^[A-Za-z][\w-]*` 要求英文开头，
+  //   中文 id 一律返回 null → findTaskLine 永远找不到 → 同 id 重复 start 每次都新建
+  //   （幂等静默失效，实测同一 id 落了两行）。中文写作里拿短语当 id 很自然，不能只收 ASCII。
+  const m = t.match(/^([^\s[\]]+)/);
+  return m ? m[1].replace(/\u200b/g, '') : null;
 }
 
 /** 提取 " — " 后的 note 部分（剥掉紧跟在 id 后的 `@author` 标记及尾部 `(认领 ...)`）。

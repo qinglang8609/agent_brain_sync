@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind } from '../src/store.js';
-import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES } from '../src/todo.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES, extractId } from '../src/todo.js';
 import { assertTodoContent, violationSignatures } from '../src/todo/validate.js';
 import { editFile } from '../src/lock.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
@@ -229,8 +229,31 @@ describe('todo 层', () => {
   // ★ 断点任务（2026-10-16 用户报）：`  ↳ [ ] <id> …` 与普通任务同等可操作。
   //   原实现 idOfTaskLine 写死 startsWith('- [ ]')，缩进/`↳` 前缀一律不认 ——
   //   实测 done/note/state 全报 NO_MATCH（写得进去、看得见、完不成）。
-  test('★ findTaskLine 认得断点任务 ↳ [ ] 与缩进子任务', () => {
-    const lines = [
+  // ★ 中文 id（2026-10-16 实测）：extractId 原正则 `^[A-Za-z][\w-]*` 要求英文开头，
+  //   中文 id 一律返回 null → findTaskLine 永远找不到 → 同 id 重复 start 每次都新建。
+  //   即幂等静默失效（实测同一 id 落了两行，且子项被追加两轮）。
+  //   中文写作里拿短语当 id 很自然，不能只收 ASCII。
+  test('★ 中文 id 能提取（否则幂等静默失效）', () => {
+    for (const [input, want] of [
+      ['[进行中] 升级-sdk-修依赖漏洞 [[u]] — 升 SDK (认领 2026-10-16)', '升级-sdk-修依赖漏洞'],
+      ['- [ ] [进行中] 中文id任务 [[u]] — 描述', '中文id任务'],
+      ['[进行中] task-a [[u]] — desc', 'task-a'],
+      ['TASK-1', 'TASK-1'],
+    ]) {
+      assert.equal(extractId(input), want, `extractId(${JSON.stringify(input)})`);
+    }
+  });
+
+  test('★ 中文 id 的同 id 重复 start 只留一条（幂等）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: '中文幂等任务', note: 'v1' });
+    await cmdTask({ dir: projectA, action: 'start', id: '中文幂等任务', note: 'v2' });
+    const t = await readTodo(projectA);
+    const n = t.split('\n').filter((l) => l.includes('中文幂等任务')).length;
+    assert.equal(n, 1, `中文 id 重复 start 只应有一行:\n${t}`);
+    assert.ok(t.includes('v2'), `应更新为最新描述:\n${t}`);
+  });
+
+  test('★ findTaskLine 认得断点任务 ↳ [ ] 与缩进子任务', () => {    const lines = [
       '- [ ] [进行中] norm — 普通',
       '  ↳ [ ] [进行中] bp — 断点任务',
       '  - [ ] [进行中] sub — 缩进子任务',
