@@ -108,7 +108,9 @@ abs load                       # 开机读状态（Rules + 图谱计数 + 看板
 abs todo                       # 看板 Todo / Done（行首带状态标记）
 
 abs todo add     TASK-1 --note "要做什么"
-abs todo note    TASK-1 --note "改到 X 文件 L40"   # 实时断点（一句话，上看板）
+abs todo note    TASK-1 --note "改到 X 文件 L40"   # 追加一条子项（标准 md 嵌套列表，可多条）
+abs todo bp-done TASK-1 [--n 2]                  # 勾子项（n=第几条，缺省最后一条）
+abs todo bp-undone TASK-1 [--n 2]                # 取消勾（勾错了退回）
 abs todo memo    TASK-1 "随手记一段（可多句，不上看板）"   # 任务笔记 → sessions/；无参=查看
 abs todo state   TASK-1 --note "进行中|讨论中|滞留中"   # 改行首状态标记
 abs todo done    TASK-1
@@ -129,6 +131,9 @@ abs update                                # 升级到最新版并刷新四宿主
 ```
 
 > `abs todo start` 与 `abs todo add` 等价（都登记任务）。
+> **子项就是标准 Markdown 嵌套列表**：任务下缩进 2 空格的 `- [ ] …`，可多条、可各自勾选；
+> 面板按缩进画树线，归档时原样保留缩进。旧格式 `↳ 断点:` 仍能读（存量不坏）。
+> 任务 id 不能含空格（用连字符），含空格会被明确拒掉。
 > 旧版 `abs task ...` / `abs board` 已废，打它们会报「未知命令」并退出码 1。
 > `abs wrapup` / `abs teardown-check` 是 hook 内部命令，无需手动调用。
 > **作者名要填真的**：`tester` / `foo` / `aaa` 这类占位名会被拒 —— 因为 `{user}` 是全局单值，
