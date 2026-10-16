@@ -253,6 +253,18 @@ describe('todo 层', () => {
     assert.ok(t.includes('v2'), `应更新为最新描述:\n${t}`);
   });
 
+  // ★ 模糊测试挖出来的（2026-10-16）：id 含空格会**静默丢信息** ——
+  //   `abs todo start "带 空格"` 落盘成 `- [ ] 带`，后面的词与描述一起消失，不报错。
+  //   宁可明确拒掉，也不替人猜哪个词算 id。
+  test('★ id 含空格 → 明确报错，不静默截断', async () => {
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'start', id: '带 空格', note: '描述' }),
+      /不能含空格/,
+    );
+    const t = await readTodo(projectA);
+    assert.ok(!t.includes('带 空格'), `拒了就不该落盘:\n${t}`);
+  });
+
   test('★ findTaskLine 认得断点任务 ↳ [ ] 与缩进子任务', () => {    const lines = [
       '- [ ] [进行中] norm — 普通',
       '  ↳ [ ] [进行中] bp — 断点任务',

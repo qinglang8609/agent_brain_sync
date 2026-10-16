@@ -36,6 +36,7 @@
     "abs": "node bin/abs.js",
     "mcp": "node bin/mcp.js",
     "test": "node --test 'test/*.test.js' 'skill/**/*.test.js'",
+    "fuzz": "node scripts/fuzz.mjs 800",
     "lint": "eslint .",
     "check": "node --experimental-vm-modules --no-warnings scripts/check-syntax.mjs && eslint .",
     "prepack": "node -e \"require('fs').chmodSync('bin/abs.js',0o755);require('fs').chmodSync('bin/mcp.js',0o755)\"",

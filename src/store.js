@@ -808,6 +808,17 @@ function recentLogLines(text, n) {
 // 纪律: task 过程动作(start/done/note/blocked)只改 todo.md, 不写 log.md。
 // log.md 是「工作成果沉淀摘要」(用户/AI 主动 abs log "..." 记), 不收工具动作流水。
 export async function cmdTask({ dir, action, id, section, note, as, session, n }) {
+  // ★ id 校验（2026-10-16 模糊测试找出来的真 bug）：id 不能含空白/方括号。
+  //   不校就是**静默丢信息**：id="带 空格" 写进文件时被 extractId 截成 "带"，
+  //   后面的 "空格" 与描述一起消失，不报错（实测：`abs todo start "带 空格"` 落成 `- [ ] 带`）。
+  //   宁可明确拒掉，也不替人猜哪个词算 id。
+  const idStr = id === undefined || id === null ? '' : String(id);
+  if (idStr && (idStr.includes(' ') || idStr.includes('\t'))) {
+    throw new Error(
+      `✗ 任务 id 不能含空格（收到 "${idStr}"）—— id 是一个词，空白会被当分隔符。\n` +
+      `  想要带空格的名字：用连字符或下划线；完整名称写进 --note。`,
+    );
+  }
   const root = await requireBrain(dir || process.cwd());
   // 写操作守卫：无姓名不落盘（hook 调的 wrapup/teardown-check 不经过这里，不受影响）
   const who = await requireUser();
