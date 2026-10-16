@@ -41,7 +41,7 @@
 - [[auto-todo-register-design]] — 自动登记 todo 的失败复盘：三版迭代后整体移除（卡顿+看板堆占位）；通则=自动化必须挂在"机器确实知道"的判断上
 - [[param-added-at-one-callsite-only]] — 加参数只改一个调用点：命令说成功、磁盘没变（报告与落盘来自两次计算就会漂移）
 - [[falsy-or-eats-zero]] — `x || 默认值` 吃掉合法零值：参数的"缺失"与"非法"要分开处理，非法要报错不静默改写
-- [[host-plugin-silent-failure]] — 宿主插件"静默失效"三坑: 可观测性(缺无条件 seen 痕)/回调签名错/导出方式错; 装上了≠加载了≠触发了
+- [[host-plugin-silent-failure]] — 宿主插件"静默失效"三坑: 可观测性(缺无条件 seen 痕)/回调签名错/导出方式错; 含宿主升级与"同族不同形"API 差异(omp 整体替换 systemPrompt); 装上了≠加载了≠触发了
 - [[skill-trigger-invisible-killers]] — skill 不触发的两个隐形杀手: description 没写触发词(主题描述匹配不上)/symlink 指向不受管理的陈旧副本; 无报错静默失效
 - [[deploy-artifact-copies]] — hook/插件产物有三份(仓库/宿主落点/进程内存)+全局 npm 副本; 改一份不算改, 删文件对已加载进程无效必须重启宿主
 - [[perf-fixed-overhead]] — 性能优化先分解固定开销: 实测 abs 27ms 中 node启动占20ms(读写仅3ms); 逐段追问"这段能否拿掉"; daemon 方案为此被否(仅省5ms)
@@ -77,6 +77,7 @@
 - [[fanchao]] — 使用者；技术栈 / 特点·工作习惯 / 名下踩过的坑
 
 ## Sources
+- [[2026-10-16-omp-oh-my-pi-18-11-1]] — omp(oh-my-pi 18.11.1) 宿主接入 API 核实（源码 ~/.bun/install/global/node_modules/@oh-my-p…
 
 ## Syntheses
 

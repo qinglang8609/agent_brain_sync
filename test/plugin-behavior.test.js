@@ -791,6 +791,7 @@ describe('插件模板源文件 (hooks/*.ts)', () => {
   const TPL = {
     'abs.opencode.ts': { need: ['@@MARK@@'], forbid: ['@@ABS_BIN@@'] },
     'abs.pi.ts': { need: ['@@ABS_BIN@@', '@@MARK@@'], forbid: [] },
+    'abs.omp.ts': { need: ['@@ABS_BIN@@', '@@MARK@@'], forbid: [] },
   };
 
   for (const [name, spec] of Object.entries(TPL)) {
@@ -942,6 +943,50 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const { parseOpenTasks } = await loadPanelFns();
     const md = ['## Todo', '- [ ] a', '  ↳ 断点: x', '- [ ] b'].join('\n');
     assert.equal(parseOpenTasks(md, 10, '').total, 2);
+  });
+
+  // ★ 断点任务（2026-10-16 用户报）：`  ↳ [ ] xxxxx` 是**一等任务** ——
+  //   可显示、可 done。原实现里它落进静默死区：写入闸门放行（isChildLine 认 `↳`）、
+  //   lint 不报，但面板不显示、done 也找不到它。
+  //   与上面的 `↳ 断点:`（冒号形态）有意区别：那个仍是附属行、不算任务（用户明确保留）。
+  test('★ 断点任务 ↳ [ ] 显示为一条任务（可带状态/描述/断点）', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] parent [[fanchao]] — 主任务',
+      '  ↳ [ ] [进行中] bp-child [[fanchao]] — 断点也是任务',
+      '  ↳ 断点: 附属说明',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    assert.equal(r.total, 2, `应含 parent + bp-child: ${JSON.stringify(r.rows)}`);
+    const bp = r.rows.find((t) => t.id === 'bp-child');
+    assert.ok(bp, '断点任务必须出现在面板里');
+    assert.equal(bp.state, '进行中');
+    assert.equal(bp.desc, '断点也是任务');
+    assert.equal(bp.note, '附属说明', '它下面的 ↳ 断点: 应挂到它自己');
+  });
+
+  // 冒号形态与勾选形态不能互相吞掉 —— 两者混用时各自归位。
+  test('★ ↳ 断点:（附属）与 ↳ [ ]（任务）混用互不干扰', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] a [[fanchao]] — 甲',
+      '  ↳ 断点: 甲的断点',
+      '- [ ] b [[fanchao]] — 乙',
+      '  ↳ [ ] bp2 [[fanchao]] — 断点任务',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    assert.deepEqual(r.rows.map((t) => t.id), ['a', 'b', 'bp2']);
+    assert.equal(r.rows.find((t) => t.id === 'a').note, '甲的断点');
+    assert.equal(r.rows.find((t) => t.id === 'b').note, '', '乙不该拿到 bp2 的断点');
+  });
+
+  // [x] 的断点任务（刚 done）不再显示在待办里。
+  test('★ 已完成的 ↳ [x] 不计入未完成', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = ['## Todo', '- [ ] a', '  ↳ [x] done-bp'].join('\n');
+    assert.equal(parseOpenTasks(md, 10, '').total, 1);
   });
 
   // ★ 对齐（用户 2026-10-05 定）：注入给 LLM 的看板 与 面板显示 必须一致。

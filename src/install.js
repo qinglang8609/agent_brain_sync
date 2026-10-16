@@ -854,12 +854,65 @@ async function uninstallPi() {
   return steps;
 }
 
+// ============================ omp (oh-my-pi, TS extension) ============================
+// 与 pi 宿主**不同构**：omp 的 before_agent_start 只给 `systemPrompt: string[]`（整体替换），
+// 没有 pi 的 promptGuidelines；session_start 也没有 reason 字段。故用专用模板 abs.omp.ts。
+// MCP 落 <configRoot>/agent/mcp.json 的 mcpServers（omp 官方首选用户级路径，见 omp://mcp-config.md）。
+function ompPluginSource() {
+  return renderPluginTemplate('abs.omp.ts', {
+    '@@ABS_BIN@@': stableBinPath('abs.js'),
+    '@@MARK@@': MARK,
+  });
+}
+
+async function installOmp({ withMcp, withSkill }) {
+  const steps = [];
+  const dir = join(hostConfigRoot('omp'), 'agent', 'extensions');
+  const p = join(dir, 'abs.ts');
+  await atomicWrite(p, ompPluginSource());
+  steps.push(`✓ hook(ts extension) → ${p}`);
+  if (withMcp) {
+    // omp native MCP 配置：<configRoot>/agent/mcp.json 的 mcpServers（stdio）。
+    // 不用 .mcp.json / 项目根 mcp.json —— 那两个是「可移植 fallback」，优先级最低。
+    const mcpP = join(hostConfigRoot('omp'), 'agent', 'mcp.json');
+    await backup(mcpP);
+    const cfg = await readJson(mcpP);
+    cfg.mcpServers = cfg.mcpServers || {};
+    cfg.mcpServers['abs'] = { type: 'stdio', command: process.execPath, args: [mcpEntryPath()] };
+    await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
+    steps.push(`✓ MCP    → ${mcpP} (mcpServers.abs, stdio)`);
+  }
+  if (withSkill) {
+    steps.push(...await installSkills('omp'));
+  }
+  return steps;
+}
+
+async function uninstallOmp() {
+  const steps = [];
+  await fs.rm(join(hostConfigRoot('omp'), 'agent', 'extensions', 'abs.ts'), { force: true });
+  steps.push(`✓ extension 已删除`);
+  steps.push(...await uninstallSkills('omp'));
+  const mcpP = join(hostConfigRoot('omp'), 'agent', 'mcp.json');
+  const cfg = await readJson(mcpP, { strict: false });
+  if (cfg === null) {
+    steps.push(`⚠ ${mcpP} 无法解析为 JSON，已跳过（未改动你的配置）`);
+  }
+  if (cfg && cfg.mcpServers && cfg.mcpServers.abs) {
+    delete cfg.mcpServers.abs;
+    await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
+    steps.push(`✓ MCP 已从 ${mcpP} 移除`);
+  }
+  return steps;
+}
+
 // ============================ 向导入口 ============================
 const INSTALLERS = {
   'claude-code': { on: installClaudeCode, off: uninstallClaudeCode },
   codex:         { on: installCodex,      off: uninstallCodex },
   opencode:      { on: installOpenCode,   off: uninstallOpenCode },
   pi:            { on: installPi,         off: uninstallPi },
+  omp:           { on: installOmp,        off: uninstallOmp },
 };
 
 export function installSummary() {

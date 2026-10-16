@@ -1,6 +1,6 @@
 ---
-tags: [concept, 宿主插件, 坑, 可观测性]
-updated: 2026-10-05
+tags: [concept, 宿主插件, 坑, 可观测性, 宿主适配]
+updated: 2026-10-16
 status: active
 ---
 
@@ -71,6 +71,32 @@ awk '/plugin reconciliation/{p=1} p' ~/.local/share/opencode/log/opencode.log | 
 ```
 （重启 `opencode service restart` 才会重新加载；watcher 只盯文件变更。）
 
+
+## 🔁 复发 2（2026-10-16）：同族宿主"看着一样"的 API 形状差异
+
+接入 omp（oh-my-pi 18.11.1，pi 的下游分支）时，事件名、`ctx` 字段、`setWidget` 签名
+**全部相同**，于是最自然的做法是「复制 pi 扩展改个 import」。但两处关键 API 不同形：
+
+| 面 | pi | omp |
+|---|---|---|
+| 注入 system prompt | `event.systemPromptOptions.promptGuidelines`（**追加**） | `event.systemPrompt: string[]` + 返回 `{systemPrompt}`（**整体替换**） |
+| `session_start` 事件 | 带 `reason: "startup"\|"reload"\|...` | **无 reason 字段** |
+
+**为什么这是静默失效而不是报错**：`promptGuidelines` 在 omp 的事件对象上**不存在** ——
+读它得到 `undefined`，`for (const g of undefined)` 会抛…但若写法是
+`options.promptGuidelines || (options.promptGuidelines = [])`（pi 版原样），
+就变成**往一个临时对象上写**：不抛错、日志照写、指引永远到不了模型。与坑 1 同构。
+
+**整体替换语义的额外风险**：omp 要求返回**完整的** systemPrompt。若只返回我们的段，
+宿主原基线（工具表 / Rules / 语境）被**整体丢掉** —— 比「不注入」严重得多。
+故必须 `[...event.systemPrompt 基线, ...我们的段]`，且基线为空时**跳过注入**
+（返回空数组 = 清空宿主 prompt）。
+
+**修法**：新增宿主**必须按该宿主的实际源码/类型核实每个用到的 API 面**，
+不能因为"同族/看着一样"就复用另一宿主的实现。
+本次照做：字段逐个人工核对 `~/.bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/src/**`。
+
+**验证代码位置须写进注释**（避免下次又靠猜）：见 `hooks/abs.omp.ts` 文件头。
 
 ## 纪律
 

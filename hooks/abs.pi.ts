@@ -738,8 +738,11 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
       if (last && !last.note) last.note = note[1].trim()
       continue
     }
-    // `- [ ] [状态] <id> …`；状态标记可能缺省
-    const m = line.match(/^-\s+\[\s\]\s+(?:\[([^\]]+)\]\s+)?(\S+)\s*(.*)$/)
+    // `- [ ] [状态] <id> …`；状态标记可能缺省。
+    // 两种前缀都收：`- [ ]`（普通任务）与 `↳ [ ]`（断点任务，2026-10-16 新增）。
+    // 断点任务必须显示 —— 它就是一等等任务（写得进去、看得见、能 done），
+    // 否则落回「静默死区」（用户在 .brain 里报的原症状）。
+    const m = line.match(/^\s*(?:-\s*\[ \]|↳\s*\[ \])\s*(?:\[([^\]]+)\]\s*)?(\S+)\s*(.*)$/)
     if (!m) continue
     const state = m[1] || '进行中'
     const id = m[2]

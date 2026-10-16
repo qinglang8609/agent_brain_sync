@@ -23,10 +23,15 @@ export function doneKindOf(line) {
 
 export function withDoneKind(line, kind) {
   if (!kind) return line;
-  const base = String(line).replace(/【(落地|否决|仅方案)】/g, '').replace(/\s{2,}/g, ' ').trimEnd();
-  const i = base.lastIndexOf(' (完成 ');
-  if (i === -1) return `${base} 【${kind}】`;
-  return `${base.slice(0, i)} 【${kind}】${base.slice(i)}`;
+  const s = String(line);
+  // 行首缩进必须原样保留 —— 断点任务（`  ↳ [ ] …`）靠缩进表达它挂在父任务下。
+  // 原实现整体 `.replace(/\s{2,}/g,' ')` 会把两空格缩进压成一个，
+  // 完成行归位 Done 后缩进就丢了（2026-10-16 实测）。
+  const lead = (s.match(/^\s*/) || [''])[0];
+  const rest = s.slice(lead.length).replace(/【(落地|否决|仅方案)】/g, '').replace(/\s{2,}/g, ' ').trimEnd();
+  const i = rest.lastIndexOf(' (完成 ');
+  if (i === -1) return `${lead}${rest} 【${kind}】`;
+  return `${lead}${rest.slice(0, i)} 【${kind}】${rest.slice(i)}`;
 }
 
 /** 判断一行是否为任务行（- [x] / - [ ]，允许缩进）。 */

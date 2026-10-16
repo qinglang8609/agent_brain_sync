@@ -225,6 +225,49 @@ describe('todo 层', () => {
     assert.equal(findTaskLine(lines, 'CODEX-HOOKS-FIX'), 0, '查干净 id 应命中含 ZWSP 的行');
     assert.equal(findTaskLine(lines, 'CO\u200bDEX-HOOKS-FIX'), 0, '查含 ZWSP 的 id 也应命中');
   });
+
+  // ★ 断点任务（2026-10-16 用户报）：`  ↳ [ ] <id> …` 与普通任务同等可操作。
+  //   原实现 idOfTaskLine 写死 startsWith('- [ ]')，缩进/`↳` 前缀一律不认 ——
+  //   实测 done/note/state 全报 NO_MATCH（写得进去、看得见、完不成）。
+  test('★ findTaskLine 认得断点任务 ↳ [ ] 与缩进子任务', () => {
+    const lines = [
+      '- [ ] [进行中] norm — 普通',
+      '  ↳ [ ] [进行中] bp — 断点任务',
+      '  - [ ] [进行中] sub — 缩进子任务',
+    ];
+    assert.equal(findTaskLine(lines, 'bp'), 1, '↳ [ ] 应可定位');
+    assert.equal(findTaskLine(lines, 'sub'), 2, '缩进的 - [ ] 应可定位');
+    assert.equal(findTaskLine(lines, 'norm'), 0);
+    // 真正的附属断点行（冒号形态）不算任务，不能命中。
+    assert.equal(findTaskLine(['- [ ] a', '  ↳ 断点: x'], 'x'), -1);
+  });
+
+  test('★ 断点任务可 done（复选框翻转 + 缩进保留）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo',
+        '- [ ] [进行中] parent [[fanchao]] — 主任务 (认领 2026-10-16)',
+        '  ↳ [ ] [进行中] bp [[fanchao]] — 断点任务 (认领 2026-10-16)',
+        '', '## Done', ''].join('\n'));
+    const out = await cmdTask({ dir: projectA, action: 'done', id: 'bp' });
+    assert.doesNotMatch(String(out), /NO_MATCH/, `done 应命中断点任务: ${out}`);
+    const t = await readTodo(projectA);
+    assert.match(t, /^ {2}↳ \[x\] bp /m, `完成行应是 ↳ [x] 且保留两空格缩进: \n${t}`);
+    assert.ok(!/\[ \] \[进行中\] bp/.test(t), '未完成形态应消失');
+  });
+
+  test('★ 断点任务可 note / state', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo',
+        '  ↳ [ ] [进行中] bp2 [[fanchao]] — 断点任务 (认领 2026-10-16)',
+        '', '## Done', ''].join('\n'));
+    const n = await cmdTask({ dir: projectA, action: 'note', id: 'bp2', note: '改到 src/x.js' });
+    assert.doesNotMatch(String(n), /NO_MATCH/, `note 应命中: ${n}`);
+    const s = await cmdTask({ dir: projectA, action: 'state', id: 'bp2', note: '讨论中' });
+    assert.doesNotMatch(String(s), /NO_MATCH/, `state 应命中: ${s}`);
+    const t = await readTodo(projectA);
+    assert.match(t, /↳ \[ \] \[讨论中\] bp2/, `状态应已改且前缀保留: \n${t}`);
+    assert.match(t, /↳ 断点: 改到 src\/x\.js/, '断点附属行应挂上');
+  });
 });
 
 // ---------- 老格式迁移 (用户报告: bootstrap 老模板 In Progress/Todo 与 B4 定稿冲突) ----------

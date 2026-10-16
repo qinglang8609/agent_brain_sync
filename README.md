@@ -21,7 +21,7 @@ abs install
 
 ```bash
 abs install --agent pi            # 只装 pi
-abs install                       # 全部: claude-code / codex / opencode / pi
+abs install                       # 全部: claude-code / codex / opencode / pi / omp
 abs install --agent pi --no-mcp   # 只装 hook + skill，不要 MCP
 ```
 
@@ -33,6 +33,7 @@ abs install --agent pi --no-mcp   # 只装 hook + skill，不要 MCP
 | codex | `~/.codex/hooks.json` | config.toml `[mcp_servers.abs]` | `~/.codex/skills/` |
 | opencode | `~/.config/opencode/plugins/abs.ts` | opencode.json mcp.abs | skills/ |
 | pi | `~/.pi/agent/extensions/abs.ts` | `~/.pi/agent/mcp-adapter.json` `mcpServers.abs` | `~/.pi/agent/skills/` |
+| omp | `~/.omp/agent/extensions/abs.ts` | `~/.omp/agent/mcp.json` `mcpServers.abs` | `~/.omp/agent/skills/` |
 
 > **skill 规则**：`skill/` 下每个含 `SKILL.md` 的子目录 = 一个 skill，
 > **目录名即安装名**（须与 frontmatter `name` 一致，否则 pi 会告警）。
@@ -53,9 +54,9 @@ npm install && npm link        # 之后全局就有 abs
 
 ## 怎么用
 
-### pi：编辑器上的 todo 面板
+### pi / omp：编辑器上的 todo 面板
 
-pi 宿主额外多一层 UI（其它宿主没有）：**编辑器上方常驻一块 todo 面板**，直接读当前项目 `.brain/todo.md`。
+pi 与 omp 宿主额外多一层 UI（其它宿主没有）：**编辑器上方常驻一块 todo 面板**，直接读当前项目 `.brain/todo.md`。
 
 ```
 ─────────────────────────────────────────────────
@@ -69,6 +70,8 @@ pi 宿主额外多一层 UI（其它宿主没有）：**编辑器上方常驻一
 - **只显示未完成**，Done 归计数不占位（数量在标题里）
 - **按当前使用者过滤**：显示 `[[我]]` 的 + 没标作者的（老任务/手写），别人的不显示
 - **断点行 `↳` 挂在父任务下**；`├─` / `└─` 表结构
+- **断点也可以是任务**：`  ↳ [ ] <id> — 说明` 与普通任务同等对待（上看板、可 `done` / `note` / `state`）；
+  单独的 `↳ 断点: 一句话` 仍是纯附属行、不算任务
 - **「进行中」带三点动画**`○○○ → ●●○ → ●●●`（250ms/帧）—— 一眼看出哪条在跑
 - **实时刷新**：我调 `abs_task` / `abs_board` 后立即重画，不用等我讲完话
 - **上描边与输入框同色满宽**（主题色 `thinkingOff`，跟 pi 输入框的边框一致）
@@ -147,7 +150,7 @@ abs update                                # 升级到最新版并刷新四宿主
 abs update
 ```
 
-查 npm 最新版 → 升级 → 自动重刷四个宿主的 hook/skill（hook 里烧的是绝对路径，升级后必须重装，`abs update` 帮你做了）。完事重启宿主。
+查 npm 最新版 → 升级 → 自动重刷五个宿主的 hook/skill（hook 里烧的是绝对路径，升级后必须重装，`abs update` 帮你做了）。完事重启宿主。
 
 手动方式：
 
@@ -164,7 +167,7 @@ abs install    # 重新刷 hook/skill
 
 ```bash
 abs uninstall                      # 全部宿主
-abs uninstall --agent pi           # 只卸 pi
+abs uninstall --agent pi           # 只卸 pi（omp 同理：--agent omp）
 npm uninstall -g @fanchao8609/agent_brain_sync
 ```
 
@@ -196,12 +199,13 @@ agent_brain_sync/
 ├── src/query.js    检索知识页（多词 OR）
 ├── src/relevant.js 相关页推荐（按"当前在干什么"挑该读的页）
 ├── src/codegraph.js  借本机 CodeGraph 取"代码影响面"，写回图谱
-├── src/hosts.js    四宿主接入定义
+├── src/hosts.js    五宿主接入定义
 ├── src/install.js  安装/卸载（分区共存合并）
 ├── src/userconfig.js  使用者姓名配置（作者标记；占位名如 tester/foo 会被拒）
 ├── src/wrapup.js   Stop 收尾快照/归档
 ├── hooks/event.sh  hook 模板
 ├── hooks/abs.pi.ts pi 扩展模板（含 todo 面板 / 随机昵称 / 常驻指引）
+├── hooks/abs.omp.ts omp 扩展模板（同上；omp 的 before_agent_start 是 systemPrompt 整体替换）
 ├── skill/<名称>/SKILL.md  技能（每个子目录 = 一个 skill，装到各智能体）
 ├── scripts/        构建期脚本（语法检查等，不进 npm 包）
 ├── docs/plans/     方案文件（YYYYMMDD-<名>.md，不进 npm 包）

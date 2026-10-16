@@ -82,7 +82,7 @@ async function cmdUpdate({ yes }) {
   console.log(r);
   console.log('\n刷新四宿主 hook/skill（hook 脚本烧的是绝对路径 + 模板快照，升级后必须重装）…');
   await runInstall({ agent: undefined, mcp: true, skill: true, yes: yes !== false });
-  console.log(`\n完成。重启宿主（pi / opencode / claude-code / codex）后新 hook 生效。`);
+  console.log(`\n完成。重启宿主（pi / omp / opencode / claude-code / codex）后新 hook 生效。`);
 }
 
 const [,, cmd, ...rest] = process.argv;
@@ -272,7 +272,7 @@ const subUsage = {
     '  abs install [--agent <宿主>] [--yes] [--no-mcp] [--no-skill]',
     '',
     '参数:',
-    '  --agent <宿主>   只装一个宿主: claude-code | codex | opencode | pi',
+    '  --agent <宿主>   只装一个宿主: claude-code | codex | opencode | pi | omp',
     '                   (不传则在 TTY 下交互多选; 非 TTY / --yes 时为全部)',
     '  --yes            不交互，直接装全部宿主（自动化用）',
     '  --no-mcp         不注册 MCP server',
@@ -295,7 +295,7 @@ const subUsage = {
     '  abs uninstall [--agent <宿主>] [--yes]',
     '',
     '参数:',
-    '  --agent <宿主>   只卸一个宿主: claude-code | codex | opencode | pi（不传=全部）',
+    '  --agent <宿主>   只卸一个宿主: claude-code | codex | opencode | pi | omp（不传=全部）',
     '  --yes            不交互',
     '',
     '说明:',

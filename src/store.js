@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir } from './index.js';
 import { requireUser, atTag, getUser, placeholderWarn } from './userconfig.js';
-import { stripStateMark, ensureStateMark, stateOfTaskLine, TODO_MAX_LINES, upsertTask, boardText, readTodo, todoTemplate, today, localStamp, setBreakpoint, setMemo, readMemo, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, collapseDone, SEC, rebuildStructure, enforceBrainFormat, sessionOf } from './todo.js';
+import { stripStateMark, checkTaskBox, ensureStateMark, stateOfTaskLine, TODO_MAX_LINES, upsertTask, boardText, readTodo, todoTemplate, today, localStamp, setBreakpoint, setMemo, readMemo, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, collapseDone, SEC, rebuildStructure, enforceBrainFormat, sessionOf } from './todo.js';
 import { setFormatGate, editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 import { keywords, recentFiles, topicStrength } from './relevant.js';
@@ -982,7 +982,7 @@ async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
         //   done 未给 sid → 沿用认领的（无新信息，不凭空编）
         const claimSid = sessionOf(l);
         const doneSid = bySid || claimSid;
-        const base = stripStateMark(l).replace('- [ ]', '- [x]').replace(/\s*\(认领[^)]*\)/, '');
+        const base = checkTaskBox(stripStateMark(l)).replace(/\s*\(认领[^)]*\)/, '');
         const parts = [];
         if (claimSid && doneSid && claimSid !== doneSid) {
           parts.push(`(认领 ${today()} ${claimSid})`);

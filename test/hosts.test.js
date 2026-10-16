@@ -8,10 +8,10 @@ import assert from 'node:assert/strict';
 import { HOSTS, hostByKey } from '../src/hosts.js';
 
 describe('HOSTS — 定义不变量', () => {
-  test('四个宿主齐全（claude-code / codex / opencode / pi）', () => {
+  test('五个宿主齐全（claude-code / codex / opencode / pi / omp）', () => {
     assert.deepEqual(
       HOSTS.map((h) => h.key).sort(),
-      ['claude-code', 'codex', 'opencode', 'pi'],
+      ['claude-code', 'codex', 'omp', 'opencode', 'pi'],
     );
   });
 
@@ -32,7 +32,8 @@ describe('HOSTS — 定义不变量', () => {
     assert.equal(hostByKey('pi').skillSub, 'agent/skills');
   });
 
-  test('其余三宿主 skill 落点都是 skills', () => {
+  test('pi 与 omp 的 skill 落点都是 agent/skills，其余是 skills', () => {
+    for (const k of ['pi', 'omp']) assert.equal(hostByKey(k).skillSub, 'agent/skills', `${k} 的 skillSub`);
     for (const k of ['claude-code', 'codex', 'opencode']) {
       assert.equal(hostByKey(k).skillSub, 'skills', `${k} 的 skillSub`);
     }
@@ -103,7 +104,7 @@ describe('hostConfigRoot / hostSkillDir — 落点计算（决定文件装到哪
     }
   });
 
-  test('installSummary 列出四个宿主（人看得懂的清单）', async () => {
+  test('installSummary 列出全部宿主（人看得懂的清单）', async () => {
     const { installSummary } = await import('../src/install.js');
     const s = installSummary();
     for (const h of HOSTS) assert.ok(s.includes(h.key), `应含 ${h.key}`);

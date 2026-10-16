@@ -299,26 +299,34 @@ export function normalizeTodo(text) {
   return out.join('\n');
 }
 
-/** 给任务行补行首状态标记（已有则不覆盖）。`- [ ] id …` → `- [ ] [状态] id …` */
-
+/** 给任务行补行首状态标记（已有则不覆盖）。`- [ ] id …` → `- [ ] [状态] id …`
+ *  两种前缀（`- [ ]` / 断点任务 `↳ [ ]`）与缩进都认 —— 否则存量迁移时断点任务补不上标记。 */
 export function ensureStateMark(line, state) {
-  const m = String(line).match(/^(- \[[ x]\] )(\[[^\]]+\]\s+)?(.*)$/);
+  const m = String(line).match(/^(\s*(?:-\s*\[[ x]\]|↳\s*\[[ x]\])\s*)(\[[^\]]+\]\s+)?(.*)$/);
   if (!m) return line;
   if (m[2] && TASK_STATES.includes(m[2].trim().replace(/[\x5B\x5D]/g, ''))) return line;
   return `${m[1]}[${state}] ${m[3]}`;
 }
 
-/** 取任务行的状态标记；无标记返回 null。 */
-
+/** 读任务行的状态标记；两种前缀（`- [ ]` / 断点任务 `↳ [ ]`）与缩进都认。 */
 export function stateOfTaskLine(line) {
-  const m = String(line).match(/^- \[[ x]\] \[([^\]]+)\]/);
+  const m = String(line).match(/^\s*(?:-\s*\[[ x]\]|↳\s*\[[ x]\])\s*\[([^\]]+)\]/);
   return m && TASK_STATES.includes(m[1]) ? m[1] : null;
 }
 
-/** 改任务行的状态标记（原地）。未找到或非法状态返回原样。 */
+/** 剥掉任务行的状态标记（`- [ ] [进行中] id …` → `- [ ] id …`），保留前缀与缩进。 */
 
 export function stripStateMark(line) {
-  return String(line).replace(/^(- \[[ x]\] )\[[^\]]+\] /, '$1');
+  // 两种前缀都剥：`- [ ] `（普通任务）与 `↳ [ ] `（断点任务，带缩进）。
+  // 原正则写死 `^- \[[ x]\] ` —— 断点任务（2026-10-16 新增形态）匹配不上，
+  // 后果是状态标记没被剥掉、markDone 的 `- [ ]`→`- [x]` 也落空（实测：完成行仍是 `[ ]`）。
+  return String(line).replace(/^(\s*(?:-\s*\[[ x]\]|↳\s*\[[ x]\])\s*)\[[^\]]+\]\s*/, '$1');
+}
+
+/** 把未完成任务行的复选框从 `[ ]` 翻到 `[x]`（保留原前缀与缩进）。
+ *  单独抽出：断点任务的 `↳ ` 前缀 + 缩进必须原样保留，用固定的 `- [ ]` 字面替换会漏。 */
+export function checkTaskBox(line) {
+  return String(line).replace(/^(\s*(?:-\s*|↳\s*))\[ \]/, '$1[x]');
 }
 
 /** 从已完成任务行提取 `(完成 YYYY-MM-DD)` 日期；无则返回 ''。兼容中英文括号。 */

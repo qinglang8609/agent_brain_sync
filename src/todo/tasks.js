@@ -45,7 +45,9 @@ export function setStateMark(text, id, state) {
   const cur = lines[idx];
   if (stateOfTaskLine(cur) === state) return { text, changed: [] };
   const raw = stripStateMark(cur);          // 先剥旧标记，再补新的
-  lines[idx] = raw.replace(/^(- \[[ x]\] )/, `$1[${state}] `);
+  // 前缀两种形态都要能接回（`- [ ]` 与断点任务 `↳ [ ]`），并保留原缩进 ——
+  // 原正则写死 `^(- \[[ x]\] )`，断点任务上补不回标记（2026-10-16 实测：state 报成功但盘上没变）。
+  lines[idx] = raw.replace(/^(\s*(?:-\s*\[[ x]\]|↳\s*\[[ x]\])\s*)/, `$1[${state}] `);
   return { text: lines.join('\n'), changed: [`${id} 状态 → ${state}`] };
 }
 
@@ -115,17 +117,19 @@ export async function upsertTask(brainRoot, { section, text, session = '' }) {
     : { file: p, text, updated: false };
 }
 
-/** 从任务文本提取幂等键（行首 id，如 TASK-1 / T-2 / fix-hook）。 */
+/** 从任务文本提取幂等键（行首 id，如 TASK-1 / T-2 / fix-hook）。
+ *  两种前缀都认：`- [ ] `（普通任务）与 `↳ [ ] `（断点任务）。缩进不影响取 id。 */
 
 export function idOfTaskLine(line) {
-  if (!line || !line.startsWith('- [ ]')) return null;
+  if (!line) return null;
   // 两区制下行首可带状态标记（`- [ ] [进行中] <id> …`）—— 必须先剥掉再取 id，
   // 否则 id 会被读成 "[进行中]"，findTaskLine 全等比对永远落空（2026-09-13 实测）。
-  const m = line.match(/^- \[ \] (?:\[[^\]]+\] )?(\S+)/);
+  // 前缀允许缩进（`  - [ ]` / `  ↳ [ ]`）—— 断点任务天然带缩进。
+  const m = line.match(/^\s*(?:-\s*\[ \]|↳\s*\[ \])\s*(?:\[[^\]]+\]\s*)?(\S+)/);
   return m ? m[1].replace(/\u200b/g, '') : null;
 }
 
-/** 定位 id 对应的未完成任务行下标；附属断点行（↳ 开头）不算任务行。
+/** 定位 id 对应的未完成任务行下标；真正的附属断点行（`↳ 断点:`）不算任务行。
  *  全等比对，不用 includes（否则 T1 会误命中 T11）。 */
 
 export function findTaskLine(lines, id) {

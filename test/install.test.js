@@ -37,6 +37,7 @@ function sbEnv(extra = {}) {
     CODEX_HOME: CODEX_CFG,
     ABS_OPENCODE_HOME: join(sandbox, 'opencode'),
     ABS_PI_HOME: join(sandbox, 'pi'),
+    ABS_OMP_HOME: join(sandbox, 'omp'),
     ...extra,
   };
   // 清掉 npm 注入的变量，让子进程看到与真实用户一致的环境。
@@ -452,6 +453,70 @@ describe('install opencode / pi', () => {
     assert.ok(!code.includes('loggedToday'), '收尾判定应删除');
     assert.ok(code.includes('session.idle:seen'), '可观测性埋点应在');
     assert.ok(code.includes('findBrain'), '无 .brain 的项目不打扰');
+  });
+});
+
+// ---------- omp (oh-my-pi) ----------
+// omp 与 pi **不同构**：before_agent_start 只给 `systemPrompt: string[]`（整体替换），
+// 没有 pi 的 promptGuidelines；session_start 也无 reason 字段。故需独立模板与断言。
+describe('install omp (oh-my-pi)', () => {
+  test('omp 装 extension + MCP(mcp.json) + skill 到 ~/.omp/agent/*', async () => {
+    await run(['install', '--agent', 'omp', '--yes']);
+    const ext = join(sandbox, 'omp', 'agent', 'extensions', 'abs.ts');
+    const src = await fs.readFile(ext, 'utf8');
+    assert.ok(src.includes('abs-managed'), '应含管理标记');
+    assert.ok(!src.includes('@@ABS_BIN@@'), '占位符必须替换');
+    assert.ok(/export default function/.test(src), '应 default 导出工厂函数');
+
+    // MCP 落 omp 官方首选用户级路径 agent/mcp.json 的 mcpServers（不是 pi 的 mcp-adapter.json）
+    const cfg = JSON.parse(await fs.readFile(join(sandbox, 'omp', 'agent', 'mcp.json'), 'utf8'));
+    const entry = cfg.mcpServers?.abs;
+    assert.ok(entry, 'mcpServers.abs 必须存在');
+    assert.equal(entry.type, 'stdio');
+    assert.ok(entry.args[0].endsWith('bin/mcp.js'), 'args 应指向 bin/mcp.js');
+
+    const skill = await fs.readFile(join(sandbox, 'omp', 'agent', 'skills', 'abs-agent-brain-sync', 'SKILL.md'), 'utf8');
+    assert.ok(skill.includes('abs'), 'skill 应装到 agent/skills');
+  });
+
+  // ★ 关键差异（源码核对）：omp 的 systemPrompt 是**整体替换**，
+  //   故必须「基线 + 我们的段」拼接 —— 丢基线 = 宿主的工具表/Rules 静默消失。
+  test('★ omp 扩展用整体替换语义（基线必须保留，不得只返回我们的段）', async () => {
+    await run(['install', '--agent', 'omp', '--yes']);
+    const src = await fs.readFile(join(sandbox, 'omp', 'agent', 'extensions', 'abs.ts'), 'utf8');
+    const code = stripComments(src);
+    assert.ok(code.includes('buildSystemPrompt'), '应有基线拼接函数');
+    assert.ok(/systemPrompt:\s*built/.test(code), '应返回 { systemPrompt } 整体替换');
+    assert.ok(code.includes('event.systemPrompt'), '必须读宿主的基线 systemPrompt');
+    assert.ok(!code.includes('promptGuidelines'), 'omp 无 promptGuidelines —— 不得照抄 pi 的写法');
+    assert.ok(code.includes('base.length === 0'), '基线为空必须跳过注入（返回空数组会清掉宿主 prompt）');
+    // 仍不得向对话注入（与 pi 同纪律：往对话里插话会打断用户）
+    assert.ok(!code.includes('sendUserMessage'), '不得向对话注入 turn');
+    assert.ok(code.includes('agent_end:seen'), '可观测性埋点应在');
+  });
+
+  test('omp 幂等重装 + 不覆盖既有 mcpServers', async () => {
+    const p = join(sandbox, 'omp', 'agent', 'mcp.json');
+    await fs.mkdir(dirname(p), { recursive: true });
+    await fs.writeFile(p, JSON.stringify({ mcpServers: { other: { command: 'foo' } } }));
+    await run(['install', '--agent', 'omp', '--yes']);
+    const first = await fs.readFile(p, 'utf8');
+    await run(['install', '--agent', 'omp', '--yes']);
+    assert.equal(await fs.readFile(p, 'utf8'), first, '重装必须幂等');
+    assert.ok(JSON.parse(first).mcpServers.other, '既有 mcpServers 条目必须保留');
+  });
+
+  test('omp 卸载只删自己的条目', async () => {
+    const p = join(sandbox, 'omp', 'agent', 'mcp.json');
+    await fs.mkdir(dirname(p), { recursive: true });
+    await fs.writeFile(p, JSON.stringify({ mcpServers: { other: { command: 'foo' } } }));
+    await run(['install', '--agent', 'omp', '--yes']);
+    await run(['uninstall', '--agent', 'omp', '--yes']);
+    const cfg = JSON.parse(await fs.readFile(p, 'utf8'));
+    assert.ok(!cfg.mcpServers.abs, 'abs 必须被移除');
+    assert.ok(cfg.mcpServers.other, '别人的 MCP 不能被误删');
+    const exists = await fs.stat(join(sandbox, 'omp', 'agent', 'extensions', 'abs.ts')).then(() => true, () => false);
+    assert.equal(exists, false, 'extension 应删除');
   });
 });
 

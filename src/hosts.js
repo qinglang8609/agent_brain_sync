@@ -45,6 +45,16 @@ export const HOSTS = [
     skillSub: join('agent', 'skills'), // pi 用户级 skill 在 ~/.pi/agent/skills (非 ~/.pi/skills)
     events: ['SessionStart', 'UserPromptSubmit', 'Stop'],
   },
+  {
+    key: 'omp',
+    label: 'omp (oh-my-pi)',
+    // 落盘: <configRoot>/agent/extensions/abs.ts（native provider 自动发现 .ts/.js）
+    // 与 pi 的差异（源码核对，见 hooks/abs.omp.ts 文件头）：before_agent_start 只给
+    // systemPrompt 整体替换（无 promptGuidelines）；session_start 无 reason 字段。
+    configRoot: () => process.env.ABS_OMP_HOME || join(HOME, '.omp'),
+    skillSub: join('agent', 'skills'), // omp 用户级 skill 在 ~/.omp/agent/skills
+    events: ['SessionStart', 'UserPromptSubmit', 'Stop'],
+  },
 ];
 
 export function hostByKey(key) {
