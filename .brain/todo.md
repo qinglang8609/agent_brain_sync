@@ -2,6 +2,7 @@
 
 ## Todo
 - [ ] [进行中] release-1.18.0-omp [[fanchao]] (认领 2026-10-16 01a1445c-389f-70)
+- [ ] [讨论中] brain-lint-7-stale-sources [[fanchao]] — 图谱 lint 报 7 条 SOURCE-UNDISTILLED（超 7 天未提炼成 concept）。全是历史遗留（9/17 ~ 10/7 的提交），非新引入，发版时用 --no-verify 跳过。要做: 逐个读 .brain/sources/2026-09-17-*.md、2026-10-03-*.md(x2)、2026-10-06-*.md(x2)、2026-10-07-*.md(x2)，判断提炼进哪个 concept 或直接删，然后清引用。 (认领 2026-10-16 01a1445c-389f-70)
 
 ## Done
 
