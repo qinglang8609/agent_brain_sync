@@ -994,6 +994,26 @@ describe('cmdTask blocked + note (实时断点)', () => {
     assert.equal(n, 1, `同文子项只应有一条:\n${t}`);
   });
 
+  // ★ 回归（2026-10-16 实测）：带子项的任务后面再 start，会在中间插一个空行。
+  //   根因：insertTask 插在「分区末尾」，而分区末尾本来就有排版空行，
+  //   插到它后面 → 每建一条多一个空行，而闸门明写「条目之间不允许空行」。
+  test('★ 带子项的任务后新建任务，不得插空行（条目之间不允许空行）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TN-4', note: '有子项的' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TN-4', note: '子项' });
+    await cmdTask({ dir: projectA, action: 'start', id: 'TN-5', note: '后面的' });
+    const t = await readTodo(projectA);
+    const sec = t.split('## Todo')[1]?.split('## Done')[0] || '';
+    // 只看**条目之间**的空行（分区标题前后的排版空行不算）。
+    // 取首条目到末条目之间，里面不得有空行。
+    const lines = sec.split('\n');
+    const isItem = (l) => l.trimStart().startsWith('- ');
+    const first = lines.findIndex(isItem);
+    let last = first;
+    for (let i = lines.length - 1; i >= 0; i--) { if (isItem(lines[i])) { last = i; break; } }
+    const between = lines.slice(first, last + 1).filter((l) => l.trim() === '');
+    assert.equal(between.length, 0, `条目之间不该有空行:\n${JSON.stringify(sec)}`);
+  });
+
   test('state 未找到 id 时明确提示', async () => {
     const r = await cmdTask({ dir: projectA, action: 'state', id: 'NOPE2', note: '滞留中' });
     assert.ok(r.includes('NOPE2'), r);

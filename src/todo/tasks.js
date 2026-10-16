@@ -69,9 +69,13 @@ function insertTask(orig, section, text) {
   if (idx === -1) {
     lines.push('', header, `- [ ] ${text}`);
   } else {
-    // 在该分区标题后、下一个分区标题前插入
+    // 在该分区标题后、下一个分区标题前插入。
+    // ★ 插入点要**跳过尾部空行**：分区末尾本来就有个排版空行（`## Done` 前的那个），
+    //   若插到它后面，新任务与前面的内容之间就隔了个空行 —— 每建一条多一个空行，
+    //   而闸门明写「条目之间不允许空行」（实测：建 4 条就有 3 个空行）。
     let insertAt = idx + 1;
     while (insertAt < lines.length && !lines[insertAt].startsWith('## ')) insertAt++;
+    while (insertAt > idx + 1 && !lines[insertAt - 1].trim()) insertAt--;
     lines.splice(insertAt, 0, `- [ ] ${text}`);
   }
   return lines.join('\n');
