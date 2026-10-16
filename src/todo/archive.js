@@ -41,11 +41,13 @@ function parseDoneUnits(bodyLines) {
   let cur = null;
   for (const l of bodyLines) {
     if (/^### /.test(l.trim()) || l.trim() === '') { cur = null; continue; } // 分组标题/空行断开会话
-    if (isTaskLine(l)) {
+    // 先判子项再判任务：缩进的 `- [ ]` 两个判据都为真，而它应挂到父任务。
+    // （标准 md 嵌套下子项本身就是任务行 —— 靠缩进区分层级，不靠形态。）
+    if (cur && isChildLine(l)) {
+      cur.lines.push(l);
+    } else if (isTaskLine(l)) {
       cur = { date: doneDateOf(l), lines: [l] };
       units.push(cur);
-    } else if (isChildLine(l) && cur) {
-      cur.lines.push(l); // 附属行挂到上一个任务
     }
   }
   return units;
@@ -222,7 +224,10 @@ export function archiveDoneInText(text, { keepDays = 3, from = today(), maxLines
       date,
       lines: gLines,
       slug: slugFor(date),
-      count: gLines.filter((l) => /^\s*- \[x\]/.test(l)).length,
+      // 只数顶层任务（缩进 0）—— 子项也是 `- [x]`，用 /^\s*- \[x\]/
+      // 会把子项一起计数（实测：1 任务 + 1 子项 → 报 "完成任务 2 条"）。
+      // 归档标记的语义是「完成了多少条任务」，子项不算。
+      count: gLines.filter((l) => /^- \[x\]/.test(l)).length,
     });
   }
 

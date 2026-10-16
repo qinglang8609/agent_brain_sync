@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { brainPath } from '../index.js';
 import { editFile, SKIP } from '../lock.js';
-import { today, localStamp, extractId, extractNote, extractAuthor, isLegacyAuthorTag, claimOf } from './common.js';
+import { today, localStamp, extractId, extractNote, extractAuthor, isLegacyAuthorTag, claimOf, parseChild, renderChild } from './common.js';
 import { todoTemplate, normalizeTodo, stateOfTaskLine, stripStateMark } from './structure.js';
 import { TASK_STATES } from './spec.js';
 import { collapseDone, groupDoneSection } from './archive.js';
@@ -138,25 +138,73 @@ export function findTaskLine(lines, id) {
   return lines.findIndex((l) => idOfTaskLine(l) === want);
 }
 
-/** 实时断点: 在 id 任务行下原位补/换 `↳ 断点:` 附属行（不挪任务位置）。 */
+/** 子项行解析：从 `idx+1` 起扫连续的缩进行（子项），返回它们的下标。
+ * 遇到非子项（下一个顶层任务 / 空行 / 分区标题）就停。 */
+function childRange(lines, idx) {
+  const out = [];
+  for (let i = idx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) break;              // 空行 = 子项块结束
+    const child = parseChild(line);
+    if (child && child.indent > 0) { out.push(i); continue; }
+    break;                                 // 另一个顶层任务行 / 标题
+  }
+  return out;
+}
 
+/** 追加/更新一条子项（标准 md：缩进 2 空格 + `- [ ]`）。
+ *
+ * 语义（2026-10-16 用户定）：子项就是 todo 的嵌套子任务 —— 可多条、可各自勾选。
+ * `abs todo note <id> "…"` **追加**一条（不再覆盖）—— 用户原话「不限，写多少算多少」。
+ * 仍保留幂等：与最后一条完全同文就不重复追加（防手滑重复调）。
+ * 旧的 `↳ 断点:` 存量行不动（parseChild 认得，继续显示）；新写一律用标准 md。 */
 export async function setBreakpoint(brainRoot, { id, text }) {
   const p = await ensureTodo(brainRoot);
-  const bp = `  ↳ 断点: ${text}`;
+  let added = false;
   const res = await editFile(p, (orig) => {
     const lines = orig.split('\n');
     const idx = findTaskLine(lines, id);
     if (idx === -1) return SKIP;
-    if (lines[idx + 1] && lines[idx + 1].trimStart().startsWith('↳ 断点:')) {
-      lines[idx + 1] = bp; // 幂等: 更新原附属行
-    } else {
-      lines.splice(idx + 1, 0, bp);
-    }
+    const kids = childRange(lines, idx);
+    const last = kids.length ? parseChild(lines[kids[kids.length - 1]]) : null;
+    if (last && last.text === String(text).trim()) return SKIP; // 幂等：同文不重复追加
+    lines.splice(idx + 1 + kids.length, 0, renderChild(text));
+    added = true;
     return { text: lines.join('\n'), ok: true };
   });
-  return res === SKIP
-    ? { ok: false, msg: `[NO_MATCH] 未找到含 "${id}" 的未完成任务行` }
-    : { ok: true, msg: `✓ 断点已落 → ${id}\n  ${bp.trim()}` };
+  if (res === SKIP) {
+    return added
+      ? { ok: true, msg: `✓ 子项已追加 → ${id}` }
+      : { ok: false, msg: `[NO_MATCH] 未找到含 "${id}" 的未完成任务行（或子项已存在）` };
+  }
+  return { ok: true, msg: `✓ 子项已追加 → ${id}\n  ${renderChild(text)}` };
+}
+
+/** 勾/取消勾子项：`- [ ] …` ↔ `- [x] …`。
+ *
+ * 定位：子项没有自己的 id（身份 = 「某任务的第 N 条子项」），故按 n 定位（1-based）。
+ * n 缺省 = 勾最后一条（最常用的「刚写的这条做完了」）。
+ * 旧格式 `↳ 断点:` 也能勾 —— 勾一下就地升级成标准 md 形态。 */
+export async function setBreakpointDone(brainRoot, { id, n, done = true }) {
+  const p = await ensureTodo(brainRoot);
+  let picked = null;
+  const res = await editFile(p, (orig) => {
+    const lines = orig.split('\n');
+    const idx = findTaskLine(lines, id);
+    if (idx === -1) return SKIP;
+    const kids = childRange(lines, idx);
+    if (!kids.length) return SKIP;
+    const target = n ? kids[n - 1] : kids[kids.length - 1];
+    if (target === undefined) return SKIP;
+    const child = parseChild(lines[target]);
+    picked = child;
+    lines[target] = renderChild(child.text, { done });
+    return { text: lines.join('\n'), ok: true };
+  });
+  if (res === SKIP || !picked) {
+    return { ok: false, msg: `[NO_MATCH] "${id}" 下没有第 ${n || '(最后)'} 条子项（或任务不存在）` };
+  }
+  return { ok: true, msg: `✓ 子项 ${done ? '已勾' : '已取消勾'} → ${id}\n  ${renderChild(picked.text, { done })}` };
 }
 
 // ---------- 任务随手记（memo）----------

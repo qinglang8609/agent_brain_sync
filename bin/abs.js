@@ -116,6 +116,8 @@ const FLAG_SPEC = {
   'title': { type: 'string' },
   'desc': { type: 'string' },
   'state': { type: 'string' },
+  // 勾子项用：第几条（1-based，缺省=最后一条）
+  'n': { type: 'string' },
   // log 流水类型：note|dev|concept|ingest（cmdLog 会校枚举，非枚举直接报错）。
   // ★ 漏声明就是真 bug（2026-10-05 本机实测）：不在 FLAG_SPEC 的选项会被静默丢掉，
   //   于是 `abs log "x" --kind note` 全写成默认的 dev，而 cmdLog 的枚举校验看不见它。
@@ -310,6 +312,8 @@ const subUsage = {
     '  abs todo add <id> [--note "做什么"] [--section 讨论中|滞留中|搁置]',
     '  abs todo rename <旧id> --note "<新id>"   改任务 id（起错名/不可读时）',
     '  abs todo note <id> --note "断点/进度"',
+    '  abs todo bp-done <id>            勾断点 → `↳ [x] 断点:`（做完落一句）',
+    '  abs todo bp-undone <id>          取消勾（勾错了退回）',
     '  abs todo memo <id> "随手记（可多句）"  任务笔记 → sessions/，不上看板；无文字=查看',
     '  abs todo state <id> --note 进行中|讨论中|滞留中|搁置',
     '  abs todo done <id> [--as 落地|否决|仅方案] [结语文字]',
@@ -374,6 +378,8 @@ const TODO_ACTIONS = {
   add: 'start',
   start: 'start', // add 的别名(老习惯保留)
   note: 'note',
+  'bp-done': 'bp-done', // 勾断点：`↳ [ ] 断点:` → `↳ [x] 断点:`
+  'bp-undone': 'bp-undone', // 取消勾断点（勾错了退回）
   memo: 'memo', // 任务随手记：多句/追加/不占看板（无文字时=查看）
   state: 'state', // 改行首状态标记：进行中|讨论中|滞留中|搁置（原地，不搬区）
   rename: 'rename', // 改任务 id：人工起错名、或旧 id 不可读时用
@@ -469,7 +475,7 @@ async function main() {
         if (!action) {
           throw new Error(
             `✗ 未知子命令 "${sub}"\n` +
-            `  可用: add / start / note / memo / state / done / archive\n` +
+            `  可用: add / start / note / bp-done / bp-undone / memo / state / done / archive\n` +
             `  看板: abs todo（不带参数）\n` +
             `  登记任务: abs todo add <id> --note "做什么"`,
           );
@@ -490,6 +496,15 @@ async function main() {
           // 无文字 = 查看该任务所有随手记
           const note = opts.note || (rest2.length ? rest2.join(' ') : undefined);
           console.log(await cmdTask({ dir: opts.dir, action, id, note, session: opts.session }));
+          break;
+        }
+        // 勾/取消勾子项：只收 <id>（子项位置 = 「某任务的第 N 条」，没有自己的 id）
+        if (action === 'bp-done' || action === 'bp-undone') {
+          rejectExtra(rest2, `abs todo ${sub} <id> [--n N]`);
+          if (!id) throw new Error(`✗ 缺 <id>\n  用法: abs todo ${sub} <id> [--n N]`);
+          const n = opts.n ? Number(opts.n) : undefined;
+          if (opts.n && (!Number.isInteger(n) || n < 1)) throw new Error(`✗ --n 要是正整数（收到 "${opts.n}"）`);
+          console.log(await cmdTask({ dir: opts.dir, action, id, n }));
           break;
         }
         rejectExtra(rest2, usage);

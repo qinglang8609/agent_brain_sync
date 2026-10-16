@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
 import { readRules, idOfPage, statusOfPage, supersededByOf, clip, RULE_BODY_MAX } from './store.js';
 import { doneKindOf, doneDateOf, checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo.js';
-import { isAllowedTodoLine, todoSectionOf } from './todo/common.js';
+import { isAllowedTodoLine, todoSectionOf, parseChild } from './todo/common.js';
 
 // ---------- 图谱遍历 ----------
 
@@ -143,8 +143,10 @@ async function checkRootFiles(vault) {
           `总结/报告/清单请分流：流水 → abs log，经验 → abs note，长设计 → sources/)`,
         );
       }
-      if (!l.trimStart().startsWith('↳ 断点:')) continue;
-      const bp = l.trimStart().slice('↳ 断点:'.length).trim();
+      // 断点行（新旧格式同一个解析器 —— 不再自己切前缀）
+      const bpLine = parseChild(l);
+      if (!bpLine) continue;
+      const bp = bpLine.text;
       if (bp.length > LINT_BREAKPOINT_MAX) {
         issues.push(
           `TODO-BREAKPOINT-BLOAT: ${BRAIN_DIR}/${file}:${i + 1} (断点 ${bp.length} 字 > ${LINT_BREAKPOINT_MAX}；` +

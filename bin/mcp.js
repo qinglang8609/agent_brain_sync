@@ -112,12 +112,12 @@ tool(
 
 tool(
   'abs_task',
-  '任务实时落盘（幂等键 = id）。start 登记进 Todo / note 补断点(改到哪文件哪行) / memo 任务随手记（多句/追加/不上看板）/ state 改状态 / done 完成归位 Done（done 时 note=结语文字，as=结语类型：落地|否决|仅方案）。必填: cwd, action, id。多会话并行时，start/add 带上 session（值见 system prompt 的 [会话] 段）以标记「这条任务谁在做」。',
+  '任务实时落盘（幂等键 = id）。start 登记进 Todo / note 补子项（**追加**，标准 md 嵌套列表，`abs todo note`）/ bp_done、bp_undone 勾/取消勾子项（n=第几条，缺省最后一条）/ memo 任务随手记（多句/追加/不上看板）/ state 改状态 / done 完成归位 Done（done 时 note=结语文字，as=结语类型：落地|否决|仅方案）。必填: cwd, action, id。多会话并行时，start/add 带上 session（值见 system prompt 的 [会话] 段）以标记「这条任务谁在做」。',
   {
-    action: z.enum(['add', 'start', 'done', 'note', 'memo', 'state']),
+    action: z.enum(['add', 'start', 'done', 'note', 'bp_done', 'bp_undone', 'memo', 'state']),
     id: z.string().describe('任务幂等键，如 TASK-xxx 或子任务名'),
-    cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
-    note: z.string().optional().describe('add/start=做什么; note=断点(文件/到哪步，一句话); memo=随手记（可多句、不定长，追加式；不传=查看已有笔记）; state=进行中|讨论中|滞留中|搁置（搁置=用户改方向/不做了；滞留中=还要做只是卡住）; done=结语文字'),
+    n: z.number().int().positive().optional().describe('bp_done/bp_undone 用：第几条子项（1-based，缺省=最后一条）'),
+    cwd: z.string().describe('项目根目录（.brain/ 所在处）'),    note: z.string().optional().describe('add/start=做什么; note=断点(文件/到哪步，一句话); memo=随手记（可多句、不定长，追加式；不传=查看已有笔记）; state=进行中|讨论中|滞留中|搁置（搁置=用户改方向/不做了；滞留中=还要做只是卡住）; done=结语文字'),
     as: z.enum(['落地', '否决', '仅方案']).optional().describe('仅 done：结语类型。默认 落地。做了又撤/评估后不做用 否决，只设计过用 仅方案 —— 别让假【落地】污染看板'),
     // 会话 id：多会话并行时标记「这条任务是谁在做」。
     // 值取自 system prompt 里的 `[会话] 本会话 id = xxx`（hook 注入），由模型原样回传。
@@ -125,12 +125,14 @@ tool(
     //   （协议没有，PI_* 环境变量也没有）；模型本来就知道自己的 sid，直接收下最省。
     session: z.string().optional().describe('仅 start/add：本会话 id（取自 system prompt 的 [会话] 段）。多会话并行时用来标记「这条任务谁在做」'),
   },
-  async ({ action, id, cwd, note, as, session }) => {
+  async ({ action, id, cwd, note, as, session, n }) => {
     const root = await findBrainRoot(cwd || process.cwd());
     if (!root) return errNoBrain(cwd || process.cwd());
     // add 是 start 的别名（与 CLI `abs todo add` 对齐）
     const act = action === 'add' ? 'start' : action;
-    return { content: [{ type: 'text', text: await cmdTask({ dir: root, action: act, id, note, as, session }) }] };
+    // bp_done → bp-done（MCP 参数名不用连字符，内部 action 用）
+    const act2 = act === 'bp_done' ? 'bp-done' : act === 'bp_undone' ? 'bp-undone' : act;
+    return { content: [{ type: 'text', text: await cmdTask({ dir: root, action: act2, id, note, as, session, n }) }] };
   }
 );
 

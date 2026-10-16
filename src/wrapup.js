@@ -8,7 +8,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { absLogDir } from './index.js';
-import { readTodo, localStamp } from './todo.js';
+import { readTodo, localStamp, parseChild } from './todo.js';
 
 export function wrapupLogPath() {
   return join(absLogDir(), 'wrapup.log');
@@ -62,7 +62,15 @@ export function extractOpenTasks(todoText) {
         const bp = [];
         while (i + 1 < lines.length && /^\s*↳/.test(lines[i + 1])) {
           i++;
-          bp.push(lines[i].trim().replace(/^↳\s*(断点|卡点)?[:：]?\s*/, ''));
+          // 断点快照带上勾选标记（`[ ] 内容` / `[x] 内容`）—— 快照是给人看的，
+          // 不保留勾选就分不清「当时已完成」与「还没做」（2026-10-16 断点可勾后必需）。
+          const parsed = parseChild(lines[i]);
+          if (parsed) {
+            bp.push(`${parsed.done ? '[x]' : '[ ]'} ${parsed.text}`);
+          } else {
+            // 非断点的 ↳ 行（如 `↳ [ ] 子任务`）仍照旧剥前缀
+            bp.push(lines[i].trim().replace(/^↳\s*(断点|卡点)?[:：]?\s*/, ''));
+          }
         }
         out.push({ body: taskBody, bp });
       }
@@ -77,12 +85,13 @@ function isPlaceholderBody(body) {
   return /^(待办任务|无|（无）|None|null)$/.test(body) || /^待办任务/.test(body);
 }
 
-/** 序列化一个快照块：首行时间戳+归属，后随未完成任务（主体+断点）。 */
+/** 序列化一个快照块：首行时间戳+归属，后随未完成任务（主体+断点）。
+ * 断点 bp 元素已自带勾选前缀（`[ ] 内容` / `[x] 内容`，见 extractOpenTasks）。 */
 function blockText(root, tasks) {
   const head = `[${localStamp()}] wrapup proj=${root}`;
   if (!tasks.length) return head; // 无滞留，仍记一行「干净结束」
   const rows = tasks.map((t) => {
-    const bps = t.bp.map((b) => `      ↳ 断点: ${b}`);
+    const bps = t.bp.map((b) => (b.startsWith('[') ? `      ↳ ${b}` : `      ↳ 断点: ${b}`));
     return `  - [ ] ${t.body}${bps.length ? '\n' + bps.join('\n') : ''}`;
   });
   return [head, ...rows].join('\n');
@@ -112,7 +121,11 @@ export function parseWrapup(text) {
     }
     const bm = line.match(/^\s*↳/);
     if (bm && cur.tasks.length) {
-      cur.tasks[cur.tasks.length - 1].bp.push(line.trim().replace(/^↳\s*(断点|卡点)?[:：]?\s*/, ''));
+      // 回读时统一成 `[ ] 内容` / `[x] 内容` 形态（新写的就是这个；旧快照无勾 → 当未勾）
+      const parsed = parseChild(line);
+      cur.tasks[cur.tasks.length - 1].bp.push(parsed
+        ? `${parsed.done ? '[x]' : '[ ]'} ${parsed.text}`
+        : line.trim().replace(/^↳\s*(断点|卡点)?[:：]?\s*/, ''));
     }
   }
   return byProj;

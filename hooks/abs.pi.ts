@@ -336,8 +336,11 @@ export function boardGuideline(md: string, who: string, touched: string[] = [], 
     let tag = ''
     if (r.sid) tag = r.sid === mySid ? '[本会话] ' : `[会话 ${r.sid}] `
     const head = `  ${tag}${r.state ? `[${r.state}] ` : ''}${r.id}${r.desc ? ` — ${r.desc}` : ''}`
-    // 断点必须带上：它就是「改到哪一步」，丢了等于对齐了也接不上。
-    return r.note ? `${head}\n    ↳ ${r.note}` : head
+    // 子项必须带上：它就是「改到哪一步」，丢了等于对齐了也接不上（2026-10-05 实测）。
+    // 与面板同形（`- [ ]` 缩进），让 LLM 看到的就是文件里的结构。
+    if (!r.kids || !r.kids.length) return head
+    const kidLines = r.kids.map((k) => `    - ${k.done ? '[x]' : '[ ]'} ${k.text}`)
+    return [head, ...kidLines].join('\n')
   })
   const more = total > rows.length ? `  …另 ${total - rows.length} 条` : ''
   // 本会话动过的文件 —— 与看板并列摆出，让 LLM 自己对照（不判断算不算任务）。
@@ -717,13 +720,13 @@ export function pickNickname(rnd: () => number = Math.random): string {
  * 断点行（缩进的 ↳）归属到它上一条任务，不单独成条。 */
 export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
   total: number
-  rows: { state: string; id: string; desc: string; note: string; sid: string }[]
+  rows: { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; sid: string }[]
   hidden: number
 } {
   // 两阶段：先无过滤地按序解析（断点归属需要“上一条”是原文里真正的前一条），
   // 再按作者过滤。若边解析边过滤，被滤掉的条目下方的断点会挂到它上面那一条
   // —— 实测：别人任务的断点会显示在我的任务下面（2026-10-03 审查发现）。
-  type Row = { state: string; id: string; desc: string; note: string; authors: string[]; sid: string }
+  type Row = { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; authors: string[]; sid: string }
   const parsed: Row[] = []
   let inTodo = false
   for (const raw of String(md || '').split('\n')) {
@@ -731,11 +734,12 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
     if (/^##\s+Todo\s*$/.test(line)) { inTodo = true; continue }
     if (/^##\s+/.test(line)) { inTodo = false; continue }
     if (!inTodo) continue
-    // 断点行：`  ↳ 断点: …`（缩进）→ 挂到上一条任务
-    const note = line.match(/^\s+↳\s*断点:\s*(.*)$/)
-    if (note) {
+    // 子项行（标准 md：缩进的 `- [ ]`；旧格式 `↳ 断点:` 继续认）→ 挂到上一条任务。
+    // 子项可多条、可各自勾选（2026-10-16 用户定）。
+    const kid = parseChildLine(line)
+    if (kid && kid.indent > 0) {
       const last = parsed[parsed.length - 1]
-      if (last && !last.note) last.note = note[1].trim()
+      if (last) last.kids.push(kid)
       continue
     }
     // `- [ ] [状态] <id> …`；状态标记可能缺省。
@@ -760,12 +764,12 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
       .replace(/^\s*—\s*/, '')
       .replace(/\s*\(认领[^)]*\)\s*$/, '')
       .trim()
-    parsed.push({ state, id, desc, note: '', authors, sid })
+    parsed.push({ state, id, desc, kids: [], authors, sid })
   }
   const mine = who
     ? parsed.filter((r) => r.authors.length === 0 || r.authors.includes(who))
     : parsed
-  const rows = mine.map(({ state, id, desc, note, sid }) => ({ state, id, desc, note, sid }))
+  const rows = mine.map(({ state, id, desc, kids, sid }) => ({ state, id, desc, kids, sid }))
   return { total: rows.length, rows: rows.slice(0, max), hidden: Math.max(0, rows.length - max) }
 }
 
@@ -792,6 +796,23 @@ async function currentUser(): Promise<string> {
  *
  * 宽度规则：CJK/全角记 2 列，其余记 1 列。足够让面板不溢出（不能处理 emoji ZWJ 序列，
  * 但面板里没有—— todo 内容是任务名与说明）。 */
+/** 解析子项行（与 src/todo/common.js 的 parseChild 同规则，双份实现）。
+ *
+ * 为何不 import src：面板是宿主扩展，单独装到 ~/.pi/extensions/，与包内 src/ 不同目录
+ * （装完就断了）。故两端各一份 —— 规则简单（两步正则），且两边测试都盖。
+ * 标准 md：缩进的 `- [ ] 内容`；旧格式 `↳ [ ] 断点: 内容` / `↳ 断点: 内容` 继续认。 */
+function parseChildLine(l: string): { done: boolean; text: string; indent: number } | null {
+  const s = String(l || '')
+  const old = s.match(/^(\s*)↳\s*(?:\[[ x]\]\s*)?(?:断点[:：]\s*)?(.*)$/)
+  if (old) {
+    if (!old[2].trim()) return null
+    return { done: /^\s*↳\s*\[x\]/.test(s), text: old[2].trim(), indent: old[1].length }
+  }
+  const m = s.match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/)
+  if (!m) return null
+  return { done: m[2] === 'x', text: m[3].trim(), indent: m[1].length }
+}
+
 function dispWidth(s: string): number {
   let w = 0
   let i = 0
@@ -887,7 +908,7 @@ export function todoAnimFrame(phase: number): string {
 }
 
 export function renderPanelLines(
-  data: { total: number; rows: { state: string; id: string; desc: string; note: string }[]; hidden: number },
+  data: { total: number; rows: { state: string; id: string; desc: string; kids?: { done: boolean; text: string }[] }[]; hidden: number },
   who: string,
   width: number,
   fg: (color: string, s: string) => string,
@@ -933,16 +954,24 @@ export function renderPanelLines(
     const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg('accent', todoAnimFrame(animPhase)) : ''
     // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
-    // 任务行用 [ ]（未完成才上面板），断点行同样带 [ ]（它是一条待办，不是注释）。
     const box = fg('dim', '[ ]')
     const head = `${fg('dim', branch)} ${box} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
-    if (t.note) {
-      // 断点行：挂在父任务下。末条时用空格对齐（└─ 下方无续）；否则用 │ 延伸。
-      // 缩进对齐父任务的 `[ ]`（branch 占 2 列 + 空格），断点自身也带 [ ]。
-      const cont = isLast ? '  ' : fg('dim', '│ ')
-      lines.push(clipToWidth(`${cont}   ${box} ${fg('dim', '↳ ' + t.note)}`, width))
+    if (t.kids && t.kids.length) {
+      // 子项：标准 md 嵌套列表 → 画成树
+      //   ├─ [ ] 子项一
+      //   └─ [x] 子项二
+      // 树线前缀 = 父任务的 │（非末条）或空格（末条），与父任务分支对齐。
+      // 勾过的用 dim 压暗（一眼看出哪些已完成），未勾用正常色。
+      const stem = isLast ? '  ' : fg('dim', '│ ')
+      const n = t.kids.length
+      t.kids.forEach((k, ki) => {
+        const kb = ki === n - 1 ? '└─' : '├─'
+        const kbox = fg('dim', k.done ? '[x]' : '[ ]')
+        const ktext = fg(k.done ? 'dim' : 'muted', k.text)
+        lines.push(clipToWidth(`${stem} ${fg('dim', kb)} ${kbox} ${ktext}`, width))
+      })
     }
   })
 

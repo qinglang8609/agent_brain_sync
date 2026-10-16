@@ -1,7 +1,7 @@
 // src/todo/validate.js — 条目级闸门：形状校验、长度限制、空行检查。
 
 import { TODO_SECTIONS, isAllowedTodoSub, INDEX_SECTIONS, ENTRY_SHAPES, indexLinkSectionNeeds, BREAKPOINT_MAX, TASK_LINE_MAX } from './spec.js';
-import { sigOfLine, REPORT_MARKERS, sentenceCount, isTaskLine, isAllowedTodoLine, todoSectionOf } from './common.js';
+import { sigOfLine, REPORT_MARKERS, sentenceCount, isTaskLine, isAllowedTodoLine, todoSectionOf, parseChild } from './common.js';
 
 export function checkFileShape(file, text, { lintMode = false } = {}) {
   const issues = [];
@@ -162,6 +162,29 @@ export function assertTodoContent(text, prevSig = null) {
     const l = lines[i];
     const lineNo = i + 1;
     if (l.startsWith('## ')) continue;
+    // 子项行要比任务行先判：标准 md 下子项（缩进的 `- [ ]`）**也是任务行**，
+    // 若让任务行分支先 continue，子项就只受 TASK_LINE_MAX(400) 管，
+    // BREAKPOINT_MAX(200) 的闸门永远走不到（实测：300 字子项静默写入）。
+    const kidEarly = parseChild(l);
+    if (kidEarly && kidEarly.indent > 0) {
+      if (isLegacy(l)) continue; // 存量：不阻写入（lint 报）
+      const kbody = kidEarly.text;
+      if (kbody.length > BREAKPOINT_MAX) {
+        throw new Error(
+          `✗ 子项太长（第 ${lineNo} 行 ${kbody.length} 字 > ${BREAKPOINT_MAX}）—— 子项只写「改到哪个文件哪一步」。\n` +
+          `  写不下的内容请分流：实施报告/验证数据 → abs log；经验与坑 → abs note；长设计 → .brain/sources/ 页。\n` +
+          `  原文开头: ${kbody.slice(0, 60)}...`,
+        );
+      }
+      if (REPORT_MARKERS.some((re) => re.test(kbody)) || sentenceCount(kbody) > 2) {
+        throw new Error(
+          `✗ 子项里像是塞了报告/清单（第 ${lineNo} 行）—— 子项是一句话（最多两句），不是文档。\n` +
+          `  todo 只能加 todo：要做的拆成任务，做完的写 abs log，经验写 abs note。\n` +
+          `  原文开头: ${kbody.slice(0, 60)}...`,
+        );
+      }
+      continue;
+    }
     // 任务行
     if (isTaskLine(l)) {
       if (l.length > TASK_LINE_MAX && !isLegacy(l)) {
@@ -173,10 +196,11 @@ export function assertTodoContent(text, prevSig = null) {
       }
       continue;
     }
-    // 断点附属行
-    if (l.trimStart().startsWith('↳ 断点:')) {
+    // 断点附属行（新旧格式用同一个解析器 —— 格式知识只有 common.js 一个真源）
+    const bp = parseChild(l);
+    if (bp) {
       if (isLegacy(l)) continue; // 存量超长断点：不阻写入（lint 报）
-      const body = l.trimStart().slice('↳ 断点:'.length).trim();
+      const body = bp.text;
       if (body.length > BREAKPOINT_MAX) {
         throw new Error(
           `✗ 断点太长（第 ${lineNo} 行 ${body.length} 字 > ${BREAKPOINT_MAX}）—— 断点只写「改到哪个文件哪一步」。\n` +

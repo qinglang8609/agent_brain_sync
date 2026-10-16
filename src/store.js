@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir } from './index.js';
 import { requireUser, atTag, getUser, placeholderWarn } from './userconfig.js';
-import { stripStateMark, checkTaskBox, ensureStateMark, stateOfTaskLine, TODO_MAX_LINES, upsertTask, boardText, readTodo, todoTemplate, today, localStamp, setBreakpoint, setMemo, readMemo, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, collapseDone, SEC, rebuildStructure, enforceBrainFormat, sessionOf } from './todo.js';
+import { stripStateMark, checkTaskBox, ensureStateMark, stateOfTaskLine, TODO_MAX_LINES, upsertTask, boardText, readTodo, todoTemplate, today, localStamp, setBreakpoint, setBreakpointDone, setMemo, readMemo, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, collapseDone, SEC, rebuildStructure, enforceBrainFormat, sessionOf, parseChild } from './todo.js';
 import { setFormatGate, editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 import { keywords, recentFiles, topicStrength } from './relevant.js';
@@ -350,7 +350,7 @@ export async function cmdLoad({ dir }) {
   );
   if (stranded.length) {
     const rows = stranded.map((t) => {
-      const bp = t.bp.length ? `\n    ${t.bp.map((b) => `↳ 断点: ${b}`).join('\n    ')}` : '';
+      const bp = t.bp.length ? `\n    ${t.bp.map((b) => (b.startsWith('[') ? `↳ ${b}` : `↳ 断点: ${b}`)).join('\n    ')}` : '';
       return `  - ${t.body}${bp}`;
     });
     // 插在项目行之后、其它内容之前
@@ -807,7 +807,7 @@ function recentLogLines(text, n) {
 // ---------- task: 登记/推进（幂等键 = 行首 id；hook 也调这个） ----------
 // 纪律: task 过程动作(start/done/note/blocked)只改 todo.md, 不写 log.md。
 // log.md 是「工作成果沉淀摘要」(用户/AI 主动 abs log "..." 记), 不收工具动作流水。
-export async function cmdTask({ dir, action, id, section, note, as, session }) {
+export async function cmdTask({ dir, action, id, section, note, as, session, n }) {
   const root = await requireBrain(dir || process.cwd());
   // 写操作守卫：无姓名不落盘（hook 调的 wrapup/teardown-check 不经过这里，不受影响）
   const who = await requireUser();
@@ -929,6 +929,12 @@ export async function cmdTask({ dir, action, id, section, note, as, session }) {
     const r = await setBreakpoint(root, { id, text: note });
     return r.msg;
   }
+  // 勾/取消勾断点：断点是待办，做完要勾（2026-10-16）。
+  // 单独两个子命令而不是 `--done true/false` —— 勾与取消是两件事，各自一个动词更顺手。
+  if (action === 'bp-done' || action === 'bp-undone') {
+    const r = await setBreakpointDone(root, { id, n, done: action === 'bp-done' });
+    return r.msg;
+  }
   if (action === 'memo') {
     // 任务随手记：多句/不定长/可追加，不占看板。无 note 时 = 查看已有笔记。
     if (!id) return '用法: abs todo memo <id> "随手记（可多句）"  |  abs todo memo <id>（查看）';
@@ -990,7 +996,16 @@ async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
         parts.push(`(完成 ${today()}${doneSid ? ' ' + doneSid : ''})`);
         const head = withDoneKind(`${base}${tail} ${parts.join(' ')}`, kind);
         const bp = [];
-        while (i + 1 < lines.length && lines[i + 1].trimStart().startsWith('↳')) bp.push(lines[++i]);
+        // 子项随任务一起搬运（标准 md：缩进的 `- [ ]`；旧格式 `↳ …` 也认）。
+        // 原实现只认 `↳`，换成标准 md 后子项会留在原区——即「任务走了子项没走」。
+        while (i + 1 < lines.length) {
+          const nx = lines[i + 1];
+          if (!nx.trim()) break;
+          const kid = parseChild(nx);
+          if (kid && kid.indent > 0) bp.push(lines[++i]);
+          else if (nx.trimStart().startsWith('↳')) bp.push(lines[++i]);
+          else break;
+        }
         moved = [head, ...bp];
         continue;
       }

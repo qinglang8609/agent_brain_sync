@@ -256,7 +256,7 @@ describe('cli: todo', () => {
     const r = await run(['todo', 'frobnicate', 'T1']);
     assert.notEqual(r.code, 0, '未知子命令必须非零退出');
     assert.ok(/未知子命令/.test(r.stderr), r.stderr);
-    assert.ok(/add \/ start \/ note \/ memo \/ state \/ done/.test(r.stderr), '应列出可用子命令');
+    assert.ok(/add \/ start \/ note \/ bp-done \/ bp-undone \/ memo \/ state \/ done/.test(r.stderr), '应列出可用子命令');
   });
 
   test('add 与 start 等价', async () => {
@@ -289,15 +289,18 @@ describe('cli: todo', () => {
     }
   });
 
-  test('state / note 断点实时落盘（两区制：状态用行首标记，不搬区）', async () => {
+  test('state / note 子项实时落盘（两区制：状态用行首标记，不搬区）', async () => {
     await run(['todo', 'start', 'TB', '--note', 'x']);
     const n = await run(['todo', 'note', 'TB', '--note', '改到 L40']);
     assert.equal(n.code, 0, n.stderr);
-    assert.ok(n.stdout.includes('断点'), n.stdout);
+    assert.ok(n.stdout.includes('子项'), n.stdout);
     const st = await run(['todo', 'state', 'TB', '--note', '滞留中']);
     assert.equal(st.code, 0, st.stderr);
     const t = await run(['todo']);
     assert.ok(t.stdout.includes('[滞留中] TB'), `应改行首标记: ${t.stdout}`);
+    // 标准 md 嵌套：子项以 2 空格缩进挂在该任务下
+    const raw = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.ok(/\n {2}- \[ \] 改到 L40/.test(raw), `子项应缩进在任务下:\n${raw}`);
     // 不搬区：仍是 ## Todo 下的行
     assert.ok(!/## Blocked/.test(t.stdout), '不该再有 Blocked 区');
   });

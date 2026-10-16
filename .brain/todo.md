@@ -1,11 +1,11 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] panel-checkbox-and-missing-task [[fanchao]] — pi 面板每行加 [ ] 复选框 + 排查「显示但缺任务」；断点行也要 [] (认领 2026-10-16 01a1446a-042e-77)
 
 ## Done
 
 ### 2026-10-16
+- [x] panel-checkbox-and-missing-task [[fanchao]] — pi 面板每行加 [ ] 复选框 + 排查「显示但缺任务」；断点行也要 [] — 面板任务行加 [ ] 复选框（断点行不带 —— 带 [ ] 会让它看着像另一条任务，且与 ↳ 挤在一起）；真因是 ~/.abs/config.json user 被沙盒测试污染成 audit，非面板 bug 【落地】 (完成 2026-10-16 01a1446a-042e-77)
 - [x] audit-project [[fanchao]] — 审核整个项目：代码质量/安全/测试/文档，出报告不改代码 — 审核完成：598→599 测试全过 + lint 0 + 50 并发写零丢失 + 路径穿越被 slugOf 挡住 + 5 宿主安装/幂等/卸载只删自己全部实证；顺带发现并修复 pi 面板缺任务真因（config user 被沙盒测试污染成 audit） 【落地】 (完成 2026-10-16 01a1446a-042e-77)
   ↳ 断点: 第一轮完成（代码/lint/测试/并发/路径穿越已验），报告落 .brain/sessions/audit-2026-10-16.md；继续补 install.js 端到端 + hooks .ts 全文
 - [x] release-1.18.0-omp [[fanchao]] — npm 1.18.0 已发布（registry dist-tags.latest=1.18.0 已核实），五宿主 hook/skill/MCP 已刷新。omp 扩展 ~/.omp/agent/extensions/abs.ts 45KB 已装。git push 未完成（代理 503）。 【落地】 (完成 2026-10-16 01a1445c-389f-70)

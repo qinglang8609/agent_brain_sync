@@ -266,7 +266,7 @@ describe('todo 层', () => {
     assert.doesNotMatch(String(s), /NO_MATCH/, `state 应命中: ${s}`);
     const t = await readTodo(projectA);
     assert.match(t, /↳ \[ \] \[讨论中\] bp2/, `状态应已改且前缀保留: \n${t}`);
-    assert.match(t, /↳ 断点: 改到 src\/x\.js/, '断点附属行应挂上');
+    assert.match(t, /- \[ \] 改到 src\/x\.js/, '子项应挂上（标准 md 缩进列表）');
   });
 });
 
@@ -398,8 +398,9 @@ describe('normalizeTodo 老格式迁移', () => {
     for (const frag of ['L-1 — 想做', 'L-2 [[tester]] — 在做', 'L-3 — 卡住', 'L-0 — 完了']) {
       assert.ok(t.includes(frag), `内容应保留 ${frag}: ${t}`);
     }
-    // 断点随迁
-    assert.ok(t.includes('↳ 断点: 改到 L40'), `断点应保留: ${t}`);
+    // 子项随迁（内容不丢即可 —— rebuildStructure 只重排分区，不静默改行格式：
+    // 存量 `↳ 断点:` 原样留着，下一次写入才升级为标准 md）
+    assert.ok(t.includes('改到 L40'), `子项内容应保留: ${t}`);
     // 幂等：再跑一次零变化
     const r2 = await checkBrainShape(projectA);
     assert.equal(r2.fixed.length, 0, `再跑应幂等: ${JSON.stringify(r2)}`);
@@ -961,26 +962,36 @@ describe('cmdTask blocked + note (实时断点)', () => {
     await assert.rejects(() => cmdTask({ dir: projectA, action: 'state', id: 'TB-1', note: '莫名其妙' }));
   });
 
-  test('note: 半成品断点原位补 ↳ 断点 行，不挪任务位置', async () => {
+  test('note: 子项追加到任务下（标准 md，不挪任务位置）', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'TN-1', note: '做 V' });
     const r = await cmdTask({ dir: projectA, action: 'note', id: 'TN-1', note: '改到 store.js L40，卡在 markDone' });
-    assert.ok(r.includes('✓') || r.includes('断点'), r);
+    assert.ok(r.includes('✓') || r.includes('子项'), r);
     const t = await readTodo(projectA);
     const todoSec = t.split('## Todo')[1]?.split('## ')[0] || '';
-    assert.ok(todoSec.includes('↳ 断点: 改到 store.js L40'), `断点行应在任务下:\n${t}`);
+    assert.ok(todoSec.includes('- [ ] 改到 store.js L40'), `子项行应在任务下:\n${t}`);
   });
 
-  test('note 幂等: 同任务再补断点更新原行不叠加', async () => {
+  test('note 追加多条子项（不覆盖 —— 2026-10-16 用户定「不限，写多少算多少」）', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'TN-2' });
-    await cmdTask({ dir: projectA, action: 'note', id: 'TN-2', note: '断点A' });
-    await cmdTask({ dir: projectA, action: 'note', id: 'TN-2', note: '断点B(新)' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TN-2', note: '子项A' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TN-2', note: '子项B' });
     const t = await readTodo(projectA);
-    const lines = t.split('\n').filter((l) => l.includes('↳ 断点:') && l.includes('TN-2') === false && (l.includes('断点A') || l.includes('断点B')));
-    // 同一任务只保留最新断点行
     const forTask = t.split('\n');
     const idx = forTask.findIndex((l) => l.includes('TN-2'));
-    assert.ok(forTask[idx + 1].includes('↳ 断点: 断点B'), `应更新为最新断点:\n${forTask.slice(idx, idx + 2).join('\n')}`);
-    assert.ok(!forTask[idx + 1].includes('断点A'), '旧断点不残留');
+    // 两条都在，且都缩进在任务下（标准 md 嵌套）
+    assert.ok(forTask[idx + 1].includes('- [ ] 子项A'), `第一条子项应在:\n${forTask.slice(idx, idx + 3).join('\n')}`);
+    assert.ok(forTask[idx + 2].includes('- [ ] 子项B'), `第二条子项应在:\n${forTask.slice(idx, idx + 3).join('\n')}`);
+    // 都是 2 空格缩进（嵌套层级）
+    assert.ok(forTask[idx + 1].startsWith('  - [ ] '), `子项要 2 空格缩进: ${JSON.stringify(forTask[idx + 1])}`);
+  });
+
+  test('note 幂等：同文子项不重复追加', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TN-3' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TN-3', note: '同一条' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TN-3', note: '同一条' });
+    const t = await readTodo(projectA);
+    const n = t.split('\n').filter((l) => l.includes('同一条')).length;
+    assert.equal(n, 1, `同文子项只应有一条:\n${t}`);
   });
 
   test('state 未找到 id 时明确提示', async () => {
@@ -1078,7 +1089,7 @@ describe('根文件形状与标签白名单（2026-10-05 用户定：写死、�
     await cmdTask({ dir: projectA, action: 'start', id: 'NEW-A', note: '做A' });
     await assert.rejects(
       () => cmdTask({ dir: projectA, action: 'note', id: 'NEW-A', note: '报告'.repeat(120) }),
-      /断点太长/,
+      /子项太长/,
     );
   });
 
@@ -1109,9 +1120,9 @@ describe('todo 内容闸门（只放 todo）', () => {
   test('正常短断点照常写入', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'TG-1', note: '做 A' });
     const r = await cmdTask({ dir: projectA, action: 'note', id: 'TG-1', note: '改到 store.js L40，卡在 markDone' });
-    assert.ok(r.includes('断点'), r);
+    assert.ok(r.includes('子项'), r);
     const t = await readTodo(projectA);
-    assert.ok(t.includes('↳ 断点: 改到 store.js L40'), `短断点应写入:\n${t}`);
+    assert.ok(t.includes('- [ ] 改到 store.js L40'), `短子项应写入:\n${t}`);
   });
 
   test('超长断点被拒（不静默截断）', async () => {
@@ -1119,7 +1130,7 @@ describe('todo 内容闸门（只放 todo）', () => {
     const huge = '实施报告内容'.repeat(50); // 300 字 > 200
     await assert.rejects(
       () => cmdTask({ dir: projectA, action: 'note', id: 'TG-2', note: huge }),
-      /断点太长/,
+      /子项太长/,
     );
     // 关键：拒了就不能落盘（不能只报错却把截断后的半截写进去）
     const t = await readTodo(projectA);
@@ -1146,7 +1157,7 @@ describe('todo 内容闸门（只放 todo）', () => {
       id: 'TG-4',
       note: '改到 src/lint.js 的汇总处；同族约束见 read-side-output-must-not-scale（Done 区已折叠计数）',
     });
-    assert.ok(r.includes('断点'), `带分号的正常断点应写下:\n${r}`);
+    assert.ok(r.includes('子项'), `带分号的正常子项应写下:\n${r}`);
     const t = await readTodo(projectA);
     assert.ok(t.includes('汇总处'), `内容应落盘:\n${t}`);
   });

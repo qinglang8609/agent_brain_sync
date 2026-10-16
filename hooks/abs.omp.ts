@@ -230,7 +230,9 @@ export function boardGuideline(md: string, who: string, touched: string[] = [], 
     let tag = ''
     if (r.sid) tag = r.sid === mySid ? '[本会话] ' : `[会话 ${r.sid}] `
     const head = `  ${tag}${r.state ? `[${r.state}] ` : ''}${r.id}${r.desc ? ` — ${r.desc}` : ''}`
-    return r.note ? `${head}\n    ↳ ${r.note}` : head
+    // 子项带上（与面板同形），丢了等于对齐了也接不上
+    if (!r.kids || !r.kids.length) return head
+    return [head, ...r.kids.map((k) => `    - ${k.done ? '[x]' : '[ ]'} ${k.text}`)].join('\n')
   })
   const more = total > rows.length ? `  …另 ${total - rows.length} 条` : ''
   const touchLines = touched.length
@@ -349,12 +351,12 @@ export function pickNickname(rnd: () => number = Math.random): string {
  * （老任务/手写的没标，漏掉比多显示更糟）。标了别人的则不收。 */
 export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
   total: number
-  rows: { state: string; id: string; desc: string; note: string; sid: string }[]
+  rows: { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; sid: string }[]
   hidden: number
 } {
   // 两阶段：先无过滤地按序解析（断点归属需要「上一条」是原文里真正的前一条），
   // 再按作者过滤。若边解析边过滤，被滤掉的条目下方的断点会挂到它上面那一条。
-  type Row = { state: string; id: string; desc: string; note: string; authors: string[]; sid: string }
+  type Row = { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; authors: string[]; sid: string }
   const parsed: Row[] = []
   let inTodo = false
   for (const raw of String(md || '').split('\n')) {
@@ -362,11 +364,11 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
     if (/^##\s+Todo\s*$/.test(line)) { inTodo = true; continue }
     if (/^##\s+/.test(line)) { inTodo = false; continue }
     if (!inTodo) continue
-    // 断点行：`  ↳ 断点: …`（缩进）→ 挂到上一条任务
-    const note = line.match(/^\s+↳\s*断点:\s*(.*)$/)
-    if (note) {
+    // 子项行（标准 md：缩进的 `- [ ]`；旧格式 `↳ 断点:` 继续认）→ 挂到上一条任务
+    const kid = parseChildLine(line)
+    if (kid && kid.indent > 0) {
       const last = parsed[parsed.length - 1]
-      if (last && !last.note) last.note = note[1].trim()
+      if (last) last.kids.push(kid)
       continue
     }
     // `- [ ] [状态] <id> …`；状态标记可能缺省。
@@ -386,12 +388,12 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
       .replace(/^\s*—\s*/, '')
       .replace(/\s*\(认领[^)]*\)\s*$/, '')
       .trim()
-    parsed.push({ state, id, desc, note: '', authors, sid })
+    parsed.push({ state, id, desc, kids: [], authors, sid })
   }
   const mine = who
     ? parsed.filter((r) => r.authors.length === 0 || r.authors.includes(who))
     : parsed
-  const rows = mine.map(({ state, id, desc, note, sid }) => ({ state, id, desc, note, sid }))
+  const rows = mine.map(({ state, id, desc, kids, sid }) => ({ state, id, desc, kids, sid }))
   return { total: rows.length, rows: rows.slice(0, max), hidden: Math.max(0, rows.length - max) }
 }
 
@@ -413,6 +415,19 @@ async function currentUser(): Promise<string> {
 /** 按显示宽度截断（自己实现，不 import 宿主 tui 包）。
  *  依赖宿主内部 alias 太脆 —— pi 版实测在测试环境会 ERR_MODULE_NOT_FOUND。
  *  宽度规则：CJK/全角记 2 列，其余记 1 列。 */
+/** 解析子项行（与 src/todo/common.js 的 parseChild 同规则，双份实现 —— 见 pi 版说明）。 */
+function parseChildLine(l: string): { done: boolean; text: string; indent: number } | null {
+  const s = String(l || '')
+  const old = s.match(/^(\s*)↳\s*(?:\[[ x]\]\s*)?(?:断点[:：]\s*)?(.*)$/)
+  if (old) {
+    if (!old[2].trim()) return null
+    return { done: /^\s*↳\s*\[x\]/.test(s), text: old[2].trim(), indent: old[1].length }
+  }
+  const m = s.match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/)
+  if (!m) return null
+  return { done: m[2] === 'x', text: m[3].trim(), indent: m[1].length }
+}
+
 function dispWidth(s: string): number {
   let w = 0
   let i = 0
@@ -493,7 +508,7 @@ export function todoAnimFrame(phase: number): string {
 }
 
 export function renderPanelLines(
-  data: { total: number; rows: { state: string; id: string; desc: string; note: string }[]; hidden: number },
+  data: { total: number; rows: { state: string; id: string; desc: string; kids?: { done: boolean; text: string }[] }[]; hidden: number },
   who: string,
   width: number,
   fg: (color: string, s: string) => string,
@@ -526,10 +541,16 @@ export function renderPanelLines(
     const head = `${fg('dim', branch)} ${box} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
-    if (t.note) {
-      // 缩进对齐父任务的 `[ ]`，断点自身也带 [ ]。
-      const cont = isLast ? '  ' : fg('dim', '│ ')
-      lines.push(clipToWidth(`${cont}   ${box} ${fg('dim', '↳ ' + t.note)}`, width))
+    if (t.kids && t.kids.length) {
+      // 子项：标准 md 嵌套列表 → 画成树
+      const stem = isLast ? '  ' : fg('dim', '│ ')
+      const n = t.kids.length
+      t.kids.forEach((k, ki) => {
+        const kb = ki === n - 1 ? '└─' : '├─'
+        const kbox = fg('dim', k.done ? '[x]' : '[ ]')
+        const ktext = fg(k.done ? 'dim' : 'muted', k.text)
+        lines.push(clipToWidth(`${stem} ${fg('dim', kb)} ${kbox} ${ktext}`, width))
+      })
     }
   })
 

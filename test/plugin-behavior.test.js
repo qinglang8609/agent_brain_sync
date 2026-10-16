@@ -925,7 +925,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     ].join('\n');
     const r = parseOpenTasks(md, 10, 'fanchao');
     const a = r.rows.find((t) => t.id === 'mine-a');
-    assert.equal(a.note, '', `mine-a 不该拿到别人的断点: ${a.note}`);
+    assert.equal(a.kids.length, 0, `mine-a 不该拿到别人的子项: ${JSON.stringify(a.kids)}`);
   });
 
   test('自己的断点正确归到自己名下', async () => {
@@ -936,7 +936,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       '  ↳ 断点: 改到 hooks/abs.pi.ts:120',
     ].join('\n');
     const r = parseOpenTasks(md, 10, 'fanchao');
-    assert.match(r.rows[0].note, /hooks\/abs\.pi\.ts:120/);
+    assert.match(r.rows[0].kids[0].text, /hooks\/abs\.pi\.ts:120/);
   });
 
   test('断点行不单独计为一条任务', async () => {
@@ -958,12 +958,9 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       '  ↳ 断点: 附属说明',
     ].join('\n');
     const r = parseOpenTasks(md, 10, 'fanchao');
-    assert.equal(r.total, 2, `应含 parent + bp-child: ${JSON.stringify(r.rows)}`);
-    const bp = r.rows.find((t) => t.id === 'bp-child');
-    assert.ok(bp, '断点任务必须出现在面板里');
-    assert.equal(bp.state, '进行中');
-    assert.equal(bp.desc, '断点也是任务');
-    assert.equal(bp.note, '附属说明', '它下面的 ↳ 断点: 应挂到它自己');
+    // 标准 md 下 `↳ [ ]` 是旧形态的附属行（子项），不是独立任务
+    assert.equal(r.total, 1, `只应含 parent: ${JSON.stringify(r.rows)}`);
+    assert.equal(r.rows[0].kids.length, 2, `两条子项都应挂上: ${JSON.stringify(r.rows[0].kids)}`);
   });
 
   // 冒号形态与勾选形态不能互相吞掉 —— 两者混用时各自归位。
@@ -977,9 +974,9 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       '  ↳ [ ] bp2 [[fanchao]] — 断点任务',
     ].join('\n');
     const r = parseOpenTasks(md, 10, 'fanchao');
-    assert.deepEqual(r.rows.map((t) => t.id), ['a', 'b', 'bp2']);
-    assert.equal(r.rows.find((t) => t.id === 'a').note, '甲的断点');
-    assert.equal(r.rows.find((t) => t.id === 'b').note, '', '乙不该拿到 bp2 的断点');
+    assert.deepEqual(r.rows.map((t) => t.id), ['a', 'b']);
+    assert.equal(r.rows.find((t) => t.id === 'a').kids[0].text, '甲的断点');
+    assert.equal(r.rows.find((t) => t.id === 'b').kids[0].text, 'bp2 [[fanchao]] — 断点任务', '乙只该拿到自己的子项');
   });
 
   // [x] 的断点任务（刚 done）不再显示在待办里。
@@ -1071,7 +1068,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const data = {
       total: 2,
       rows: [
-        { state: '进行中', id: 'a', desc: '中文描述测试', note: '' },
+        { state: '进行中', id: 'a', desc: '中文描述测试', kids: [] },
         { state: '进行中', id: 'b', desc: 'x'.repeat(200), note: '很长的断点内容'.repeat(10) },
       ],
       hidden: 0,
@@ -1101,8 +1098,8 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const data = {
       total: 2,
       rows: [
-        { state: '进行中', id: 'a', desc: 'A', note: '' },
-        { state: '进行中', id: 'b', desc: 'B', note: 'B 的断点' },
+        { state: '进行中', id: 'a', desc: 'A', kids: [] },
+        { state: '进行中', id: 'b', desc: 'B', kids: [{ done: false, text: 'B 的断点' }] },
       ],
       hidden: 0,
     };
@@ -1112,16 +1109,16 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(taskLines[1].startsWith('└─'), `末条（带断点）应 └─: ${taskLines[1]}`);
   });
 
-  // ★ 2026-10-16 用户要求：面板是 todo.md 的只读视图，就该长成 todo 原貌 ——
-  //   每行前面带 `[ ]` 复选框（任务行 + 断点行）。曾只有 [状态] 标记，读起来不像待办列表。
-  test('★ 任务行与断点行都带 [ ] 复选框（对齐 todo.md 原貌）', async () => {
+  // ★ 2026-10-16 用户要求：面板是 todo.md 的只读视图 ——
+  //   任务行带 `[ ]`，子项（标准 md 嵌套）画成树线并带自己的 `[ ]`/`[x]`。
+  test('★ 任务行带 [ ]；子项画树线且带自己的复选框', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const fg = (c, s) => s;
     const data = {
       total: 2,
       rows: [
-        { state: '进行中', id: 'a', desc: 'A', note: 'A 的断点' },
-        { state: '滞留中', id: 'b', desc: 'B', note: '' },
+        { state: '进行中', id: 'a', desc: 'A', kids: [{ done: true, text: 'A 的子项一' }, { done: false, text: 'A 的子项二' }] },
+        { state: '滞留中', id: 'b', desc: 'B', kids: [] },
       ],
       hidden: 0,
     };
@@ -1130,12 +1127,19 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(taskLines.length, 2);
     for (const l of taskLines) {
       assert.ok(l.includes('[ ]'), `任务行必须有 [ ] 复选框: ${JSON.stringify(l)}`);
+      assert.ok(l.indexOf('[ ]') < l.indexOf('[进行中]') || l.indexOf('[ ]') < l.indexOf('[滞留中]'),
+        `[ ] 应在 [状态] 之前: ${JSON.stringify(l)}`);
     }
-    const noteLine = lines.find((l) => l.includes('A 的断点'));
-    assert.ok(noteLine.includes('[ ]'), `断点行也必须带 [ ]: ${JSON.stringify(noteLine)}`);
-    // 复选框在状态标记之前（先勾选框、再状态，与文件里 `- [ ] [进行中]` 同序）
-    assert.ok(taskLines[0].indexOf('[ ]') < taskLines[0].indexOf('[进行中]'),
-      `[ ] 应在 [状态] 之前: ${JSON.stringify(taskLines[0])}`);
+    // 两条子项都渲染，且带树线 ├─ / └─ 与各自的复选框
+    const kid1 = lines.find((l) => l.includes('A 的子项一'));
+    const kid2 = lines.find((l) => l.includes('A 的子项二'));
+    assert.ok(kid1 && kid2, `两条子项都要渲染:\n${lines.join('\n')}`);
+    assert.ok(kid1.includes('[x]'), `已完成的子项应显 [x]: ${JSON.stringify(kid1)}`);
+    assert.ok(kid2.includes('[ ]'), `未完成的子项应显 [ ]: ${JSON.stringify(kid2)}`);
+    assert.ok(kid1.includes('├─'), `多条子项的第一条用 ├─: ${JSON.stringify(kid1)}`);
+    assert.ok(kid2.includes('└─'), `最后一条子项用 └─: ${JSON.stringify(kid2)}`);
+    // 子项缩进在父任务下（父任务是 ├─，故子项行以 '│ ' 起）
+    assert.ok(kid1.startsWith('│ '), `子项应缩进在父任务下: ${JSON.stringify(kid1)}`);
   });
 
   test('上描边满宽（不得留余量，否则右侧缺一块）', async () => {
@@ -1143,7 +1147,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     // 用真 ANSI 包装模拟 pi 的 theme.fg
     const fg = (c, s) => `\x1b[38;5;240m${s}\x1b[0m`;
     const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
-    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', note: '' }], hidden: 0 };
+    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', kids: [] }], hidden: 0 };
     for (const w of [40, 80, 120]) {
       const line = renderPanelLines(data, 'me', w, fg, 0, '')[0];
       const got = [...strip(line)].length;
@@ -1173,8 +1177,8 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const data = {
       total: 2,
       rows: [
-        { state: '进行中', id: 'doing', desc: '干活', note: '' },
-        { state: '滞留中', id: 'wait', desc: '等着', note: '' },
+        { state: '进行中', id: 'doing', desc: '干活', kids: [] },
+        { state: '滞留中', id: 'wait', desc: '等着', kids: [] },
       ],
       hidden: 0,
     };
@@ -1188,7 +1192,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   test('动画：animPhase=-1 时完全不显示（开关作用）', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const fg = (c, s) => s;
-    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', note: '' }], hidden: 0 };
+    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', kids: [] }], hidden: 0 };
     const lines = renderPanelLines(data, 'me', 80, fg, -1);
     assert.ok(!/[○●]{3}/.test(lines.join('\n')), '关闭时不该出现动画符');
   });
@@ -1240,7 +1244,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   test('昵称：附在作者名后，窄宽度不溢出', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const fg = (c, s) => s;
-    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', note: '' }], hidden: 0 };
+    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', kids: [] }], hidden: 0 };
     const nick = '📞 听到电话铃响就窒息的接听恐惧症';
     const wide = renderPanelLines(data, 'fanchao', 200, fg, -1, nick)[1];
     assert.match(wide, /fanchao/, '应含作者名');
