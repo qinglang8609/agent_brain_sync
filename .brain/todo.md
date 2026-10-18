@@ -5,9 +5,8 @@
 ## Done
 
 ### 2026-10-18
-- [x] subtask-hierarchy-in-done-rest1 [[fanchao]] — 已实现：子任务未完成时拒绝 done；主 1.19.2 已发布（原 subtask-hierarchy-in-done 遗留） — 已完成 【落地】 (完成 2026-10-18)
+  - [x] 测试子项：故意不勾
 - [x] subtask-hierarchy-in-done [[fanchao]] — 子任务完成进 Done 后必须保持缩进挂在主任务下，不能丢层级 【落地】 (完成 2026-10-18 01a14cf9-1259-73)
-- [x] write-path-hardening-rest1 [[fanchao]] — 已补 index 链接区白名单 + log 裸散文白名单，613/613 全过。下一步：盘清全部写入通路，确保三文件写入只有一条收口。（原 write-path-hardening 遗留） — 已完成（数据修正：原为主任务的子项，被旧逻辑错误升格） 【落地】 (完成 2026-10-18)
 - [x] release-1.19.1-rest2 [[fanchao]] — 闸门四漏全修，629/629 过，已提交 31f9541（原 release-1.19.1 遗留） — 已完成（数据修正：原为主任务的子项，被旧逻辑错误升格） 【落地】 (完成 2026-10-18)
 - [x] release-1.19.1-rest1 [[fanchao]] — 源码已提交 31f9541，629/629 过（原 release-1.19.1 遗留） — 已完成（数据修正：原为主任务的子项，被旧逻辑错误升格） 【落地】 (完成 2026-10-18)
 - [x] mcp-restart-verify-rest1 [[fanchao]] — 临时子项A（原 mcp-restart-verify 遗留） 【否决】 (完成 2026-10-18)
