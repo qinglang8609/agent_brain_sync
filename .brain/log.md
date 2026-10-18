@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-10-18 11:43] [[fanchao]] note | 升级后必须重启宿主：MCP 服务在会话启动时加载进进程，装完新版仍调旧代码。实测这次 todo done 把子项搬进 Done（旧逻辑），而同一时刻 CLI 跑的是新逻辑。看到行为与源码不一致时，先确认调用方是哪个进程。
 ## [2026-10-18 11:24] [[fanchao]] note | 三文件是数据库表，闸门必须默认在场：靠 import 副作用注册格式校验，谁漏了 import 谁就是静默缺口。实测只 import lock.js 时裸散文直接写进 index.md。修法是懒加载自补 + 受管文件硬拒双保险。
 ## [2026-10-16 19:44] [[fanchao]] note | todo 子项格式定案：标准 Markdown 嵌套列表（2 空格缩进 + - [ ]），不搞自定义前缀。踩过的坑：① 校验闸门里任务行分支先 continue，导致缩进的 - [ ] 子项只受 TASK_LINE_MAX(400) 管，BREAKPOINT_MAX(200) 闸门走不到（300 字子项静默写入）；② done 归位只认 ↳ 前缀收集附属行，换格式后子项残留原区；③ 归档 count 用 /^\s*- \[x\]/ 把子项也算成任务；④ parseDoneUnits 里 isTaskLine 先命中，子项被当独立条目。共同点：缩进的 - [ ] 同时满足任务行与子项两个判据，凡按行的形态判定的地方都要先排子项。
 ## [2026-10-16 19:22] [[fanchao]] note | 排查 pi todo 面板「显示但缺任务」：真因不是面板 bug，而是 ~/.abs/config.json 的 user 被污染成 'audit'。userConfigPath() 优先读 ABS_CONFIG_DIR、回退 homedir()，而 Node 的 homedir() 读系统真实用户目录、**不受 HOME 环境变量影响** —— 沙盒测试只设 HOME 时 config set 会写进真实 ~/.abs/config.json。面板按 user 过滤作者，非本人且非无作者的任务即不可见。

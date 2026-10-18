@@ -1,15 +1,15 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] release-1.19.1 [[fanchao]] — 提交三文件闸门加固 + 发布 npm + 本地安装 (认领 2026-10-18 01a14cf9-1259-73)
-  - [ ] 源码已提交 31f9541，629/629 过
-  - [ ] 闸门四漏全修，629/629 过，已提交 31f9541
+- [ ] [进行中] release-1.19.1-rest1 [[fanchao]] — 源码已提交 31f9541，629/629 过（原 release-1.19.1 遗留）
+- [ ] [进行中] release-1.19.1-rest2 [[fanchao]] — 闸门四漏全修，629/629 过，已提交 31f9541（原 release-1.19.1 遗留）
+- [ ] [进行中] write-path-hardening-rest1 [[fanchao]] — 已补 index 链接区白名单 + log 裸散文白名单，613/613 全过。下一步：盘清全部写入通路，确保三文件写入只有一条收口。（原 write-path-hardening 遗留）
 
 ## Done
 
 ### 2026-10-18
+- [x] release-1.19.1 [[fanchao]] — 提交三文件闸门加固 + 发布 npm + 本地安装 【落地】 (完成 2026-10-18 01a14cf9-1259-73)
 - [x] write-path-hardening [[fanchao]] — 保证 index/log/todo 插入稳定，禁止脏字段与格式污染 【落地】 (完成 2026-10-18 01a14cf9-1259-73)
-  - [ ] 已补 index 链接区白名单 + log 裸散文白名单，613/613 全过。下一步：盘清全部写入通路，确保三文件写入只有一条收口。
 - [x] index-cleanup [[fanchao]] — 清理 index.md 里混入的无关内容 【落地】 (完成 2026-10-18 01a14cf9-1259-73)
 - [x] subtask-done-not-in-panel [[fanchao]] — 排查 todo 子项未完成但父任务已完成时，子项不显示在面板 【落地】 (完成 2026-10-18 01a14cf9-1259-73)
 
