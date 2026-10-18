@@ -3049,6 +3049,33 @@ describe('子任务未完成时拒绝 done', () => {
 
 // ---------- index 摘要 / log 正文的块级结构（2026-10-18 审查修复）----------
 // index 是表，摘要是一列纯文本；摘要写成列表/围栏/表格会把表结构搞坏。
+// 审查修复（2026-10-18）：摘要位置在 `- [[页名]] — ` 之后，是一行中间，
+// `+ ` / `* ` / `> ` / `1. ` 在这里不会真渲染成块级结构，都是人话开头。
+// 原判据把它们一起拒了（实测「+ 一点补充」被误拒）。
+describe('index 摘要：只拦真会破坏解析的结构符', () => {
+  const shape = async (d) => {
+    const { checkFileShape } = await import('../src/todo.js');
+    return checkFileShape('index.md', ['# 🗂 Graph Index', '', '## Sources', `- [[a]] — ${d}`, ''].join('\n'));
+  };
+  for (const d of ['+ 一点补充', '* 星号开头', '> 引用样式', '1. 第一步', '- 是减号还是列表，这里算文字？']) {
+    test(`放行：${d}`, async () => {
+      const bad = await shape(d);
+      if (d.startsWith('-')) {
+        // 以 `- ` 开头同形另一条条目开头，仍要拒（防粘条目）
+        assert.ok(bad.length > 0, `以 "- " 开头应拒: ${d}`);
+      } else {
+        assert.equal(bad.length, 0, `不该误拒: ${d} => ${JSON.stringify(bad)}`);
+      }
+    });
+  }
+  for (const d of ['- 列表项', '```js', '| a | b |', '## 标题']) {
+    test(`拒绝：${d}`, async () => {
+      const bad = await shape(d);
+      assert.ok(bad.length > 0, `应拒: ${d}`);
+    });
+  }
+});
+
 describe('index 摘要禁止携带块级 Markdown 结构', () => {
   const spec = { h1: '# 🗂 Graph Index', order: ['## Sources'] };
   const clean = '# 🗂 Graph Index\n\n## Sources\n- [[a]] — ok\n';
@@ -3056,7 +3083,6 @@ describe('index 摘要禁止携带块级 Markdown 结构', () => {
     ['列表项', '- 列表项'],
     ['代码围栏', '```js'],
     ['表格', '| a | b |'],
-    ['引用', '> 引用'],
     ['标题', '## 标题'],
     ['行中含围栏', '一句话 ```js'],
   ];
@@ -3153,5 +3179,36 @@ describe('孤儿子任务不吃存量豁免', () => {
     const ok = ['# 📋 Todo Board', '', '## Todo', '', '## Done', '', '### 2026-10-18',
       '- [x] 主任务 【落地】 (完成 2026-10-18)', '  - [x] 子项', ''].join('\n');
     assert.doesNotThrow(() => enforceBrainFormat(ok, spec, ok));
+  });
+});
+
+// ---------- load 不吞格式错误（2026-10-18 审查修复）----------
+// checkBrainShape 原来对 enforceBrainFormat 的拒绝 .catch(() => {}) 吞掉，
+// 于是含孤儿行的库跑 load 时退出码 0、无任何提示，文件也没动 ——
+// 开机第一入口沉默，用户以为库是健康的。
+describe('load 遇到无法自动归一的文件要报出来', () => {
+  test('含孤儿子任务的 todo.md：load 警告里点名具体问题行', async () => {
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo', '', '## Done', '', '### 2026-10-18',
+        '  - [x] 没有主项的子项', ''].join('\n'), 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.match(out, /未能自动归一/, `load 应报出归一失败:\n${out}`);
+    assert.match(out, /孤儿子任务/, `要点名具体问题:\n${out}`);
+  });
+
+  test('正常库跑 load 不出现这条警告', async () => {
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo', '- [ ] [进行中] P1 [[fc]] — 主', '  - [ ] 子', '', '## Done', ''].join('\n'), 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(!out.includes('未能自动归一'), `正常库不该报:\n${out}`);
+  });
+
+  test('只有标题非标准时，才出现「无头文件不自动改」这句提示', async () => {
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'index.md'), '随便一个标题\n\n## Concepts\n', 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.match(out, /无头文件不自动改/, out);
   });
 });

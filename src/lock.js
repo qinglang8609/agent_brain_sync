@@ -15,22 +15,17 @@ export class LockTimeout extends Error {}
 let formatGate = null;
 export function setFormatGate(fn) { formatGate = fn; }
 
-/** 三个受管文件名 —— 它们存在就是为了当“数据库表”，格式必须恒定。 */
-const MANAGED = new Set(['index.md', 'log.md', 'todo.md']);
-
 /** 懒加载闸门：**漏了 setFormatGate 就等于没闸门**，而注册是 import 副作用，
  *  谁少 import 一次 store.js 就静默裂开（2026-10-18 实测：只 import lock.js 时
  *  裸散文直接写进了 index.md）。故这里不信任外部注册，缺失时自己补上。
  *
- * 补不上（= store.js 没调 setFormatGate）就对受管文件硬拒：宁可写失败也不要格崩坏
- * ——写不进去能重试，写脏了没人知道。 */
+ * 返回 null 表示「该文件不归闸门管」（非受管文件，或闸门自己说不管）—— 原样写盘。
+ * 依赖：`store.js` 顶层无条件调 `setFormatGate`（见那里）。若那行被删，受管文件
+ * 会退回静默直写 —— 这是已知的单点，防它靠 review 不靠代码（加守卫就是给不可能发生的
+ * 情况多写 6 行，2026-10-18 审查定）。 */
 async function gateFor(file) {
   if (!formatGate) await import('./store.js'); // 它的模块顶层会调 setFormatGate
-  if (formatGate) return formatGate;
-  if (MANAGED.has(basename(file))) {
-    throw new Error(`✗ ${basename(file)} 是受管文件，但格式闸门未注册 —— 拒绝写入（防止格崩坏）`);
-  }
-  return null;
+  return formatGate;
 }
 const LOCK_WAIT_BASE_MS = 15;  // 指数退避起始重试间隔
 const LOCK_WAIT_MAX_MS = 150;  // 指数退避上限

@@ -259,7 +259,14 @@ export async function checkBrainShape(root) {
       if (next2 === cur) return SKIP;
       changed = r.fixed.length ? r.fixed : ['结构按标准重排'];
       return { text: next2 };
-    }).catch(() => {});
+    }).catch((e) => {
+      // 不能吞：load 是开机第一入口，静默跳过会让人以为库是健康的。
+      // 典型触发：文件里有孤儿子任务（真错，不修而报）。
+      // 只报**具体问题行**（以 `·` 开头的那些），不把整个错误头拼进去。
+      const msg = e && e.message ? e.message : '未知错误';
+      const detail = msg.split('\n').filter((x) => x.trim().startsWith('·')).map((x) => x.trim().slice(1).trim());
+      warn.push(`${file}: 未能自动归一 —— ${detail.length ? detail.join('; ') : msg.split('\n')[0]}`.slice(0, 200));
+    });
     if (changed.length) fixed.push(`${file}: ${changed.join('; ')}`);
     if (!knownH1) warn.push(`${file}: 标题非标准（读到 "${clip(l1, 24) || '(空)'}"）`);
   }
@@ -315,7 +322,10 @@ export async function cmdLoad({ dir }) {
       ...shape.fixed.map((a) => `  ✓ 已补: ${a}`),
       ...shape.warn.map((a) => `  ⚠ ${a}`),
     ];
-    if (shape.warn.length) rows.push('  （无头文件不自动改：结构可能整体脱轨，请手工对齐 .brain/ 模板）');
+    // 那句提示只适用于「标题非标准」：其他 warn（如格式不合规）说这句会误导。
+    if (shape.warn.some((a) => a.includes('标题非标准'))) {
+      rows.push('  （无头文件不自动改：结构可能整体脱轨，请手工对齐 .brain/ 模板）');
+    }
     sections.push('--- 文件形状核对 ---', ...rows, '');
   }
   // 未设姓名/姓名是占位名时开场就提醒 —— load 是开机第一屏，不在这里提，
@@ -986,7 +996,6 @@ async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
     let changed = false;
     let moved = null;
     const kept = [];
-    const leftBehind = [];
     const wantId = String(id).replace(/\u200b/g, '');
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
@@ -1012,15 +1021,9 @@ async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
         const head = withDoneKind(`${base}${tail} ${parts.join(' ')}`, kind);
         const bp = [];
         const leftover = [];
-        // 子项搬运：已勾选的随任务进 Done；**未勾选的不搬**，留在 Todo 区。
-        //
-        // 为何（2026-10-18 实测）：Done 区被 collapseDone 折叠成计数，搬进去即「看板里
-        // 消失」。实测 factory-docs-slim 就带着「待做六链」的 `- [ ]` 落地，那条待办
-        // 此后无处可寻，同时父任务盖着【落地】——看板与事实矛盾。
-        //
-        // 为何不是硬拦（A 方案被否）：`abs todo note` 写的子项与断点记录**同形**（都是
-        // `  - [ ] …`），无法从字段上区分「待办」与「过程记录」；硬拦会把所有带断点的
-        // 任务一起拦住（实测弄挂两条既有测试）。改为「不搬 + 点名」，信息不丢且不误伤。
+        // 子项搬运：**已勾选**的随任务进 Done；未勾选的不搬（下方直接拒）。
+        // 已勾的必须搬：否则任务进 Done 了、子项剩在原区，就是无主孤儿行，
+        // 重建分区时会被清掉（历史上就是这么丢过数据）。
         while (i + 1 < lines.length) {
           const nx = lines[i + 1];
           if (!nx.trim()) break;
@@ -1068,15 +1071,11 @@ async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
     }
     if (!changed || !moved) return SKIP;
     // 归位 + 按日期分组：insertDoneGrouped 一次重建 Done 区（新日期在前，未标日期归尾）
-    return { text: insertDoneGrouped(kept.join('\n'), moved), leftBehind };
+    return { text: insertDoneGrouped(kept.join('\n'), moved) };
   });
   return res === SKIP
     ? `[NO_MATCH] 未找到含 "${id}" 的未完成任务行`
-    : `✓ 已完成并归位 Done: ${id} 【${kind}】` +
-        (res.leftBehind?.length
-          ? `\n  ⚠ ${res.leftBehind.length} 条未勾子项留在 Todo 区（未跟入 Done，仍可在看板看到）：\n` +
-            res.leftBehind.map((p) => `    - [ ] ${p}`).join('\n')
-          : '');
+    : `✓ 已完成并归位 Done: ${id} 【${kind}】`;
 }
 
 // ---------- show: 查看 index/todo/log（只读面） ----------
