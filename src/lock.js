@@ -14,6 +14,24 @@ export class LockTimeout extends Error {}
  * 返回 null = 该文件不归闸门管；否则返回整理后的 text。 */
 let formatGate = null;
 export function setFormatGate(fn) { formatGate = fn; }
+
+/** 三个受管文件名 —— 它们存在就是为了当“数据库表”，格式必须恒定。 */
+const MANAGED = new Set(['index.md', 'log.md', 'todo.md']);
+
+/** 懒加载闸门：**漏了 setFormatGate 就等于没闸门**，而注册是 import 副作用，
+ *  谁少 import 一次 store.js 就静默裂开（2026-10-18 实测：只 import lock.js 时
+ *  裸散文直接写进了 index.md）。故这里不信任外部注册，缺失时自己补上。
+ *
+ * 补不上（= store.js 没调 setFormatGate）就对受管文件硬拒：宁可写失败也不要格崩坏
+ * ——写不进去能重试，写脏了没人知道。 */
+async function gateFor(file) {
+  if (!formatGate) await import('./store.js'); // 它的模块顶层会调 setFormatGate
+  if (formatGate) return formatGate;
+  if (MANAGED.has(basename(file))) {
+    throw new Error(`✗ ${basename(file)} 是受管文件，但格式闸门未注册 —— 拒绝写入（防止格崩坏）`);
+  }
+  return null;
+}
 const LOCK_WAIT_BASE_MS = 15;  // 指数退避起始重试间隔
 const LOCK_WAIT_MAX_MS = 150;  // 指数退避上限
 // 抢锁总预算：排队等锁的进程须依次排完。多进程高并发(CLI/MCP/hook 同刻抢一文件)下,
@@ -76,7 +94,14 @@ export async function editFile(file, mutator) {
     let write = typeof res === 'string' ? res : res && typeof res.text === 'string' ? res.text : null;
     // 格式闸门：所有写 index/todo/log 的路径（CLI/MCP/hook 共 ~15 处）都在此收口，
     // 不必逐个改调用点 —— 破坏格式的写入在这里被整理回标准形态（见 todo.js）。
-    if (write && formatGate) write = formatGate(file, write, current) ?? write;
+    //
+    // ★ 对三个受管文件，闸门**必须存在**：它们不是自由文本，是数据库表。
+    //   闸门缺失时以前会静默跳过（直写盘），现在改为自己补加载；补不上就硬拒，
+    //   宁可写失败也不要格崩坏——写不进去能重试，写脏了没人知道。
+    if (write) {
+      const gate = await gateFor(file);
+      if (gate) write = gate(file, write, current) ?? write;
+    }
     if (write && write !== current) {
       await fs.writeFile(file, write, 'utf8');
     }

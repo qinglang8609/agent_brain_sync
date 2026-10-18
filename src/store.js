@@ -56,9 +56,11 @@ export async function cmdInit({ dir }) {
 
 async function createSkeleton(root, brain) {
   for (const d of BRAIN_DIRS) await fs.mkdir(join(brain, d), { recursive: true });
-  await fs.writeFile(join(brain, 'index.md'), indexTemplate(), 'utf8');
-  await fs.writeFile(join(brain, 'log.md'), logTemplate(), 'utf8');
-  await fs.writeFile(join(brain, 'todo.md'), todoTemplate(), 'utf8');
+  // 走 editFile 而不是 fs.writeFile：三个文件是受管表，写入必须过同一道闸门
+  // （2026-10-18：原来直写盘，是个绕过口）。模板本身合法，闸门只做归一。
+  for (const [f, tpl] of [['index.md', indexTemplate], ['log.md', logTemplate], ['todo.md', todoTemplate]]) {
+    await editFile(join(brain, f), (cur) => (cur === null ? { text: tpl() } : SKIP));
+  }
   // 建完就提示设姓名 —— 否则用户一路到第一次 todo add 才撞墙，
   // 中间 init/load 都不提，根本不知道该设。
   const who = await getUser();
@@ -116,7 +118,8 @@ export async function cmdRepair({ dir }) {
     try {
       await fs.access(join(brain, f));
     } catch {
-      await fs.writeFile(join(brain, f), tpl(), 'utf8');
+      // 同 createSkeleton：补齐也走 editFile 的口子（已存在则 cur 非 null，不覆盖）
+      await editFile(join(brain, f), (cur) => (cur === null ? { text: tpl() } : SKIP));
       fixed.push(f);
     }
   }
@@ -983,6 +986,7 @@ async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
     let changed = false;
     let moved = null;
     const kept = [];
+    const leftBehind = [];
     const wantId = String(id).replace(/\u200b/g, '');
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
@@ -1007,28 +1011,65 @@ async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
         parts.push(`(完成 ${today()}${doneSid ? ' ' + doneSid : ''})`);
         const head = withDoneKind(`${base}${tail} ${parts.join(' ')}`, kind);
         const bp = [];
-        // 子项随任务一起搬运（标准 md：缩进的 `- [ ]`；旧格式 `↳ …` 也认）。
-        // 原实现只认 `↳`，换成标准 md 后子项会留在原区——即「任务走了子项没走」。
+        const leftover = [];
+        // 子项搬运：已勾选的随任务进 Done；**未勾选的不搬**，留在 Todo 区。
+        //
+        // 为何（2026-10-18 实测）：Done 区被 collapseDone 折叠成计数，搬进去即「看板里
+        // 消失」。实测 factory-docs-slim 就带着「待做六链」的 `- [ ]` 落地，那条待办
+        // 此后无处可寻，同时父任务盖着【落地】——看板与事实矛盾。
+        //
+        // 为何不是硬拦（A 方案被否）：`abs todo note` 写的子项与断点记录**同形**（都是
+        // `  - [ ] …`），无法从字段上区分「待办」与「过程记录」；硬拦会把所有带断点的
+        // 任务一起拦住（实测弄挂两条既有测试）。改为「不搬 + 点名」，信息不丢且不误伤。
         while (i + 1 < lines.length) {
           const nx = lines[i + 1];
           if (!nx.trim()) break;
           const kid = parseChild(nx);
-          if (kid && kid.indent > 0) bp.push(lines[++i]);
-          else if (nx.trimStart().startsWith('↳')) bp.push(lines[++i]);
-          else break;
+          if (kid && kid.indent > 0) {
+            // 无论勾没勾都要 i++（否则原地打转 —— 2026-10-18 实测 OOM）
+            const ch = lines[++i];
+            if (kid.done) bp.push(ch);
+            else leftover.push(kid.text);
+            continue;
+          }
+          if (nx.trimStart().startsWith('↳')) {
+            const ch = lines[++i];
+            if (/^\s*↳\s*\[ \]/.test(ch)) leftover.push(ch.trim().replace(/^\s*↳\s*\[ \]\s*/, ''));
+            else bp.push(ch);
+            continue;
+          }
+          break;
         }
         moved = [head, ...bp];
+        // 未勾子项升为独立任务留在 Todo 区：原地留着不行 —— 子项行一旦失去父任务，
+        // 重建分区时就是无主杂行（实测被清掉，待办静默消失）。
+        //
+        // ★ 2026-10-18 补：升格的行必须有**合法 id** 与**父任务线索**。
+        //   原来直接写 `- [ ] ${txt}`，实测 idOfTaskLine 会把正文开头的几个字当成 id
+        //   （`- [ ] [进行中] 子任务带 id ABC-1` → id="子任务带"），后续 `abs todo done`
+        //   靠 id 全等定位，于是变成靠句子前几个字匹配 —— 换个措辞就断，两条子项
+        //   开头相同时互相误命中。作者标记沿用父任务的，不另取名（拿不到就留空）。
+        const author = (l.match(/\[\[([^\]]+)\]\]/) || [])[1];
+        leftover.forEach((txt, k) => {
+          const restId = `${wantId}-rest${k + 1}`;
+          kept.push(`- [ ] [进行中] ${restId}${author ? ` [[${author}]]` : ''} — ${txt}（原 ${wantId} 遗留）`);
+        });
+        leftBehind.push(...leftover);
         continue;
       }
       kept.push(l);
     }
     if (!changed || !moved) return SKIP;
     // 归位 + 按日期分组：insertDoneGrouped 一次重建 Done 区（新日期在前，未标日期归尾）
-    return { text: insertDoneGrouped(kept.join('\n'), moved) };
+    return { text: insertDoneGrouped(kept.join('\n'), moved), leftBehind };
   });
   return res === SKIP
     ? `[NO_MATCH] 未找到含 "${id}" 的未完成任务行`
-    : `✓ 已完成并归位 Done: ${id} 【${kind}】`;
+    : `✓ 已完成并归位 Done: ${id} 【${kind}】` +
+        (res.leftBehind?.length
+          ? `\n  ⚠ ${res.leftBehind.length} 条未勾子项留在 Todo 区（未跟入 Done，仍可在看板看到）：\n` +
+            res.leftBehind.map((p) => `    - [ ] ${p}`).join('\n')
+          : '');
 }
 
 // ---------- show: 查看 index/todo/log（只读面） ----------

@@ -5,6 +5,10 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES, extractId } from '../src/todo.js';
@@ -492,17 +496,23 @@ describe('cmdTask', () => {
     assert.ok(t.includes(`完成 ${today()}`));
   });
 
-  test('done 归位时断点附属行随任务走，不残留原区 (trimStart bug)', async () => {
+  // 原意：修 trimStart bug —— 断点行不能「任务走了、断点剩在原区」。
+  // 2026-10-18 调整：未勾子项（含 note 写的断点）不再随迁 Done，而是升为 Todo 区的
+  // 独立任务。所以「不残留原区」仍成立，但落点变了：不是进 Done，是变成新任务。
+  test('done 归位时断点行不遗弃（升为独立任务，不残留孤儿行）', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'T-BP', note: '带断点任务' });
     await cmdTask({ dir: projectA, action: 'note', id: 'T-BP', note: '改到 store.js L40' });
     const r = await cmdTask({ dir: projectA, action: 'done', id: 'T-BP' });
     assert.ok(r.includes('✓'), r);
     const t = await readTodo(projectA);
-    const todaySec = t.split('## Today')[1]?.split('## ')[0] || '';
     const doneSec = t.split('## Done')[1] || '';
-    // 断点应随任务进 Done 区（Done 区内 T-BP 行下方）
-    assert.ok(!todaySec.includes('改到 store.js L40'), `断点不应残留在 Today 区:\n${todaySec}`);
-    assert.ok(doneSec.includes('改到 store.js L40'), `断点应随任务归位 Done:\n${doneSec}`);
+    const todoSec = t.split('## Todo')[1]?.split('## ')[0] || '';
+    // 内容不丢：作为独立任务留在 Todo 区（可继续追）
+    assert.ok(todoSec.includes('改到 store.js L40'), `未勾断点应升为独立任务留在 Todo 区:\n${todoSec}`);
+    assert.ok(!doneSec.includes('改到 store.js L40'), `未勾断点不该进 Done（会被折叠看不见）:\n${doneSec}`);
+    // 不能留成无主的缩进孤儿行（那会在重建分区时被清掉）
+    const orphan = todoSec.split('\n').filter((l) => /^\s+- \[[ x]\] 改到/.test(l));
+    assert.equal(orphan.length, 0, `不应有残留的缩进孤儿行: ${JSON.stringify(orphan)}`);
   });
 
   test('done 幂等: 重复 done 不再追加行', async () => {
@@ -1027,6 +1037,44 @@ describe('cmdTask blocked + note (实时断点)', () => {
     const t = await readTodo(projectA);
     const n = t.split('\n').filter((l) => l.includes('同一条')).length;
     assert.equal(n, 1, `同文子项只应有一条:\n${t}`);
+  });
+
+  // ★ 回归（2026-10-18 实测）：`abs todo done` 原来把孩子无条件一起搬进 Done 区，
+  //   包括还没勾的 `- [ ]`。Done 区被 collapseDone 折叠成计数 → 那条待办从此看板里消失，
+  //   父任务却盖了【落地】。实测 data: .agents/.brain/todo.md 的 factory-docs-slim。
+  //   改为：未勾子项不随迁，留在 Todo 区，并在结语里点名。
+  test('★ 未勾子项不随任务进 Done（否则待办被折叠后从此看不见）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TD-1', note: '做带子项的' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TD-1', note: '还没做完的子项' });
+    const r = await cmdTask({ dir: projectA, action: 'done', id: 'TD-1' });
+    assert.match(r, /已完成/, r);
+    assert.match(r, /未勾子项/, `结语应点名遗留子项: ${r}`);
+    const t = await readTodo(projectA);
+    // 任务进了 Done
+    const doneSec = t.split('## Done')[1] || '';
+    assert.ok(/\[x\].*TD-1/.test(doneSec), `任务应在 Done: ${t}`);
+    // 但未勾子项没跟进去，也没丢
+    assert.ok(!doneSec.includes('还没做完的子项'), `未勾子项不能进 Done: ${doneSec}`);
+    assert.ok(t.includes('还没做完的子项'), `未勾子项不能在看板上消失: ${t}`);
+    const todoSec = t.split('## Todo')[1]?.split('## ')[0] || '';
+    assert.ok(todoSec.includes('还没做完的子项'), `应留在 Todo 区: ${todoSec}`);
+  });
+
+  test('已勾子项随任务进 Done，不残留在 Todo 区', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TD-2', note: '做完了的' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TD-2', note: '做完的子项' });
+    // 手动把子项勾上（note 写的是未完成形态）
+    const f = join(projectA, '.brain', 'todo.md');
+    const before = await fs.readFile(f, 'utf8');
+    await fs.writeFile(f, before.replace('- [ ] 做完的子项', '- [x] 做完的子项'), 'utf8');
+    const r = await cmdTask({ dir: projectA, action: 'done', id: 'TD-2' });
+    assert.match(r, /已完成/, r);
+    assert.ok(!r.includes('未勾子项'), `无遗留时不该报遗留: ${r}`);
+    const t = await readTodo(projectA);
+    const doneSec = t.split('## Done')[1] || '';
+    assert.ok(doneSec.includes('做完的子项'), `已勾子项应随迁 Done: ${doneSec}`);
+    const todoSec = t.split('## Todo')[1]?.split('## ')[0] || '';
+    assert.ok(!todoSec.includes('做完的子项'), `已勾子项不应残留 Todo: ${todoSec}`);
   });
 
   // ★ 回归（2026-10-16 实测）：带子项的任务后面再 start，会在中间插一个空行。
@@ -1910,10 +1958,20 @@ describe('cmdWrapup + load 滞留 (A+B)', () => {
     assert.ok(load1.includes('上会话滞留'), load1);
     assert.ok(load1.includes('滞留任务'), load1);
     assert.ok(load1.includes('断点X'), load1);
-    // 把任务 done 了 → 再 load 滞留应消失（不再误报）
+    // 把任务 done 了 → 快照里的那个任务不应再被报为滞留。
+    // 2026-10-18 新语义：未勾子项（断点X）升为独立任务留在看板 → 它自己确实还没做完，
+    // 所以「滞留」仍会报，但报的是**新任务本身**，不再是原来那条 LA-1。
     await cmdTask({ dir: projectA, action: 'done', id: 'LA-1' });
     const load2 = await cmdLoad({ dir: projectA });
-    assert.ok(!load2.includes('上会话滞留'), `done 后不应再报滞留:\n${load2}`);
+    assert.ok(!load2.includes('滞留任务'), `done 后原任务不应再报滞留:\n${load2}`);
+  });
+
+  test('A: 无遗留子项时 done 后滞留完全消失', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LA-2', note: '干净任务' });
+    await cmdWrapup({ dir: projectA });
+    await cmdTask({ dir: projectA, action: 'done', id: 'LA-2' });
+    const load = await cmdLoad({ dir: projectA });
+    assert.ok(!load.includes('上会话滞留'), `无遗留时不应报滞留:\n${load}`);
   });
 
   test('A: 无 wrapup.log 时 load 正常不报滞留', async () => {
@@ -2825,5 +2883,193 @@ describe('格式闸门对 log.md 的写入无副作用', () => {
     for (const line of before.split('\n').filter((l) => l.startsWith('## ['))) {
       assert.ok(after.includes(line), `旧条目被改动: ${line}`);
     }
+  });
+});
+
+// ---------- index 链接区闸门（2026-10-18）----------
+// 真库实测：Sources 区被塞进 `场景：…` 散文段落、裸编号列表项、带 `## ` 前缀的摘要。
+// 根因：INDEX-ENTRY 只检查 `- ` 开头的行，不以 `- ` 开头的行全被放行。
+describe('index 链接区闸门（只放 `- [[页名]] — 一句话`）', () => {
+  const clean = [
+    '# 🗂 Graph Index', '', '## Rules', '', '> 硬规则一条。', '',
+    '## Concepts', '- [[a]] — 一句话描述', '',
+    '## Sources', '- [[s1]] — 一条来源', '',
+    '## Sessions', '',
+  ].join('\n');
+  const spec = { h1: '# 🗂 Graph Index', order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'] };
+
+  const cases = [
+    ['散文段落（真库实际污染形态）', '场景：6405 个下载包文件全量导入知识库，边导边优化存储…'],
+    ['裸编号列表项', '1. **卡片 id = n + nodes**'],
+    ['没跟描述的条目', '- [[bad]] 没有破折号'],
+  ];
+  for (const [name, dirty] of cases) {
+    test(`拒绝：${name}`, async () => {
+      const { enforceBrainFormat } = await import('../src/todo/structure.js');
+      const bad = clean.replace('## Sources\n- [[s1]] — 一条来源', `## Sources\n- [[s1]] — 一条来源\n\n${dirty}`);
+      assert.throws(() => enforceBrainFormat(bad, spec, clean), /格式不合规/);
+    });
+  }
+
+  test('拒绝：摘要带 `## ` 标题前缀（摘要取了页面首行）', async () => {
+    const { enforceBrainFormat } = await import('../src/todo/structure.js');
+    const bad = clean.replace('- [[s1]] — 一条来源', '- [[s1]] — ## 标题残留');
+    assert.throws(() => enforceBrainFormat(bad, spec, clean), /标题前缀/);
+  });
+
+  test('放行：正常新增一条', async () => {
+    const { enforceBrainFormat } = await import('../src/todo/structure.js');
+    const good = clean.replace('- [[s1]] — 一条来源', '- [[s1]] — 一条来源\n- [[s2]] — 另一条');
+    assert.doesNotThrow(() => enforceBrainFormat(good, spec, clean));
+  });
+
+  test('Rules 区不受链接形状约束（它放的是硬规则短句）', async () => {
+    const { enforceBrainFormat } = await import('../src/todo/structure.js');
+    const good = clean.replace('> 硬规则一条。', '> 硬规则一条。\n- 只写做过、跑过、测过的事实。');
+    assert.doesNotThrow(() => enforceBrainFormat(good, spec, clean));
+  });
+});
+
+// ---------- 三文件受管表：闸门不可绕过（2026-10-18）----------
+// 用户的定位很明确：index/log/todo 是数据库表，markdown 只是呈现层。
+// 表不能被"某个入口忘了注册校验"就写脏 —— 闸门必须默认在场。
+describe('三文件受管表：闸门默认生效，不依赖调用方 import', () => {
+  const brainOf = (proj) => join(proj, '.brain');
+
+  test('只 import lock.js（未注册闸门）也拦得住脏写入', async () => {
+    // ★ 必须在**子进程**里跑：本进程已经加载过 store.js，formatGate 早就不是空，
+    //   根本走不到「懒加载」分支 —— 那条路径就没被盖到（实测：拆掉懒加载测试仍绿）。
+    const proj = join(sandbox, 'gate-lockonly');
+    await fs.mkdir(join(proj, '.brain'), { recursive: true });
+    const p = join(brainOf(proj), 'index.md');
+    await fs.writeFile(p, '# 🗂 Graph Index\n\n## Sources\n- [[a]] — ok\n', 'utf8');
+    const script = `
+      const { editFile } = await import(${JSON.stringify(new URL('../src/lock.js', import.meta.url).href)});
+      try {
+        await editFile(${JSON.stringify(p)}, (c) => ({ text: c + '\\n裸散文段落\\n' }));
+        console.log('WROTE');
+      } catch (e) { console.log('REJECTED'); }
+    `;
+    const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '-e', script]);
+    assert.match(stdout, /REJECTED/, `未注册闸门时受管文件也不能被写脏（输出: ${stdout}）`);
+    const after = await fs.readFile(p, 'utf8');
+    assert.ok(!after.includes('裸散文段落'), `文件不该被改: ${after}`);
+    assert.ok(after.includes('- [[a]] — ok'), '原内容不该被动');
+  });
+
+  test('log.md 里的裸散文被拒（不只管 `## ` 行）', async () => {
+    const { enforceBrainFormat } = await import('../src/todo/structure.js');
+    const clean = ['# 🗒 Activity Log', '', '## Log', '', '## [2026-10-18 10:00] [[fc]] note | 一条', ''].join('\n');
+    const bad = clean + '\n这是一段没有条目标签的裸散文\n';
+    assert.throws(() => enforceBrainFormat(bad, { h1: '# 🗒 Activity Log', order: [] }, clean), /格式不合规/);
+  });
+
+  test('log.md 正常条目照常写入', async () => {
+    await cmdLog({ dir: projectA, title: '正常条目' });
+    const t = await fs.readFile(join(brainOf(projectA), 'log.md'), 'utf8');
+    assert.match(t, /^## \[\d{4}-\d{2}-\d{2}/m, t);
+  });
+
+  test('init 建的三个文件也过闸门（不再是直写盘）', async () => {
+    const proj = join(sandbox, 'gate-init');
+    await fs.mkdir(proj, { recursive: true });
+    await cmdInit({ dir: proj });
+    for (const f of ['index.md', 'log.md', 'todo.md']) {
+      const t = await fs.readFile(join(proj, '.brain', f), 'utf8');
+      assert.ok(t.trim().length > 0, `${f} 应非空`);
+    }
+  });
+});
+
+// ---------- 升格子项的 id 与来源（2026-10-18 审查修复）----------
+// 审查发现：未勾子项升为顶层任务时只写 `- [ ] ${txt}`，没有 id。
+// idOfTaskLine 于是把正文开头几个字当 id（实测 `子任务带 id ABC-1` → id="子任务带"），
+// 而 abs todo done 靠 id 全等定位 —— 换个措辞就断，两条子项开头相同还会互相误命中。
+describe('done 时升格的遗留子项：id 合法 + 来源可追溯', () => {
+  test('升格后 id 是 <父id>-restN，不是正文开头几个字', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'RS-1', note: '父任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'RS-1', note: '子任务带 id ABC-1' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'RS-1', note: '普通断点' });
+    await cmdTask({ dir: projectA, action: 'done', id: 'RS-1' });
+    const t = await readTodo(projectA);
+    const topLines = t.split('## Todo')[1].split('## Done')[0]
+      .split('\n').filter((l) => l.startsWith('- [ ]'));
+    assert.equal(topLines.length, 2, `应升格两条:\n${topLines.join('\n')}`);
+    const { idOfTaskLine } = await import('../src/todo.js');
+    const ids = topLines.map(idOfTaskLine);
+    assert.deepEqual(ids, ['RS-1-rest1', 'RS-1-rest2'], `id 必须是规范形态，实得: ${JSON.stringify(ids)}`);
+    // 正文里的 ABC-1 不能变成 id
+    assert.ok(!ids.includes('子任务带'), `不能拿正文当 id: ${ids}`);
+  });
+
+  test('升格后的行带「原 父id 遗留」线索，不丢上下文', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'RS-2', note: '另一个父任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'RS-2', note: '没收尾的事' });
+    await cmdTask({ dir: projectA, action: 'done', id: 'RS-2' });
+    const t = await readTodo(projectA);
+    assert.ok(/原 RS-2 遗留/.test(t), `升格行应标明来源:\n${t}`);
+  });
+
+  test('升格后的任务能按新 id 正常 done（闭环）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'RS-3', note: '父' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'RS-3', note: '遗留项' });
+    await cmdTask({ dir: projectA, action: 'done', id: 'RS-3' });
+    const r = await cmdTask({ dir: projectA, action: 'done', id: 'RS-3-rest1' });
+    assert.match(r, /已完成/, `升格任务应能按 id 完成: ${r}`);
+  });
+});
+
+// ---------- index 摘要 / log 正文的块级结构（2026-10-18 审查修复）----------
+// index 是表，摘要是一列纯文本；摘要写成列表/围栏/表格会把表结构搞坏。
+describe('index 摘要禁止携带块级 Markdown 结构', () => {
+  const spec = { h1: '# 🗂 Graph Index', order: ['## Sources'] };
+  const clean = '# 🗂 Graph Index\n\n## Sources\n- [[a]] — ok\n';
+  const bads = [
+    ['列表项', '- 列表项'],
+    ['代码围栏', '```js'],
+    ['表格', '| a | b |'],
+    ['引用', '> 引用'],
+    ['标题', '## 标题'],
+    ['行中含围栏', '一句话 ```js'],
+  ];
+  for (const [name, d] of bads) {
+    test(`拒绝摘要里的${name}`, async () => {
+      const { enforceBrainFormat } = await import('../src/todo/structure.js');
+      const bad = clean.replace('- [[a]] — ok', `- [[a]] — ok\n- [[b]] — ${d}`);
+      assert.throws(() => enforceBrainFormat(bad, spec, clean), /格式不合规/);
+    });
+  }
+
+  test('放行：含行内代码的正常摘要', async () => {
+    const { enforceBrainFormat } = await import('../src/todo/structure.js');
+    const good = clean.replace('- [[a]] — ok', '- [[a]] — ok\n- [[b]] — 一句正常话，含 `行内代码` 与数字 42');
+    assert.doesNotThrow(() => enforceBrainFormat(good, spec, clean));
+  });
+});
+
+describe('log 正文禁止代码围栏', () => {
+  test('含 ``` 的条目被拒', async () => {
+    const { enforceBrainFormat } = await import('../src/todo/structure.js');
+    const spec2 = { h1: '# 🗒 Activity Log', order: [] };
+    const clean = '# 🗒 Activity Log\n\n## Log\n\n## [2026-10-18 10:00] [[fc]] note | 正常\n';
+    const bad = clean + '\n## [2026-10-18 11:00] [[fc]] note | 带围栏 ```js\n';
+    assert.throws(() => enforceBrainFormat(bad, spec2, clean), /格式不合规/);
+  });
+});
+
+// 闸门返回 null = "这个文件不归我管"，editFile 应原样放行（`?? write` 兜底）。
+// 这条守住"闸门只对 index/log/todo 生效，不误伤 concepts/ 等自由页"。
+describe('闸门对非受管文件放行', () => {
+  test('concepts/ 下的自由页不受三文件格式约束', async () => {
+    const proj = join(sandbox, 'gate-free');
+    await fs.mkdir(join(proj, '.brain', 'concepts'), { recursive: true });
+    const p = join(proj, '.brain', 'concepts', 'free.md');
+    // 故意写成 index 会拒绝的形态（散文段落、代码围栏）
+    const body = '---\ntags: [concept]\n---\n\n# 自由页\n\n这是散文段落。\n\n```js\nconst a = 1;\n```\n';
+    await assert.doesNotReject(
+      () => editFile(p, () => ({ text: body })),
+      '自由页不该被三文件的格式闸门拦',
+    );
+    assert.equal(await fs.readFile(p, 'utf8'), body);
   });
 });
