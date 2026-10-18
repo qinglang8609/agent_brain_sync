@@ -8,6 +8,8 @@
 ## Done
 
 ### 2026-10-18
+- [x] mcp-restart-verify-rest1 [[fanchao]] — 临时子项A（原 mcp-restart-verify 遗留） 【否决】 (完成 2026-10-18)
+- [x] mcp-restart-verify [[fanchao]] — 重启后验证 MCP 进程已加载 1.19.1 新逻辑 【落地】 (完成 2026-10-18 01a14cf9-1259-73)
 - [x] release-1.19.1 [[fanchao]] — 提交三文件闸门加固 + 发布 npm + 本地安装 【落地】 (完成 2026-10-18 01a14cf9-1259-73)
 - [x] write-path-hardening [[fanchao]] — 保证 index/log/todo 插入稳定，禁止脏字段与格式污染 【落地】 (完成 2026-10-18 01a14cf9-1259-73)
 - [x] index-cleanup [[fanchao]] — 清理 index.md 里混入的无关内容 【落地】 (完成 2026-10-18 01a14cf9-1259-73)
