@@ -185,13 +185,21 @@ export function enforceBrainFormat(text, spec, prev) {
     const tLines = t.split('\n');
     const bad = checkFileShape(fname, t).filter(
       (it) => it.code !== 'STRAY-BLANK-LINE' &&
-              !(prevSig !== null && prevSig.has(sigOfLine(tLines[it.line - 1] || ''))),
+              // ★ 孤儿缩进行**不吃存量豁免**（2026-10-18 用户要求）。
+              //   超长断点/奇怪条目放行存量是因为「没有安全的自动修法」；
+              //   而孤儿行是**确定性的坏数据**（子项没有父项，语义已丢），放行 = 让损坏持续。
+              //   宁可写不进去让人看见，也不要静默接受。
+              (it.code === 'TODO-ORPHAN-CHILD' ||
+               !(prevSig !== null && prevSig.has(sigOfLine(tLines[it.line - 1] || '')))),
     );
     if (bad.length) {
+      const onlyOrphan = bad.every((it) => it.code === 'TODO-ORPHAN-CHILD');
       throw new Error(
         `✗ ${fname} 格式不合规（写入被拒）：\n` +
         bad.map((it) => `  · ${it.msg}`).join('\n') +
-        `\n  出路：内容归入现有标签，或走对应入口（页 → concepts/ 等子目录 + index 登记；流水 → abs log；经验 → abs note）。`,
+        (onlyOrphan
+          ? `\n  出路：子任务必须挂在主任务下。给删掉的父任务行恢复一行任务行，或把那几条子项一起删掉。`
+          : `\n  出路：内容归入现有标签，或走对应入口（页 → concepts/ 等子目录 + index 登记；流水 → abs log；经验 → abs note）。`),
       );
     }
   };

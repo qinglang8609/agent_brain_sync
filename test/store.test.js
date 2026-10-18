@@ -3133,3 +3133,25 @@ describe('孤儿子任务必须被检出', () => {
     assert.ok(!(await shape(t)).includes('TODO-ORPHAN-CHILD'), `上溯跳过空行: ${JSON.stringify(await shape(t))}`);
   });
 });
+
+// 孤儿行不吃存量豁免（2026-10-18 用户要求）：
+// 超长断点放行存量是因为没有安全自动修法；孤儿行是确定性的坏数据，
+// 放行等于让损坏持续 —— 宁可写不进去让人看见。
+describe('孤儿子任务不吃存量豁免', () => {
+  test('写入前就存在的孤儿子项，仍会阻止写入', async () => {
+    const { enforceBrainFormat } = await import('../src/todo/structure.js');
+    const spec = { h1: '# 📋 Todo Board', order: ['## Todo', '## Done'] };
+    const dirty = ['# 📋 Todo Board', '', '## Todo', '', '## Done', '', '### 2026-10-18',
+      '  - [x] 早就存在的孤儿', '- [x] 正常 【落地】 (完成 2026-10-18)', ''].join('\n');
+    // current = 同一份脏内容 → prevSig 会包含那行，但孤儿仍要拒
+    assert.throws(() => enforceBrainFormat(dirty, spec, dirty), /孤儿子任务/);
+  });
+
+  test('修好之后（把子项挂回主任务）就能写', async () => {
+    const { enforceBrainFormat } = await import('../src/todo/structure.js');
+    const spec = { h1: '# 📋 Todo Board', order: ['## Todo', '## Done'] };
+    const ok = ['# 📋 Todo Board', '', '## Todo', '', '## Done', '', '### 2026-10-18',
+      '- [x] 主任务 【落地】 (完成 2026-10-18)', '  - [x] 子项', ''].join('\n');
+    assert.doesNotThrow(() => enforceBrainFormat(ok, spec, ok));
+  });
+});
