@@ -1,7 +1,7 @@
 ---
 tags: [concept, node]
-updated: 2026-09-08
-status: draft
+updated: 2026-10-18
+status: active
 ---
 
 # 概念：todo 行操作必须整文件重写保序

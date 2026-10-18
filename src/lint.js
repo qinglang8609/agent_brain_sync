@@ -331,8 +331,12 @@ async function checkFiles(vault, pages, indexLinks) {
     if (doneLines > DONE_MAX) {
       issues.push(`DONE-PILED-UP: Done 区 ${doneLines} 行 > ${DONE_MAX}; 跑 \`abs todo archive\` 迁出旧日期组`);
     }
+    // ★ 只数**顶格**任务行（缩进 0）—— 子项也是 `- [x]`，带 \s* 会把子项一起算进来，
+    //   于是「父任务有结语有日期、子项没有」也被报成缺结语（实测 DONE-NO-KIND 误报
+    //   一条子项 `- [x] 不急，等下次碰这块再拆`）。与 archive.js 数任务时的判据保持一致。
+    const isTopDone = (l) => /^- \[x\]/.test(l);
     const doneBody = todoTxt.split('\n').slice(di + 1);
-    const noKind = doneBody.filter((l) => /^\s*- \[x\]/.test(l) && !doneKindOf(l));
+    const noKind = doneBody.filter((l) => isTopDone(l) && !doneKindOf(l));
     if (noKind.length) {
       const sample = (noKind[0].match(/- \[x\] (\S+)/) || [, '?'])[1];
       issues.push(
@@ -340,7 +344,7 @@ async function checkFiles(vault, pages, indexLinks) {
         `逐条补 \`--as 落地|否决|仅方案\`（新条目：abs todo done <id> --as …）`,
       );
     }
-    const noDate = doneBody.filter((l) => /^\s*- \[x\]/.test(l) && !doneDateOf(l));
+    const noDate = doneBody.filter((l) => isTopDone(l) && !doneDateOf(l));
     if (noDate.length) {
       const sample = (noDate[0].match(/- \[x\] (\S+)/) || [, '?'])[1];
       issues.push(

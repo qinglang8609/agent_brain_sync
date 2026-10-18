@@ -1,7 +1,7 @@
 ---
 tags: [concept, 文档, 重构]
-updated: 2026-09-08
-status: draft
+updated: 2026-10-18
+status: active
 ---
 
 # 概念：skill 以旧文档为基底重写时，旧方法会残留成悬空引用

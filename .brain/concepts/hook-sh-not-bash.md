@@ -1,7 +1,7 @@
 ---
 tags: [concept, shell]
-updated: 2026-09-08
-status: draft
+updated: 2026-10-18
+status: active
 ---
 
 # 概念：hook 脚本 shebang 与语法必须同方言

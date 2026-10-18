@@ -1,8 +1,8 @@
 ---
 tags: [concept, 守卫, hook, 非交互, 向后兼容]
 author: fanchao
-updated: 2026-09-12
-status: draft
+updated: 2026-10-18
+status: active
 ---
 
 # 加前置守卫前，先问「谁在非交互地调我」

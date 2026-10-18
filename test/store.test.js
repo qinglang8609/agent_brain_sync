@@ -2288,6 +2288,19 @@ describe('Done 结语契约', () => {
     assert.ok(out.includes('1 条缺结语'), `应只报 1 条(已标的不算): ${out}`);
   });
 
+  // 回归(2026-10-18 实测): 判据原来带 \s*，缩进的子项 `  - [x] …` 也被算成 Done 条目。
+  // 于是「父任务有结语有日期、其下子项没有」被误报成缺结语/缺日期（真库实测报了一对）。
+  test('lint: Done 区的缩进子项不算独立条目（不报 DONE-NO-KIND/DATE）', async () => {
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo', '', '## Done', '', '### 2026-10-16', '',
+       '- [x] P-1 — 父任务 【落地】 (完成 2026-10-16)',
+       '  - [x] 一条没有结语也没有日期的子项', ''].join('\n'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!out.includes('DONE-NO-KIND'), `子项不该被算成缺结语的条目:\n${out}`);
+    assert.ok(!out.includes('DONE-NO-DATE'), `子项不该被算成缺日期的条目:\n${out}`);
+  });
+
   test('lint: Done 条目全带结语时不报', async () => {
     await fs.mkdir(join(projectA, '.brain'), { recursive: true });
     await fs.writeFile(join(projectA, '.brain', 'todo.md'),
