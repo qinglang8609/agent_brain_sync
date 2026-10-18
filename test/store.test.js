@@ -3101,3 +3101,35 @@ describe('闸门对非受管文件放行', () => {
     assert.equal(await fs.readFile(p, 'utf8'), body);
   });
 });
+
+// ---------- 孤儿缩进（2026-10-18 实测）----------
+// 手动清理 Done 区时只删了父任务行、留下它的 `  - [x] 子项`，看板上出现
+// 一条"没有主项的子项" —— 而 checkFileShape 报 0 违规、lint 说健康。
+// 子任务靠缩进表达归属，离开父任务就没意义，属硬错。
+describe('孤儿子任务必须被检出', () => {
+  const shape = async (t) => (await import('../src/todo.js')).checkFileShape('todo.md', t).map((x) => x.code);
+
+  test('检出：缩进的子项上方没有任务行', async () => {
+    const t = ['# 📋 Todo Board', '', '## Todo', '', '## Done', '', '### 2026-10-18',
+      '  - [x] 孤儿', '- [x] 正常 【落地】 (完成 2026-10-18)', ''].join('\n');
+    assert.ok((await shape(t)).includes('TODO-ORPHAN-CHILD'), `应检出孤儿: ${JSON.stringify(await shape(t))}`);
+  });
+
+  test('不误报：子项挂在顶层主任务下', async () => {
+    const t = ['# 📋 Todo Board', '', '## Todo', '- [ ] [进行中] P1 [[fc]] — 主',
+      '  - [ ] 子一', '  - [ ] 子二', '', '## Done', ''].join('\n');
+    assert.ok(!(await shape(t)).includes('TODO-ORPHAN-CHILD'), `不该误报: ${JSON.stringify(await shape(t))}`);
+  });
+
+  test('不误报：旧格式一等任务 `↳ [ ]` 下面是合法子项', async () => {
+    const t = ['# 📋 Todo Board', '', '## Todo',
+      '  ↳ [ ] [进行中] bp2 [[fc]] — 旧形态任务', '  - [ ] 挂在它下面', '', '## Done', ''].join('\n');
+    assert.ok(!(await shape(t)).includes('TODO-ORPHAN-CHILD'), `旧格式任务也是父项: ${JSON.stringify(await shape(t))}`);
+  });
+
+  test('不误报：空行分隔不影响判定', async () => {
+    const t = ['# 📋 Todo Board', '', '## Todo', '- [ ] [进行中] P1 [[fc]] — 主', '',
+      '  - [ ] 隔了个空行的子项', '', '## Done', ''].join('\n');
+    assert.ok(!(await shape(t)).includes('TODO-ORPHAN-CHILD'), `上溯跳过空行: ${JSON.stringify(await shape(t))}`);
+  });
+});

@@ -77,6 +77,36 @@ export function checkFileShape(file, text, { lintMode = false } = {}) {
       }
     }
   }
+  // 孤儿缩进行：缩进的任务行（子任务）上方必须紧跟着一条任务行。
+  //
+  // 为何要这个（2026-10-18 实测）：我手动清理 Done 区时只删了父任务行、
+  // 留下了它的 `  - [x] 测试子项`，于是看板上出现一条“没有主项的子项”
+  // —— 而当时 checkFileShape 报 0 违规，lint 也说健康，没人拦得住。
+  // 现实中它会来自：手改文件、父任务行被删、分区重建时父任务被搬走。
+  // 子任务离开父任务就没有意义（它靠缩进表达归属），所以这是硬错。
+  if (file === 'todo.md') {
+    for (let i = 0; i < lines.length; i++) {
+      if (!/^\s+- \[[ x]\]/.test(lines[i])) continue;
+      // 往上找最近的非空行
+      let p = i - 1;
+      while (p >= 0 && !lines[p].trim()) p--;
+      const prev = p >= 0 ? lines[p] : null;
+      // 父行可以是：顶层任务 `- [x]`、子任务 `  - [x]`、或旧格式一等任务 `  ↳ [ ] …`
+      // （后者缩进是历史形态，它本身是任务不是子项 —— 实测漏认会把合法数据误判成孤儿）。
+      const ok = prev !== null && (
+        /^- \[[ x]\]/.test(prev) ||
+        /^\s+- \[[ x]\]/.test(prev) ||
+        /^\s*↳\s*\[[ x]\]/.test(prev)
+      );
+      if (!ok) {
+        issues.push({
+          code: 'TODO-ORPHAN-CHILD',
+          line: i + 1,
+          msg: `todo.md:${i + 1} 孤儿子任务（「${lines[i].trim().slice(0, 40)}」上方没有主任务）—— 子任务靠缩进表达归属，删父任务时要连子项一起删`,
+        });
+      }
+    }
+  }
   // 条目之间的空行（与写入闸门 assertNoStrayBlank 同判据）。
   // lint 只能「报」，不能抛 —— 体检不能因格式坏而挂。
   const isEntryLine = (l) => /^-\s/.test(l) || /^#{1,3}\s+\[/.test(l);
