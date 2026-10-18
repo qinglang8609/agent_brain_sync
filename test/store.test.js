@@ -499,20 +499,21 @@ describe('cmdTask', () => {
   // 原意：修 trimStart bug —— 断点行不能「任务走了、断点剩在原区」。
   // 2026-10-18 调整：未勾子项（含 note 写的断点）不再随迁 Done，而是升为 Todo 区的
   // 独立任务。所以「不残留原区」仍成立，但落点变了：不是进 Done，是变成新任务。
-  test('done 归位时断点行不遗弃（升为独立任务，不残留孤儿行）', async () => {
+  // 2026-10-18：note 写下的行也是子任务，同样受"子任务未完成不许 done"约束。
+  // 本测试原本验的是 trimStart bug（断点不残留在原区），现在改为：
+  // 有未勾断点时拒绝 done；勾掉后 done，断点随任务进 Done 且内容不丢。
+  test('带未勾断点时拒绝 done；勾掉后随任务进 Done 且不残留原区', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'T-BP', note: '带断点任务' });
     await cmdTask({ dir: projectA, action: 'note', id: 'T-BP', note: '改到 store.js L40' });
+    await assert.rejects(() => cmdTask({ dir: projectA, action: 'done', id: 'T-BP' }), /子任务未完成/);
+    await cmdTask({ dir: projectA, action: 'bp-done', id: 'T-BP' });
     const r = await cmdTask({ dir: projectA, action: 'done', id: 'T-BP' });
     assert.ok(r.includes('✓'), r);
     const t = await readTodo(projectA);
     const doneSec = t.split('## Done')[1] || '';
     const todoSec = t.split('## Todo')[1]?.split('## ')[0] || '';
-    // 内容不丢：作为独立任务留在 Todo 区（可继续追）
-    assert.ok(todoSec.includes('改到 store.js L40'), `未勾断点应升为独立任务留在 Todo 区:\n${todoSec}`);
-    assert.ok(!doneSec.includes('改到 store.js L40'), `未勾断点不该进 Done（会被折叠看不见）:\n${doneSec}`);
-    // 不能留成无主的缩进孤儿行（那会在重建分区时被清掉）
-    const orphan = todoSec.split('\n').filter((l) => /^\s+- \[[ x]\] 改到/.test(l));
-    assert.equal(orphan.length, 0, `不应有残留的缩进孤儿行: ${JSON.stringify(orphan)}`);
+    assert.ok(doneSec.includes('改到 store.js L40'), `断点应随任务进 Done:\n${doneSec}`);
+    assert.ok(!todoSec.includes('改到 store.js L40'), `断点不应残留在 Todo 区:\n${todoSec}`);
   });
 
   test('done 幂等: 重复 done 不再追加行', async () => {
@@ -1043,21 +1044,19 @@ describe('cmdTask blocked + note (实时断点)', () => {
   //   包括还没勾的 `- [ ]`。Done 区被 collapseDone 折叠成计数 → 那条待办从此看板里消失，
   //   父任务却盖了【落地】。实测 data: .agents/.brain/todo.md 的 factory-docs-slim。
   //   改为：未勾子项不随迁，留在 Todo 区，并在结语里点名。
-  test('★ 未勾子项不随任务进 Done（否则待办被折叠后从此看不见）', async () => {
+  // 2026-10-18 用户定：主子都是任务，子任务没完成就不许 done。
+  // 原来的做法（未勾子项随父进 Done）会让它在折叠区看不见 —— 那是错的，
+  // 现在改为直接拒绝，让人先勾完或先删。
+  test('★ 子项没做完就不许 done（拒绝，不动文件）', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'TD-1', note: '做带子项的' });
     await cmdTask({ dir: projectA, action: 'note', id: 'TD-1', note: '还没做完的子项' });
-    const r = await cmdTask({ dir: projectA, action: 'done', id: 'TD-1' });
-    assert.match(r, /已完成/, r);
-    assert.match(r, /未勾子项/, `结语应点名遗留子项: ${r}`);
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'done', id: 'TD-1' }),
+      /子任务未完成/,
+    );
     const t = await readTodo(projectA);
-    // 任务进了 Done
-    const doneSec = t.split('## Done')[1] || '';
-    assert.ok(/\[x\].*TD-1/.test(doneSec), `任务应在 Done: ${t}`);
-    // 但未勾子项没跟进去，也没丢
-    assert.ok(!doneSec.includes('还没做完的子项'), `未勾子项不能进 Done: ${doneSec}`);
-    assert.ok(t.includes('还没做完的子项'), `未勾子项不能在看板上消失: ${t}`);
-    const todoSec = t.split('## Todo')[1]?.split('## ')[0] || '';
-    assert.ok(todoSec.includes('还没做完的子项'), `应留在 Todo 区: ${todoSec}`);
+    assert.ok(t.includes('还没做完的子项'), `子项不能丢: ${t}`);
+    assert.ok(/\[ \].*TD-1/.test(t), `任务应仍在 Todo 区（未完成）: ${t}`);
   });
 
   test('已勾子项随任务进 Done，不残留在 Todo 区', async () => {
@@ -1959,8 +1958,8 @@ describe('cmdWrapup + load 滞留 (A+B)', () => {
     assert.ok(load1.includes('滞留任务'), load1);
     assert.ok(load1.includes('断点X'), load1);
     // 把任务 done 了 → 快照里的那个任务不应再被报为滞留。
-    // 2026-10-18 新语义：未勾子项（断点X）升为独立任务留在看板 → 它自己确实还没做完，
-    // 所以「滞留」仍会报，但报的是**新任务本身**，不再是原来那条 LA-1。
+    // 2026-10-18：子任务（断点X）没勾时不许 done，先勾掉它再完成。
+    await cmdTask({ dir: projectA, action: 'bp-done', id: 'LA-1' });
     await cmdTask({ dir: projectA, action: 'done', id: 'LA-1' });
     const load2 = await cmdLoad({ dir: projectA });
     assert.ok(!load2.includes('滞留任务'), `done 后原任务不应再报滞留:\n${load2}`);
@@ -2994,41 +2993,57 @@ describe('三文件受管表：闸门默认生效，不依赖调用方 import', 
   });
 });
 
-// ---------- 升格子项的 id 与来源（2026-10-18 审查修复）----------
-// 审查发现：未勾子项升为顶层任务时只写 `- [ ] ${txt}`，没有 id。
-// idOfTaskLine 于是把正文开头几个字当 id（实测 `子任务带 id ABC-1` → id="子任务带"），
-// 而 abs todo done 靠 id 全等定位 —— 换个措辞就断，两条子项开头相同还会互相误命中。
-describe('done 时升格的遗留子项：id 合法 + 来源可追溯', () => {
-  test('升格后 id 是 <父id>-restN，不是正文开头几个字', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'RS-1', note: '父任务' });
-    await cmdTask({ dir: projectA, action: 'note', id: 'RS-1', note: '子任务带 id ABC-1' });
-    await cmdTask({ dir: projectA, action: 'note', id: 'RS-1', note: '普通断点' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'RS-1' });
-    const t = await readTodo(projectA);
-    const topLines = t.split('## Todo')[1].split('## Done')[0]
-      .split('\n').filter((l) => l.startsWith('- [ ]'));
-    assert.equal(topLines.length, 2, `应升格两条:\n${topLines.join('\n')}`);
-    const { idOfTaskLine } = await import('../src/todo.js');
-    const ids = topLines.map(idOfTaskLine);
-    assert.deepEqual(ids, ['RS-1-rest1', 'RS-1-rest2'], `id 必须是规范形态，实得: ${JSON.stringify(ids)}`);
-    // 正文里的 ABC-1 不能变成 id
-    assert.ok(!ids.includes('子任务带'), `不能拿正文当 id: ${ids}`);
+// ---------- 主子都是任务：子任务未完成不许 done（2026-10-18 用户定）----------
+// 规则：主任务与子任务处理方式一样，子任务也是任务。
+// 只有主任务和子任务都完成，主任务才能经 done。
+// 历史：前四版都错（随父进 Done=被折叠吞掉 / 升格=用户否 / 占位任务=无中生有 /
+// 原地不管=无主杂行被清掉），正确的做法是不替用户决定。
+describe('子任务未完成时拒绝 done', () => {
+  test('拒绝：有未勾子任务时不能 done，且文件一字不动', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LZ-1', note: '主任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LZ-1', note: '子任务甲' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LZ-1', note: '子任务乙' });
+    const before = await readTodo(projectA);
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'done', id: 'LZ-1' }),
+      /子任务未完成/,
+      '有未勾子任务时必须拒绝',
+    );
+    const after = await readTodo(projectA);
+    assert.equal(after, before, `拒绝时文件不该有任何改动:\n${after}`);
   });
 
-  test('升格后的行带「原 父id 遗留」线索，不丢上下文', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'RS-2', note: '另一个父任务' });
-    await cmdTask({ dir: projectA, action: 'note', id: 'RS-2', note: '没收尾的事' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'RS-2' });
-    const t = await readTodo(projectA);
-    assert.ok(/原 RS-2 遗留/.test(t), `升格行应标明来源:\n${t}`);
+  test('报错要点名是哪几条没完成', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LZ-2', note: '主任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LZ-2', note: '还没做的事A' });
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'done', id: 'LZ-2' }),
+      /还没做的事A/,
+      '报错里要能看见具体是哪条',
+    );
   });
 
-  test('升格后的任务能按新 id 正常 done（闭环）', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'RS-3', note: '父' });
-    await cmdTask({ dir: projectA, action: 'note', id: 'RS-3', note: '遗留项' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'RS-3' });
-    const r = await cmdTask({ dir: projectA, action: 'done', id: 'RS-3-rest1' });
-    assert.match(r, /已完成/, `升格任务应能按 id 完成: ${r}`);
+  test('子任务全勾后才能 done，且进 Done 后子任务缩进保留', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LZ-3', note: '主任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LZ-3', note: '子任务一' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LZ-3', note: '子任务二' });
+    await cmdTask({ dir: projectA, action: 'bp-done', id: 'LZ-3', n: 1 });
+    await cmdTask({ dir: projectA, action: 'bp-done', id: 'LZ-3', n: 2 });
+    const r = await cmdTask({ dir: projectA, action: 'done', id: 'LZ-3' });
+    assert.match(r, /已完成/, r);
+    const t = await readTodo(projectA);
+    const doneSec = t.split('## Done')[1];
+    assert.match(doneSec, /- \[x\] LZ-3/, `主任务应在 Done:\n${doneSec}`);
+    // 子任务仍缩进挂在主任务下（层级不丢）
+    const kids = doneSec.split('\n').filter((l) => /^\s+- \[x\]/.test(l));
+    assert.equal(kids.length, 2, `两条子任务都要缩进保留:\n${doneSec}`);
+    assert.ok(kids.every((k) => k.startsWith('  - [x] ')), `必须是 2 空格缩进: ${JSON.stringify(kids)}`);
+  });
+
+  test('没有子任务时照常 done（不误拦）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LZ-4', note: '干净任务' });
+    const r = await cmdTask({ dir: projectA, action: 'done', id: 'LZ-4' });
+    assert.match(r, /已完成/, r);
   });
 });
 

@@ -1041,20 +1041,27 @@ async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
           break;
         }
         moved = [head, ...bp];
-        // 未勾子项升为独立任务留在 Todo 区：原地留着不行 —— 子项行一旦失去父任务，
-        // 重建分区时就是无主杂行（实测被清掉，待办静默消失）。
+        // 还有未勾子项就**不许 done**（2026-10-18 用户定）。
         //
-        // ★ 2026-10-18 补：升格的行必须有**合法 id** 与**父任务线索**。
-        //   原来直接写 `- [ ] ${txt}`，实测 idOfTaskLine 会把正文开头的几个字当成 id
-        //   （`- [ ] [进行中] 子任务带 id ABC-1` → id="子任务带"），后续 `abs todo done`
-        //   靠 id 全等定位，于是变成靠句子前几个字匹配 —— 换个措辞就断，两条子项
-        //   开头相同时互相误命中。作者标记沿用父任务的，不另取名（拿不到就留空）。
-        const author = (l.match(/\[\[([^\]]+)\]\]/) || [])[1];
-        leftover.forEach((txt, k) => {
-          const restId = `${wantId}-rest${k + 1}`;
-          kept.push(`- [ ] [进行中] ${restId}${author ? ` [[${author}]]` : ''} — ${txt}（原 ${wantId} 遗留）`);
-        });
-        leftBehind.push(...leftover);
+        // 规则：主任务与子任务都是任务，处理方式一样 —— 子任务也是看板上一行，
+        // 也要自己完成。只有主子全部完成，主任务才能经 done。
+        //
+        // 为何不自己搬：上四版的四种做法全被否定——
+        //   ① 随父任务进 Done（原实现）→ Done 区被 collapseDone 折叠成计数，
+        //      未勾子项进去即消失（实测 factory-docs-slim）
+        //   ② 升为顶层任务（<id>-restN）→ 用户：子任务不能升格
+        //   ③ 建占位主任务挂住 → 仍是无中生有，与 ② 同病
+        //   ④ 就这么留着不管 → 无主杂行，重建分区时被清掉
+        // 正确做法是**不替用户决定**：告诉他还有哪些没完成，让他先勾或先删。
+        if (leftover.length) {
+          throw new Error(
+            `✗ 任务 "${wantId}" 还有 ${leftover.length} 条子任务未完成，不能 done：\n` +
+              leftover.map((p) => `    - [ ] ${p}`).join('\n') +
+              `\n子任务也是任务，主子全部完成才能 done。先二选一：\n` +
+              `  • 做完了 → abs todo bp-done ${wantId}   （勾最后一条；指定第 N 条：bp-done ${wantId} --n N）\n` +
+              `  • 不做了 → 删掉那几行子项，再 abs todo done ${wantId}`,
+          );
+        }
         continue;
       }
       kept.push(l);
