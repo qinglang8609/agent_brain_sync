@@ -23,7 +23,7 @@ export function setFormatGate(fn) { formatGate = fn; }
  * 依赖：`store.js` 顶层无条件调 `setFormatGate`（见那里）。若那行被删，受管文件
  * 会退回静默直写 —— 这是已知的单点，防它靠 review 不靠代码（加守卫就是给不可能发生的
  * 情况多写 6 行，2026-10-18 审查定）。 */
-async function gateFor(file) {
+async function gateFor() {
   if (!formatGate) await import('./store.js'); // 它的模块顶层会调 setFormatGate
   return formatGate;
 }
@@ -94,7 +94,7 @@ export async function editFile(file, mutator) {
     //   闸门缺失时以前会静默跳过（直写盘），现在改为自己补加载；补不上就硬拒，
     //   宁可写失败也不要格崩坏——写不进去能重试，写脏了没人知道。
     if (write) {
-      const gate = await gateFor(file);
+      const gate = await gateFor();
       if (gate) write = gate(file, write, current) ?? write;
     }
     if (write && write !== current) {

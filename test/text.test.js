@@ -66,3 +66,37 @@ describe('slugOf — 文件名 slug', () => {
     assert.equal(slugOf('！！！'), '');   // 全标点 → 折叠后为空
   });
 });
+
+// 回归（2026-10-19）：clip/slugOf 原先用 s.slice(n) 按 UTF-16 code unit 切，
+// emoji（星平面字符，占两个 code unit）会被拦腰切开，写出半个代理对 → 文件里是乱码。
+describe('clip / slugOf — emoji 不被拦腰切开', () => {
+  // 半个代理对的正则：高代理后面没跟低代理，或低代理前面没有高代理
+  const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+
+  test('clip 在任意 n 下都不产生半个代理对', () => {
+    const s = '😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀';
+    for (const n of [1, 3, 5, 7, 13]) {
+      const r = clip(s, n);
+      assert.ok(!LONE_SURROGATE.test(r), `n=${n} 产生了半个代理对: ${JSON.stringify(r)}`);
+    }
+  });
+
+  test('clip 混排（中英 + emoji）也不切坏', () => {
+    for (const n of [1, 3, 5, 7]) {
+      const r = clip('ab😀cd😀ef😀gh', n);
+      assert.ok(!LONE_SURROGATE.test(r), `n=${n}: ${JSON.stringify(r)}`);
+    }
+  });
+
+  test('slugOf 也不切坏 emoji', () => {
+    const r = slugOf('😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀');
+    assert.ok(!LONE_SURROGATE.test(r), `产生了半个代理对: ${JSON.stringify(r)}`);
+  });
+
+  test('中文按字符数计长（未因改码点切而变成 double）', () => {
+    // 回归：改成按码点切后，n 的语义必须是「双字」，不能变成字节或 code unit
+    assert.equal(clip('一二三四五', 5), '一二三四五');
+    const r = clip('这是一句比较长的中文句子，用来验证在标点处断开的行为是否正确。后面还有。', 20);
+    assert.ok(r.endsWith('…') && r.length <= 21, `应收口在 20 字内: ${JSON.stringify(r)}`);
+  });
+});

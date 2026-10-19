@@ -27,11 +27,16 @@ export async function cmdNote({ dir, text, tags, when, impact, type }) {
   await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
   const srcDir = brainPath(root, 'sources');
   await fs.mkdir(srcDir, { recursive: true });
-  // 幂等: 同文本已落过就不再落一份（判据是内容包含，不看时间）
+  // 幂等: 同文本已落过就不再落一份。
+  // ★ 判据必须是**整条相等**，不是 `body.includes(clean)`（2026-10-19 实测修正）：
+  //   子串判据会把「新经验恰好是某条旧经验的子串」当成重复丢掉 —— 实测已落
+  //   "load 慢的根因在 matchPage 缓存" 后再 `note "缓存"`，直接被判「已落过」跳过，
+  //   内容永久丢失且只报一句「跳过重复」。比对落盘时写下的 `TITLE: <原文>` 整行。
+  const titleLine = `TITLE: ${clean}`;
   const existing = (await fs.readdir(srcDir).catch(() => [])).filter((f) => f.endsWith('.md'));
   for (const f of existing) {
     const body = await fs.readFile(join(srcDir, f), 'utf8').catch(() => '');
-    if (body.includes(clean)) {
+    if (body.split('\n').some((l) => l.trim() === titleLine)) {
       return `• 已落过同文本 → ${f} (跳过重复)`;
     }
   }
@@ -261,13 +266,19 @@ export async function cmdLog({ dir, title, kind = 'dev' }) {
   // 作者前置于 kind：`## [时间] @name dev | 内容`。
   // 一眼先看到谁做的（与 todo 行 `ID @name — 说明` 排版对齐）。
   const line = `## [${stamp}] ${atTag(who)} ${kind} | ${clean}`;
-  await editFile(p, (cur) => {
+  const res = await editFile(p, (cur) => {
     const text = cur ?? '# 🗒 Activity Log\n';
     // 倒序：新行插在标题后（若已是模板占位行则替换它）
     const lines = text.split('\n');
     const headerIdx = lines.findIndex((l) => l.startsWith('#'));
+    // ★ 幂等（2026-10-19 实测补）：同一分钟内同文重复调（cmdNote 结尾自动写一条 -
+    //   收尾又写一条 / 重试）会落成多行一模一样的流水。时间戳只到分钟，同段重写
+    //   就是完全意义上的重复记录。判据用整行相等，不靠计数。
+    if (lines.slice(headerIdx + 1).some((l) => l === line)) return SKIP;
     lines.splice(headerIdx + 1, 0, line);
     return { text: lines.join('\n') };
   });
+  // 重复时不报「✓ 已写入」—— 那是在说假话（用户会以为多了一条）。
+  if (res === SKIP) return `• 同一分钟已有同一内容，已跳过 → ${p}\n  ${line}`;
   return `✓ log → ${p}\n  ${line}`;
 }

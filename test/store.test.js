@@ -753,6 +753,20 @@ describe('board/load/status', () => {
 
 // ---------- log ----------
 describe('cmdLog', () => {
+  test('★ 同一分钟同文不重复落行（2026-10-19 实测 bug）', async () => {
+    // 原实现无条件 splice 插入 → cmdNote 结尾自动写一条 + 收尾又写一条时，
+    // log.md 落成多行一模一样的流水（时间戳只到分钟，同分钟重写就是重复记录）。
+    const before = (await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8'))
+      .split('\n').filter((l) => l.startsWith('## [')).length;
+    const one = await cmdLog({ dir: projectA, title: '同分钟去重探针' });
+    const two = await cmdLog({ dir: projectA, title: '同分钟去重探针' });
+    const after = (await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8'))
+      .split('\n').filter((l) => l.startsWith('## [')).length;
+    assert.ok(one.includes('✓'), `首次应真写入: ${one}`);
+    assert.ok(two.includes('已跳过'), `第二次应报跳过而不是谎报✓: ${two}`);
+    assert.equal(after - before, 1, `只应多一行，实际 ${after - before}`);
+  });
+
   test('追加一行且换行被清洗、超长在语义边界收口', async () => {
     await cmdLog({ dir: projectA, title: '[SessionStart]\nlong'.repeat(30) });
     const log = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
@@ -1399,6 +1413,24 @@ describe('cmdNote (经验实时暂存)', () => {
       if (b.includes('重复我')) dup++;
     }
     assert.equal(dup, 1, `同文本应只落一份, 实际 ${dup}`);
+  });
+
+  test('★ 子串不算重复（2026-10-19 实测 bug）：新经验只是旧经验的一段时必须照落', async () => {
+    // 原实现用 body.includes(clean) 判重 → 已落「某长句」后，再记它里面的一段
+    // 会被当成重复静默丢掉，内容永久丢失。用本轮唯一的长句/短句对避开前面用例的污染。
+    await cmdNote({ dir: projectA, text: '子串判重探针长长长长句' });
+    await cmdNote({ dir: projectA, text: '子串判重探针' });
+    const srcDir = join(projectA, '.brain', 'sources');
+    const bodies = [];
+    for (const f of await fs.readdir(srcDir)) {
+      bodies.push(await fs.readFile(join(srcDir, f), 'utf8'));
+    }
+    // ★ 断言必须用**整行相等**，不能 `b.includes('TITLE: 子串判重探针')`：
+    //   长串页写的是 `TITLE: 子串判重探针长长长长句`，它也包含那个前缀 ——
+    //   用 includes 会让这条测试在旧实现下也绿（实测踩到，同一个子串陷阱）。
+    const titles = bodies.flatMap((b) => b.split('\n').filter((l) => l.startsWith('TITLE: ')).map((l) => l.trim()));
+    assert.ok(titles.includes('TITLE: 子串判重探针'), `短的那条应独立成页；被误判成重复则这里会红（现有: ${titles.join(' | ')}）`);
+    assert.ok(titles.includes('TITLE: 子串判重探针长长长长句'), '长的那条也应在');
   });
 
   test('追加到 index Sources 区 + log 一行', async () => {

@@ -13,24 +13,28 @@ import { clip, slugOf } from './text.js';
 export { clip, slugOf } from './text.js';
 
 // 页面生命周期已拆到 page.js（2026-10-05）。
-// 必须【先 import 再 export】—— 只写 `export {x} from` 只是转发，本文件作用域里
-// 拿不到 x，内部调用会 ReferenceError（拆完先跑测试就抓到了这个）。
-import {
-  idOfPage, backfillPageId, statusOfPage, supersededByOf,
-  cmdSupersede, resolvePage, cmdReview, cmdResolve, collapseIndex,
-} from './page.js';
+// ★ 只用 `export {x} from` 转发 —— 本文件内部**不再**调用它们（2026-10-19 核对：
+//   11 个符号在 store.js 里除了 import/export 两行之外零出现）。
+//   历史注释说「必须先进 import 再 export」，那是拆分当时 idOfPage 等还在内部用的写法；
+//   现在它们已全部只在 page.js/note.js 内部使用，多留一份 import 就是死代码。
+//   若将来本文件又要内部调用某个符号，再单独 import 它（单独 import 才不触发 lint）。
 export {
   idOfPage, backfillPageId, PAGE_STATUS, statusOfPage, supersededByOf,
   cmdSupersede, resolvePage, cmdReview, cmdResolve, collapseIndex,
 } from './page.js';
+// 本文件内部真在调用的两个，必须**另行 import**（`export {x} from` 不建立本地绑定）。
+// 两者既转发又内部用，所以 export 行与 import 行各留一份——这不是冗余。
+import { collapseIndex } from './page.js';
 
-// 经验暂存/知识页脚手架已拆到 note.js（2026-10-05）—— 同样先 import 再 export。
-import { cmdLog, cmdNote, cmdConcept, ensurePersonPage, registerInIndex } from './note.js';
+// 经验暂存/知识页脚手架已拆到 note.js（2026-10-05）—— 同样转发。
 export { cmdLog, cmdNote, cmdConcept, ensurePersonPage, registerInIndex } from './note.js';
+import { ensurePersonPage } from './note.js';
 
 // Re-export lint.js symbols so external importers (e.g. bin/mcp.js, bin/abs.js) still work.
 export { cmdLint, listPages, hasTail, PAGE_DIRS, foldSameKind } from './lint.js';
-import { SOURCES_MAX, PAGE_DIRS, listPages } from './lint.js';
+// SOURCES_MAX / listPages 本文件内部真在用（load 的 sources 提醒 + queryHint），
+// 必须单独 import；PAGE_DIRS 内部零使用，已在上一行转发，不重复 import。
+import { SOURCES_MAX, listPages } from './lint.js';
 
 // ---------- init: 建 .brain/ 骨架 ----------
 const BRAIN_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];

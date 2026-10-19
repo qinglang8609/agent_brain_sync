@@ -3,6 +3,7 @@
 node_modules/
 backup-legacy-*/
 .codegraph/
+.delta/
 .omo/
 .claude/
 

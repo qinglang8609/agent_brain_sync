@@ -10,8 +10,13 @@
  * 用户与后续会话看到的天然是半句 —— "摘要读起来抽象"的真因在写入口, 不在表述能力。 */
 export function clip(text, n) {
   const s = String(text || '').trim();
-  if (s.length <= n) return s;
-  const head = s.slice(0, n);
+  // 按**码点**切，不按 UTF-16 下标（2026-10-19 实测修正）：emoji 等星平面字符
+  // 占两个 code unit，s.slice 会把它拦腰切开 → 写出半个代理对（实测
+  // clip('😀😀😀😀😀😀', 3) 得 "😀\ud83d…"，落到 readme 里就是乱码）。
+  // Array.from 按码点拆，再逐步长度判断。
+  const cps = Array.from(s);
+  if (cps.length <= n) return s;
+  const head = cps.slice(0, n).join('');
   // 优先在标点处断开（中文句读 + 英文句读），其次空格，最后才硬切
   const cut = Math.max(
     head.lastIndexOf('。'), head.lastIndexOf('；'), head.lastIndexOf('！'), head.lastIndexOf('？'),
@@ -19,16 +24,18 @@ export function clip(text, n) {
     head.lastIndexOf('.'), head.lastIndexOf(' '),
   );
   // 边界太靠前（< 一半）说明这一段本就是长句，宁可硬切也不留个残破的短头
-  const keep = cut > n / 2 ? cut : n;
-  return `${s.slice(0, keep).replace(/[\s,，、;；.。]+$/, '')}…`;
+  const keep = cut > n / 2 ? head.slice(0, cut) : head;
+  return `${keep.replace(/[\s,，、;；.。]+$/, '')}…`;
 }
 
 /** slug：取前 n 码点 → 非词字符折叠为 '-'。只用于**文件名**，完整标题另存 TITLE 行。
  * 在标点/空格边界收口，不在字中间切断（否则出 `...-硬切-不` 这种残尾）。 */
 export function slugOf(text, n = 24) {
   const s = String(text || '').trim();
-  let head = s.slice(0, n);
-  if (s.length > n) {
+  // 同 clip：按码点切，避免把 emoji 切成半个代理对（见 clip 注释）。
+  const cps = Array.from(s);
+  let head = cps.slice(0, n).join('');
+  if (cps.length > n) {
     const cut = Math.max(head.lastIndexOf('，'), head.lastIndexOf('。'), head.lastIndexOf('、'),
       head.lastIndexOf('：'), head.lastIndexOf(','), head.lastIndexOf('.'), head.lastIndexOf(' '));
     if (cut > n / 2) head = head.slice(0, cut);

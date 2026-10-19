@@ -4,7 +4,7 @@
 import js from '@eslint/js';
 
 export default [
-  { ignores: ['node_modules/**', '.brain/**', '.pi-glla/**', '.codegraph/**', '.omo/**', '.claude/**'] },
+  { ignores: ['node_modules/**', '.brain/**', '.pi-glla/**', '.codegraph/**', '.omo/**', '.delta/**', '.claude/**'] },
   js.configs.recommended,
   {
     files: ['**/*.js', '**/*.mjs'],
