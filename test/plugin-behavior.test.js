@@ -55,7 +55,20 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(sandbox, { recursive: true, force: true });
+  // 清理偶发 ENOTEMPTY（实测：并行全量时约几十次一遇，单跑 3 次都不复现）。
+  // 原因：本文件会 spawn bin/abs.js 子进程，子进程收尾写盘（hooks.log / mark 之类）
+  //   可能恰好与 rm -r 重叠 —— 目录“刚腾空又被写入”。
+  // 这不是产品 bug，但会让 pre-push 全量测试偶发变红、拦住正常推送。
+  // 退避重试即可：rm 本身是幂等的，第二遍就能清干净。
+  for (let i = 0; i < 3; i++) {
+    try {
+      await fs.rm(sandbox, { recursive: true, force: true });
+      return;
+    } catch (e) {
+      if (e.code !== 'ENOTEMPTY' && e.code !== 'EBUSY') throw e;
+      await new Promise((r) => setTimeout(r, 50 * (i + 1)));
+    }
+  }
 });
 
 /** 造一个有 .brain 的项目; logHasToday=false 时 log.md 只有旧日期。 */
