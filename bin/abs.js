@@ -311,9 +311,9 @@ const subUsage = {
     '  abs todo                       看板',
     '  abs todo add <id> [--note "做什么"] [--section 讨论中|滞留中|搁置]',
     '  abs todo rename <旧id> --note "<新id>"   改任务 id（起错名/不可读时）',
-    '  abs todo note <id> --note "断点/进度"',
-    '  abs todo bp-done <id>            勾断点 → `↳ [x] 断点:`（做完落一句）',
-    '  abs todo bp-undone <id>          取消勾（勾错了退回）',
+    '  abs todo note <id> --note "进度/子项"     追加一条子项（标准 md 缩进列表）',
+    '  abs todo child-done <id> [--n N]   勾子项（缺省最后一条）',
+    '  abs todo child-undone <id> [--n N] 取消勾',
     '  abs todo memo <id> "随手记（可多句）"  任务笔记 → sessions/，不上看板；无文字=查看',
     '  abs todo state <id> --note 进行中|讨论中|滞留中|搁置',
     '  abs todo done <id> [--as 落地|否决|仅方案] [结语文字]',
@@ -378,8 +378,8 @@ const TODO_ACTIONS = {
   add: 'start',
   start: 'start', // add 的别名(老习惯保留)
   note: 'note',
-  'bp-done': 'bp-done', // 勾断点：`↳ [ ] 断点:` → `↳ [x] 断点:`
-  'bp-undone': 'bp-undone', // 取消勾断点（勾错了退回）
+  'child-done': 'child-done', // 勾子项（标准 md 缩进列表项）
+  'child-undone': 'child-undone', // 取消勾子项
   memo: 'memo', // 任务随手记：多句/追加/不占看板（无文字时=查看）
   state: 'state', // 改行首状态标记：进行中|讨论中|滞留中|搁置（原地，不搬区）
   rename: 'rename', // 改任务 id：人工起错名、或旧 id 不可读时用
@@ -475,7 +475,7 @@ async function main() {
         if (!action) {
           throw new Error(
             `✗ 未知子命令 "${sub}"\n` +
-            `  可用: add / start / note / bp-done / bp-undone / memo / state / done / archive\n` +
+            `  可用: add / start / note / child-done / child-undone / memo / state / done / archive\n` +
             `  看板: abs todo（不带参数）\n` +
             `  登记任务: abs todo add <id> --note "做什么"`,
           );
@@ -499,7 +499,7 @@ async function main() {
           break;
         }
         // 勾/取消勾子项：只收 <id>（子项位置 = 「某任务的第 N 条」，没有自己的 id）
-        if (action === 'bp-done' || action === 'bp-undone') {
+        if (action === 'child-done' || action === 'child-undone') {
           rejectExtra(rest2, `abs todo ${sub} <id> [--n N]`);
           if (!id) throw new Error(`✗ 缺 <id>\n  用法: abs todo ${sub} <id> [--n N]`);
           const n = opts.n ? Number(opts.n) : undefined;

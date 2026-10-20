@@ -45,9 +45,8 @@ export function setStateMark(text, id, state) {
   const cur = lines[idx];
   if (stateOfTaskLine(cur) === state) return { text, changed: [] };
   const raw = stripStateMark(cur);          // 先剥旧标记，再补新的
-  // 前缀两种形态都要能接回（`- [ ]` 与断点任务 `↳ [ ]`），并保留原缩进 ——
-  // 原正则写死 `^(- \[[ x]\] )`，断点任务上补不回标记（2026-10-16 实测：state 报成功但盘上没变）。
-  lines[idx] = raw.replace(/^(\s*(?:-\s*\[[ x]\]|↳\s*\[[ x]\])\s*)/, `$1[${state}] `);
+  // 前缀统一为 `- [ ]`（缩进保留）；旧 `↳` 写法已由 migrateLegacyChild 迁移掉。
+  lines[idx] = raw.replace(/^(\s*-\s*\[[ x]\]\s*)/, `$1[${state}] `);
   return { text: lines.join('\n'), changed: [`${id} 状态 → ${state}`] };
 }
 
@@ -121,19 +120,18 @@ export async function upsertTask(brainRoot, { section, text, session = '' }) {
     : { file: p, text, updated: false };
 }
 
-/** 从任务文本提取幂等键（行首 id，如 TASK-1 / T-2 / fix-hook）。
- *  两种前缀都认：`- [ ] `（普通任务）与 `↳ [ ] `（断点任务）。缩进不影响取 id。 */
+/** 从任务文本提取幂等键（行首 id，如 TASK-1 / T-2 / fix-hook）。 */
 
 export function idOfTaskLine(line) {
   if (!line) return null;
   // 两区制下行首可带状态标记（`- [ ] [进行中] <id> …`）—— 必须先剥掉再取 id，
   // 否则 id 会被读成 "[进行中]"，findTaskLine 全等比对永远落空（2026-09-13 实测）。
-  // 前缀允许缩进（`  - [ ]` / `  ↳ [ ]`）—— 断点任务天然带缩进。
-  const m = line.match(/^\s*(?:-\s*\[ \]|↳\s*\[ \])\s*(?:\[[^\]]+\]\s*)?(\S+)/);
+  // 前缀允许缩进（`  - [ ]`）—— 子任务天然带缩进。
+  const m = line.match(/^\s*-\s*\[ \]\s*(?:\[[^\]]+\]\s*)?(\S+)/);
   return m ? m[1].replace(/\u200b/g, '') : null;
 }
 
-/** 定位 id 对应的未完成任务行下标；真正的附属断点行（`↳ 断点:`）不算任务行。
+/** 定位 id 对应的未完成任务行下标；子项行不算独立任务。
  *  全等比对，不用 includes（否则 T1 会误命中 T11）。 */
 
 export function findTaskLine(lines, id) {
@@ -160,8 +158,7 @@ function childRange(lines, idx) {
  *
  * 语义（2026-10-16 用户定）：子项就是 todo 的嵌套子任务 —— 可多条、可各自勾选。
  * `abs todo note <id> "…"` **追加**一条（不再覆盖）—— 用户原话「不限，写多少算多少」。
- * 仍保留幂等：与最后一条完全同文就不重复追加（防手滑重复调）。
- * 旧的 `↳ 断点:` 存量行不动（parseChild 认得，继续显示）；新写一律用标准 md。 */
+ * 仍保留幂等：与最后一条完全同文就不重复追加（防手滑重复调）。 */
 export async function setBreakpoint(brainRoot, { id, text }) {
   const p = await ensureTodo(brainRoot);
   let added = false;
@@ -187,8 +184,7 @@ export async function setBreakpoint(brainRoot, { id, text }) {
 /** 勾/取消勾子项：`- [ ] …` ↔ `- [x] …`。
  *
  * 定位：子项没有自己的 id（身份 = 「某任务的第 N 条子项」），故按 n 定位（1-based）。
- * n 缺省 = 勾最后一条（最常用的「刚写的这条做完了」）。
- * 旧格式 `↳ 断点:` 也能勾 —— 勾一下就地升级成标准 md 形态。 */
+ * n 缺省 = 勾最后一条（最常用的「刚写的这条做完了」）。 */
 export async function setBreakpointDone(brainRoot, { id, n, done = true }) {
   const p = await ensureTodo(brainRoot);
   let picked = null;

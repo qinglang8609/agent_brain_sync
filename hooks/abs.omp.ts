@@ -104,7 +104,7 @@ function inputField(input: unknown, key: string): string {
 }
 
 /** 会改文件的工具名。用于判定「真的开始干活了」—— 排查类会话先跑一堆读命令，
- *  若用「第一次 tool_call」当判据，断点会被写在与任务无关的文件上。
+ *  若用「第一次 tool_call」当判据，子项会被写在与任务无关的文件上。
  *  白名单必须按宿主实际用法穷举，漏一个就把功能静默关掉（含 bash：大量修改是经 bash 完成的）。 */
 const WRITE_TOOL = /^(write|edit|apply_patch|patch|multiedit|notebookedit|bash|shell)$/i
 
@@ -354,8 +354,8 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
   rows: { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; sid: string }[]
   hidden: number
 } {
-  // 两阶段：先无过滤地按序解析（断点归属需要「上一条」是原文里真正的前一条），
-  // 再按作者过滤。若边解析边过滤，被滤掉的条目下方的断点会挂到它上面那一条。
+  // 两阶段：先无过滤地按序解析（子项归属需要「上一条」是原文里真正的前一条），
+  // 再按作者过滤。若边解析边过滤，被滤掉的条目下方的子项会挂到它上面那一条。
   type Row = { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; authors: string[]; sid: string }
   const parsed: Row[] = []
   let inTodo = false
@@ -364,7 +364,7 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
     if (/^##\s+Todo\s*$/.test(line)) { inTodo = true; continue }
     if (/^##\s+/.test(line)) { inTodo = false; continue }
     if (!inTodo) continue
-    // 子项行（标准 md：缩进的 `- [ ]`；旧格式 `↳ 断点:` 继续认）→ 挂到上一条任务
+    // 子项行（标准 md：缩进的 `- [ ]`）→ 挂到上一条任务
     const kid = parseChildLine(line)
     if (kid && kid.indent > 0) {
       const last = parsed[parsed.length - 1]
@@ -372,9 +372,9 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
       continue
     }
     // `- [ ] [状态] <id> …`；状态标记可能缺省。
-    // 两种前缀都收：`- [ ]`（普通任务）与 `↳ [ ]`（断点任务，2026-10-16 新增）。
-    // 断点任务必须显示 —— 它就是一等待任务（写得进去、看得见、能 done）。
-    const m = line.match(/^\s*(?:-\s*\[ \]|↳\s*\[ \])\s*(?:\[([^\]]+)\]\s*)?(\S+)\s*(.*)$/)
+    // 只认 `- [ ]`（2026-10-20 旧 `↳ [ ]` 写法已废弃）。
+    // 子项任务必须显示 —— 它就是一等待任务（写得进去、看得见、能 done）。
+    const m = line.match(/^\s*-\s*\[ \]\s*(?:\[([^\]]+)\]\s*)?(\S+)\s*(.*)$/)
     if (!m) continue
     const state = m[1] || '进行中'
     const id = m[2]
@@ -417,13 +417,9 @@ async function currentUser(): Promise<string> {
  *  宽度规则：CJK/全角记 2 列，其余记 1 列。 */
 /** 解析子项行（与 src/todo/common.js 的 parseChild 同规则，双份实现 —— 见 pi 版说明）。 */
 function parseChildLine(l: string): { done: boolean; text: string; indent: number } | null {
-  const s = String(l || '')
-  const old = s.match(/^(\s*)↳\s*(?:\[[ x]\]\s*)?(?:断点[:：]\s*)?(.*)$/)
-  if (old) {
-    if (!old[2].trim()) return null
-    return { done: /^\s*↳\s*\[x\]/.test(s), text: old[2].trim(), indent: old[1].length }
-  }
-  const m = s.match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/)
+  // 只认标准 md 缩进子项（2026-10-20 旧箭头写法已废弃）。
+  // 旧行由 CLI 侧 migrateLegacyChild 在读写时迁移掉，面板拿到的已是新格式。
+  const m = String(l || '').match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/)
   if (!m) return null
   return { done: m[2] === 'x', text: m[3].trim(), indent: m[1].length }
 }
@@ -532,7 +528,7 @@ export function renderPanelLines(
     return lines
   }
   data.rows.forEach((t, i) => {
-    // `└─` 只给最后一条 —— 不管它有没有断点（否则末条带断点时全篇没有收尾）。
+    // `└─` 只给最后一条 —— 不管它有没有子项（否则末条带子项时全篇没有收尾）。
     const isLast = i === lastIdx
     const branch = isLast ? '└─' : '├─'
     const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg('accent', todoAnimFrame(animPhase)) : ''
@@ -707,7 +703,7 @@ export default function absOmpExtension(pi: ExtensionAPI): void {
   resetThrottle()
 
   pi.on("session_start", (_event: SessionStartEvent, ctx: ExtensionContext) => {
-    // 新会话 = 重新登记：不重置则同进程的第二个会话永远不再落断点
+    // 新会话 = 重新登记：不重置则同进程的第二个会话永远不再落子项
     autoTaskSeen = false
     filesSeen.clear()    // 同理：新会话的文件痕迹不能带到下个会话
     loadInjected.clear() // 同：新会话的每个目录都要重新摆一次开局状态
@@ -743,7 +739,7 @@ export default function absOmpExtension(pi: ExtensionAPI): void {
       pendingTodoTool = true
       logHook(`tool_call todo_tool name=${name} target=${target || '-'}`).catch(() => {})
     }
-    // 自动登记断点：真动文件时把「改到哪个」记进本会话（可观测埋点，不写看板）。
+    // 自动登记子项：真动文件时把「改到哪个」记进本会话（可观测埋点，不写看板）。
     if (!autoTaskSeen && isWriteCall(name, input)) {
       autoTaskSeen = true
       const sid = sessionIdFor(ctx)

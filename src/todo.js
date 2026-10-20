@@ -8,3 +8,4 @@ export { todoTemplate, rebuildStructure, dropRetiredSections, enforceBrainFormat
 export { checkFileShape, violationSignatures, assertNoStrayBlank, assertTodoContent } from './todo/validate.js';
 export { doneDateOf, doneKindOf, withDoneKind, collapseDone, archiveDoneInText, renderArchiveBody, upsertArchiveSection, groupDoneSection, insertDoneGrouped } from './todo/archive.js';
 export { readTodo, ensureTodo, setStateMark, addTask, upsertTask, idOfTaskLine, findTaskLine, setBreakpoint, setBreakpointDone, setMemo, readMemo, boardText } from './todo/tasks.js';
+export { migrateLegacyChild, isTaskLine, isChildLine, CHILD_INDENT } from './todo/common.js';

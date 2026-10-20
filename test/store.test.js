@@ -269,43 +269,56 @@ describe('todo 层', () => {
     assert.ok(!t.includes('带 空格'), `拒了就不该落盘:\n${t}`);
   });
 
-  test('★ findTaskLine 认得断点任务 ↳ [ ] 与缩进子任务', () => {    const lines = [
+  test('★ findTaskLine 认得缩进子任务；旧 ↳ 写法已不再被当任务', () => {
+    const lines = [
       '- [ ] [进行中] norm — 普通',
-      '  ↳ [ ] [进行中] bp — 断点任务',
       '  - [ ] [进行中] sub — 缩进子任务',
     ];
-    assert.equal(findTaskLine(lines, 'bp'), 1, '↳ [ ] 应可定位');
-    assert.equal(findTaskLine(lines, 'sub'), 2, '缩进的 - [ ] 应可定位');
+    assert.equal(findTaskLine(lines, 'sub'), 1, '缩进的 - [ ] 应可定位');
     assert.equal(findTaskLine(lines, 'norm'), 0);
-    // 真正的附属断点行（冒号形态）不算任务，不能命中。
+    // 2026-10-20：旧 `↳ [ ]` 写法彻底废弃 —— 它不再被认成任务行。
+    assert.equal(findTaskLine(['- [ ] a', '  ↳ [ ] bp — x'], 'bp'), -1,
+      '↳ [ ] 已不再是任务行（存量由 migrateLegacyChild 迁走）');
     assert.equal(findTaskLine(['- [ ] a', '  ↳ 断点: x'], 'x'), -1);
   });
 
-  test('★ 断点任务可 done（复选框翻转 + 缩进保留）', async () => {
+  test('★ 旧 ↳ 任务行经 load 自动迁移成标准 md 子项（存量不丢）', async () => {
+    // 存量兼容：真库里有这种写法（实测 zj_shop 6 行），迁移后必须能当子项用。
     await fs.writeFile(join(projectA, '.brain', 'todo.md'),
       ['# 📋 Todo Board', '', '## Todo',
         '- [ ] [进行中] parent [[fanchao]] — 主任务 (认领 2026-10-16)',
-        '  ↳ [ ] [进行中] bp [[fanchao]] — 断点任务 (认领 2026-10-16)',
+        '  ↳ [ ] [进行中] bp [[fanchao]] — 旧写法子项 (认领 2026-10-16)',
         '', '## Done', ''].join('\n'));
-    const out = await cmdTask({ dir: projectA, action: 'done', id: 'bp' });
-    assert.doesNotMatch(String(out), /NO_MATCH/, `done 应命中断点任务: ${out}`);
     const t = await readTodo(projectA);
-    assert.match(t, /^ {2}↳ \[x\] bp /m, `完成行应是 ↳ [x] 且保留两空格缩进: \n${t}`);
-    assert.ok(!/\[ \] \[进行中\] bp/.test(t), '未完成形态应消失');
+    assert.doesNotMatch(t, /↳/, `旧写法应已被迁移掉: \n${t}`);
+    assert.match(t, /^ {2}- \[ \] \[进行中\] bp /m, `应迁移成缩进子项且保留内容与状态: \n${t}`);
   });
 
-  test('★ 断点任务可 note / state', async () => {
+  test('★ 裸 ↳ 内容行也迁移成未完成子项（旧格式变体）', async () => {
     await fs.writeFile(join(projectA, '.brain', 'todo.md'),
       ['# 📋 Todo Board', '', '## Todo',
-        '  ↳ [ ] [进行中] bp2 [[fanchao]] — 断点任务 (认领 2026-10-16)',
+        '- [ ] [进行中] parent [[fanchao]] — 主任务 (认领 2026-10-16)',
+        '  ↳ 断点: 后端已改完',
+        '  ↳ 内容: 另一个变体',
+        '', '## Done', ''].join('\n'));
+    const t = await readTodo(projectA);
+    assert.doesNotMatch(t, /↳/, `两种变体都应迁走: \n${t}`);
+    assert.match(t, /^ {2}- \[ \] 后端已改完/m, t);
+    assert.match(t, /^ {2}- \[ \] 另一个变体/m, t);
+  });
+
+  test('★ 子项可 note / state（标准 md 缩进列表）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo',
+        '- [ ] [进行中] bp2 [[fanchao]] — 主任务 (认领 2026-10-16)',
         '', '## Done', ''].join('\n'));
     const n = await cmdTask({ dir: projectA, action: 'note', id: 'bp2', note: '改到 src/x.js' });
     assert.doesNotMatch(String(n), /NO_MATCH/, `note 应命中: ${n}`);
     const s = await cmdTask({ dir: projectA, action: 'state', id: 'bp2', note: '讨论中' });
     assert.doesNotMatch(String(s), /NO_MATCH/, `state 应命中: ${s}`);
     const t = await readTodo(projectA);
-    assert.match(t, /↳ \[ \] \[讨论中\] bp2/, `状态应已改且前缀保留: \n${t}`);
-    assert.match(t, /- \[ \] 改到 src\/x\.js/, '子项应挂上（标准 md 缩进列表）');
+    assert.match(t, /- \[ \] \[讨论中\] bp2/, `状态应已改: \n${t}`);
+    assert.match(t, /^ {2}- \[ \] 改到 src\/x\.js/m, '子项应挂上（标准 md 缩进列表）');
   });
 });
 
@@ -506,7 +519,7 @@ describe('cmdTask', () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'T-BP', note: '带断点任务' });
     await cmdTask({ dir: projectA, action: 'note', id: 'T-BP', note: '改到 store.js L40' });
     await assert.rejects(() => cmdTask({ dir: projectA, action: 'done', id: 'T-BP' }), /子任务未完成/);
-    await cmdTask({ dir: projectA, action: 'bp-done', id: 'T-BP' });
+    await cmdTask({ dir: projectA, action: 'child-done', id: 'T-BP' });
     const r = await cmdTask({ dir: projectA, action: 'done', id: 'T-BP' });
     assert.ok(r.includes('✓'), r);
     const t = await readTodo(projectA);
@@ -1284,7 +1297,7 @@ describe('todo 内容闸门（只放 todo）', () => {
     await fs.writeFile(
       p,
       ['# 📋 Todo Board', '', '## Todo', `- [ ] [进行中] TL-1 [[tester]] — 旧任务 (认领 ${today()})`,
-        `  ↳ 断点: ${bloat}`, '## Done', ''].join('\n'),
+        `  - [ ] ${bloat}`, '## Done', ''].join('\n'),
       'utf8',
     );
     const out = await cmdLint({ dir: projectA });
@@ -1327,10 +1340,10 @@ describe('todo 裸文本闸门（Todo 区只放任务）', () => {
       /不允许裸文本/,
       '裸文本行应被拒写入',
     );
-    // 对照：同样位置写合法断点则放行
+    // 对照：同样位置写合法子项则放行
     const good = clean.replace(
       `(认领 ${today()})`,
-      `(认领 ${today()})\n  ↳ 断点: 改到 src/lint.js 的白名单判据`,
+      `(认领 ${today()})\n  - [ ] 改到 src/lint.js 的白名单判据`,
     );
     assert.doesNotThrow(() => enforceBrainFormat(good, spec, clean));
   });
@@ -1991,7 +2004,7 @@ describe('cmdWrapup + load 滞留 (A+B)', () => {
     assert.ok(load1.includes('断点X'), load1);
     // 把任务 done 了 → 快照里的那个任务不应再被报为滞留。
     // 2026-10-18：子任务（断点X）没勾时不许 done，先勾掉它再完成。
-    await cmdTask({ dir: projectA, action: 'bp-done', id: 'LA-1' });
+    await cmdTask({ dir: projectA, action: 'child-done', id: 'LA-1' });
     await cmdTask({ dir: projectA, action: 'done', id: 'LA-1' });
     const load2 = await cmdLoad({ dir: projectA });
     assert.ok(!load2.includes('滞留任务'), `done 后原任务不应再报滞留:\n${load2}`);
@@ -3059,8 +3072,8 @@ describe('子任务未完成时拒绝 done', () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'LZ-3', note: '主任务' });
     await cmdTask({ dir: projectA, action: 'note', id: 'LZ-3', note: '子任务一' });
     await cmdTask({ dir: projectA, action: 'note', id: 'LZ-3', note: '子任务二' });
-    await cmdTask({ dir: projectA, action: 'bp-done', id: 'LZ-3', n: 1 });
-    await cmdTask({ dir: projectA, action: 'bp-done', id: 'LZ-3', n: 2 });
+    await cmdTask({ dir: projectA, action: 'child-done', id: 'LZ-3', n: 1 });
+    await cmdTask({ dir: projectA, action: 'child-done', id: 'LZ-3', n: 2 });
     const r = await cmdTask({ dir: projectA, action: 'done', id: 'LZ-3' });
     assert.match(r, /已完成/, r);
     const t = await readTodo(projectA);
@@ -3179,10 +3192,17 @@ describe('孤儿子任务必须被检出', () => {
     assert.ok(!(await shape(t)).includes('TODO-ORPHAN-CHILD'), `不该误报: ${JSON.stringify(await shape(t))}`);
   });
 
-  test('不误报：旧格式一等任务 `↳ [ ]` 下面是合法子项', async () => {
+  test('旧格式 ↳ 任务行迁移后能被当成子项（不报孤儿）', async () => {
+    // 2026-10-20：旧写法不再被当成任务行，但存量会被 migrateLegacyChild 迁成
+    // 标准缩进子项，挂到所属主任务下 —— 因此不该再报孤儿。
+    // （迁移后它就是一条普通子项，没有父任务当然还是会报 —— 那是正确行为。）
     const t = ['# 📋 Todo Board', '', '## Todo',
-      '  ↳ [ ] [进行中] bp2 [[fc]] — 旧形态任务', '  - [ ] 挂在它下面', '', '## Done', ''].join('\n');
-    assert.ok(!(await shape(t)).includes('TODO-ORPHAN-CHILD'), `旧格式任务也是父项: ${JSON.stringify(await shape(t))}`);
+      '- [ ] [进行中] P1 [[fc]] — 主任务',
+      '  ↳ 断点: 做到一半的记录', '  - [ ] 已有的子项', '', '## Done', ''].join('\n');
+    const parsed = normalizeTodo(t);
+    assert.doesNotMatch(parsed, /↳/, `旧写法应已迁走: ${parsed}`);
+    assert.match(parsed, /^ {2}- \[ \] 做到一半的记录/m, `应迁成缩进子项: ${parsed}`);
+    assert.ok(!(await shape(parsed)).includes('TODO-ORPHAN-CHILD'), `迁移后不应报孤儿: ${JSON.stringify(await shape(parsed))}`);
   });
 
   test('不误报：空行分隔不影响判定', async () => {

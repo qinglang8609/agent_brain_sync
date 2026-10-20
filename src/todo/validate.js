@@ -91,12 +91,11 @@ export function checkFileShape(file, text, { lintMode = false } = {}) {
       let p = i - 1;
       while (p >= 0 && !lines[p].trim()) p--;
       const prev = p >= 0 ? lines[p] : null;
-      // 父行可以是：顶层任务 `- [x]`、子任务 `  - [x]`、或旧格式一等任务 `  ↳ [ ] …`
-      // （后者缩进是历史形态，它本身是任务不是子项 —— 实测漏认会把合法数据误判成孤儿）。
+      // 父行可以是：顶层任务 `- [x]` 或子任务 `  - [x]`。
+      // （旧 `↳ [ ]` 形态已由 migrateLegacyChild 迁移，不再存在）
       const ok = prev !== null && (
         /^- \[[ x]\]/.test(prev) ||
-        /^\s+- \[[ x]\]/.test(prev) ||
-        /^\s*↳\s*\[[ x]\]/.test(prev)
+        /^\s+- \[[ x]\]/.test(prev)
       );
       if (!ok) {
         issues.push({
@@ -233,28 +232,28 @@ export function assertTodoContent(text, prevSig = null) {
       const body = bp.text;
       if (body.length > BREAKPOINT_MAX) {
         throw new Error(
-          `✗ 断点太长（第 ${lineNo} 行 ${body.length} 字 > ${BREAKPOINT_MAX}）—— 断点只写「改到哪个文件哪一步」。\n` +
+          `✗ 子项太长（第 ${lineNo} 行 ${body.length} 字 > ${BREAKPOINT_MAX}）—— 子项只写「改到哪个文件哪一步」。\n` +
           `  写不下的内容请分流：实施报告/验证数据 → abs log；经验与坑 → abs note；长设计 → .brain/sources/ 页。\n` +
           `  原文开头: ${body.slice(0, 60)}...`,
         );
       }
       if (REPORT_MARKERS.some((re) => re.test(body)) || sentenceCount(body) > 2) {
         throw new Error(
-          `✗ 断点里像是塞了报告/清单（第 ${lineNo} 行）—— 断点是一句话（最多两句），不是文档。\n` +
+          `✗ 子项里像是塞了报告/清单（第 ${lineNo} 行）—— 子项是一句话（最多两句），不是文档。\n` +
           `  todo 只能加 todo：要做的拆成任务，做完的写 abs log，经验写 abs note。\n` +
           `  原文开头: ${body.slice(0, 60)}...`,
         );
       }
       continue;
     }
-    // 裸文本行（2026-10-11）：Todo 区里既不是任务行也不是断点的行 = 总结/报告/清单。
+    // 裸文本行（2026-10-11）：Todo 区里既不是任务行也不是子项的行 = 总结/报告/清单。
     // 前面的修法都挂在「行的形态」上（超长断点、多句断点），把总结写成裸文本行就全部绕过
     // ——同一个坑第三次复发。改成白名单后，换形态也落回这里。
     // 按区判：Todo 区才管；Done/Archived 区有日期分组与归档链接，判据不同。
     // 存量行（prevSig）放行，交给 lint 报 —— 否则老库直接被锁死写不进去。
     if (todoSectionOf(lines, i) === 'Todo' && !isAllowedTodoLine(l) && !isLegacy(l)) {
       throw new Error(
-        `✗ todo 的 Todo 区不允许裸文本（第 ${lineNo} 行）—— 这里只放任务行（- [ ] …）与断点行（↳ 断点: …）。\n` +
+        `✗ todo 的 Todo 区不允许裸文本（第 ${lineNo} 行）—— 这里只放任务行（- [ ] …）与子项（  - [ ] …）。\n` +
         `  「总结/实施报告/清单」请分流：流水与测试数据 → abs log；经验与坑 → abs note；长设计与方案 → .brain/sources/ 页。\n` +
         `  原文开头: ${l.trim().slice(0, 60)}...`,
       );

@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { requireBrain, brainPath, absLogDir } from './index.js';
 import { requireUser, atTag, getUser, placeholderWarn } from './userconfig.js';
-import { stripStateMark, checkTaskBox, ensureStateMark, stateOfTaskLine, TODO_MAX_LINES, upsertTask, boardText, readTodo, todoTemplate, today, localStamp, setBreakpoint, setBreakpointDone, setMemo, readMemo, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, collapseDone, SEC, rebuildStructure, enforceBrainFormat, sessionOf, parseChild } from './todo.js';
+import { stripStateMark, checkTaskBox, ensureStateMark, stateOfTaskLine, TODO_MAX_LINES, upsertTask, boardText, readTodo, todoTemplate, today, localStamp, setBreakpoint, setBreakpointDone, setMemo, readMemo, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, archiveDoneInText, upsertArchiveSection, DONE_KINDS, withDoneKind, collapseDone, SEC, rebuildStructure, enforceBrainFormat, sessionOf, parseChild, migrateLegacyChild } from './todo.js';
 import { setFormatGate, editFile, SKIP } from './lock.js';
 import { appendWrapup, strandedFor } from './wrapup.js';
 import { keywords, recentFiles, topicStrength } from './relevant.js';
@@ -367,7 +367,7 @@ export async function cmdLoad({ dir }) {
   );
   if (stranded.length) {
     const rows = stranded.map((t) => {
-      const bp = t.bp.length ? `\n    ${t.bp.map((b) => (b.startsWith('[') ? `↳ ${b}` : `↳ 断点: ${b}`)).join('\n    ')}` : '';
+      const bp = t.bp.length ? `\n    ${t.bp.map((b) => (b.startsWith('[') ? `- ${b}` : `- [ ] ${b}`)).join('\n    ')}` : '';
       return `  - ${t.body}${bp}`;
     });
     // 插在项目行之后、其它内容之前
@@ -375,7 +375,7 @@ export async function cmdLoad({ dir }) {
       1, 0,
       '⏳ 上会话滞留（未 done，先对账）',
       rows.join('\n'),
-      '→ 完成: abs todo done <id>；未完: abs todo note <id> --note 断点',
+      '→ 完成: abs todo done <id>；未完: abs todo note <id> --note 子项',
       ''
     );
   }
@@ -430,8 +430,9 @@ export function extractBlocks(todoText) {
     // 完成行：不再跟踪
     if (/^\s*-\s*\[x\]/.test(line)) { curId = null; continue; }
     if (!curId) continue;
-    // 附属行（↳ 开头或缩进行）里找卡点前缀
-    const m = line.match(/^\s*(?:↳\s*断点:\s*)?(?:阻塞|等待|等)[:：]\s*(.+)$/);
+    // 附属行（缩进子项）里找卡点前缀。
+    // 旧写法 `↳ 断点: 阻塞: …`（存量）也认 —— 保留一条前缀兼容，以免漏报历史卡点。
+    const m = line.match(/^\s*(?:↳\s*(?:断点|卡点)?[:：]\s*)?(?:阻塞|等待|等)[:：]\s*(.+)$/);
     if (m && m[1].trim()) out.push({ id: curId, why: m[1].trim() });
   }
   return out;
@@ -957,10 +958,12 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
     const r = await setBreakpoint(root, { id, text: note });
     return r.msg;
   }
-  // 勾/取消勾断点：断点是待办，做完要勾（2026-10-16）。
+  // 勾/取消勾子项：子项也是待办，做完要勾。
   // 单独两个子命令而不是 `--done true/false` —— 勾与取消是两件事，各自一个动词更顺手。
-  if (action === 'bp-done' || action === 'bp-undone') {
-    const r = await setBreakpointDone(root, { id, n, done: action === 'bp-done' });
+  // 2026-10-20：命令名从 bp-done/bp-undone 改为 child-done/child-undone
+  //（「断点」这个叫法已废弃，子项就是标准 md 嵌套列表项）。
+  if (action === 'child-done' || action === 'child-undone') {
+    const r = await setBreakpointDone(root, { id, n, done: action === 'child-done' });
     return r.msg;
   }
   if (action === 'memo') {
@@ -1039,10 +1042,14 @@ async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
             else leftover.push(kid.text);
             continue;
           }
-          if (nx.trimStart().startsWith('↳')) {
-            const ch = lines[++i];
-            if (/^\s*↳\s*\[ \]/.test(ch)) leftover.push(ch.trim().replace(/^\s*↳\s*\[ \]\s*/, ''));
-            else bp.push(ch);
+          // 防御：旧 `↳` 行本应已在 normalizeTodo 里迁掉。万一有路径绕过迁移，
+          // 这里必须**消费掉该行**（i++），否则外层 while 原地打转（2026-10-18 OOM 实测）。
+          const legacyChild = migrateLegacyChild(nx);
+          if (legacyChild !== null) {
+            i++;  // 消费掉这一行，防止原地打转
+            const parsed2 = parseChild(legacyChild);
+            if (parsed2 && !parsed2.done) leftover.push(parsed2.text);
+            else bp.push(legacyChild);
             continue;
           }
           break;
@@ -1065,7 +1072,7 @@ async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
             `✗ 任务 "${wantId}" 还有 ${leftover.length} 条子任务未完成，不能 done：\n` +
               leftover.map((p) => `    - [ ] ${p}`).join('\n') +
               `\n子任务也是任务，主子全部完成才能 done。先二选一：\n` +
-              `  • 做完了 → abs todo bp-done ${wantId}   （勾最后一条；指定第 N 条：bp-done ${wantId} --n N）\n` +
+              `  • 做完了 → abs todo child-done ${wantId}   （勾最后一条；指定第 N 条：child-done ${wantId} --n N）\n` +
               `  • 不做了 → 删掉那几行子项，再 abs todo done ${wantId}`,
           );
         }

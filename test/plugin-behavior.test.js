@@ -928,12 +928,12 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(a.kids.length, 0, `mine-a 不该拿到别人的子项: ${JSON.stringify(a.kids)}`);
   });
 
-  test('自己的断点正确归到自己名下', async () => {
+  test('自己的子项正确归到自己名下', async () => {
     const { parseOpenTasks } = await loadPanelFns();
     const md = [
       '## Todo',
       '- [ ] mine-a [[fanchao]] — 我的',
-      '  ↳ 断点: 改到 hooks/abs.pi.ts:120',
+      '  - [ ] 改到 hooks/abs.pi.ts:120',
     ].join('\n');
     const r = parseOpenTasks(md, 10, 'fanchao');
     assert.match(r.rows[0].kids[0].text, /hooks\/abs\.pi\.ts:120/);
@@ -941,7 +941,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
 
   test('断点行不单独计为一条任务', async () => {
     const { parseOpenTasks } = await loadPanelFns();
-    const md = ['## Todo', '- [ ] a', '  ↳ 断点: x', '- [ ] b'].join('\n');
+    const md = ['## Todo', '- [ ] a', '  - [ ] x', '- [ ] b'].join('\n');
     assert.equal(parseOpenTasks(md, 10, '').total, 2);
   });
 
@@ -949,52 +949,44 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   //   可显示、可 done。原实现里它落进静默死区：写入闸门放行（isChildLine 认 `↳`）、
   //   lint 不报，但面板不显示、done 也找不到它。
   //   与上面的 `↳ 断点:`（冒号形态）有意区别：那个仍是附属行、不算任务（用户明确保留）。
-  test('★ 断点任务 ↳ [ ] 显示为一条任务（可带状态/描述/断点）', async () => {
+  test('★ 标准 md 子项显示在面板上（可带勾选状态）', async () => {
     const { parseOpenTasks } = await loadPanelFns();
     const md = [
       '## Todo',
       '- [ ] parent [[fanchao]] — 主任务',
-      '  ↳ [ ] [进行中] bp-child [[fanchao]] — 断点也是任务',
-      '  ↳ 断点: 附属说明',
+      '  - [ ] 还没做的子项',
+      '  - [x] 已完成的子项',
     ].join('\n');
     const r = parseOpenTasks(md, 10, 'fanchao');
-    // 标准 md 下 `↳ [ ]` 是旧形态的附属行（子项），不是独立任务
     assert.equal(r.total, 1, `只应含 parent: ${JSON.stringify(r.rows)}`);
     assert.equal(r.rows[0].kids.length, 2, `两条子项都应挂上: ${JSON.stringify(r.rows[0].kids)}`);
+    assert.equal(r.rows[0].kids[0].done, false);
+    assert.equal(r.rows[0].kids[1].done, true);
   });
 
-  // 冒号形态与勾选形态不能互相吞掉 —— 两者混用时各自归位。
-  test('★ ↳ 断点:（附属）与 ↳ [ ]（任务）混用互不干扰', async () => {
+  // 2026-10-20：旧箭头写法已彻底废弃 —— 面板不再解析它。
+  // 存量由 CLI 侧 migrateLegacyChild 在读写时迁移，面板拿到的应该已是新格式。
+  test('★ 旧箭头写法不再被面板解析（已废弃）', async () => {
     const { parseOpenTasks } = await loadPanelFns();
     const md = [
       '## Todo',
       '- [ ] a [[fanchao]] — 甲',
-      '  ↳ 断点: 甲的断点',
-      '- [ ] b [[fanchao]] — 乙',
-      '  ↳ [ ] bp2 [[fanchao]] — 断点任务',
+      '  ↳ 断点: 旧写法',
     ].join('\n');
     const r = parseOpenTasks(md, 10, 'fanchao');
-    assert.deepEqual(r.rows.map((t) => t.id), ['a', 'b']);
-    assert.equal(r.rows.find((t) => t.id === 'a').kids[0].text, '甲的断点');
-    assert.equal(r.rows.find((t) => t.id === 'b').kids[0].text, 'bp2 [[fanchao]] — 断点任务', '乙只该拿到自己的子项');
-  });
-
-  // [x] 的断点任务（刚 done）不再显示在待办里。
-  test('★ 已完成的 ↳ [x] 不计入未完成', async () => {
-    const { parseOpenTasks } = await loadPanelFns();
-    const md = ['## Todo', '- [ ] a', '  ↳ [x] done-bp'].join('\n');
-    assert.equal(parseOpenTasks(md, 10, '').total, 1);
+    assert.equal(r.rows.length, 1, `只应有 a: ${JSON.stringify(r.rows)}`);
+    assert.equal(r.rows[0].kids.length, 0, `旧写法不该再挂成子项: ${JSON.stringify(r.rows[0].kids)}`);
   });
 
   // ★ 对齐（用户 2026-10-05 定）：注入给 LLM 的看板 与 面板显示 必须一致。
   //   两者都走 parseOpenTasks（同源），但渲染不同 —— 这条钉住「渲染别漏东西」。
   //   实测踩过：首版 guidelines 漏了断点（对齐了也接不上），且 desc 空时拖个空破折号。
-  test('guidelines 与面板对齐：任务/状态/断点三项都在', async () => {
+  test('guidelines 与面板对齐：任务/状态/子项三项都在', async () => {
     const { boardGuideline } = await loadPanelFns();
     const md = [
       '## Todo',
       '- [ ] [进行中] t1 [[fanchao]] — 第一件事',
-      '  ↳ 断点: 改到 src/x.js',
+      '  - [ ] 改到 src/x.js',
       '- [ ] [讨论中] t2 [[fanchao]]',
     ].join('\n');
     const g = boardGuideline(md, 'fanchao');

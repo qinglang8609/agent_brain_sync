@@ -95,15 +95,15 @@ function sessionIdFor(ctx: any): string {
 }
 
 /** 会改文件的工具名。用于判定「真的开始干活了」—— 排查类会话先跑一堆读命令，
- *  若用「第一次 tool_call」当判据，断点会被写在与任务无关的文件上。
+ *  若用「第一次 tool_call」当判据，子项会被记在与任务无关的文件上。
  *
  * 为何含 bash：大量修改是经 bash 完成的（heredoc / sed -i / > 重定向），
- * 漏掉它 = 纯 bash 会话永远不记断点（见 concept opencode-inject-channel-verdict
+ * 漏掉它 = 纯 bash 会话永远不记子项（见 concept opencode-inject-channel-verdict
  * 的同源教训：白名单必须按宿主实际用法穷举，漏一个就把功能静默关掉）。
  */
 const WRITE_TOOL = /^(write|edit|apply_patch|patch|multiedit|notebookedit|bash|shell)$/i
 
-/** bash 命令里没有写入迹象则不算「干活」—— 否则 `ls`/`git status` 也会记断点。 */
+/** bash 命令里没有写入迹象则不算「干活」—— 否则 `ls`/`git status` 也会记子项。 */
 const BASH_WRITES = /(^|[^\w])(>|>>|sed\s+-i|tee\b|mkdir\b|rm\b|mv\b|cp\b|touch\b|cat\s*>)/
 
 /** 这次 tool_call 是否算「真的动了文件」。 */
@@ -145,8 +145,8 @@ let agentEndSeen = false
  * 同样在模块级，理由同上（闭包 flag 在重复注册时不共享）。 */
 let pendingTodoTool = false
 
-/** 本会话是否已记过自动任务断点。模块级（重复注册时闭包 flag 不共享 —— 同 agentEndSeen 的坑）。
- *  只记第一次写文件，不是每次都记：断点是「记到哪」不是流水账。 */
+/** 本会话是否已记过自动任务子项。模块级（重复注册时闭包 flag 不共享 —— 同 agentEndSeen 的坑）。
+ *  只记第一次写文件，不是每次都记：子项是「记到哪」不是流水账。 */
 let autoTaskSeen = false
 
 /** 本会话动过的文件（去重，最多记 FILES_SEEN_MAX 个）。
@@ -219,7 +219,7 @@ const TODO_GUIDELINES = [
   'Use the abs task tool as soon as you receive instructions that involve changing this project — including investigation work where you read code or ask questions before any edit. Call it with action "start" and a short id before the work itself, not after. Skip it for pure questions about general knowledge, one-line answers, and conversation. (Tool name varies by host: `mcp__abs` with tool="abs_task", or `mcp__abs__abs_task`, or `abs_task` — use whichever form this session exposes.)',
   // ② 完成即结：不许攒
   'Mark a task "done" immediately when it finishes — never batch completions at the end of a session.',
-  // ③ 断点：跨会话接力靠它
+  // ③ 子项：跨会话接力靠它
   'Before starting a task, record the checkpoint with action "note" (which file, which step) so a later session can resume.',
   // ④ 反例（照 rpiv-todo）：明确什么情况【不许】标完成 —— 只给正向要求时，
   //   模型倾向于把"我以为做完了"当成完成，结语失真会污染下个会话的判断。
@@ -717,15 +717,15 @@ export function pickNickname(rnd: () => number = Math.random): string {
  * who 不为空时只收“我的任务”：行内有 [[who]] 的，或**完全没标作者**的
  * （老任务/手写的没标，漏掉比多显示更糟）。标了别人的则不收。
  *
- * 断点行（缩进的 ↳）归属到它上一条任务，不单独成条。 */
+ * 子项行（缩进的 `- [ ]`）归属到它上一条任务，不单独成条。 */
 export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
   total: number
   rows: { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; sid: string }[]
   hidden: number
 } {
-  // 两阶段：先无过滤地按序解析（断点归属需要“上一条”是原文里真正的前一条），
-  // 再按作者过滤。若边解析边过滤，被滤掉的条目下方的断点会挂到它上面那一条
-  // —— 实测：别人任务的断点会显示在我的任务下面（2026-10-03 审查发现）。
+  // 两阶段：先无过滤地按序解析（子项归属需要“上一条”是原文里真正的前一条），
+  // 再按作者过滤。若边解析边过滤，被滤掉的条目下方的子项会挂到它上面那一条
+  // —— 实测：别人任务的子项会显示在我的任务下面（2026-10-03 审查发现）。
   type Row = { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; authors: string[]; sid: string }
   const parsed: Row[] = []
   let inTodo = false
@@ -734,7 +734,7 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
     if (/^##\s+Todo\s*$/.test(line)) { inTodo = true; continue }
     if (/^##\s+/.test(line)) { inTodo = false; continue }
     if (!inTodo) continue
-    // 子项行（标准 md：缩进的 `- [ ]`；旧格式 `↳ 断点:` 继续认）→ 挂到上一条任务。
+    // 子项行（标准 md：缩进的 `- [ ]`）→ 挂到上一条任务。
     // 子项可多条、可各自勾选（2026-10-16 用户定）。
     const kid = parseChildLine(line)
     if (kid && kid.indent > 0) {
@@ -743,10 +743,10 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
       continue
     }
     // `- [ ] [状态] <id> …`；状态标记可能缺省。
-    // 两种前缀都收：`- [ ]`（普通任务）与 `↳ [ ]`（断点任务，2026-10-16 新增）。
-    // 断点任务必须显示 —— 它就是一等等任务（写得进去、看得见、能 done），
+    // 只认 `- [ ]`（2026-10-20 旧 `↳ [ ]` 写法已废弃）。
+    // 子项任务必须显示 —— 它就是一等等任务（写得进去、看得见、能 done），
     // 否则落回「静默死区」（用户在 .brain 里报的原症状）。
-    const m = line.match(/^\s*(?:-\s*\[ \]|↳\s*\[ \])\s*(?:\[([^\]]+)\]\s*)?(\S+)\s*(.*)$/)
+    const m = line.match(/^\s*-\s*\[ \]\s*(?:\[([^\]]+)\]\s*)?(\S+)\s*(.*)$/)
     if (!m) continue
     const state = m[1] || '进行中'
     const id = m[2]
@@ -800,15 +800,11 @@ async function currentUser(): Promise<string> {
  *
  * 为何不 import src：面板是宿主扩展，单独装到 ~/.pi/extensions/，与包内 src/ 不同目录
  * （装完就断了）。故两端各一份 —— 规则简单（两步正则），且两边测试都盖。
- * 标准 md：缩进的 `- [ ] 内容`；旧格式 `↳ [ ] 断点: 内容` / `↳ 断点: 内容` 继续认。 */
+ * 标准 md：缩进的 `- [ ] 内容`。 */
 function parseChildLine(l: string): { done: boolean; text: string; indent: number } | null {
-  const s = String(l || '')
-  const old = s.match(/^(\s*)↳\s*(?:\[[ x]\]\s*)?(?:断点[:：]\s*)?(.*)$/)
-  if (old) {
-    if (!old[2].trim()) return null
-    return { done: /^\s*↳\s*\[x\]/.test(s), text: old[2].trim(), indent: old[1].length }
-  }
-  const m = s.match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/)
+  // 只认标准 md 缩进子项（2026-10-20 旧箭头写法已废弃）。
+  // 旧行由 CLI 侧 migrateLegacyChild 在读写时迁移掉，面板拿到的已是新格式。
+  const m = String(l || '').match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/)
   if (!m) return null
   return { done: m[2] === 'x', text: m[3].trim(), indent: m[1].length }
 }
@@ -945,9 +941,9 @@ export function renderPanelLines(
     return lines
   }
   data.rows.forEach((t, i) => {
-    // `└─` 只给最后一条 —— 不管它有没有断点。
-    // （2026-10-03 审查修正：原条件 `i === lastIdx && !t.note` 会让“末条带断点”时
-    //  全篇没有 └─ 收尾，断点行的 │ 又延伸到视觉底部，看起来像列表被截断。）
+    // `└─` 只给最后一条 —— 不管它有没有子项。
+    // （2026-10-03 审查修正：原条件 `i === lastIdx && !t.note` 会让“末条带子项”时
+    //  全篇没有 └─ 收尾，子项行的 │ 又延伸到视觉底部，看起来像列表被截断。）
     const isLast = i === lastIdx
     const branch = isLast ? '└─' : '├─'
     // 进行中的行带一个小动画（其余行不加，避免满屏都在跳）
@@ -1044,7 +1040,7 @@ export default function absPiHook(pi: ExtensionAPI): void {
   resetThrottle()
 
   pi.on("session_start", (event: any, ctx: any) => {
-    // 新会话 = 重新登记：不重置则同进程的第二个会话永远不再落断点
+    // 新会话 = 重新登记：不重置则同进程的第二个会话永远不再落子项
     autoTaskSeen = false
     filesSeen.clear() // 同理：新会话的文件痕迹不能带到下个会话
     loadInjected.clear() // 同：新会话的每个目录都要重新摆一次开局状态
@@ -1085,8 +1081,8 @@ export default function absPiHook(pi: ExtensionAPI): void {
       pendingTodoTool = true
       logHook(`tool_call todo_tool name=${name} target=${target || '-'}`).catch(() => {})
     }
-    // 自动登记断点（2026-10-05）：真的动文件时，把「改到哪个」记进本会话的自动任务。
-    // 为何不用「第一次 tool_call」：排查类会话先跑一堆读命令，断点会落在无关文件上。
+    // 自动登记子项（2026-10-05）：真的动文件时，把「改到哪个」记进本会话的自动任务。
+    // 为何不用「第一次 tool_call」：排查类会话先跑一堆读命令，子项会落在无关文件上。
     // 写类工具只留一行痕（可观测），不 spawn、不写看板 —— 见上面的删除说明。
     if (!autoTaskSeen && isWriteCall(name, input)) {
       autoTaskSeen = true
@@ -1205,7 +1201,7 @@ export default function absPiHook(pi: ExtensionAPI): void {
     }
     // 每轮 spawn 已删除（2026-10-05 用户实报"卡顿"）：agentEndSeen 一旦置位，
     // 下面那个条件就恒真 → 每轮结束都起一个 node 进程，纯属白烧。
-    // 断点改由 agent 在用 abs_task 时自己写（那时它本来就在跑，不额外起进程）。
+    // 子项改由 agent 在用 abs_task 时自己写（那时它本来就在跑，不额外起进程）。
   })
 
   pi.on("session_shutdown", (_e: any, ctx: any) => {

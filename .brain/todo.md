@@ -4,6 +4,9 @@
 
 ## Done
 
+### 2026-10-20
+- [x] remove-legacy-child-syntax [[fanchao]] — 彻底移除旧箭头子项写法及相关命令，统一到标准 md 嵌套列表 — 旧箭头写法全删；存量由 migrateLegacyChild 自动迁移（实测三种变体零丢失）；命令改名为 child-done/child-undone 【落地】 (完成 2026-10-20 01a15394-cd03-70)
+
 ### 2026-10-18
 - [x] mcp-1194-orphan-verify [[fanchao]] — 重启后验证 MCP 进程已是 1.19.4：孤儿行应阻断写入 【落地】 (完成 2026-10-18 01a14cf9-1259-73)
   - [x] 子任务：不勾

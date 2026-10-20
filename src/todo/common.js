@@ -104,47 +104,56 @@ export function sentenceCount(s) {
  * 子任务：缩进的 `- [ ]` 行（标准 Markdown 嵌套列表，2 空格一层）。
  * 两者**都是任务行**（子任务可各自勾选）；层级的区分看缩进，不在本函数。
  *
- * 为何也收 `↳ [ ]`：2026-10-16 早上刚把断点任务升级成一等任务（存量数据里有），
- * 现在改用标准 md 嵌套列表，旧形态继续认（存量不能变“看不见”）。 */
+ * 2026-10-20：旧 `↳ [ ]` 写法已彻底废弃，本函数不再认它。
+ * 存量由 migrateLegacyChild 在 load 时就地转成标准 md（见下）。 */
 export function isTaskLine(l) {
-  // 先排旧式断点行：`↳ [ ] 断点: x` 形似任务行，但它带 `断点:` ⇒ 是子项文本，不是任务。
-  if (/^\s*↳\s*\[[ x]\]\s*断点[:：]/.test(l)) return false;
-  return /^\s*(?:-\s*\[[ x]\]|↳\s*\[[ x]\])/.test(l);
+  return /^\s*-\s*\[[ x]\]/.test(l);
 }
 
-/** 一行是否任务附属行（子项）：缩进的 `- [ ]`，或旧的 `↳ …` 形态。
- *
- * 标准 md 下子项就是缩进的列表项 —— 它本身也是任务行（isTaskLine 为真），
- * 但**不单独成条**：它挂在父任务下，不占顶层 id、不参与 `abs todo done`。
- * 故 isChild 的判据是「有缩进」，不是「形态不同」。 */
+/** 一行是否任务附属行（子项）：缩进的 `- [ ]`。 */
 export function isChildLine(l) {
-  if (/^\s*↳/.test(l)) return true;          // 旧形态（含 `↳ [ ]` 断点任务）
-  return /^\s+-\s*\[[ x]\]/.test(l);         // 缩进的 `- [ ]`（新形态）
+  return /^\s+-\s*\[[ x]\]/.test(l);
 }
 
 // ---------- 子项行（标准 md 嵌套列表：缩进 2 空格 + `- [ ]`） ----------
-/** 子项 = 挂在任务下的可勾条目（旧的「断点」就是一条子项）。
+/** 子项 = 挂在任务下的可勾条目。
  *
- * 格式（2026-10-16 用户定）：标准 Markdown 嵌套列表，不搞自定义前缀。
+ * 格式（2026-10-16 用户定，2026-10-20 彻底收口）：标准 Markdown 嵌套列表。
  *   - [ ] [进行中] 主任务
  *     - [x] 已完成的子项
  *     - [ ] 还没做的子项
- * 旧格式 `↳ 断点: 内容` **继续承认**（存量数据不能坏），新写入一律用标准 md。 */
+ *
+ * 旧的 `↳ 断点: 内容` / `↳ [ ] 断点: 内容` 写法**已移除**，不再被解析。
+ * 存量靠 migrateLegacyChild 一次性迁移（那是全仓唯一还认得 `↳` 的地方）。 */
 export const CHILD_INDENT = '  ';
 
-/** 解析子项行 → { done, text, indent }；不是子项返回 null。
- * 两种形态都收：新的 `  - [ ] 内容` 与旧的 `  ↳ [ ] 断点: 内容` / `  ↳ 断点: 内容`。 */
-export function parseChild(l) {
+/** 唯一还认得旧 `↳` 写法的地方 —— 存量迁移。
+ *
+ * 为何保留这一个函数（2026-10-20 用户定：彻底去掉断点写法，但存量要自动迁移）：
+ *   其它项目的 todo.md 里已有旧行（实测 corp_agent 1 行、obsidian_bridge 1 行、
+ *   zj_shop 6 行，形态还包括 `↳ 内容:` 这种变体）。直接删判据会让这些行变成
+ *   「裸文本」而被闸门拒写 → 那几个项目的 todo 全部锁死。
+ *   所以保留这一个「只读旧形态、产出新形态」的转换器，写回后旧行就不存在了。
+ *
+ * 返回 null = 不是旧形态（不用迁移）；否则返回 `  - [ ] 内容` 形态的行。
+ *   裸 `↳ 内容`（无复选框）按未完成子项处理 —— 旧格式里它就是「待办的一句话」。
+ *   `↳ [x] 内容` 保留已勾状态。
+ *   `↳ [ ]` 后面没内容 = 旧一等任务的空壳，迁移成 `- [ ] （空）` 没意义 → 返回 null 由闸门拒。 */
+export function migrateLegacyChild(l) {
   const s = String(l || '');
-  // 旧形态（↳ 开头）：剥掉 ↳ 与可选复选框及可选的 `断点:` 标签
-  const old = s.match(/^(\s*)↳\s*(\[[ x]\])?\s*(?:断点[:：]\s*)?(.*)$/);
-  if (old) {
-    // 勾选看 ↳ 后的那个复选框；旧格式无勾 ⇒ false
-    if (!old[3].trim()) return null;  // `↳ [ ]` 后面没内容 = 不是子项（是旧一等任务的空壳）
-    return { done: old[2] === '[x]', text: old[3].trim(), indent: old[1].length };
-  }
-  // 新形态（缩进的 `- [ ]`）—— 必须缩进，否则那是顶层任务
-  const m = s.match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/);
+  const m = s.match(/^(\s*)↳\s*(?:\[([ x])\]\s*)?(?:断点|卡点|内容)[:：]?\s*(.*)$/)
+    || s.match(/^(\s*)↳\s*(?:\[([ x])\]\s*)?(.*)$/);
+  if (!m) return null;
+  const text = (m[3] || '').trim();
+  if (!text) return null;                 // 空壳子：不猜，交给闸门拒
+  const done = m[2] === 'x';
+  return `${m[1]}- ${done ? '[x]' : '[ ]'} ${text}`;
+}
+
+/** 解析子项行 → { done, text, indent }；不是子项返回 null。
+ * 只认标准 md（缩进的 `- [ ]`）。旧 `↳` 形态请先过 migrateLegacyChild。 */
+export function parseChild(l) {
+  const m = String(l || '').match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/);
   if (!m) return null;
   return { done: m[2] === 'x', text: m[3].trim(), indent: m[1].length };
 }
@@ -161,7 +170,7 @@ export function renderChild(text, { done = false, indent = CHILD_INDENT } = {}) 
  *  于是把总结写成「紧跟任务行的裸文本行」就三层全部放行：闸门不看、形状规则不管、
  *  lint 只查断点行 —— 实测 .agents/.brain/todo.md 被塞进 10 行实施报告而 lint 报 0 问题。
  *  前面的修法都挂在「行的形态」上（先修超长断点、再修多句断点），换个形态就绕过。
- *  改成白名单：Todo 区里除了任务行/断点/空行/标题，别的都是非法。
+ *  改成白名单：Todo 区里除了任务行/子项/空行/标题，别的都是非法。
  *  只在 `## Todo` 区生效 —— Done/Archived 区有日期分组与归档链接，判据不同。
  *  返回 false 才叫非法。 */
 export function isAllowedTodoLine(l) {
@@ -169,12 +178,12 @@ export function isAllowedTodoLine(l) {
   if (!t) return true;                        // 空行
   if (/^#{1,3}\s/.test(t)) return true;       // `## Todo` / `### …` 标题
   if (isTaskLine(l)) return true;             // 任务行
-  if (isChildLine(l)) return true;            // ↳ 断点附属行
+  if (isChildLine(l)) return true;            // 缩进子项
   return false;
 }
 
 /** 把 Done 区文本（bodyLines，不含 `## Done` 标题）解析成任务单元 [{ date, lines:[main,...children] }]。
- * 剥 `### 日期` 分组标题与空行；任务行下紧跟的 ↳ 行并入该单元。 */
+ * 剥 `### 日期` 分组标题与空行；任务行下紧跟的缩进子项并入该单元。 */
 
 export function daysAgo(n, from) {
   const [y, m, d] = String(from).split('-').map(Number);
@@ -196,9 +205,9 @@ export function isPlaceholder(line) {
 
 export function extractId(text) {
   // 先剥行首状态标记（`[进行中] <id>`），否则 id 会取成 "[进行中]"（2026-09-13 实测）。
-  // 再剥具体的 `- [ ] ` / `↳ [ ] ` 前缀（CLI 传完整行时）。
+  // 再剥具体的 `- [ ] ` 前缀（CLI 传完整行时）。
   const t = String(text)
-    .replace(/^\s*(?:-\s*\[[ x]\]|↳\s*\[[ x]\])\s*/, '')
+    .replace(/^\s*-\s*\[[ x]\]\s*/, '')
     .replace(/^\[[^\]]+\]\s+/, '');
   // id = 到第一个空白 / `[` 为止的连续字符（id 不允许含空格或方括号）。
   // ★ 必须支持**中文 id**（2026-10-16 实测）：原正则 `^[A-Za-z][\w-]*` 要求英文开头，

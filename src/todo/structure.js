@@ -2,7 +2,7 @@
 
 import { TODO_SECTIONS, H1_TO_FILE, TASK_STATES, RETIRED_SECTIONS } from './spec.js';
 import { checkFileShape, violationSignatures, assertNoStrayBlank, assertTodoContent } from './validate.js';
-import { trimBlank, sigOfLine, isPlaceholder } from './common.js';
+import { trimBlank, sigOfLine, isPlaceholder, migrateLegacyChild } from './common.js';
 
 export function todoTemplate() {
   // 由 rebuildStructure 生成，保证“模板”与“重排结果”逐字节一致
@@ -156,8 +156,24 @@ function stripStrayBlanks(body, fixed) {
 }
 
 export function enforceBrainFormat(text, spec, prev) {
-  const src = String(text ?? '');
+  let src = String(text ?? '');
   if (!src.trim()) return { text: src, fixed: [] };
+  const fixed = [];
+  // ★ 旧 `↳` 子项写法最先迁移（2026-10-20），必须跑在**一切校验之前**：
+  //   否则旧行会被 assertTodoContent 判成「裸文本」而拒写 —— 整个库变只读。
+  //   （实测：真库形态的 `  ↳ 断点: …` 在 load 时就撞上了这条。）
+  if (spec?.h1 === '# 📋 Todo Board') {
+    const ls0 = src.split('\n');
+    let n0 = 0;
+    for (let i = 0; i < ls0.length; i++) {
+      const conv = migrateLegacyChild(ls0[i]);
+      if (conv !== null && conv !== ls0[i]) { ls0[i] = conv; n0++; }
+    }
+    if (n0) {
+      src = ls0.join('\n');
+      fixed.push(`旧 ↳ 子项写法 → 标准 md 缩进子项（${n0} 行）`);
+    }
+  }
   // 内容闸门：形状归一之前先拒掉乱塞（超长断点/报告体），否则下面的 rebuild
   // 会把它当「人自加的正文」好好保留下来 —— 越规整越难发现。
   // ★ 存量宽容（2026-10-05 本机实测踩到）：只拒「本次写入新引入」的违规；
@@ -203,7 +219,6 @@ export function enforceBrainFormat(text, spec, prev) {
       );
     }
   };
-  const fixed = [];
   // 旧标记 → 标准标记（H1 与分区/分组标题）。与 store.js 的 LEGACY_MARKS 同源，
   // 由调用方通过 spec.renames 注入（todo.js 不反向依赖 store.js）。
 
@@ -233,13 +248,23 @@ export function enforceBrainFormat(text, spec, prev) {
   //   底层 addTask/upsertTask 传的就是裸文本，它们是内部 API，不是 AI 入口）。
   if (fname === 'todo.md') {
     const ls = body.split('\n');
+    let migrated = 0;
     for (let i = 0; i < ls.length; i++) {
+      // ★ 旧 `↳ 断点:` / `↳ [ ]` 写法 → 标准 md 缩进子项（2026-10-20）。
+      //   为何在闸门里做而不只靠 load：所有写入都过这里，迁移一次就永久生效。
+      //   保留这个转换器是「存量不能锁死」的代价 —— 它是全仓唯一还认得 ↳ 的地方。
+      const conv = migrateLegacyChild(ls[i]);
+      if (conv !== null) {
+        if (conv !== ls[i]) { ls[i] = conv; migrated++; }
+        continue;
+      }
       // 裸任务行（`- [ ] id …` 无状态标记）→ 补默认「进行中」
       if (/^- \[ \] /.test(ls[i]) && !/^- \[ \] \[[^\]]+\]/.test(ls[i])) {
         const fixed2 = ensureStateMark(ls[i], '进行中');
         if (fixed2 !== ls[i]) { ls[i] = fixed2; fixed.push('补回缺失的状态标记'); }
       }
     }
+    if (migrated) fixed.push(`旧 ↳ 子项写法 → 标准 md 缩进子项（${migrated} 行）`);
     body = ls.join('\n');
   }
 
@@ -277,13 +302,18 @@ function normalizeTodoIf(body, spec) {
 }
 
 export function normalizeTodo(text) {
-  const lines = text.split('\n');
+  // ★ 旧 `↳` 子项写法先就地迁移（2026-10-20）。
+  //   为何放在 normalizeTodo 而不只放闸门：读路径（readTodo）不过写入闸门，
+  //   不在这里迁，旧行就会以「看不见」的状态留在盘上（面板/看板都不认它）。
+  //   迁移后走到下面的「已是标准两区」早退分支也没关系 —— 内容已经是新的了。
+  const migrated = String(text).split('\n').map((l) => migrateLegacyChild(l) ?? l).join('\n');
+  const lines = migrated.split('\n');
   const has = (name) => lines.some((l) => l.trim() === `## ${name}`);
   // 已是标准两区制 = 有 Todo 且**没有**任何进行时老分区。
   // 坑（2026-09-13）：曾只判 has('Todo') 就 return —— 而最老格式里也可能有 `## Todo`
   // （与 `## In Progress` 混用），于是旧文件永不迁移。
   const legacy = ['Backlog', 'Today / In Progress', 'In Progress', 'Blocked'].some(has);
-  if (has('Todo') && !legacy) return text;
+  if (has('Todo') && !legacy) return migrated;
   const out = ['# 📋 Todo Board'];
   const grab = (name) => {
     const items = [];
@@ -308,33 +338,31 @@ export function normalizeTodo(text) {
 }
 
 /** 给任务行补行首状态标记（已有则不覆盖）。`- [ ] id …` → `- [ ] [状态] id …`
- *  两种前缀（`- [ ]` / 断点任务 `↳ [ ]`）与缩进都认 —— 否则存量迁移时断点任务补不上标记。 */
+ *  缩进与 `- [ ]` 前缀都认（子项也要能补标记）。 */
 export function ensureStateMark(line, state) {
-  const m = String(line).match(/^(\s*(?:-\s*\[[ x]\]|↳\s*\[[ x]\])\s*)(\[[^\]]+\]\s+)?(.*)$/);
+  const m = String(line).match(/^(\s*-\s*\[[ x]\]\s*)(\[[^\]]+\]\s+)?(.*)$/);
   if (!m) return line;
   if (m[2] && TASK_STATES.includes(m[2].trim().replace(/[\x5B\x5D]/g, ''))) return line;
   return `${m[1]}[${state}] ${m[3]}`;
 }
 
-/** 读任务行的状态标记；两种前缀（`- [ ]` / 断点任务 `↳ [ ]`）与缩进都认。 */
+/** 读任务行的状态标记；缩进与 `- [ ]` 前缀都认。 */
 export function stateOfTaskLine(line) {
-  const m = String(line).match(/^\s*(?:-\s*\[[ x]\]|↳\s*\[[ x]\])\s*\[([^\]]+)\]/);
+  const m = String(line).match(/^\s*-\s*\[[ x]\]\s*\[([^\]]+)\]/);
   return m && TASK_STATES.includes(m[1]) ? m[1] : null;
 }
 
 /** 剥掉任务行的状态标记（`- [ ] [进行中] id …` → `- [ ] id …`），保留前缀与缩进。 */
 
 export function stripStateMark(line) {
-  // 两种前缀都剥：`- [ ] `（普通任务）与 `↳ [ ] `（断点任务，带缩进）。
-  // 原正则写死 `^- \[[ x]\] ` —— 断点任务（2026-10-16 新增形态）匹配不上，
-  // 后果是状态标记没被剥掉、markDone 的 `- [ ]`→`- [x]` 也落空（实测：完成行仍是 `[ ]`）。
-  return String(line).replace(/^(\s*(?:-\s*\[[ x]\]|↳\s*\[[ x]\])\s*)\[[^\]]+\]\s*/, '$1');
+  // 前缀只剥 `- [ ] `（缩进与状态标记的位置保留）。
+  // 旧正则里带 `↳ [ ]` 分支已在 2026-10-20 随旧写法一并移除。
+  return String(line).replace(/^(\s*-\s*\[[ x]\]\s*)\[[^\]]+\]\s*/, '$1');
 }
 
-/** 把未完成任务行的复选框从 `[ ]` 翻到 `[x]`（保留原前缀与缩进）。
- *  单独抽出：断点任务的 `↳ ` 前缀 + 缩进必须原样保留，用固定的 `- [ ]` 字面替换会漏。 */
+/** 把未完成任务行的复选框从 `[ ]` 翻到 `[x]`（保留原前缀与缩进）。 */
 export function checkTaskBox(line) {
-  return String(line).replace(/^(\s*(?:-\s*|↳\s*))\[ \]/, '$1[x]');
+  return String(line).replace(/^(\s*-\s*)\[ \]/, '$1[x]');
 }
 
 /** 从已完成任务行提取 `(完成 YYYY-MM-DD)` 日期；无则返回 ''。兼容中英文括号。 */

@@ -1,6 +1,6 @@
 // src/todo/archive.js — Done 结语契约与任务归档（分组、折叠、迁归档区）。
 
-import { today, SEC, isTaskLine, isChildLine, daysAgo } from './common.js';
+import { today, SEC, isTaskLine, isChildLine, daysAgo, migrateLegacyChild } from './common.js';
 import { ARCHIVE_HEADING, ARCHIVE_SECTION } from './spec.js';
 
 export function doneDateOf(line) {
@@ -39,7 +39,10 @@ export function withDoneKind(line, kind) {
 function parseDoneUnits(bodyLines) {
   const units = [];
   let cur = null;
-  for (const l of bodyLines) {
+  for (const raw of bodyLines) {
+    // 旧 `↳` 子项先迁移（2026-10-20）——否则它不再被认成子项，会从所属任务里“掉出去”，
+    // 归档时要么丢失、要么归错日期组。
+    const l = migrateLegacyChild(raw) ?? raw;
     if (/^### /.test(l.trim()) || l.trim() === '') { cur = null; continue; } // 分组标题/空行断开会话
     // 先判子项再判任务：缩进的 `- [ ]` 两个判据都为真，而它应挂到父任务。
     // （标准 md 嵌套下子项本身就是任务行 —— 靠缩进区分层级，不靠形态。）

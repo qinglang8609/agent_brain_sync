@@ -256,7 +256,7 @@ describe('cli: todo', () => {
     const r = await run(['todo', 'frobnicate', 'T1']);
     assert.notEqual(r.code, 0, '未知子命令必须非零退出');
     assert.ok(/未知子命令/.test(r.stderr), r.stderr);
-    assert.ok(/add \/ start \/ note \/ bp-done \/ bp-undone \/ memo \/ state \/ done/.test(r.stderr), '应列出可用子命令');
+    assert.ok(/add \/ start \/ note \/ child-done \/ child-undone \/ memo \/ state \/ done/.test(r.stderr), '应列出可用子命令');
   });
 
   test('add 与 start 等价', async () => {

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
 import { readRules, idOfPage, statusOfPage, supersededByOf, clip, RULE_BODY_MAX } from './store.js';
 import { doneKindOf, doneDateOf, checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo.js';
-import { isAllowedTodoLine, todoSectionOf, parseChild } from './todo/common.js';
+import { isAllowedTodoLine, todoSectionOf, parseChild, migrateLegacyChild } from './todo/common.js';
 
 // ---------- 图谱遍历 ----------
 
@@ -136,10 +136,27 @@ async function checkRootFiles(vault) {
     if (file !== 'todo.md') continue;
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
+      // 旧 `↳` 子项写法（2026-10-20 废弃）：lint 仍要能看见它，
+      // 报专门的迁移码而不是「裸文本」—— 两者出路不同。
+      const legacy = migrateLegacyChild(l);
+      if (legacy !== null) {
+        issues.push(
+          `TODO-LEGACY-CHILD: ${BRAIN_DIR}/${file}:${i + 1} (旧 ↳ 子项写法；` +
+          `跑一次 abs load 即可自动迁移为标准 md 缩进子项)`,
+        );
+        const legacyText = (parseChild(legacy) || {}).text || '';
+        if (legacyText.length > LINT_BREAKPOINT_MAX) {
+          issues.push(
+            `TODO-BREAKPOINT-BLOAT: ${BRAIN_DIR}/${file}:${i + 1} (子项 ${legacyText.length} 字 > ${LINT_BREAKPOINT_MAX}；` +
+            `子项只写「改到哪个文件哪一步」，报告迁 sessions/ 或 sources/)`,
+          );
+        }
+        continue;
+      }
       // 裸文本行（与闸门 isAllowedTodoLine 同源，2026-10-11）：Todo 区只能有任务行/断点/空行/标题。
       if (todoSectionOf(lines, i) === 'Todo' && !isAllowedTodoLine(l)) {
         issues.push(
-          `TODO-STRAY-PROSE: ${BRAIN_DIR}/${file}:${i + 1} (Todo 区里的裸文本，不是任务行也不是断点；` +
+          `TODO-STRAY-PROSE: ${BRAIN_DIR}/${file}:${i + 1} (Todo 区里的裸文本，不是任务行也不是子项；` +
           `总结/报告/清单请分流：流水 → abs log，经验 → abs note，长设计 → sources/)`,
         );
       }
@@ -149,12 +166,12 @@ async function checkRootFiles(vault) {
       const bp = bpLine.text;
       if (bp.length > LINT_BREAKPOINT_MAX) {
         issues.push(
-          `TODO-BREAKPOINT-BLOAT: ${BRAIN_DIR}/${file}:${i + 1} (断点 ${bp.length} 字 > ${LINT_BREAKPOINT_MAX}；` +
-          `断点只写「改到哪个文件哪一步」，报告迁 sessions/ 或 sources/)`,
+          `TODO-BREAKPOINT-BLOAT: ${BRAIN_DIR}/${file}:${i + 1} (子项 ${bp.length} 字 > ${LINT_BREAKPOINT_MAX}；` +
+          `子项只写「改到哪个文件哪一步」，报告迁 sessions/ 或 sources/)`,
         );
       } else if (bp.split(/[。！？!?]+|\s*[\u2460-\u2473]\s*/).map((x) => x.trim()).filter(Boolean).length > 2) {
         issues.push(
-          `TODO-BREAKPOINT-PROSE: ${BRAIN_DIR}/${file}:${i + 1} (断点写了多句 = 报告体；` +
+          `TODO-BREAKPOINT-PROSE: ${BRAIN_DIR}/${file}:${i + 1} (子项写了多句 = 报告体；` +
           `todo 只放待办，长文迁 sessions/ 或 sources/)`,
         );
       }
