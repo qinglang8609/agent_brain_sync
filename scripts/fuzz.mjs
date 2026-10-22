@@ -15,7 +15,7 @@ const ROUNDS = Number(process.argv[2] || 200);
 const IDS = ['t1', 'TASK-2', '中文id', '升级SDK', 'a-b-c', 'x_y', '🐛bug', '带 空格', '', '   ', '..', '../../etc', 'x'.repeat(80), '大写ABC', 'task/with/slash'];
 const NOTES = ['普通描述', '带 — 破折号', '多句。第二句。第三句。', 'x'.repeat(300), '', '   ', 'emoji 🚀 测试', '含\n换行', '含"引号"', "含'单引号'", '$(whoami)', '`id`', '|管道|', '--flag', '-x'];
 const STATES = ['进行中', '讨论中', '滞留中', '搁置', '乱写的状态', ''];
-const ACTIONS = ['start', 'add', 'note', 'memo', 'state', 'bp-done', 'bp-undone', 'done', 'archive'];
+const ACTIONS = ['start', 'add', 'note', 'memo', 'state', 'child-done', 'child-undone', 'done', 'archive'];
 // 非 todo 命令也要混进去 —— bug 常在「两个命令的产物互相不匹配」时出现
 // （例：unwrapup 读 todo、lint 读两者、note 写 index）。
 const OTHER_CMDS = [
@@ -83,7 +83,7 @@ async function main() {
     if (id !== '') args.push(id);
     if (action === 'state') args.push('--note', pick(STATES));
     else if (note !== '') args.push('--note', note);
-    if (action === 'bp-done' || action === 'bp-undone') {
+    if (action === 'child-done' || action === 'child-undone') {
       if (Math.random() < 0.5) args.push('--n', pick(['1', '2', '99', '0', '-1', 'abc']));
     }
     if (action === 'done' && Math.random() < 0.5) args.push('--as', pick(['落地', '否决', '仅方案', '乱写']));

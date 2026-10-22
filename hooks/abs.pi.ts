@@ -228,6 +228,9 @@ const TODO_GUIDELINES = [
   'Keep exactly one task in "进行中" at a time; when the user switches direction or drops a task, use action "state" with 搁置 (dropped/not doing it); 滞留中 for still-wanted-but-stuck; 讨论中 for still-open. If you finish one and another is ready, promote it explicitly.',
   // ⑥ 结语要真实：三种结语各有含义，别一律写落地。
   'When completing, pick the honest conclusion via the `as` field: 落地 (built and verified) / 否决 (decided against, or built then reverted) / 仅方案 (designed only). A wrong conclusion makes the next session treat "considered" as "completed".',
+  // ⑦ 文档精简九条（用户 2026-10-22 定，原文见 skill 的「文档精简」一节）：
+  // 管每一行写进 .brain 的文字；与上面六条行为规则不重叠，故不合并。
+  'Every line you write into .brain/ (todo rows, log rows, knowledge pages, session snapshots) must pass the nine-bullet doc-slimming rule in the abs skill: only what serves the topic (drop the rest), no unverified summaries, ordered and layered, plain declarative wording (no rhetorical questions, no guessing), no duplication (cite the other doc instead), terse prohibitions, nothing the user did not ask for, plain Chinese.',
 ]
 
 /** 当前项目是否有 .brain 图谱 —— 有才加指引（没图谱的项目里这指引是噪音）。
@@ -1158,11 +1161,7 @@ export default function absPiHook(pi: ExtensionAPI): void {
           }
           if (rulesOn) openingRulesLogged = true
         }
-        // 【临时取证 2026-10-06】seen= 把 Set 内容原样打出来：
-        //   真实环境里 agent_brain_sync 从未 load_delivered 却 still skip → 与「按 cwd 分」矛盾。
-        //   靠这行区分：Set 空（→ 判断写错）vs Set 里已有该 cwd（→ 有东西提前加进去了）。
-        //   定位并修好后删掉这行。
-        logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} load_guide=${loadState} opening_rules=${openingRulesLogged ? 'on' : 'skip'} seen=[${[...loadInjected].join(',')}] pending=[${loadPending}] cwd=${cwd}`).catch(() => {})
+        logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} load_guide=${loadState} opening_rules=${openingRulesLogged ? 'on' : 'skip'} cwd=${cwd}`).catch(() => {})
 
         // 自动登记已整体移除（2026-10-05 用户实报两点）：
         //   ① 卡顿 —— agent_end 每轮 spawn 一个 node 进程

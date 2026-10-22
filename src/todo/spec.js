@@ -57,8 +57,6 @@ export const LOG_KINDS = ['note', 'dev', 'concept', 'ingest'];
 
 /** 条目形状规则表：文件 → 每行的预期形状。
  *  校验器只报告「不像这个形状」的行，不自动改写内容（机器不猜语义）。 */
-/** 条目形状规则表：文件 → 每行的预期形状。
- *  校验器只报告「不像这个形状」的行，不自动改写内容（机器不猜语义）。 */
 
 export const H1_TO_FILE = {
   '# 🗂 Graph Index': 'index.md',

@@ -1062,9 +1062,9 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(boards(opts).length, 1);
     assert.ok(boards(opts)[0].includes('t3'));
 
-    // 静态 6 条始终在（不被看板挤掉）
-    assert.equal(opts.promptGuidelines.length - boards(opts).length, 6,
-      '静态指引条数应恒为 6');
+    // 静态 7 条始终在（不被看板挤掉；2026-10-22 加了文档精简一条：6 → 7）
+    assert.equal(opts.promptGuidelines.length - boards(opts).length, 7,
+      '静态指引条数应恒为 7');
   });
 
   test('宽度截断：CJK 按 2 列，永不溢出且尾部有省略号', async () => {

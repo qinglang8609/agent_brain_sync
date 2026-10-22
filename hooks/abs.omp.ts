@@ -193,6 +193,8 @@ const TODO_GUIDELINES = [
   'Never mark a task "done" when tests are failing, the implementation is partial, or an error is unresolved — keep it in progress and add a task for the blocker instead.',
   'Keep exactly one task in "进行中" at a time; when the user switches direction or drops a task, use action "state" with 搁置 (dropped/not doing it); 滞留中 for still-wanted-but-stuck; 讨论中 for still-open. If you finish one and another is ready, promote it explicitly.',
   'When completing, pick the honest conclusion via the `as` field: 落地 (built and verified) / 否决 (decided against, or built then reverted) / 仅方案 (designed only). A wrong conclusion makes the next session treat "considered" as "completed".',
+  // 文档精简九条（用户 2026-10-22 定，原文见 skill 的「文档精简」一节）：管每一行写进 .brain 的文字。
+  'Every line you write into .brain/ (todo rows, log rows, knowledge pages, session snapshots) must pass the nine-bullet doc-slimming rule in the abs skill: only what serves the topic (drop the rest), no unverified summaries, ordered and layered, plain declarative wording (no rhetorical questions, no guessing), no duplication (cite the other doc instead), terse prohibitions, nothing the user did not ask for, plain Chinese.',
 ]
 
 /** 从 skill 里挑出的【硬规则】—— 只第一轮送, 与 load 同机会（同 pi 版方案 B）。 */
