@@ -12,6 +12,18 @@ import { editFile, SKIP } from './lock.js';
 import { impactOf } from './codegraph.js';
 import { clip, slugOf } from './text.js';
 
+
+/** 惰性调 autoIndex —— 断循环 import：note.js ← capture.js ← db-cmd.js ← note.js。
+ * 动态 import 只在真正写入时解析，静态加载期不受影响。失败一律吞掉（见 autoIndex 边界）。 */
+async function autoIndexLazy() {
+  try {
+    const { autoIndex } = await import('./brain/db-cmd.js');
+    return await autoIndex();
+  } catch {
+    return { ok: false, reason: '入库模块不可用' };
+  }
+}
+
 // ---------- note: 经验实时暂存（source 页，一念一落，防流失） ----------
 
 export async function cmdNote({ dir, text, tags, when, impact, type }) {
@@ -91,6 +103,8 @@ export async function cmdNote({ dir, text, tags, when, impact, type }) {
   const slug = file.replace(/\.md$/, '');
   await registerInIndex(root, 'Sources', slug, heading);
   await cmdLog({ dir: root, title: clean, kind: 'note' });
+  // 落盘即入库（库已存在时）。失败不阻断 —— 见 autoIndex 的边界说明。
+  await autoIndexLazy();
   return `✓ 经验暂存 → sources/${file}\n  ${clean} ${atTag(who)}`;
 }
 
@@ -174,6 +188,7 @@ export async function cmdConcept({ dir, slug, title, tags, desc }) {
   }
   const oneLine = String(desc || '').trim() || clip(head, 60);
   await registerInIndex(root, 'Concepts', name, oneLine);
+  await autoIndexLazy();
   // 不写 log.md（2026-10-05 用户定）：`新建概念页 x` 是**命令的副作用**不是成果 ——
   // 38 字符、零信息量，且「该页存在」已由 registerInIndex 落在 index.md 的 Concepts 区
   // （那是 index 的职责）。同件事落两处，且建 10 个页 = 10 行流水噪声自动重现，

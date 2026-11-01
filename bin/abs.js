@@ -3,6 +3,9 @@
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
 import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede, cmdReview } from '../src/store.js';
+import { cmdDbRebuild, cmdDbSearch, cmdDbStatus, addProject } from '../src/brain/db-cmd.js';
+import { cmdCapture } from '../src/brain/capture.js';
+import { cmdSummon } from '../src/brain/summon-cmd.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
@@ -101,6 +104,13 @@ const FLAG_SPEC = {
   'session': { type: 'string' },
   'payload': { type: 'string' },
   'tags': { type: 'string' },
+  // db search 用：最多返回几页（亮度排序后的截断）。未声明会被静默吞成 true。
+  'limit': { type: 'string' },
+  // capture 用：1-7 的层号。未声明会被静默吞成 true。
+  'layer': { type: 'string' },
+  // summon 用：布尔开关。未声明会被静默吞成 true（--mark 会变成真值即生效，但 --status 同理）。
+  'mark': { type: 'boolean' },
+  'status': { type: 'boolean' },
   'port': { type: 'string' },
   // note 的触发条件（何时该读这条经验）—— 供 load 的相关页推荐匹配。
   'when': { type: 'string' },
@@ -198,6 +208,10 @@ function parseArgv(args) {
     all: !!values.all,
     payload: values.payload,
     tags: values.tags,
+    limit: values.limit === undefined ? undefined : Number(values.limit),
+    layer: values.layer,
+    mark: !!values.mark,
+    status: !!values.status,
     title: values.title,
     desc: values.desc,
     help: !!values.help,
@@ -231,8 +245,11 @@ const usage = `abs — 跨会话记忆工具（.brain/ 图谱）
   todo                       任务看板 (add/note/state/done/archive)
   index | log | status       索引 / 流水 / 概要
   note <经验> [--tags a,b]   经验暂存 → sources/
+  capture [--layer 1-7] "…"  按七层判定落点后直接写入 (不传=L4)
+  summon [--mark|--status]   会话总结托底: 列出未总结/有更新的会话 (不写盘)
   concept <slug> --title …   建概念页骨架
   query <词…> [--all]       检索知识页 (多词 OR)
+  db rebuild|search|status   图数据库: 建库 / 亮度搜索 / 体检
   resolve <页名…>            反查页面路径
   supersede <页名> [--by 页] 标经验已失效
   review [--accept 页…|--reject 页…]  待确认页队列 (draft 升 active/否决)
@@ -512,6 +529,14 @@ async function main() {
         console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note: opts.note, as: opts.as, session: opts.session }));
         break;
       }
+      case 'summon': {
+        console.log(await cmdSummon({ dir: opts.dir, mark: !!opts.mark, full: !!opts.full, status: !!opts.status, limit: Number(opts.limit) || 15 }));
+        break;
+      }
+      case 'capture': {
+        console.log(await cmdCapture({ dir: opts.dir, text: opts._.join(' '), layer: opts.layer, tags: opts.tags, title: opts.title }));
+        break;
+      }
       case 'note': {
         console.log(await cmdNote({ dir: opts.dir, text: opts._.join(' '), tags: opts.tags, when: opts.when, impact: opts.impact, type: opts.type }));
         break;
@@ -548,6 +573,20 @@ async function main() {
         const isAdd = sub === 'add';
         if (!isAdd && sub) throw new Error(`✗ 未知子命令 "${sub}"\n  用法: abs rule / abs rule add "一句话"`);
         console.log(await cmdRule({ dir: opts.dir, action: isAdd ? 'add' : 'list', text: rest3.join(' ') }));
+        break;
+      }
+      case 'db': {
+        const sub = opts._[0];
+        const rest = opts._.slice(1);
+        if (sub === 'rebuild') { console.log(await cmdDbRebuild({ dir: opts.dir })); break; }
+        if (sub === 'search') { console.log(await cmdDbSearch({ query: rest.join(' '), limit: Number(opts.limit) || 8 })); break; }
+        if (sub === 'status') { console.log(await cmdDbStatus()); break; }
+        if (sub === 'add') {
+          const r = await addProject(opts.dir || process.cwd());
+          console.log(`✓ 已登记项目: ${r}\n  建库: abs db rebuild`);
+          break;
+        }
+        console.log('用法: abs db rebuild | search <词> | status | add [--dir <项目根>]');
         break;
       }
       case 'query': {
