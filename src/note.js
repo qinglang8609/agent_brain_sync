@@ -102,7 +102,7 @@ export async function cmdNote({ dir, text, tags, when, impact, type }) {
   // index Sources 区登记（锁内幂等：别页已登记则跳过，防并发重复） + log 一行
   const slug = file.replace(/\.md$/, '');
   await registerInIndex(root, 'Sources', slug, heading);
-  await cmdLog({ dir: root, title: clean, kind: 'note' });
+  await cmdLog({ dir: root, title: clean, kind: 'note', summon: false });
   // 落盘即入库（库已存在时）。失败不阻断 —— 见 autoIndex 的边界说明。
   await autoIndexLazy();
   return `✓ 经验暂存 → sources/${file}\n  ${clean} ${atTag(who)}`;
@@ -260,7 +260,7 @@ export async function registerInIndex(root, section, slug, desc) {
   });
 }
 // ---------- log: 追加工作成果沉淀摘要（用户/AI 主动 abs log "..." 记, 不收工具动作流水） ----------
-export async function cmdLog({ dir, title, kind = 'dev' }) {
+export async function cmdLog({ dir, title, kind = 'dev', summon = true }) {
   const root = await requireBrain(dir || process.cwd());
   const who = await requireUser(); // 写操作守卫
   // ★ kind 必须是枚举值（2026-10-05 加）：此前无校验，传什么写什么 ——
@@ -294,6 +294,38 @@ export async function cmdLog({ dir, title, kind = 'dev' }) {
     return { text: lines.join('\n') };
   });
   // 重复时不报「✓ 已写入」—— 那是在说假话（用户会以为多了一条）。
-  if (res === SKIP) return `• 同一分钟已有同一内容，已跳过 → ${p}\n  ${line}`;
-  return `✓ log → ${p}\n  ${line}`;
+  const head = res === SKIP
+    ? `• 同一分钟已有同一内容，已跳过 → ${p}\n  ${line}`
+    : `✓ log → ${p}\n  ${line}`;
+
+  // 落盘顺手深读本项目下的会话：没总结过的、有更新的，一并提出来。
+  // 为何挂在 log 上（2026-11-01 用户定）：`abs log` 是收尾动作本身，
+  //   人在这里才愿意看「还有哪些会话没总结」；平时他不会主动跑 summon。
+  // 只给线索不写盘 —— 落哪一条仍是人的判断（见 summon.js 的边界说明）。
+  // summon=false 供 note/concept 内部调用时关闭：那些也是写 log，但不是收尾场景。
+  const tail = summon ? await summonTail(root) : '';
+  return head + tail;
+}
+
+/** 收尾时顺手列出未总结/有更新的会话。失败一律吞掉 —— 记流水不能因为扫会话而失败。 */
+async function summonTail(root) {
+  try {
+    const { scanProject } = await import('./brain/summon.js');
+    const r = await scanProject(root);
+    const pending = (r.fresh?.length || 0) + (r.changed?.length || 0);
+    if (!pending) return '';
+    const lines = ['', `--- 本项目有 ${pending} 场会话待总结 ---`];
+    for (const it of [...r.fresh, ...r.changed].slice(0, 8)) {
+      const tag = it.prevMd5 ? '（有更新）' : '';
+      lines.push(`  ${it.day}  ${it.sizeKB}KB${tag}`);
+      for (const u of (it.digest?.users || []).slice(0, 2)) {
+        lines.push(`     · ${u.replace(/\s+/g, ' ').trim().slice(0, 70)}`);
+      }
+    }
+    if (pending > 8) lines.push(`  …另有 ${pending - 8} 场（abs summon 看全量）`);
+    lines.push('  落哪条由你判断: abs capture --layer N "…"  |  abs summon --mark 记账不再提');
+    return '\n' + lines.join('\n');
+  } catch {
+    return '';
+  }
 }

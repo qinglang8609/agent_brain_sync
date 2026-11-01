@@ -166,10 +166,12 @@ export async function scanProject(projectRoot, { ledger, now = Date.now() } = {}
   try { names = (await fs.readdir(dir)).filter((f) => f.endsWith('.jsonl')); } catch {
     return { error: `找不到会话目录: ${dir}`, fresh: [], changed: [], skipped: [], active: [] };
   }
+  const ownBook = !ledger;              // 账本是自己读的（不是调用方给的）
   const book = ledger || await readLedger();
   // 已有快照的日子整日跳过 —— 人已经总结过，托底不该再吵。
   const haveSnapshot = await daysWithSnapshot(join(projectRoot, '.brain', 'sessions'));
   const fresh = [], changed = [], skipped = [], active = [];
+  let touched = false;   // 是否补记过 stat（需要回写账本，否则下次又得读全文）
 
   for (const name of names.sort()) {
     const full = join(dir, name);
@@ -177,25 +179,60 @@ export async function scanProject(projectRoot, { ledger, now = Date.now() } = {}
     try { st = await fs.stat(full); } catch { continue; }
     if (now - st.mtimeMs < ACTIVE_MS) { active.push({ name, reason: '会话仍在写' }); continue; }
 
-    const md5 = await md5Of(full);
-    if (!md5) continue;
+    const rec = book.files[name];
+
+    // ── 便宜的预筛：文件大小 + mtime 都没变 → 内容必然没变 → 跳过，不读全文。
+    // 为何要它（2026-11-01 实测）：全读算 md5 在 63 个文件 / 55MB 上是 74ms，
+    // 而只读 stat 是 0ms（快 74 倍）。这条路径会被 abs log 每次收尾调用，
+    // 且文件数只增不减 —— 不预筛就是「读取侧随规模增长」。
+    // 漏判风险为零：改内容必动 mtime，内容变了而 size 与 mtime 都不变不可能发生。
+    if (rec && rec.size === st.size && rec.mtime === st.mtimeMs && rec.md5) {
+      skipped.push({ name, reason: 'size+mtime 未变' });
+      continue;
+    }
+
+    // 已有快照的日子，先看账本里记的 day —— 不必读文件就能判。
+    // 实测（2026-11-01）：63 个文件里有 41 个属于「已有快照」的日子，
+    // 原来要先 digestSession 读全文才知道日期，等于白读 41 次。账本里有 day 时先拦。
+    if (rec && rec.day && haveSnapshot.has(rec.day)) {
+      skipped.push({ name, reason: `${rec.day} 已有快照` });
+      continue;
+    }
+
     const d = await digestSession(full);
     if (!d || !d.users.length) { skipped.push({ name, reason: '无真实用户输入' }); continue; }
     if (d.day && haveSnapshot.has(d.day)) { skipped.push({ name, reason: `${d.day} 已有快照` }); continue; }
 
-    const rec = book.files[name];
-    if (rec && rec.md5 === md5) { skipped.push({ name, reason: 'md5 一致' }); continue; }
+    // 到这里才需要 md5（要么文件变了，要么账本里没有）。
+    const md5 = await md5Of(full);
+    if (!md5) continue;
+    if (rec && rec.md5 === md5) {
+      // size/mtime 变了但内容没变（如 touch、备份还原）→ 补记新的 stat，下次走预筛
+      book.files[name] = { ...rec, size: st.size, mtime: st.mtimeMs };
+      touched = true;
+      skipped.push({ name, reason: 'md5 一致（仅 stat 变化）' });
+      continue;
+    }
 
-    const item = { name, md5, day: d.day, digest: d, sizeKB: Math.round(st.size / 1024) };
+    const item = { name, md5, day: d.day, digest: d, sizeKB: Math.round(st.size / 1024), size: st.size, mtime: st.mtimeMs };
     if (rec) changed.push({ ...item, prevMd5: rec.md5 }); else fresh.push(item);
   }
+  // 补记的 stat 要落盘 —— 只改内存等于每次重读全文，预筛白做。
+  // 只在自己读的账本上回写：调用方传了 ledger 时，回写时机由它决定
+  // （cmdSummon 要等 --mark 才写，免得扫描顺手改了用户的账本）。
+  if (touched && ownBook) await writeLedger(book);
+
   return { fresh, changed, skipped, active, dir };
 }
 
 /** 记一笔：这些会话已提取（不管人是否落盘，账本只记「提过了」）。 */
+/** 记一笔：这些会话已提取。同时存 size+mtime —— 下次扫描靠它做便宜预筛，避免全读。 */
 export function markSummarized(ledger, items, when = new Date().toISOString()) {
   for (const it of items) {
-    ledger.files[it.name] = { md5: it.md5, day: it.day, summarizedAt: when };
+    ledger.files[it.name] = {
+      md5: it.md5, day: it.day, summarizedAt: when,
+      size: it.size, mtime: it.mtime,
+    };
   }
   return ledger;
 }

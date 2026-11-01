@@ -119,7 +119,8 @@ test('md5 一致 → 跳过；md5 变了 → 进「有更新」要求补充总�
     const r2 = await withEnv(env, () => scanProject(proj));
     assert.equal(r2.fresh.length, 0);
     assert.equal(r2.changed.length, 0);
-    assert.equal(r2.skipped.filter((s) => /md5/.test(s.reason || '')).length, 1);
+    // 走的是便宜预筛（size+mtime 未变），不是 md5 —— 见 scanProject 里的注释
+    assert.equal(r2.skipped.filter((s) => /size\+mtime/.test(s.reason || '')).length, 1);
 
     // 会话被续写 → md5 变了 → 进 changed
     await fs.writeFile(f, makeSession({ start: '2026-10-02T10:00:00.000Z', userTexts: ['第一版', '又聊了一段'] }));
@@ -143,5 +144,73 @@ test('账本读写幂等，坏账本退化为空', async () => {
     await writeLedger(book, p);
     const back = await readLedger(p);
     assert.equal(back.files['a.jsonl'].md5, 'm1');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('size/mtime 变了但内容没变 → 跳过并补记新 stat（不误报有更新）', async () => {
+  const { root, proj, piSessions } = await sandbox();
+  try {
+    const f = join(piSessions, 'a.jsonl');
+    const ledgerFile = join(root, 'ledger.json');
+    const body = makeSession({ start: '2026-10-03T10:00:00.000Z', userTexts: ['内容不变'] });
+    await fs.writeFile(f, body);
+    await makeStale(f);
+
+    const env = { ABS_PI_SESSIONS: join(root, 'pi'), ABS_SUMMON_LEDGER: ledgerFile };
+    const r1 = await withEnv(env, () => scanProject(proj));
+    assert.equal(r1.fresh.length, 1);
+    const book = { version: 1, files: {} };
+    markSummarized(book, r1.fresh);
+    await writeLedger(book, ledgerFile);
+
+    // 只触碰 mtime，内容一个字节都没改（模拟备份还原 / touch）
+    const future = new Date(Date.now() - 3600 * 1000);
+    await fs.utimes(f, future, future);
+
+    const r2 = await withEnv(env, () => scanProject(proj));
+    assert.equal(r2.changed.length, 0, '内容没变就不能报「有更新」');
+    assert.equal(r2.fresh.length, 0);
+    assert.equal(r2.skipped.filter((s) => /仅 stat 变化/.test(s.reason || '')).length, 1);
+
+    // 补记后，再扫一次应当直接走便宜预筛
+    const r3 = await withEnv(env, () => scanProject(proj));
+    assert.equal(r3.skipped.filter((s) => /size\+mtime 未变/.test(s.reason || '')).length, 1,
+      '第二次应当走 stat 预筛，不再读全文');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('abs log 落盘时带出待总结会话（收尾顺手深读）', async () => {
+  const { root, proj, piSessions } = await sandbox();
+  try {
+    const f = join(piSessions, 'a.jsonl');
+    await fs.writeFile(f, makeSession({ start: '2026-10-05T10:00:00.000Z', userTexts: ['配置必须跟库同目录'] }));
+    await makeStale(f);
+
+    const { cmdLog } = await import('../src/note.js');
+    const out = await withEnv(
+      { ABS_PI_SESSIONS: join(root, 'pi'), ABS_SUMMON_LEDGER: join(root, 'ledger.json'), ABS_USER: 'tester' },
+      () => cmdLog({ dir: proj, title: '完成 测试任务' }),
+    );
+    assert.match(out, /✓ log/, 'log 本身要成功');
+    assert.match(out, /场会话待总结/, '要带出待总结会话');
+    assert.match(out, /配置必须跟库同目录/, '要给原话线索，不能只给个数');
+    assert.match(out, /abs capture/, '要给下一步可执行的命令');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('summon:false 时不扫会话（note/capture 内部调用 log 的场景）', async () => {
+  const { root, proj, piSessions } = await sandbox();
+  try {
+    const f = join(piSessions, 'a.jsonl');
+    await fs.writeFile(f, makeSession({ start: '2026-10-06T10:00:00.000Z', userTexts: ['有内容'] }));
+    await makeStale(f);
+
+    const { cmdLog } = await import('../src/note.js');
+    const out = await withEnv(
+      { ABS_PI_SESSIONS: join(root, 'pi'), ABS_SUMMON_LEDGER: join(root, 'ledger.json'), ABS_USER: 'tester' },
+      () => cmdLog({ dir: proj, title: '完成 X', summon: false }),
+    );
+    assert.match(out, /✓ log/);
+    assert.doesNotMatch(out, /场会话待总结/, '内部调用不该带会话清单，否则每次写经验都刷一遍');
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

@@ -153,7 +153,7 @@ export async function cmdCapture({ dir, text, layer, tags, title }) {
   const slug = file.replace(/\.md$/, '');
   const section = dirName === 'concepts' ? 'Concepts' : dirName === 'sessions' ? 'Sessions' : 'Sources';
   await registerInIndex(root, section, slug, head);
-  await cmdLog({ dir: root, title: clean, kind: 'note' });
+  await cmdLog({ dir: root, title: clean, kind: 'note', summon: false });
 
   // 落盘即入库 —— 否则用户以为记下了，检索却空手而归（静默失效）。
   // autoIndex 永不抛错也不阻塞：库坏了只是检索旧一点，不能让记笔记失败。

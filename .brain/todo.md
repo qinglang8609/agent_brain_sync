@@ -5,6 +5,7 @@
 ## Done
 
 ### 2026-11-01
+- [x] summon-on-log [[fanchao]] — abs log 落盘时顺手扇出会话：增 size+mtime 预筛避开全读，然后把未总结/有更新的会话提给人 — abs log 落盘时深读会话，带出未总结/有更新的；加 size+mtime 与账本 day 双层预筛，避免全读 【落地】 (完成 2026-11-01 01a19752-29b2-70)
 - [x] summarize-pi-sessions [[fanchao]] — 扫 pi 会话目录，把琐碎会话内容总结成知识（L5→L4 提炼）；补上「混沌层没有正常总结」这一环 — abs summon：扫 pi 会话目录，md5 账本判重 + 有快照跳过 + 活跃会话跳过；接进 teardown 提示给条数；6 个测试钉住 【落地】 (完成 2026-11-01 01a19752-29b2-70)
 - [x] lint-cleanup [[fanchao]] — 清 lint 报错 — capture 模板补验证尾巴（NO-TAIL 根治）；4 页碎片并入 memory-box-seven-layers 后删除；lint 13→7，剩余全是存量 sources 未提炼 【落地】 (完成 2026-11-01 01a19752-29b2-70)
 - [x] l3-migration [[fanchao]] — 存量页标 L3 — 12 页按判据转 L3（具体工具的用法/坑）；5 页通用设计规律留 L4；L3 3→15 页，L4 57→45 【落地】 (完成 2026-11-01 01a19752-29b2-70)
