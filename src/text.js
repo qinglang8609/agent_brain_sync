@@ -1,8 +1,9 @@
-// src/text.js — 无依赖的纯文本工具。从 store.js 拆出（2026-10-05）。
+// src/text.js — 纯文本工具。从 store.js 拆出（2026-10-05）。
 //
 // 为何单独一个文件：clip / slugOf 被 log、note、concept 三处共用，而它们本身
 // 零依赖。放在任何业务文件里都会逼出循环 import（note.js ⇄ store.js）。
 // 纯工具独立成格，是谁都能往下依赖的底。
+import { promises as fs } from 'node:fs';
 
 /** 摘要收口：超过 n 码点在**语义边界**收尾（标点 → 空格 → 硬切），加省略号。
  * 坑: 曾直接 `.slice(0, n)` 硬切 → log.md 34/85 条断在词中间(revert-c / file-write-lockin /
@@ -41,4 +42,23 @@ export function slugOf(text, n = 24) {
     if (cut > n / 2) head = head.slice(0, cut);
   }
   return head.replace(/[^\w一-鿿]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+}
+
+/** 读文件，不存在/读失败返回空串（不抛）。被 load / maintain 共用。 */
+export async function readIfExists(p) {
+  try { return (await fs.readFile(p, 'utf8')).trim(); } catch { return ''; }
+}
+
+/** log.md 是"新在上"（cmdLog 把新行插在标题后）——取**最新** n 条，只认 `## [` 条目行。
+ * 坑: 曾用 tailLines 取末尾 → 拿到的永远是最旧几条，而标签写着"最近动作"，
+ * 于是"开机读状态"最该看的一节长期显示两天前的旧记录（今天的新条目从未显示）。 */
+export function recentLogLines(text, n) {
+  return String(text || '')
+    .split('\n')
+    .filter((l) => /^##\s*\[/.test(l))
+    .slice(0, n)
+    // 每条按语义边界收口：load 是开机读状态，只求"上会话做到哪"的线索，不须全文。
+    // 坑: 不收口时 5 条能占 2.9KB（单条 800B），又是一处随日志变长而膨胀的上下文。
+    .map((l) => clip(l, 220))
+    .join('\n');
 }
