@@ -4,19 +4,21 @@
 
 ## Done
 
-### 2026-10-22
-- [x] fix-review-3-issues [[fanchao]] — 修审查发现的前三条：fuzz 虚跑的 bp-done、spec.js 重复注释、pi hook 临时取证日志 — fuzz 改名 child-done/undone（原 bp-done 已不存在，跨界线全空转）；删 spec.js 重复注释；删 pi hook 临时取证日志。654 测试过，fuzz 200 轮过，子项边界命令行实测有正确报错。 【落地】 (完成 2026-10-22 01a1624d-b32d-71)
-- [x] review-agent-brain-sync [[fanchao]] — 审查 agent_brain_sync 项目本身：代码、结构、测试、文档一致性 — 审查完成：5 处问题已报，前三条开始修 【落地】 (完成 2026-10-22 01a1624d-b32d-71)
-  - [x] 已跑 check/lint/test/fuzz/pack；发现 5 处问题（fuzz 虚跑、spec 重复注释、临时取证日志、双 hook 重复、死代码注释）
-- [x] abs-hard-rule-slim [[fanchao]] — 把文档精简 9 条固定进 abs：生成 todo/知识库文档时强制遵守 — 文档精简 9 条已写进 SKILL.md「文档精简」硬规则节，并成为 pi/omp hook 的常驻指引第 7 条；v1.20.1 已重装四处宿主，654 项测试全过。 【落地】 (完成 2026-10-22 01a1624d-b32d-71)
-  - [x] 锚点已查：SKILL.md 两处渲染（写、更新）＋ hooks/abs.pi.ts 常驻 TODO_GUIDELINES
-- [x] slim-skills [[fanchao]] — 按文档精简 9 条规则精简技能 SKILL.md — 精简 abs SKILL.md 183→174 行（去掉重复段落、唠叨的禁令理由、错乱编号），并修正一处与代码相反的说明（note 实为追加式，原文写覆盖式）；654 项测试全过，五处宿主已重装同源。 【落地】 (完成 2026-10-22 01a1624d-b32d-71)
-  - [x] 范围定案：只精简 abs 主技能 SKILL.md；改包内源 → abs install → 清 ~/.agents 过期副本
-
-### 2026-10-20
-- [x] remove-legacy-child-syntax [[fanchao]] — 彻底移除旧箭头子项写法及相关命令，统一到标准 md 嵌套列表 — 旧箭头写法全删；存量由 migrateLegacyChild 自动迁移（实测三种变体零丢失）；命令改名为 child-done/child-undone 【落地】 (完成 2026-10-20 01a15394-cd03-70)
+### 2026-11-01
+- [x] summarize-pi-sessions [[fanchao]] — 扫 pi 会话目录，把琐碎会话内容总结成知识（L5→L4 提炼）；补上「混沌层没有正常总结」这一环 — abs summon：扫 pi 会话目录，md5 账本判重 + 有快照跳过 + 活跃会话跳过；接进 teardown 提示给条数；6 个测试钉住 【落地】 (完成 2026-11-01 01a19752-29b2-70)
+- [x] lint-cleanup [[fanchao]] — 清 lint 报错 — capture 模板补验证尾巴（NO-TAIL 根治）；4 页碎片并入 memory-box-seven-layers 后删除；lint 13→7，剩余全是存量 sources 未提炼 【落地】 (完成 2026-11-01 01a19752-29b2-70)
+- [x] l3-migration [[fanchao]] — 存量页标 L3 — 12 页按判据转 L3（具体工具的用法/坑）；5 页通用设计规律留 L4；L3 3→15 页，L4 57→45 【落地】 (完成 2026-11-01 01a19752-29b2-70)
+- [x] official-db-setup [[fanchao]] — 建正式库并修 projects.json 路径 — 正式库 ~/.abs/graph.db 已建；修 projects.json 落到家目录的路径 bug（dirname(dbPath) 不是 dbPath） 【落地】 (完成 2026-11-01 01a19752-29b2-70)
+- [x] auto-index-on-write [[fanchao]] — capture/note/concept 写后自动入库 — 写后自动全量重建（0.07s）；库未建时不自动建；流水页排除出检索；老库自动迁移 【落地】 (完成 2026-11-01 01a19752-29b2-70)
+- [x] seven-layer-capture [[fanchao]] — 按七层判定落点的 capture 命令 — abs capture --layer 1-7 落地：L3/L4 落 concepts 带 layer 字段，L7 落 sources，L1 走铁律门槛，L6 拒手写；8 个测试钉住，679 全绿 【落地】 (完成 2026-11-01 01a19752-29b2-70)
+- [x] memory-box-design [[fanchao]] — 设计记忆盒子：七层知识分层 + 双链图谱 + 亮度衰减式联想检索，替代当前关键词 query — 七层规格落成 layers.js，双链与亮度已实现 【落地】 (完成 2026-11-01 01a19752-29b2-70)
+- [x] luminance-engine [[fanchao]] — 独立亮度程序：只读 .brain 的 markdown，现场扩散算每页亮度，输出排序。不存储、不改 abs、不加依赖。 — 亮度扩散做进 db.js 的 illuminate：按层衰减 + 枢纽惩罚 + HOPS=1 压制 【落地】 (完成 2026-11-01 01a19752-29b2-70)
+- [x] sqlite-brain-graph [[fanchao]] — 图数据库落地：todo/index/log 写库打项目标记后生成 markdown；搜索走 SQLite 亮度；老项目迁库；双链含跨项目链接重建。 — 七层规格 + SQLite 图库 + 亮度搜索 + 跨项目双链落地，671 测试全绿 【落地】 (完成 2026-11-01 01a19752-29b2-70)
+- [x] herdr-abs-sidebar [[fanchao]] — 在 herdr-app 顶栏加按钮，点击侧边栏以卡片展示 abs 的 index/todo/log — 用户取消。范围跑偏：先复制了 herdr_app_abs 整个项目、又反复重写 abs 解析；前端侧边栏界面未动，Rust 代码一次未编译。已停手。 【否决】 (完成 2026-11-01 01a19622-7711-75)
 
 ### Archived
+- [[log-2026-10-22]] 完成任务 4 条
+- [[log-2026-10-20]] 完成任务 1 条
 - [[log-2026-10-18]] 完成任务 10 条
 - [[log-2026-10-16]] 完成任务 3 条
 - [[log-2026-10-11]] 完成任务 2 条

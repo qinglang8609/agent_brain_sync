@@ -23,3 +23,4 @@ abs CLI 对 `.brain/todo.md` 做登记/勾选/归位时，任务行要跨分区�
 
 ## 关联连接
 - [[AgentBrainSync]] — todo 看板的底层读写纪律
+- [[subitem-satisfies-two-predicates]] — 同族坑：子项行同时满足两个判据，先排子项

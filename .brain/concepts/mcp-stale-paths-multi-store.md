@@ -3,6 +3,7 @@ tags: [concept, mcp, install, 陈旧路径, 部署]
 author: fanchao
 updated: 2026-09-13
 status: active
+layer: 3
 ---
 
 # MCP 陈旧路径：只改自己写的那个文件不够

@@ -2,6 +2,7 @@
 tags: [concept, install]
 updated: 2026-09-09
 status: active
+layer: 3
 ---
 
 # 概念：abs 全局安装形态 = npm link 单一真源

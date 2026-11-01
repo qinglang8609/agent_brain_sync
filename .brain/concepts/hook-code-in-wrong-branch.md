@@ -2,6 +2,7 @@
 tags: [concept, hook, 行为测试, 排查, 坑]
 updated: 2026-10-05
 status: active
+layer: 3
 ---
 
 # 加了 hook 却不生效：先确认「代码在哪条分支里」，别猜环境

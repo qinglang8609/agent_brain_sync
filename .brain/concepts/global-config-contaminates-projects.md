@@ -48,3 +48,4 @@ echo "$ABS_USER"            # ② 无值才查环境变量
 - [[fanchao]] — 沉淀者
 - [[validation-gate-on-shared-write-path]] — 同属「共享状态 + 存量污染」这类失效
 - [[AgentBrainSync]] — 本机制所属项目
+- [[homedir-ignores-home-env]] — 污染的具体入口：os.homedir() 不受 HOME 影响

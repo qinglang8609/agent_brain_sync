@@ -3,6 +3,7 @@ tags: [concept, 守卫, hook, 非交互, 向后兼容]
 author: fanchao
 updated: 2026-10-18
 status: active
+layer: 3
 ---
 
 # 加前置守卫前，先问「谁在非交互地调我」

@@ -19,7 +19,8 @@ description: "USE FOR abs / agent-brain-sync 跨会话记忆与任务续接。�
 abs load                          # 开机读状态
 abs query <词>                    # 检索；abs resolve <页名> 反查路径
 abs todo add <id> --note "做什么"   # 登记；note/memo/state/done 见「进行中」
-abs note "经验" [--tags a,b]      # 暂存经验
+abs capture [--layer 1-7] "…"    # 按七层判定落点后直接写入（不传=L4）
+abs note "经验" [--tags a,b]      # 暂存经验（一律 L7 混沌层）
 abs concept <slug> --title "…"    # 建概念页骨架
 abs rule add "一句话"             # 加 Rules；abs lint 体检；abs init 建图谱
 ```
@@ -93,6 +94,24 @@ abs rule add "一句话"             # 加 Rules；abs lint 体检；abs init �
 3. **读命中页**：`abs query <词>` → `abs resolve <页名或id>` 拿路径，**只读命中那几页**，绝不通读 `.brain/`；多文件汇总交 `ctx_execute` 在沙箱处理，只打印结论。
 4. **续 todo**：把顶部未完成项当当前任务开做；有新任务而 todo 没有 → `abs todo add <id> --note 做什么` 再动工。
 
+## 按七层总结（总结前必读）
+
+七层不是分类好看，是**检索权重不同**：L1 永不衰减，L7 几乎不参与。所以总结时必须先判层，判完直接落到位 —— 一律塞 sources/ 会让 44% 的知识按错误的权重参与检索。
+
+| 层 | 判据 | 落点 | 怎么落 |
+|---|---|---|---|
+| L1 铁律 | 违反就必须停下 | index 的 `## Rules` | `abs capture --layer 1`（≤42 字、禁链接） |
+| L2 规则 | 这个项目要遵守的做法 | `concepts/` + `layer: 2` | `abs capture --layer 2` |
+| L3 工具 | 某工具怎么用、有什么坑 | `concepts/` + `layer: 3` | `abs capture --layer 3` |
+| L4 认知 | 踩坑的根因与解法 | `concepts/` + `layer: 4` | `abs capture "…"`（默认） |
+| L5 会话 | 这次做了什么 | `log.md` / `sessions/` | `abs log` / `abs todo done` |
+| L6 断点 | 双链词 | 不立页，机器自动抽 | 不接手写 |
+| L7 混沌 | 还没想清的碎片 | `sources/` | `abs capture --layer 7` |
+
+判据不明时用 L4 —— 但**知道是工具经验就写 L3**：实测算过，本仓 52 页 concepts 里 23 页其实是 L3。
+
+`abs capture` 之后跑 `abs db rebuild` 让图数据库收录，否则检索拿不到它。
+
 ## 进行中：什么时候动它
 
 todo 是随改随写的活看板，和 git commit 同反射。
@@ -104,7 +123,7 @@ todo 是随改随写的活看板，和 git commit 同反射。
 | 被打断 / 干到一半 | `note` + 改到哪个文件哪一步 | 任务下追加一条子项（**一句话**） |
 | 干活中随手记多句发现 | `memo` + 原文 | `sessions/` 当日笔记，**不上看板** |
 | 子任务做完 | `done` + note 结语 + as 落地\|否决\|仅方案 | Done |
-| 总结出经验/坑/规律 | `abs_note` text + tags | `sources/` |
+| 总结出经验/坑/规律 | `abs capture --layer N`（先按上表判层） | 按层落到位 |
 
 **四个落点的区别**：
 

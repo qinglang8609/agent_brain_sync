@@ -2,6 +2,7 @@
 tags: [concept, npm, publish, 发布]
 updated: 2026-09-13
 status: active
+layer: 3
 ---
 
 # 概念：npm 包发布全流程踩坑（产品模式 "npm install -g xxx"）
