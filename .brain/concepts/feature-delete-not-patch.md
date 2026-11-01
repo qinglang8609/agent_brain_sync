@@ -67,3 +67,4 @@ abs query <词> --all     # superseded 是否默认隐藏且可查回
 - [[read-side-output-must-not-scale]] — 「复用已有清单」是删掉重叠功能的依据
 - [[self-reported-reasoning-is-post-hoc]] — 实测否证后「该删就删」的案例（skill/abs-think-tree）
 - [[AgentBrainSync]] — 项目实体页
+- [[abs-origin-problem]] — 判断「该不该加」的原始诉求

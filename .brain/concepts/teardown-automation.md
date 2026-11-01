@@ -80,3 +80,4 @@ op​encode 侧抄 pi 时漏了 `bash`，而该宿主大量改走 `bash`（hered
 - [[learning-loop-collect-distill-deliver]] — 本页只解决「采集」环；另外两环（消化/生效）缺失才是坑反复发作的根因
 - [[resource-default-let-os-assign]] — 同属 CLI/hook 的默认值选型（端口固定值会让第二个项目起不来）
 - [[AgentBrainSync]] — 项目实体页
+- [[agent-end-is-not-session-end]] — 触发时机的关键反直觉事实：agent_end 每轮都来

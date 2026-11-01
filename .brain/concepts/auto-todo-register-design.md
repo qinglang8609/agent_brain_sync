@@ -84,3 +84,4 @@ node --test --test-name-pattern="面板重绘" test/plugin-behavior.test.js
 - [[host-plugin-silent-failure]] — 宿主插件静默失效家族
 - [[read-side-output-must-not-scale]] — 看板被占位堆满违反的同类原则
 - [[remind-vs-gate]] — 本页的续集：12 次尝试后活下来的两层（对齐必做 + 门禁兜底）
+- [[register-needs-description]] — 登记时的另一种失败：id 有了但描述没写，内容永久丢失

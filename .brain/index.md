@@ -22,6 +22,9 @@
 - 体检输出必须按类型折叠计数，同类超限只报条数+样例
 
 ## Concepts
+- [[abs-origin-problem]] — abs 的缘起与判据：服务「让琐碎经验不流失」才做，否则是自嗨
+- [[agent-end-is-not-session-end]] — agent_end 不是会话结尾：聊一句就触发，判据不能靠事件名推断时机
+- [[register-needs-description]] — 登记任务必须带描述：只给 id 会留下无法补回的空壳
 - [[incomplete-state-no-auto-decide]] — 状态不完整时不替用户决定：四种兜底全错，程序只报告状态不决定归属
 - [[subitem-satisfies-two-predicates]] — 缩进子项同时满足两个判据：凡按行判断处都要先排子项
 - [[homedir-ignores-home-env]] — os.homedir() 不受 HOME 影响：测试隔离必须用专属环境变量
