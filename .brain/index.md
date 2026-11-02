@@ -22,6 +22,9 @@
 - 体检输出必须按类型折叠计数，同类超限只报条数+样例
 
 ## Concepts
+- [[wechat-miniprogram-review-traps]] — 微信小程序审核两大高频拒因：登录页混淆官方元素、无资质出现「提现」字眼
+- [[mcp-json-migrated-to-adapter]] — pi 的 MCP 配置迁到 mcp-adapter.json；只删旧文件治不了，写入侧也要改
+- [[db-replica-not-auto]] — 主从不是自动同步：只有写主库才复制，读从库要应用自己路由
 - [[knowledge-self-evolution]] — 知识自我进化：推翻关系进库，能看出知识在往哪走；含三个判据错误
 - [[search-relevance-pitfalls]] — 中文检索四个实测坑：单字 gram、归一化分母、高频虚词门槛、解构吃掉字段
 - [[abs-origin-problem]] — abs 的缘起与判据：服务「让琐碎经验不流失」才做，否则是自嗨

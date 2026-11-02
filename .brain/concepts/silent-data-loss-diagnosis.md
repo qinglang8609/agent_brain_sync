@@ -76,3 +76,5 @@ WRITE 50d73b1 19 -> a55bfc4 19     ← ⚠ 19 → 19, 条数没增长！
 - [[pi-extension-api-traps]] — 同族：API 字段值是基线而非真实（靠字段名猜必错，且无报错）
 - [[global-config-contaminates-projects]] — 同族：全局单值配置污染所有项目（症状在别处爆）
 - [[AgentBrainSync]] — 项目实体页
+- [[wechat-miniprogram-review-traps]] — 同族：先把拒审原文拿到再改
+- [[db-replica-not-auto]] — 同族：先弄清「同步的方向和边界」再动手

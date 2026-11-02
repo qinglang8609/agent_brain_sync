@@ -38,3 +38,4 @@ layer: 3
 - [[deploy-artifact-copies]] — "改一份不算改"的部署总则
 - [[abs-install-layout]] — 四宿主安装器与落点
 - [[AgentBrainSync]] — 项目实体页
+- [[mcp-json-migrated-to-adapter]] — 同族：配置文件本身换了名字，只改副本没用
