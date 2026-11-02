@@ -19,6 +19,7 @@ import { cmdLog } from '../note.js';
 import { clip, slugOf } from '../text.js';
 import { LAYERS, layerOf, DEFAULT_LAYER } from './layers.js';
 import { autoIndex } from './db-cmd.js';
+import { summonTail } from './summon.js';
 
 /** 层 → 落点目录。L1/L6 不立页，由下面的分支单独处理。 */
 const LAYER_DIR = {
@@ -159,12 +160,16 @@ export async function cmdCapture({ dir, text, layer, tags, title }) {
   // autoIndex 永不抛错也不阻塞：库坏了只是检索旧一点，不能让记笔记失败。
   const idx = await autoIndex();
 
+  // 每次总结都顺手查一遍会话历史，避免漏下没总结的会话（2026-11-02 用户要求）。
+  // 只给线索不写盘 —— 落哪一条仍是人的判断。
+  const tail = await summonTail(root);
+
   return [
     `✓ 已落入 L${L} ${meta.name}层 → ${dirName}/${file}`,
     `  ${clip(clean, 60)} ${atTag(who)}`,
     `  该层衰减 ${meta.decay}（${meta.note}）`,
     idx.ok ? '  已同步入库，abs db search 可查到' : `  （未入库：${idx.reason}）`,
-  ].join('\n');
+  ].join('\n') + tail;
 }
 
 export { LAYERS };

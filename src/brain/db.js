@@ -309,19 +309,38 @@ export function rebuild(handle, pages) {
       const isLedger = p.dir === '' && (p.slug === 'todo' || p.slug === 'log');
       if (isLedger) continue;
       for (const word of anchorsOf(p.body)) {
-        insAnchor.run(word, srcId);
+        const { project: explicitProj, page } = parseAnchor(word);
+        // 断点词（L6）只记页名，不记 @项目前缀 —— 那是链接语法不是索引词
+        insAnchor.run(page, srcId);
         stat.anchors++;
-        // 就近优先：本项目 → 再全局
-        const dstId = idOf.get(`${p.project}/concepts/${word}`)
-          ?? idOf.get(`${p.project}/entities/${word}`)
-          ?? idOf.get(`${p.project}/sessions/${word}`)
-          ?? findGlobal(idOf, word);
+        let dstId;
+        if (explicitProj) {
+          // 显式跨项目：只在这个项目里找，找不到就是悬挂，不退回全局兜底
+          // （退回会静默连到别的项目，正是这个语法要避免的）
+          dstId = idOf.get(`${explicitProj}/concepts/${page}`)
+            ?? idOf.get(`${explicitProj}/entities/${page}`)
+            ?? idOf.get(`${explicitProj}/sessions/${page}`)
+            ?? idOf.get(`${explicitProj}/syntheses/${page}`);
+          if (dstId === undefined) stat.crossProjectMissing = (stat.crossProjectMissing || 0) + 1;
+        } else {
+          // 就近优先：本项目 → 再全局
+          dstId = idOf.get(`${p.project}/concepts/${page}`)
+            ?? idOf.get(`${p.project}/entities/${page}`)
+            ?? idOf.get(`${p.project}/sessions/${page}`)
+            ?? findGlobal(idOf, page);
+        }
         if (dstId === undefined) {
-          insEdge.run(srcId, 0, word);
-          stat.dangling++;
+          // 平铺文件名（index/todo/log）当链接目标是**讨论语法的示例文本**，
+          // 不是真链接 —— 实测 .brain 里 `[[todo]]` 出现在「lint 误报它死链」这句里。
+          // 这类不记悬挂（它们不是死链，是正文引用了文件名）。
+          if (!LEDGER_SLUGS.has(page)) {
+            insEdge.run(srcId, 0, word);
+            stat.dangling++;
+          }
         } else {
           insEdge.run(srcId, dstId, word);
           stat.edges++;
+          if (explicitProj) stat.crossProject = (stat.crossProject || 0) + 1;
         }
       }
     }
@@ -337,8 +356,32 @@ export function rebuild(handle, pages) {
   return stat;
 }
 
-/** 同名页全局兜底：取第一个命中的（跨项目引用靠 @前缀 显式写，这里只做兜底）。 */
+/** 解析双链目标：`[[@项目/页面]]` → 显式跨项目；`[[页面]]` → 就近。
+ *
+ * 为何要这个语法（2026-11-02 用户定「跨项目双链连接」）：
+ *   默认就近（本项目优先）能覆盖绝大多数情况，但「我要明确引用另一个项目的某页」
+ *   就没法表达 —— 只能靠全局兜底，而那会撞上同名页。
+ *   `@` 前缀让跨项目引用显式，读页面时也一眼看得出「这条链出了项目」。
+ *
+ * 返回 { project: '项目名'|null, page: '页名' }。
+ */
+export function parseAnchor(word) {
+  const w = String(word || '').trim();
+  const m = w.match(/^@([^/\\]+)[/\\](.+)$/);
+  if (m) return { project: m[1].trim(), page: m[2].trim() };
+  return { project: null, page: w };
+}
+
+/** 同名页全局兜底：取第一个命中的（跨项目引用靠 @前缀 显式写，这里只做兜底）。
+ *
+ * 必须排除两类同名目标（2026-11-02 实测踩到）：
+ *   · 平铺文件 index/todo/log —— 每个项目都有一份，兜底会连到别的项目去。
+ *     实测 `[[index]]` 把 agent_brain_sync 的页连到了 pA/index，纯误连。
+ *   · 流水页（dir 为空）同理。
+ * 判据：兜底只在「知识页」之间发生，索引/流水不算知识页。
+ */
 function findGlobal(idOf, word) {
+  if (LEDGER_SLUGS.has(word)) return undefined;
   for (const [k, v] of idOf) {
     if (k.endsWith(`/${word}`)) return v;
   }

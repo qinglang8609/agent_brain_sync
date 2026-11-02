@@ -271,3 +271,33 @@ export function renderScan(result, { full = false, limit = 15 } = {}) {
   }
   return out.join('\n');
 }
+
+/** 收尾时顺手列出未总结/有更新的会话（给人看的尾巴）。
+ *
+ * 为何放在这里而不是各调用方（2026-11-02）：abs log 与 abs capture 都要用，
+ * 两处各写一份必然漂移。失败一律吞掉 —— 记流水/记经验不能因为扫会话而失败。
+ *
+ * @param {string} root 项目根
+ * @param {object} opts { limit } 最多列几场
+ * @returns {Promise<string>} 无待总结时返回空串（不占输出）
+ */
+export async function summonTail(root, { limit = 8 } = {}) {
+  try {
+    const r = await scanProject(root);
+    const pending = (r.fresh?.length || 0) + (r.changed?.length || 0);
+    if (!pending) return '';
+    const lines = ['', `--- 本项目有 ${pending} 场会话待总结 ---`];
+    for (const it of [...r.fresh, ...r.changed].slice(0, limit)) {
+      const tag = it.prevMd5 ? '（有更新）' : '';
+      lines.push(`  ${it.day}  ${it.sizeKB}KB${tag}`);
+      for (const u of (it.digest?.users || []).slice(0, 2)) {
+        lines.push(`     · ${u.replace(/\s+/g, ' ').trim().slice(0, 70)}`);
+      }
+    }
+    if (pending > limit) lines.push(`  …另有 ${pending - limit} 场（abs summon 看全量）`);
+    lines.push('  落哪条由你判断: abs capture --layer N "…"  |  abs summon --mark 记账不再提');
+    return '\n' + lines.join('\n');
+  } catch {
+    return '';
+  }
+}

@@ -11,6 +11,7 @@ import { today, localStamp, LOG_KINDS } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { impactOf } from './codegraph.js';
 import { clip, slugOf } from './text.js';
+import { summonTail } from './brain/summon.js';
 
 
 /** 惰性调 autoIndex —— 断循环 import：note.js ← capture.js ← db-cmd.js ← note.js。
@@ -307,25 +308,3 @@ export async function cmdLog({ dir, title, kind = 'dev', summon = true }) {
   return head + tail;
 }
 
-/** 收尾时顺手列出未总结/有更新的会话。失败一律吞掉 —— 记流水不能因为扫会话而失败。 */
-async function summonTail(root) {
-  try {
-    const { scanProject } = await import('./brain/summon.js');
-    const r = await scanProject(root);
-    const pending = (r.fresh?.length || 0) + (r.changed?.length || 0);
-    if (!pending) return '';
-    const lines = ['', `--- 本项目有 ${pending} 场会话待总结 ---`];
-    for (const it of [...r.fresh, ...r.changed].slice(0, 8)) {
-      const tag = it.prevMd5 ? '（有更新）' : '';
-      lines.push(`  ${it.day}  ${it.sizeKB}KB${tag}`);
-      for (const u of (it.digest?.users || []).slice(0, 2)) {
-        lines.push(`     · ${u.replace(/\s+/g, ' ').trim().slice(0, 70)}`);
-      }
-    }
-    if (pending > 8) lines.push(`  …另有 ${pending - 8} 场（abs summon 看全量）`);
-    lines.push('  落哪条由你判断: abs capture --layer N "…"  |  abs summon --mark 记账不再提');
-    return '\n' + lines.join('\n');
-  } catch {
-    return '';
-  }
-}

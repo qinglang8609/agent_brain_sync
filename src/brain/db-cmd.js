@@ -12,6 +12,28 @@ import { LAYERS } from './layers.js';
 const PAGE_DIRS = ['concepts', 'entities', 'sources', 'syntheses', 'sessions'];
 const FLAT_FILES = ['index.md', 'todo.md', 'log.md'];
 
+/** 项目根路径 → 项目名（入库时的 project 字段）。
+ *
+ * 取路径末段。为何不引入 UUID（2026-11-02 评估）：项目名是给人看的标识，
+ * 出现在每条检索结果里；UUID 会让输出不可读。末段同名的风险用 `db status` 暴露，
+ * 不做静默处理。
+ */
+function projectNameOf(root) {
+  return String(root).split('/').filter(Boolean).pop() || 'unknown';
+}
+
+/** 当前所在项目名。查询时用它决定「读哪几条铁律」。
+ *
+ * 为何要单独一个函数（2026-11-02）：原来只在 cmdDbSearch 里内联算，
+ * 与 rebuild 用的算法是两份代码 —— 任一边改了项目名规则，铁律就会读错项目的。
+ * 判据：项目名的算法只能有一处。 */
+async function currentProjectName(dir) {
+  if (process.env.ABS_PROJECT) return process.env.ABS_PROJECT;
+  const from = dir || process.cwd();
+  const root = await findBrainRoot(from);
+  return root ? projectNameOf(root) : '';
+}
+
 /** 扫一个项目的 .brain/ → 页面数组（含 index/todo/log 三份平铺文件）。 */
 async function scanProject(root, project) {
   const out = [];
@@ -85,7 +107,7 @@ export async function cmdDbRebuild({ dir } = {}) {
   for (const root of roots) {
     const found = await findBrainRoot(root);
     if (!found) continue;                       // 登记了但目录没了 → 跳过，不报错
-    const project = found.split('/').filter(Boolean).pop() || 'unknown';
+    const project = projectNameOf(found);
     pages.push(...await scanProject(found, project));
     used.push(`${project} (${found})`);
   }
@@ -122,9 +144,7 @@ export async function cmdDbSearch({ query, limit = 8 } = {}) {
   const h = openDb(path);
   try {
     // L1 铁律永远先出 —— 「不可逾越」的代码保证，不靠读到文本才遵守
-    const project = process.env.ABS_PROJECT
-      || (await findBrainRoot(process.cwd()) || '').split('/').filter(Boolean).pop()
-      || '';
+    const project = await currentProjectName();
     const rules = rulesOf(h, project);
 
     const seeds = search(h, q, { limit: 12 });
@@ -146,9 +166,15 @@ export async function cmdDbSearch({ query, limit = 8 } = {}) {
       const bar = '█'.repeat(Math.max(1, Math.round(Math.min(p.bright, 3) / 3 * 12)));
       const where = [p.project, p.dir, p.slug].filter(Boolean).join('/');
       const tag = p.from === 'spread' ? ' ↝' : '';
-      out.push(`${bar} ${p.bright.toFixed(2)} L${p.layer} ${where}${tag}`);
+      // 跨项目的结果要显式标出来 —— 用户得知道「这条是别的项目的经验」，
+      // 否则会以为是自己项目的结论（判据、上下文都可能不同）。
+      const other = project && p.project && p.project !== project ? '  [跨项目]' : '';
+      out.push(`${bar} ${p.bright.toFixed(2)} L${p.layer} ${where}${tag}${other}`);
     }
     out.push('', '（L1 铁律恒在最前；↝ 表示由邻居扩散点亮，非直接命中）');
+    if (project) {
+      out.push(`（铁律只显示本项目 "${project}" 的 —— 别的项目的铁律不外借）`);
+    }
     return out.join('\n');
   } finally {
     h.close();
@@ -239,8 +265,7 @@ async function cmdDbRebuildQuiet() {
   for (const root of roots) {
     const found = await findBrainRoot(root);
     if (!found) continue;
-    const project = found.split('/').filter(Boolean).pop() || 'unknown';
-    pages.push(...await scanProject(found, project));
+    pages.push(...await scanProject(found, projectNameOf(found)));
   }
   if (!pages.length) return;
   const h = openDb(dbPath());
