@@ -4,6 +4,7 @@ id: self-authored-evidence
 author: fanchao
 updated: 2026-10-07
 status: active
+kind: gotcha
 ---
 
 # 自造证据：单假设会逼你造假，多假设 + 反证条件才治得住

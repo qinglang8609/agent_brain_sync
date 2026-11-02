@@ -2,6 +2,7 @@
 tags: [concept, skill, 触发, symlink, 坑]
 updated: 2026-10-05
 status: active
+kind: gotcha
 ---
 
 # skill 自动触发的两个隐形杀手：描述没写触发词 + symlink 指向陈旧副本

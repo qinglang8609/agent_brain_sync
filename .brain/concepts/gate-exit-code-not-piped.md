@@ -4,6 +4,7 @@ id: gate-exit-code-not-piped
 author: fanchao
 updated: 2026-10-07
 status: active
+kind: gotcha
 ---
 
 # 概念：门禁静默放行 —— 退出码被管道吞掉

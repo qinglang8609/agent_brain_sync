@@ -19,7 +19,7 @@ description: "USE FOR abs / agent-brain-sync 跨会话记忆与任务续接。�
 abs load                          # 开机读状态
 abs query <词>                    # 检索；abs resolve <页名> 反查路径
 abs todo add <id> --note "做什么"   # 登记；note/memo/state/done 见「进行中」
-abs capture [--layer 1-7] "…"    # 按七层判定落点后直接写入（不传=L4）
+abs capture [--layer 1-7] [--kind …] "…"   # 按七层判定落点后写入（--kind 分作用）
 abs note "经验" [--tags a,b]      # 暂存经验（一律 L7 混沌层）
 abs concept <slug> --title "…"    # 建概念页骨架
 abs rule add "一句话"             # 加 Rules；abs lint 体检；abs init 建图谱
@@ -109,6 +109,18 @@ abs rule add "一句话"             # 加 Rules；abs lint 体检；abs init �
 | L7 混沌 | 还没想清的碎片 | `sources/` | `abs capture --layer 7` |
 
 判据不明时用 L4 —— 但**知道是工具经验就写 L3**：实测算过，本仓 52 页 concepts 里 23 页其实是 L3。
+
+**`--kind` 是另一条正交轴**（借 cl​aude-mem 的 observation 类型）：`layer` 说「什么性质」，`kind` 说「起什么作用」。
+
+| kind | 含义 | 何时用 |
+|---|---|---|
+| `gotcha` | 关键坑 | 踩了会白干、想不到的那种 |
+| `decision` | 决策 | 记「当时为什么这么选」 |
+| `tradeoff` | 权衡 | A 好但 B 也有理，最后选了哪个 |
+| `howto` | 做法 | 这类事该怎么做 |
+
+不传就不写（旧页留空，不强制补）。实测只有 `gotcha` 能靠 tags/标题机械识别，
+另三类判据在内容里 —— 别拿关键词瞎猜。
 
 `abs capture` 之后跑 `abs db rebuild` 让图数据库收录，否则检索拿不到它。
 

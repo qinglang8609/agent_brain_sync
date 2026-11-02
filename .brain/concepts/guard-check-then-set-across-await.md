@@ -5,6 +5,7 @@ author: fanchao
 updated: 2026-10-07
 status: active
 layer: 3
+kind: gotcha
 ---
 
 # 概念：守卫的检查与置位跨 await 就会漏：并发调用一起通过

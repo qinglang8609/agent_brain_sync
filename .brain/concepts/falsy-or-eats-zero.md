@@ -2,6 +2,7 @@
 tags: [concept, javascript, 坑, 静默失效, 参数校验]
 updated: 2026-10-05
 status: active
+kind: gotcha
 ---
 
 # `x || 默认值` 吃掉合法零值：JS falsy 陷阱

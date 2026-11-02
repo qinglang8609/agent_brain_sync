@@ -210,6 +210,7 @@ function parseArgv(args) {
     tags: values.tags,
     limit: values.limit === undefined ? undefined : Number(values.limit),
     layer: values.layer,
+    kind: values.kind,
     mark: !!values.mark,
     status: !!values.status,
     title: values.title,
@@ -534,7 +535,7 @@ async function main() {
         break;
       }
       case 'capture': {
-        console.log(await cmdCapture({ dir: opts.dir, text: opts._.join(' '), layer: opts.layer, tags: opts.tags, title: opts.title }));
+        console.log(await cmdCapture({ dir: opts.dir, text: opts._.join(' '), layer: opts.layer, tags: opts.tags, title: opts.title, kind: opts.kind }));
         break;
       }
       case 'note': {
@@ -579,7 +580,7 @@ async function main() {
         const sub = opts._[0];
         const rest = opts._.slice(1);
         if (sub === 'rebuild') { console.log(await cmdDbRebuild({ dir: opts.dir })); break; }
-        if (sub === 'search') { console.log(await cmdDbSearch({ query: rest.join(' '), limit: Number(opts.limit) || 8 })); break; }
+        if (sub === 'search') { console.log(await cmdDbSearch({ query: rest.join(' '), limit: Number(opts.limit) || 8, full: !!opts.full })); break; }
         if (sub === 'status') { console.log(await cmdDbStatus()); break; }
         if (sub === 'evolve') { console.log(await cmdDbEvolve({ staleDays: Number(opts['stale-days']) || 90 })); break; }
         if (sub === 'add') {

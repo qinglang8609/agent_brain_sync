@@ -5,6 +5,7 @@ author: fanchao
 updated: 2026-11-01
 status: active
 layer: 3
+kind: gotcha
 ---
 
 # agent_end 不是会话结尾

@@ -4,6 +4,7 @@ id: audit-claims-verify-before-fix
 author: fanchao
 updated: 2026-09-16
 status: active
+kind: gotcha
 ---
 
 # 审计清单也是待证证据：逐条最小探针确证后再改

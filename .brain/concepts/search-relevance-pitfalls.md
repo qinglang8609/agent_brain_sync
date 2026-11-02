@@ -5,6 +5,7 @@ author: fanchao
 updated: 2026-11-02
 status: active
 layer: 3
+kind: gotcha
 ---
 
 # 中文全文检索的四个实测坑

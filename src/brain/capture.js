@@ -52,13 +52,13 @@ export function layerGuide() {
   ].join('\n');
 }
 
-export async function cmdCapture({ dir, text, layer, tags, title }) {
+export async function cmdCapture({ dir, text, layer, tags, title, kind }) {
   const clean = String(text || '').trim();
   const layerArg = String(layer || '').trim();
 
   if (!clean) {
     return [
-      '用法: abs capture [--layer 1-7] "一句话" [--tags a,b] [--title "页标题"]',
+      '用法: abs capture [--layer 1-7] [--kind gotcha|decision|tradeoff|howto] "一句话" [--tags a,b] [--title "页标题"]',
       '',
       layerGuide(),
     ].join('\n');
@@ -84,6 +84,16 @@ export async function cmdCapture({ dir, text, layer, tags, title }) {
     const { cmdRule } = await import('./rules.js');
     const r = await cmdRule({ dir, action: 'add', text: clean });
     return r;
+  }
+
+  // 作用分档（2026-11-02 借 clo​ude-mem）：gotcha 坑 / decision 决策 / tradeoff 权衡 / howto 做法。
+  // 与 layer 正交：layer 说「这是什么性质的知识」，kind 说「它起什么作用」。
+  const KIND = {
+    gotcha: '坑', decision: '决策', tradeoff: '权衡', howto: '做法',
+  };
+  const kindArg = String(kind || '').trim().toLowerCase();
+  if (kindArg && !KIND[kindArg]) {
+    return `✗ --kind 只认 ${Object.keys(KIND).join(' / ')}（收到 "${kind}"）`;
   }
 
   let root;
@@ -121,6 +131,7 @@ export async function cmdCapture({ dir, text, layer, tags, title }) {
     '---',
     `tags: [${['concept', ...tagList].join(', ')}]`,
     `layer: ${L}`,
+    ...(kindArg ? [`kind: ${kindArg}`] : []),
     `author: ${who}`,
     `updated: ${today()}`,
     'status: draft',

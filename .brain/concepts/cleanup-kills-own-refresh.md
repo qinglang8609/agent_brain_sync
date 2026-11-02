@@ -2,6 +2,7 @@
 tags: [concept, tui, 重绘, 坑, 自相矛盾]
 updated: 2026-10-05
 status: active
+kind: gotcha
 ---
 
 # 消失了却不重绘：清理动作把自己的刷新通道一起关掉

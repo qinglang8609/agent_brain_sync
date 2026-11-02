@@ -5,6 +5,7 @@ author: fanchao
 updated: 2026-11-01
 status: active
 layer: 4
+kind: gotcha
 ---
 
 # 缩进子项同时满足两个判据

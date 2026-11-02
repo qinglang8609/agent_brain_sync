@@ -120,9 +120,9 @@ abs todo done    TASK-1
 abs note "一句话经验" --tags 坑,docker    # 经验暂存 → sources/
 abs log "完成 X"                          # 记一行流水；abs log 无参 = 查看
 abs query <词>                            # 检索图谱（多词 OR）；已被推翻的经验默认隐藏（--all 可看）
-abs capture [--layer 1-7] "一句话"        # 按七层判层后直接落到位（不传 = L4 认知）
+abs capture [--layer 1-7] [--kind …] "一句话"  # 按七层判层后落到位（--kind: gotcha|decision|tradeoff|howto）
 abs db rebuild                            # 扫所有登记项目 → 建图数据库（~/.abs/graph.db）
-abs db search <词>                        # 走库检索：FTS 拿种子 + 亮度扩散，L1 铁律恒在最前
+abs db search <词> [--full]              # 走库检索：默认只给摘要+token 成本，--full 才附正文
 abs db status                             # 库体检：七层分布 / 悬挂链接 / 已入库项目
 abs db add                                # 把当前项目登记进 ~/.abs/projects.json
 abs db evolve                             # 知识进化体检：被推翻/断链/主题堆积/僵化页

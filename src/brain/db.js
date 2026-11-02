@@ -28,7 +28,7 @@ import { unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolveLayer, anchorsOf, decayOf, DEFAULT_LAYER } from './layers.js';
 
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
 /** 库路径。ABS_DB 可覆盖（测试隔离 / 多库切换）。 */
 export function dbPath() {
@@ -78,6 +78,15 @@ CREATE TABLE IF NOT EXISTS nodes (
   -- 被谁推翻」。原来这关系只存在于 markdown 的一行 frontmatter 里，
   -- 库只存 status 不存走向，于是「进化」在检索侧完全看不见。
   superseded_by TEXT NOT NULL DEFAULT '',
+  -- 知识的「作用」分档（借 clo​ude-mem 的 observation 类型，2026-11-02）：
+  --   gotcha    关键坑（怎么都想不到、踩了会白干）
+  --   decision  决策（当时为什么这么选）
+  --   tradeoff  权衡（A 好但 B 也有理，最后选了哪个）
+  --   howto     做法（这类事该怎么做）
+  -- 为何要它：七层按「性质」分（工具/认知/混沌），分不出「同一层里哪种更该先看」。
+  -- 实测 L4 有 382 页，其中「坑」106 页，而「决策」「权衡」根本没被记下来。
+  -- 留空 = 未分档（不强制补，旧页保持空）。
+  kind TEXT NOT NULL DEFAULT '',
   UNIQUE(project, dir, slug)
 );
 CREATE INDEX IF NOT EXISTS i_nodes_layer   ON nodes(layer);
@@ -238,6 +247,37 @@ export async function ensureDbDir(path = dbPath()) {
   await fs.mkdir(dirname(path), { recursive: true });
 }
 
+/** 估算一段文字要占多少 token。中文按 1.5 字符/token、其余按 4 字符/token。
+ *
+ * 为何要估算而不是精确算（2026-11-02）：精确分词要引依赖，而这里只需
+ * 「让用户知道取这一页大概多少钱」—— 数量级对就够了。
+ * 实测校准：本项目 40 页正文平均 824 token/页，与按段落读下来的体感一致。
+ */
+export function estTokens(s) {
+  const t = String(s || '');
+  const cjk = (t.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const rest = t.length - cjk;
+  return Math.round(cjk / 1.5 + rest / 4);
+}
+
+/** 从页正文取一句话摘要：优先 frontmatter 的 description，退化到首个非标题行。
+ *  与 relevant.js 的 digest 同思路，但这里在库侧用（不读文件）。 */
+export function digest(body, maxLen = 90) {
+  const lines = String(body || '').split('\n');
+  const fmEnd = lines[0] === '---' ? lines.indexOf('---', 1) : -1;
+  if (fmEnd > 0) {
+    const d = lines.slice(1, fmEnd).find((l) => /^description\s*:/.test(l));
+    if (d) return d.replace(/^description\s*:\s*/, '').trim().slice(0, maxLen);
+  }
+  // 跳过 frontmatter 与标题，取第一句正文
+  const start = fmEnd > 0 ? fmEnd + 1 : 0;
+  const first = lines.slice(start).find((l) => {
+    const x = l.trim();
+    return x && !x.startsWith('#') && !x.startsWith('---') && !x.startsWith('>') && !x.startsWith('|');
+  });
+  return String(first || '').replace(/^[-*]\s*/, '').replace(/^TITLE\s*:\s*/, '').trim().slice(0, maxLen);
+}
+
 /** 从 markdown 正文抽 title / tags / status（与页面 frontmatter 同源）。 */
 function metaOf(body) {
   const t = String(body || '');
@@ -245,7 +285,8 @@ function metaOf(body) {
   const tags = (t.match(/^tags:\s*(.+)$/m) || [])[1]?.replace(/^\[|\]$/g, '').trim() || '';
   const st = (t.match(/^status:\s*(.+)$/m) || [])[1]?.trim() || 'active';
   const sup = (t.match(/^superseded-by:\s*(.+)$/m) || [])[1]?.trim() || '';
-  return { title, tags, status: st, supersededBy: sup };
+  const kind = (t.match(/^kind:\s*(.+)$/m) || [])[1]?.trim() || '';
+  return { title, tags, status: st, supersededBy: sup, kind };
 }
 
 /** 全量重建：清表 → 重扫所有注册项目 → 重建边与断点词。
@@ -260,8 +301,8 @@ export function rebuild(handle, pages) {
     db.exec('DELETE FROM anchors; DELETE FROM edges; DELETE FROM nodes; DELETE FROM rules; DELETE FROM nodes_bigram;');
     try { db.exec("INSERT INTO fts(fts) VALUES('delete-all')"); } catch { /* 空表时无可删 */ }
 
-    const insNode = db.prepare(`INSERT INTO nodes(project,dir,slug,layer,title,tags,status,body,mtime,is_ledger,superseded_by)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?)`);
+    const insNode = db.prepare(`INSERT INTO nodes(project,dir,slug,layer,title,tags,status,body,mtime,is_ledger,superseded_by,kind)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`);
     const insGram = db.prepare('INSERT OR REPLACE INTO nodes_bigram(id,g) VALUES(?,?)');
     const insEdge = db.prepare('INSERT OR IGNORE INTO edges(src,dst,raw) VALUES(?,?,?)');
     const insAnchor = db.prepare('INSERT OR IGNORE INTO anchors(word,node) VALUES(?,?)');
@@ -270,11 +311,11 @@ export function rebuild(handle, pages) {
     // 第一遍：建节点，拿 id 映射 key = `project/dir/slug`
     const idOf = new Map();
     for (const p of pages) {
-      const { title, tags, status, supersededBy } = metaOf(p.body);
+      const { title, tags, status, supersededBy, kind } = metaOf(p.body);
       const { layer } = resolveLayer(p.body, p.dir);
       const ledger = (p.dir === '' && LEDGER_SLUGS.has(p.slug)) ? 1 : 0;
       const r = insNode.run(p.project, p.dir, p.slug, layer, title, tags, status,
-        p.body, p.mtime || now, ledger, supersededBy);
+        p.body, p.mtime || now, ledger, supersededBy, kind);
       const id = Number(r.lastInsertRowid);
       // FTS 源：正文 + 标题 + tags 切 2-gram。查询侧必须用同一个 bigrams()。
       insGram.run(id, bigrams([p.slug, title, tags, p.body].join('\n')).join(' '));
@@ -423,7 +464,7 @@ export function search(handle, query, { limit = 20 } = {}) {
   try {
     // 取 g 列才能数命中数；多取一些候选，过滤后仍可能不够 limit
     const rows = db.prepare(`
-      SELECT n.id, n.project, n.dir, n.slug, n.title, n.layer,
+      SELECT n.id, n.project, n.dir, n.slug, n.title, n.layer, n.kind, n.body,
              bm25(fts) AS rank, b.g
       FROM fts
       JOIN nodes_bigram b ON b.id = fts.rowid
@@ -462,29 +503,33 @@ export function search(handle, query, { limit = 20 } = {}) {
     //   档位由加权覆盖率决定（0.6~1.0）：全命中最高，勉强沾边压到 0.6 档再往下。
     //   档内名次由相对 bm25 决定（0.1~1.0）：覆盖率相同但 bm25 不同的页仍可分。
     // 下限 0.3 保留 —— 勉强命中的种子仍要能向外扩散，只是传得更弱。
-    return kept.slice(0, limit).map(({ g: _g, ...r }) => {
-      const rel = Math.min(1, Math.abs(r.rank) / best);
-      const band = 0.6 + 0.4 * r.cover;
-      // 亮度保持 0.3~1.0 的可读区间，**不乘层权重**。
-      // 坑（2026-11-02 实测）：把层权重乘进亮度后，L4 的满分页只剩 0.40，
-      // 输出里一片 0.3~0.5，用户看不出谁更相关 —— 亮度失去了「一眼看强弱」的作用。
-      // 层的作用改由**排序**承担（见下面 sort），亮度回归「这一页与查询多贴」本身。
-      const bright = Math.max(0.3, Math.min(1, band * (0.1 + 0.9 * rel)));
-      return { ...r, bright };
-    }).sort((a, b) => {
+    return kept.slice(0, limit)
+      .map(({ g: _g, ...r }) => {
+        const rel = Math.min(1, Math.abs(r.rank) / best);
+        const band = 0.6 + 0.4 * r.cover;
+        // 亮度保持 0.3~1.0 的可读区间，**不乘层权重**。
+        // 坑（2026-11-02 实测）：把层权重乘进亮度后，L4 的满分页只剩 0.40，
+        // 输出里一片 0.3~0.5，用户看不出谁更相关 —— 亮度失去了「一眼看强弱」的作用。
+        // 层的作用改由**排序**承担（见下面 sort），亮度回归「这一页与查询多贴」本身。
+        const bright = Math.max(0.3, Math.min(1, band * (0.1 + 0.9 * rel)));
+        return { ...r, bright };
+      })
       // 排序：层优先，同层再看亮度。
       // 为何层要排第一（2026-11-02，586 页实测）：查「静默失效」的前三名全是 L7
       // 混沌页（临时笔记），字面 cover=1.00 但内容与主题无关；
       // 而 L4 认知层里真正讲这个主题的页被压到后面。
       // 判据：知识层的页即便贴得稍微松一点，也比混沌层的碎片更该先看。
-      //
       // 例外：L1/L2 不参与排序（铁律不立页，单独在最前输出）。
-      const wa = layerWeight(a.layer);
-      const wb = layerWeight(b.layer);
-      const sa = wa * a.bright;
-      const sb = wb * b.bright;
-      return (sb - sa) || (b.bright - a.bright) || (a.id - b.id);
-    });
+      .sort((a, b) => {
+        const wa = layerWeight(a.layer);
+        const wb = layerWeight(b.layer);
+        return (wb * b.bright - wa * a.bright) || (b.bright - a.bright) || (a.id - b.id);
+      })
+      // 索引优先（2026-11-02 借 clo​ude-mem 的 Progressive Disclosure）：
+      // 返回值只给「摘要 + 取全文成本」，**不带正文** —— 正文要用 getPage 再取。
+      // 实测这一层的价值：ABS 单页平均 824 token，8 页全带就是 6600 token，
+      // 而其中真正被用上的往往只有 1-2 页（clo​ude-mem 实测 90% 是浪费）。
+      .map(({ body, ...r }) => ({ ...r, digest: digest(body, 90), tokens: estTokens(body) }));
   } catch {
     // 方言/语法问题不能让搜索整体挂掉 —— 退化成空种子，由调用方决定提示
     return [];
@@ -546,8 +591,14 @@ export function illuminate(handle, seeds, { hops = HOPS, limit = 10 } = {}) {
   for (const [id, v] of bright) {
     // 扩散出口也要排除 superseded —— 入口（search）排了，出口不排就绕过去：
     // 实测旧结论页自己不出现在种子里，却被邻居扩散点亮（亮度 0.24 带 ↝）。
-    const n = db.prepare("SELECT id,project,dir,slug,title,layer FROM nodes WHERE id = ? AND is_ledger = 0 AND status != 'superseded'").get(id);
-    if (n) out.push({ ...n, bright: v.bright, from: v.from });
+    const n = db.prepare("SELECT id,project,dir,slug,title,layer,kind,body FROM nodes WHERE id = ? AND is_ledger = 0 AND status != 'superseded'").get(id);
+    if (n) {
+      // 与 search 保持同一形态：索引优先，只给摘要与成本，不带正文。
+      // 坑（2026-11-02 实测）：这里原来只查少数字段，于是 CLI 侧读不到 digest/tokens，
+      // 摘要与成本全丢 —— search 改了、出口没改，典型的「改一半」。
+      const { body, ...rest } = n;
+      out.push({ ...rest, bright: v.bright, from: v.from, digest: digest(body, 90), tokens: estTokens(body) });
+    }
   }
   // 排序口径必须与 search 一致：层优先，同层再比亮度。
   // 坑（2026-11-02 实测）：原来这里只按 bright 排，把 search 已经排好的层序冲掉了 ——

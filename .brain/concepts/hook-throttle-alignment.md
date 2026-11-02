@@ -3,6 +3,7 @@ title: hook 节流判据必须对齐「真收尾」，且节流状态必须跨�
 tags: [坑, hook, 静默失效]
 created: 2026-09-13
 layer: 3
+kind: gotcha
 ---
 
 # hook 节流：三种静默失效

@@ -4,6 +4,7 @@ id: self-reported-reasoning-is-post-hoc
 author: fanchao
 updated: 2026-09-16
 status: active
+kind: gotcha
 ---
 
 # 让模型自述思考层 ≠ 真思考：实测是「知答案后编陪跑」

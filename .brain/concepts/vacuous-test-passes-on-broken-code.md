@@ -4,6 +4,7 @@ id: vacuous-test-passes-on-broken-code
 author: fanchao
 updated: 2026-09-17
 status: active
+kind: gotcha
 ---
 
 # 空测试：恒真断言，破坏代码也全绿

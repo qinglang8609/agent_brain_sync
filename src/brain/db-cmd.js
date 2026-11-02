@@ -176,7 +176,7 @@ export async function cmdDbRebuild({ dir } = {}) {
 }
 
 /** `abs db search <词>` —— 走库搜索：FTS 种子 → 亮度扩散。 */
-export async function cmdDbSearch({ query, limit = 8 } = {}) {
+export async function cmdDbSearch({ query, limit = 8, full = false } = {}) {
   const q = String(query || '').trim();
   if (!q) return '用法: abs db search <词>';
 
@@ -204,6 +204,20 @@ export async function cmdDbSearch({ query, limit = 8 } = {}) {
         : '（无命中。库可能是旧的：abs db rebuild 重扫）');
       return out.join('\n');
     }
+    // --full：显式要求时才读正文。默认不给 —— 这是索引优先的核心。
+    // 实测（2026-11-02）：ABS 单页平均 824 token，8 页全带就是 6600 token，
+    // 而真正被用上的往往只有 1-2 页。让「看全文」成为一个显式动作。
+    const bodies = new Map();
+    if (full) {
+      const root = await findBrainRoot(process.cwd());
+      if (root) {
+        for (const p of lit) {
+          const body = await fs.readFile(brainPath(root, p.dir, `${p.slug}.md`), 'utf8').catch(() => '');
+          if (body) bodies.set(p.id, body);
+        }
+      }
+    }
+
     out.push('', '--- 按亮度排序 ---');
     for (const p of lit) {
       // 亮度现在是 0.3~1.0（不再是早期可能到 165 万的异常值），
@@ -214,9 +228,22 @@ export async function cmdDbSearch({ query, limit = 8 } = {}) {
       // 跨项目的结果要显式标出来 —— 用户得知道「这条是别的项目的经验」，
       // 否则会以为是自己项目的结论（判据、上下文都可能不同）。
       const other = project && p.project && p.project !== project ? '  [跨项目]' : '';
-      out.push(`${bar} ${p.bright.toFixed(2)} L${p.layer} ${where}${tag}${other}`);
+      // 索引优先：给摘要 + 取全文成本，让「要不要看全文」成为一个可算的决定。
+      const about = p.digest ? `\n            ${p.digest}` : '';
+      const cost = p.tokens ? `  ~${p.tokens}tok` : '';
+      // 作用分档（gotcha/decision/tradeoff/howto）—— 同层里「哪种更该先看」的线索
+      const KIND_ICON = { gotcha: '🔴坑', decision: '🟤决策', tradeoff: '⚖️权衡', howto: '🔵做法' };
+      const kind = p.kind && KIND_ICON[p.kind] ? `  ${KIND_ICON[p.kind]}` : '';
+      out.push(`${bar} ${p.bright.toFixed(2)} L${p.layer} ${where}${tag}${other}${kind}${cost}${about}`);
+      if (full && bodies.has(p.id)) {
+        // 正文缩进显示，便于与索引行区分
+        const body = bodies.get(p.id).replace(/^---[\s\S]*?---\n/, '');   // 去掉 frontmatter
+        out.push(...body.split('\n').slice(0, 60).map((l) => `      │ ${l}`));
+        if (body.split('\n').length > 60) out.push('      │ …（已截断，用 abs resolve 看全文）');
+      }
     }
     out.push('', '（L1 铁律恒在最前；↝ 表示由邻居扩散点亮，非直接命中）');
+    out.push('（只给摘要与成本；要看全文: abs db search <词> --full  或  abs resolve <页名>）');
     if (project) {
       out.push(`（铁律只显示本项目 "${project}" 的 —— 别的项目的铁律不外借）`);
     }

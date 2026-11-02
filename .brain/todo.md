@@ -5,6 +5,7 @@
 ## Done
 
 ### 2026-11-02
+- [x] index-first-plus-kinds [[fanchao]] — 索引优先（摘要+token 成本+--full）+ 观察类型分档（gotcha/decision/tradeoff） — 索引优先（摘要+token 成本+--full）+ kind 分档（gotcha/decision/tradeoff/howto，capture --kind）；23 页标 gotcha，其余留空不猜 【落地】 (完成 2026-11-02 01a19752-29b2-70)
 - [x] fix-retired-vs-replaced [[fanchao]] — evolve 区分单纯弃用与被取代 — 原来没写 superseded-by 一律报断链，误报「需求已否决」的存档页；现分 replaced/retired，只有写了 by 但目标不存在才是断链 【落地】 (完成 2026-11-02 01a19752-29b2-70)
 - [x] fix-dangling-links [[fanchao]] — 清 4 条悬挂链接 — 加了占位符形状判据（省略号/大写冒号）与 wiki 排除；PPT-CONVERSION-FORMULAS 改纯文本说明（原文档已不在仓库）；悬挂 4→0 【落地】 (完成 2026-11-02 01a19752-29b2-70)
 - [x] load-with-search [[fanchao]] — 把 db search 接进 abs load，开机带出最亮的几页正文 — load 首屏带出最亮 3 页（页名+摘要不贴正文）；抽出 contextKeywords 共用；首屏按纯亮度排不按层权重 【落地】 (完成 2026-11-02 01a19752-29b2-70)

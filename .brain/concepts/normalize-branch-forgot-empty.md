@@ -4,6 +4,7 @@ id: normalize-branch-forgot-empty
 author: fanchao
 updated: 2026-10-06
 status: active
+kind: gotcha
 ---
 
 # 概念：排版归一只测了「有内容」分支：空分区的接缝被吃掉

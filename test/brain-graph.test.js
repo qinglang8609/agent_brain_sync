@@ -601,3 +601,55 @@ async function withEnv2(env, fn) {
     }
   }
 }
+
+// ---------- 索引优先 + 作用分档 ----------
+
+test('search 返回索引形态：有 digest 与 tokens，不带 body', async () => {
+  // 借 cl​aude-mem 的 Progressive Disclosure：默认只给摘要 + 取全文成本。
+  // 实测 ABS 单页平均 824 token，8 页全带就是 6600 token，而真正用上的往往只有 1-2 页。
+  const { h, dir } = await freshDb();
+  try {
+    rebuild(h, [page('p1', 'concepts', '甲', '---\ntitle: 测试页\n---\n# 测试页\n这是一句话摘要，后面还有内容')]);
+    const rows = search(h, '一句话摘要');
+    assert.ok(rows.length > 0);
+    assert.ok(rows[0].digest, '必须有摘要');
+    assert.ok(rows[0].tokens > 0, '必须有 token 成本');
+    assert.equal('body' in rows[0], false, '索引不该带正文');
+  } finally { h.close(); await fs.rm(dir, { recursive: true, force: true }); }
+});
+
+test('illuminate 出口也带 digest/tokens（改一半的坑）', async () => {
+  // search 改了、illuminate 出口没改，摘要与成本会全丢 —— 实测踩过。
+  const { h, dir } = await freshDb();
+  try {
+    rebuild(h, [page('p1', 'concepts', '甲', '---\ntitle: 甲\n---\n# 甲\n独特关键词在这里')]);
+    const lit = illuminate(h, search(h, '独特关键词'), { limit: 5 });
+    assert.ok(lit.length > 0);
+    assert.ok(lit[0].digest, 'illuminate 出口也要有摘要');
+    assert.ok(lit[0].tokens > 0);
+  } finally { h.close(); await fs.rm(dir, { recursive: true, force: true }); }
+});
+
+test('kind 分档：能从 frontmatter 读出并随结果返回', async () => {
+  const { h, dir } = await freshDb();
+  try {
+    rebuild(h, [
+      page('p1', 'concepts', '坑页', '---\nkind: gotcha\n---\n# 坑页\n共同关键词'),
+      page('p1', 'concepts', '普通页', '---\n---\n# 普通页\n共同关键词'),
+    ]);
+    const rows = search(h, '共同关键词');
+    const gotcha = rows.find((r) => r.slug === '坑页');
+    const plain = rows.find((r) => r.slug === '普通页');
+    assert.equal(gotcha.kind, 'gotcha');
+    assert.equal(plain.kind, '', '没标 kind 的留空，不猜');
+  } finally { h.close(); await fs.rm(dir, { recursive: true, force: true }); }
+});
+
+test('estTokens 估算合理（中文比英文占 token 多）', async () => {
+  const { estTokens } = await import('../src/brain/db.js');
+  const zh = estTokens('这是一段中文文字用来测试估算');
+  const en = estTokens('this is an english sentence for testing');
+  assert.ok(zh > 0 && en > 0);
+  // 同样字符数下，中文 token 更多（1.5 字符/token vs 4 字符/token）
+  assert.ok(zh / 14 > en / 38, '中文每字符占的 token 应多于英文');
+});

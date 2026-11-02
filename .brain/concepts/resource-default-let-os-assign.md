@@ -4,6 +4,7 @@ id: resource-default-let-os-assign
 author: fanchao
 updated: 2026-09-16
 status: active
+kind: gotcha
 ---
 
 # 稀缺全局资源的默认值：让 OS 分配，不写死

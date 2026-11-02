@@ -4,6 +4,7 @@ id: global-config-contaminates-projects
 author: fanchao
 updated: 2026-10-05
 status: active
+kind: gotcha
 ---
 
 # 概念：全局单值配置会污染所有项目
