@@ -5,7 +5,7 @@ import { brainPath, requireBrain } from '../index.js';
 import { getUser, placeholderWarn } from '../userconfig.js';
 import { boardText, readTodo, collapseDone } from '../todo.js';
 import { strandedFor } from '../wrapup.js';
-import { keywords, recentFiles, topicStrength } from '../relevant.js';
+import { keywords, recentFiles, topicStrength, digest } from '../relevant.js';
 import { readIfExists, recentLogLines } from '../text.js';
 import { listPages } from '../lint.js';
 import { SOURCES_MAX } from '../lint.js';
@@ -136,6 +136,12 @@ export async function cmdLoad({ dir }) {
     const rel = await queryHintSection(root, todo);
     if (rel) sections.push('', rel);
   } catch { /* 提示失败不影响 load */ }
+  // 最相关几页（2026-11-02）：queryHint 给「该查什么词」，这里给「该读哪几页」。
+  // 放最后 —— 它是「再深入一层」的东西，前面先给状态与待办。
+  try {
+    const hot = await hotPagesSection(root, todo);
+    if (hot) sections.push('', hot);
+  } catch { /* 同上，失败静默 */ }
   // sources 堆积提醒：与「滞留」同构 —— 放在每次开工必经的顶部，而不是等人跑 lint。
   // 只数目录条目（不读文件），零成本。提炼仍手工：这里只负责送达，不替判断。
   try {
@@ -174,6 +180,94 @@ export function extractBlocks(todoText) {
   return out;
 }
 
+/** 从「活跃 todo + 最近改动的文件」推出当前上下文的关键词。
+ *
+ * 抽成公共函数（2026-11-02）：queryHint（给查询词）与 hotPages（给正文）
+ * 都要用，两处各算一遍必然漂移。
+ *
+ * 已剔掉任务行的结构记号：`- [ ] [状态] <id> [[作者]] —` 里只有「—」后面是真内容。
+ * 实测教训（2026-09-17）：不剔的话 `<id>` 与 `[[作者]]` 会进入词表，
+ * 而作者名恰好有自己的 entities/<作者>.md 页 → 命中页名 → 提出「查你自己的名字」。
+ */
+async function contextKeywords(root, todoText) {
+  const active = String(todoText || '')
+    .split('\n')
+    .filter((l) => /^\s*-\s*\[\s*\]/.test(l))
+    .map((l) => l.replace(/^\s*-\s*\[\s*\]\s*(?:\[[^\]]*\]\s*)?(?:\S+\s*)?/, '').replace(/\[\[[^\]]*\]\]/g, ' '))
+    .join(' ');
+  const files = await recentFiles(root, { n: 5 }).catch(() => []);
+  const src = [active, files.map((f) => f.name).join(' ')].filter(Boolean).join(' ');
+  return { kws: keywords(src), files };
+}
+
+/**
+ * 开机带出「当前上下文最相关的几页」—— 只给页名 + 一句话摘要，不贴正文。
+ *
+ * 与 queryHint 的分工（2026-11-02 用户定）：
+ *   queryHint 给「该查什么词」，本函数给「该读哪几页」。两者都只是**送达线索**，
+ *   不替代 query / db search，也不贴正文。
+ *
+ * 为何不贴正文：既有判据是「自动带出正文会让 query 更没人用，且无法按需求变化调整词」。
+ *   只给页名 + 摘要把选择权留给人：想看再 abs resolve / 读文件。
+ *
+ * 输入是环境事实（活跃 todo 的关键词 + 最近改过的文件），不需要人先想到搜索词 ——
+ *   这正是不依赖「主动查询」的那条路。
+ *
+ * 降级：库不存在 / 库坏了 / 任何异常 → 返回空串，不影响 load。
+ *
+ * @param {string} root 项目根
+ * @param {string} todoText
+ * @param {number} limit 最多几页
+ */
+export async function hotPagesSection(root, todoText, { limit = 3 } = {}) {
+  try {
+    const { kws } = await contextKeywords(root, todoText);
+    if (!kws.length) return '';
+    const { openDb, search, illuminate, dbPath } = await import('./db.js');
+    const { promises: fsp } = await import('node:fs');
+    const exists = await fsp.stat(dbPath()).then(() => true).catch(() => false);
+    if (!exists) return '';   // 库没建 → 静默跳过（不是错误）
+
+    // 项目名要与入库时一致 —— 铁律按项目隔离，读错项目就是串味
+    const project = String(root).split('/').filter(Boolean).pop() || '';
+    const h = openDb(dbPath());
+    try {
+      // 用几个强词合并成一组种子：逐个查再按 id 去重取最高亮度
+      const seeds = new Map();
+      for (const kw of kws.slice(0, 5)) {
+        for (const s of search(h, kw, { limit: 6 })) {
+          const prev = seeds.get(s.id);
+          if (!prev || s.bright > prev.bright) seeds.set(s.id, s);
+        }
+      }
+      if (!seeds.size) return '';
+      const lit = illuminate(h, [...seeds.values()], { limit: limit + 6 })
+        // 只留本项目的页：跨项目的经验可以查，但不该在开机首屏默认塞进来
+        .filter((r) => r.project === project)
+        // 再按**纯亮度**重排 —— illuminate 用的是「层权重 × 亮度」，
+        // 那是为了让知识页压过流水页（搜索场景对）；但开机首屏要看的是
+        // 「跟我现在干的事最贴的」，不是「层级最高的」。
+        // 实测：不重排时 L3 的 0.925 会排在 L4 的 1.000 前面 —— 读起来反直觉。
+        .sort((a, b) => b.bright - a.bright)
+        .slice(0, limit);
+      if (!lit.length) return '';
+
+      const rows = ['--- 当前最相关（按亮度，纯线索不贴正文；要看用 abs resolve <页名>）---'];
+      for (const r of lit) {
+        const one = await fsp.readFile(brainPath(root, r.dir, `${r.slug}.md`), 'utf8').catch(() => '');
+        const about = one ? digest(one, 80) : '';
+        const tag = r.from === 'spread' ? ' ↝' : '';
+        rows.push(`  ${r.bright.toFixed(2)} L${r.layer} [[${r.slug}]]${tag}${about ? ' — ' + about : ''}`);
+      }
+      return rows.join('\n');
+    } finally {
+      h.close();
+    }
+  } catch {
+    return '';   // 任何异常都不该弄坏 load
+  }
+}
+
 /**
  * 开工提示：直接给出该查的几个词，降低发起 query 的成本。
  *
@@ -195,19 +289,7 @@ export function extractBlocks(todoText) {
  * @param {{name:string,body:string}[]} [pages] 已读好的页（省一次磁盘扫描）
  */
 async function queryHint(root, todoText, pages) {
-  const active = String(todoText || '')
-    .split('\n')
-    .filter((l) => /^\s*-\s*\[\s*\]/.test(l))
-    // 剔掉任务行的结构记号再分词：`- [ ] [状态] <id> [[作者]] —` 里只有「—」后面是真内容。
-    // 实测教训（2026-09-17）：不剔的话 `<id>` 与 `[[作者]]` 会进入词表，
-    // 而作者名恰好有自己的 entities/<作者>.md 页 → 命中**页名** → 强度 1 过了门槛，
-    // 于是提示语变成「查一下你自己的名字」。建议查作者页不是“别重踩的经验”。
-    // 用 task 行自身的形状剥（与 idOfTaskLine 同源），不维护人名/任务名黑名单。
-    .map((l) => l.replace(/^\s*-\s*\[\s*\]\s*(?:\[[^\]]*\]\s*)?(?:\S+\s*)?/, '').replace(/\[\[[^\]]*\]\]/g, ' '))
-    .join(' ');
-  const files = await recentFiles(root, { n: 5 }).catch(() => []);
-  const src = [active, files.map((f) => f.name).join(' ')].filter(Boolean).join(' ');
-  const kws = keywords(src);
+  const { kws, files } = await contextKeywords(root, todoText);
   if (!kws.length) return '';
   const all = pages || await listPages(brainPath(root)).catch(() => []);
   const strength = topicStrength(all.map((p) => ({ name: p.slug, body: p.body })), kws);

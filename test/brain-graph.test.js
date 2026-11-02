@@ -555,3 +555,49 @@ test('检索排序：知识页要压过会话流水页（层权重）', async ()
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+// ---------- load 首屏带出最亮几页 ----------
+
+test('hotPagesSection: 无库时静默返回空串（不影响 load）', async () => {
+  const { hotPagesSection } = await import('../src/brain/load.js');
+  const root = await freshBrain();
+  try {
+    const out = await withEnv2({ ABS_DB: join(root, 'nodb.db') }, () => hotPagesSection(root, '- [ ] TASK-1 — 测试', {}));
+    assert.equal(out, '', '库不存在时不能报错，也不能占位');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('hotPagesSection: 只出本项目的页，且按纯亮度排（不按层权重）', async () => {
+  const root = await freshBrain();
+  const dbFile = join(root, 'g.db');
+  try {
+    const { openDb, rebuild } = await import('../src/brain/db.js');
+    const h = openDb(dbFile);
+    const proj = root.split('/').filter(Boolean).pop();
+    rebuild(h, [
+      // 本项目：一个 L3（亮度高但层权重大）、一个 L4（亮度更高）
+      { project: proj, dir: 'concepts', slug: 'tool-page', body: '---\nlayer: 3\n---\n并发写 加锁 并发写 加锁', mtime: Date.now() },
+      { project: proj, dir: 'concepts', slug: 'cog-page', body: '---\nlayer: 4\n---\n并发写 加锁 丢了 并发写 加锁 丢了 更多', mtime: Date.now() },
+      // 别的项目：不该出现在首屏
+      { project: 'other', dir: 'concepts', slug: 'foreign', body: '---\n---\n并发写 加锁', mtime: Date.now() },
+    ]);
+    h.close();
+
+    const { hotPagesSection } = await import('../src/brain/load.js');
+    const out = await withEnv2({ ABS_DB: dbFile }, () => hotPagesSection(root, '- [ ] TASK-1 [[x]] — 并发写 加锁', { limit: 5 }));
+    assert.match(out, /tool-page|cog-page/, '该带出本项目的页');
+    assert.doesNotMatch(out, /foreign/, '别的项目的页不进开机首屏');
+    assert.doesNotMatch(out, /##\s/, '不能贴正文标题，只给页名 + 摘要');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+async function withEnv2(env, fn) {
+  const saved = {};
+  for (const k of Object.keys(env)) { saved[k] = process.env[k]; process.env[k] = env[k]; }
+  try { return await fn(); }
+  finally {
+    for (const k of Object.keys(env)) {
+      if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+    }
+  }
+}

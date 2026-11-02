@@ -78,7 +78,21 @@ export function resolveLayer(body, dirName) {
 /** 模板占位符 —— 它们出现在正文里是在**讨论语法**，不是真链接。
  * 实测（2026-11-01）：.brain 里 `[[作者]]` `[[页面名]]` `[[slug]]` 被当成真双链，
  * 污染断点词表并被报成悬挂链接。排除它们是判据，不是特例。 */
-const PLACEHOLDER = new Set(['作者', '页面名', 'slug', '页面', '页名', '名称', 'x', 'y', 'foo', 'bar']);
+const PLACEHOLDER = new Set([
+  '作者', '页面名', 'slug', '页面', '页名', '名称', 'x', 'y', 'foo', 'bar',
+  // 讨论「双链 vs wiki」时提到的词（2026-11-02 实测：log-2026-09-17 里
+  // 「抽词前剥掉 [[wiki]]」是指令，不是链接到某个 wiki 页）
+  'wiki',
+]);
+
+/** 占位符形状：`[[TOOLS:...]]`、`[[A...B]]`、`[[前缀:xxx]]` 这类。
+ * 它们是「描述语法时写的方括号」，不是真链接。
+ * 判据（2026-11-02）：含省略号，或含冒号且冒号前是纯大写字母（像常量/枚举写法）。 */
+function isPlaceholderShape(t) {
+  if (/[.．]{2,}|\.\.\.|…/.test(t)) return true;          // 省略号
+  if (/^[A-Z_]+[：:]/.test(t)) return true;                 // TOOLS:xxx 这类
+  return false;
+}
 
 /** 提取页面里的双链词（L6 断点层的数据来源）。
  * `[[x]]` / `[[x|别名]]` / `[[x#小节]]` 都取 x。
@@ -92,6 +106,7 @@ export function anchorsOf(body) {
     const t = m[1].trim();
     if (!t) continue;
     if (PLACEHOLDER.has(t)) continue;
+    if (isPlaceholderShape(t)) continue;
     // 纯符号/纯数字的不是页名
     if (!/[\p{L}\p{N}]/u.test(t)) continue;
     out.add(t);

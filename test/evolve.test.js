@@ -39,11 +39,16 @@ test('能看出被推翻的页与被谁取代', async () => {
   });
 });
 
-test('标了推翻却没指向新页 → 报断链', async () => {
+test('单纯弃用（没写 superseded-by）不算断链', async () => {
+  // 2026-11-02 修正：原来把「没写 superseded-by」一律报断链，于是用户每跑一次
+  // evolve 都被提醒一件并不存在的问题（实测 corp_agent 有页正文写着「需求已否决」，
+  // 那是存档不是断链）。真断链只有：写了 by 但目标不存在。
   await with_db(async (h) => {
-    rebuild(h, [page('concepts', 'old', '---\nstatus: superseded\n---\n旧结论')]);
+    rebuild(h, [page('concepts', 'axi', '---\nstatus: superseded\n---\n需求已否决，本页存档')]);
     const sig = evolveSignals(h);
-    assert.equal(sig.danglingSupersede.length, 1, '历史断了要报，不能静默');
+    assert.equal(sig.danglingSupersede.length, 0, '单纯弃用不该报断链');
+    assert.equal(sig.retired.length, 1, '该归到 retired');
+    assert.equal(sig.replaced.length, 0);
   });
 });
 
@@ -94,11 +99,14 @@ test('会话流水不参与主题堆积（归档快照本来就该各自独立�
 
 test('renderEvolve 不抛、含关键小节', async () => {
   await with_db(async (h) => {
-    rebuild(h, [page('concepts', 'a', '---\nstatus: superseded\n---\nx')]);
+    // 造一个真被取代的页（有 superseded-by），渲染才会出「已推翻」
+    rebuild(h, [
+      page('concepts', 'old', '---\nstatus: superseded\nsuperseded-by: new\n---\n旧'),
+      page('concepts', 'new', '---\nstatus: active\n---\n新'),
+    ]);
     const out = renderEvolve(evolveSignals(h));
     assert.match(out, /图谱进化体检/);
     assert.match(out, /已推翻/);
-    assert.match(out, /abs supersede/, '要给可执行的下一步');
   });
 });
 
@@ -214,4 +222,14 @@ test('uniqueProjectNames: 重名时加父目录前缀', async () => {
   assert.equal(r.get('/Users/fanchao/Code/zj_shop'), 'zj_shop', '没重名的保持短名');
   assert.ok(r.get('/Users/fanchao/.agents').includes('.agents'));
   assert.ok(r.get('/Users/fanchao/Documents/软件/.agents').includes('.agents'));
+});
+
+test('写了 superseded-by 但目标页不存在 → 报断链', async () => {
+  await with_db(async (h) => {
+    rebuild(h, [page('concepts', 'old', '---\nstatus: superseded\nsuperseded-by: 根本没这页\n---\n旧')]);
+    const sig = evolveSignals(h);
+    assert.equal(sig.danglingSupersede.length, 1, '这种才是真断链');
+    assert.equal(sig.replaced.length, 1);
+    assert.equal(sig.retired.length, 0);
+  });
 });

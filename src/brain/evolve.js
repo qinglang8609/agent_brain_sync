@@ -22,12 +22,20 @@ export function evolveSignals(handle, { staleDays = 90, now = Date.now() } = {})
   const outbound = new Map();
   for (const r of db.prepare('SELECT src, count(*) c FROM edges WHERE src > 0 GROUP BY src').all()) outbound.set(r.src, r.c);
 
-  // 1. 被推翻的
+  // 1. 被推翻的 vs 单纯弃用
+  //
+  // 两者都是 status=superseded，但含义不同（2026-11-02 修正）：
+  //   · 被取代  —— 有 superseded-by，指向新页（知识更新了）
+  //   · 单纯弃用 —— 没有 superseded-by（如「需求已否决，本页存档设计」）
+  // 原来把「没写 superseded-by」一律报成断链，于是用户每跑一次 evolve 都被提醒
+  // 一件并不存在问题的事（实测：corp_agent 的 run-command-controlled-exec
+  // 正文写着「需求已否决」，那是存档不是断链）。
+  // 真断链只有一种：**写了 by、但指向的页不存在**。
   const superseded = all.filter((r) => r.status === 'superseded');
-  const danglingSupersede = superseded.filter((r) => {
-    if (!r.superseded_by) return true;                    // 标了推翻但没指向谁
-    return !all.some((x) => x.slug === r.superseded_by && x.project === r.project);
-  });
+  const retired = superseded.filter((r) => !r.superseded_by);   // 单纯弃用，不报警
+  const replaced = superseded.filter((r) => r.superseded_by);   // 真被取代
+  const danglingSupersede = replaced.filter((r) =>
+    !all.some((x) => x.slug === r.superseded_by && x.project === r.project));
 
   // 2. 主题堆积：按 tags 里的**业务标签**归类。
   //
@@ -60,7 +68,7 @@ export function evolveSignals(handle, { staleDays = 90, now = Date.now() } = {})
 
   return {
     total: all.length,
-    superseded, danglingSupersede,
+    superseded, replaced, retired, danglingSupersede,
     piled, sinkOnly, stale,
     byId, inbound, outbound,
   };
@@ -79,16 +87,20 @@ export function renderEvolve(sig, { sample = 5, staleDays = 90 } = {}) {
   out.push('');
 
   // 好消息放前面：推翻说明知识在更新
-  if (sig.superseded.length) {
-    out.push(`✓ 已推翻 ${sig.superseded.length} 页（知识在更新，不是坏事）`);
-    out.push(...trunc(sig.superseded, (r) => `    ${r.slug} → ${r.superseded_by || '(未指向)'}`));
+  if (sig.replaced.length) {
+    out.push(`✓ 已推翻 ${sig.replaced.length} 页（知识在更新，不是坏事）`);
+    out.push(...trunc(sig.replaced, (r) => `    ${r.slug} → ${r.superseded_by}`));
   } else {
     out.push('· 还没有被推翻的页 —— 要么知识很稳，要么没人回头修正');
+  }
+  if (sig.retired.length) {
+    out.push(`· 另有 ${sig.retired.length} 页是单纯弃用（需求否决/方案作废），不是断链`);
+    out.push(...trunc(sig.retired, (r) => `    ${r.slug}`));
   }
   out.push('');
 
   if (sig.danglingSupersede.length) {
-    out.push(`⚠ ${sig.danglingSupersede.length} 页标了推翻但没指向新页（历史断了，看不出被谁取代）`);
+    out.push(`⚠ ${sig.danglingSupersede.length} 页写了取代者但目标页不存在（历史断了）`);
     out.push(...trunc(sig.danglingSupersede, (r) => `    ${r.slug}`));
     out.push('  修: abs supersede <旧页> --by <新页>');
     out.push('');
