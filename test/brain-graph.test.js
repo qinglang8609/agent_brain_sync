@@ -534,3 +534,24 @@ test('superseded 页不能被扩散点亮（入口排了出口也要排）', asy
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('检索排序：知识页要压过会话流水页（层权重）', async () => {
+  // 坑（2026-11-02，14 个项目 586 页实测）：查「docker」时三个 sessions/ 流水页排最前，
+  // 压过真正讲 docker 的知识页 —— 流水页正文长、词频高，bm25 天然占优，
+  // 但对「我上次怎么解决 X」没有价值。分层不能只在扩散时起作用，种子也要加权。
+  const { h, dir } = await freshDb();
+  try {
+    rebuild(h, [
+      // 流水页：关键词重复多次，bm25 会很高
+      page('p1', 'sessions', 'log-x', 'docker 部署 docker 启动 docker 失败 docker'),
+      // 知识页：只提一次
+      page('p1', 'concepts', 'docker-代理失效', 'docker 拉镜像失败是因为残留代理'),
+    ]);
+    const rows = search(h, 'docker');
+    assert.ok(rows.length >= 2, '两页都该命中');
+    assert.equal(rows[0].slug, 'docker-代理失效', '知识页必须排在流水页前面');
+  } finally {
+    h.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

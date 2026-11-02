@@ -190,3 +190,28 @@ test('查询跨项目共享：能查到别的项目的知识页', async () => {
 function page2(project, dirName, slug, body) {
   return { project, dir: dirName, slug, body, mtime: Date.now() };
 }
+
+// ---------- 项目名消歧 ----------
+
+test('uniqueProjectNames: 不重名时保持短名', async () => {
+  const { uniqueProjectNames } = await import('../src/brain/db-cmd.js');
+  const r = uniqueProjectNames(['/Users/a/Code/proj1', '/Users/a/Code/proj2']);
+  assert.equal(r.get('/Users/a/Code/proj1'), 'proj1');
+  assert.equal(r.get('/Users/a/Code/proj2'), 'proj2');
+});
+
+test('uniqueProjectNames: 重名时加父目录前缀', async () => {
+  // 坑（2026-11-02 实测）：机器上同时有 ~/.agents 与 ~/Documents/软件/.agents，
+  // 末段都是 .agents → 入库撞 UNIQUE(project, dir, slug)，整个 rebuild 失败。
+  const { uniqueProjectNames } = await import('../src/brain/db-cmd.js');
+  const r = uniqueProjectNames([
+    '/Users/fanchao/Documents/软件/.agents',
+    '/Users/fanchao/.agents',
+    '/Users/fanchao/Code/zj_shop',
+  ]);
+  const vals = [...r.values()];
+  assert.equal(new Set(vals).size, vals.length, '结果必须互不重名');
+  assert.equal(r.get('/Users/fanchao/Code/zj_shop'), 'zj_shop', '没重名的保持短名');
+  assert.ok(r.get('/Users/fanchao/.agents').includes('.agents'));
+  assert.ok(r.get('/Users/fanchao/Documents/软件/.agents').includes('.agents'));
+});

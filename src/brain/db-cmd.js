@@ -22,6 +22,44 @@ function projectNameOf(root) {
   return String(root).split('/').filter(Boolean).pop() || 'unknown';
 }
 
+/** 给一批项目根算出**互不重名**的项目名。
+ *
+ * 为何需要（2026-11-02 实测）：项目名默认取路径末段，而机器上同时存在
+ *   ~/.agents 与 ~/Documents/软件/.agents，两者末段都是 `.agents` →
+ *   入库时撞 UNIQUE(project, dir, slug) 约束，整个 rebuild 失败。
+ *
+ * 消歧规则：重名的那些改用「父目录-末段」，仍重名就继续往上加，直到唯一。
+ * 只给重名的项目加前缀 —— 没重名的保持短名（检索结果里读起来更清楚）。
+ */
+export function uniqueProjectNames(roots) {
+  const seg = (p) => String(p).split('/').filter(Boolean);
+  const base = new Map(roots.map((r) => [r, seg(r).pop() || 'unknown']));
+  const groups = new Map();
+  for (const [r, n] of base) {
+    if (!groups.has(n)) groups.set(n, []);
+    groups.get(n).push(r);
+  }
+  const out = new Map();
+  for (const [name, list] of groups) {
+    if (list.length === 1) { out.set(list[0], name); continue; }
+    // 重名 → 逐层加父目录前缀，直到组内唯一
+    for (let depth = 2; depth <= 4; depth++) {
+      const cand = new Map();
+      for (const r of list) {
+        const s = seg(r);
+        cand.set(r, s.slice(Math.max(0, s.length - depth)).join('-'));
+      }
+      const vals = [...cand.values()];
+      if (new Set(vals).size === vals.length) {
+        for (const [r, v] of cand) out.set(r, v);
+        break;
+      }
+      if (depth === 4) for (const [r, v] of cand) out.set(r, v);  // 兜底：认了
+    }
+  }
+  return out;
+}
+
 /** 当前所在项目名。查询时用它决定「读哪几条铁律」。
  *
  * 为何要单独一个函数（2026-11-02）：原来只在 cmdDbSearch 里内联算，
@@ -102,14 +140,19 @@ export async function cmdDbRebuild({ dir } = {}) {
     return '✗ 没有可入的项目。先在项目根跑: abs db add   或  abs db rebuild';
   }
 
+  // 先收集所有有效根，再统一算项目名 —— 名字要去重，必须看到全局才知道谁重名
+  const found = [];
+  for (const root of roots) {
+    const r = await findBrainRoot(root);
+    if (r) found.push(r);                       // 登记了但目录没了 → 跳过，不报错
+  }
+  const names = uniqueProjectNames([...new Set(found)]);
   const pages = [];
   const used = [];
-  for (const root of roots) {
-    const found = await findBrainRoot(root);
-    if (!found) continue;                       // 登记了但目录没了 → 跳过，不报错
-    const project = projectNameOf(found);
-    pages.push(...await scanProject(found, project));
-    used.push(`${project} (${found})`);
+  for (const f of [...new Set(found)]) {
+    const project = names.get(f);
+    pages.push(...await scanProject(f, project));
+    used.push(`${project} (${f})`);
   }
   if (!pages.length) return '✗ 登记的项目都没有 .brain/ 图谱，无可入库内容。';
 
@@ -261,12 +304,15 @@ async function cmdDbRebuildQuiet() {
   const here = await findBrainRoot(process.cwd());
   const roots = [...new Set([...registered, ...(here ? [here] : [])])];
   if (!roots.length) return;
-  const pages = [];
+  const found = [];
   for (const root of roots) {
-    const found = await findBrainRoot(root);
-    if (!found) continue;
-    pages.push(...await scanProject(found, projectNameOf(found)));
+    const r = await findBrainRoot(root);
+    if (r) found.push(r);
   }
+  const uniq = [...new Set(found)];
+  const names = uniqueProjectNames(uniq);
+  const pages = [];
+  for (const f of uniq) pages.push(...await scanProject(f, names.get(f)));
   if (!pages.length) return;
   const h = openDb(dbPath());
   try { rebuild(h, pages); } finally { h.close(); }

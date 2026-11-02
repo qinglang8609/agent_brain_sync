@@ -450,6 +450,13 @@ export function search(handle, query, { limit = 20 } = {}) {
     //   rank 升序（第一行最相关），最后一条恰恰是**最不相关**的那条，其 rank 接近 0。
     //   实测一个 4 条结果的查询里，最相关那条亮度算出 1168694.07（= |−2.42| / 2e-6），
     //   输出一行 165 万的亮度条。分母必须取最相关的那条（第一条）。
+    // 种子亮度里要体现「层」—— 否则分层只在扩散时起作用，种子仍按纯字面排。
+    // 实测（2026-11-02，14 个项目 586 页）：查「docker」时三个 sessions/ 流水页
+    // 排在最前，压过真正讲了 docker 的知识页 —— 流水页正文长、词频高，bm25 天然占优，
+    // 但对「我上次怎么解决 X」没有价值。
+    // 权重 = 1 - decay：L3 工具 0.6、L4 认知 0.4、L5 会话 0.25、L7 混沌 0.05。
+    // L1/L2 不参与（铁律不立页）。
+    const layerWeight = (layer) => Math.max(0.05, 1 - decayOf(layer));
     const best = Math.abs(kept[0].rank) || 1e-9;
     // 亮度 = 档位 × 档内名次。
     //   档位由加权覆盖率决定（0.6~1.0）：全命中最高，勉强沾边压到 0.6 档再往下。
@@ -458,7 +465,9 @@ export function search(handle, query, { limit = 20 } = {}) {
     return kept.slice(0, limit).map(({ g: _g, ...r }) => {
       const rel = Math.min(1, Math.abs(r.rank) / best);
       const band = 0.6 + 0.4 * r.cover;
-      return { ...r, bright: Math.max(0.3, Math.min(1, band * (0.1 + 0.9 * rel))) };
+      const base = band * (0.1 + 0.9 * rel);
+      // 层权重乘上去：会话/混沌层的种子亮度天然低于工具/认知层
+      return { ...r, bright: Math.max(0.3, Math.min(1, base * layerWeight(r.layer))) };
     });
   } catch {
     // 方言/语法问题不能让搜索整体挂掉 —— 退化成空种子，由调用方决定提示
