@@ -3,7 +3,7 @@
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
 import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede, cmdReview } from '../src/store.js';
-import { cmdDbRebuild, cmdDbSearch, cmdDbStatus, addProject } from '../src/brain/db-cmd.js';
+import { cmdDbRebuild, cmdDbSearch, cmdDbStatus, cmdDbEvolve, addProject } from '../src/brain/db-cmd.js';
 import { cmdCapture } from '../src/brain/capture.js';
 import { cmdSummon } from '../src/brain/summon-cmd.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
@@ -249,7 +249,7 @@ const usage = `abs — 跨会话记忆工具（.brain/ 图谱）
   summon [--mark|--status]   会话总结托底: 列出未总结/有更新的会话 (不写盘)
   concept <slug> --title …   建概念页骨架
   query <词…> [--all]       检索知识页 (多词 OR)
-  db rebuild|search|status   图数据库: 建库 / 亮度搜索 / 体检
+  db rebuild|search|status|evolve  图数据库: 建库 / 亮度搜索 / 体检 / 进化体检
   resolve <页名…>            反查页面路径
   supersede <页名> [--by 页] 标经验已失效
   review [--accept 页…|--reject 页…]  待确认页队列 (draft 升 active/否决)
@@ -556,7 +556,7 @@ async function main() {
       case 'uninstall': {
         // --help 已在 switch 前统一拦截（subUsage）。
         if (cmd === 'install') {
-          await runInstall({ agent: opts.agent, mcp: opts.mcp !== false, skill: opts.skill !== false, yes: opts.yes });
+          await runInstall({ agent: opts.agent, all: !!opts.all, mcp: opts.mcp !== false, skill: opts.skill !== false, yes: opts.yes });
         } else {
           await runUninstall({ agent: opts.agent, yes: opts.yes });
         }
@@ -581,12 +581,13 @@ async function main() {
         if (sub === 'rebuild') { console.log(await cmdDbRebuild({ dir: opts.dir })); break; }
         if (sub === 'search') { console.log(await cmdDbSearch({ query: rest.join(' '), limit: Number(opts.limit) || 8 })); break; }
         if (sub === 'status') { console.log(await cmdDbStatus()); break; }
+        if (sub === 'evolve') { console.log(await cmdDbEvolve({ staleDays: Number(opts['stale-days']) || 90 })); break; }
         if (sub === 'add') {
           const r = await addProject(opts.dir || process.cwd());
           console.log(`✓ 已登记项目: ${r}\n  建库: abs db rebuild`);
           break;
         }
-        console.log('用法: abs db rebuild | search <词> | status | add [--dir <项目根>]');
+        console.log('用法: abs db rebuild | search <词> | status | evolve | add [--dir <项目根>]');
         break;
       }
       case 'query': {

@@ -655,7 +655,7 @@ describe('全量安装 install --yes 不破坏既有配置', () => {
 
   test('pi: 全量安装后 mcpServers/settings/imports/自定义字段全保', async () => {
     await seedAll();
-    const r = await run(['install', '--yes']);
+    const r = await run(['install', '--all', '--yes']);
     assert.equal(r.code, 0, r.stderr);
     const cfg = JSON.parse(await fs.readFile(PI_MCP(), 'utf8'));
     assert.ok(cfg.mcpServers.othersrv, '他人 mcpServers 必须保留');
@@ -667,7 +667,7 @@ describe('全量安装 install --yes 不破坏既有配置', () => {
 
   test('opencode: 全量安装后既有 mcp 服务保留', async () => {
     await seedAll();
-    await run(['install', '--yes']);
+    await run(['install', '--all', '--yes']);
     const cfg = JSON.parse(await fs.readFile(OC_JSON(), 'utf8'));
     assert.ok(cfg.mcp.other, '他人 MCP 服务必须保留');
     assert.ok(cfg.mcp.abs, 'abs 必须已注册');
@@ -675,7 +675,7 @@ describe('全量安装 install --yes 不破坏既有配置', () => {
 
   test('codex: 全量安装后 config.toml 既有内容与 hooks.json 他人 hook 保留', async () => {
     await seedAll();
-    await run(['install', '--yes']);
+    await run(['install', '--all', '--yes']);
     const toml = await fs.readFile(CODEX_TOML(), 'utf8');
     assert.ok(toml.includes('MINE-KEEP'), 'config.toml 既有内容必须保留');
     assert.ok(toml.includes('[mcp_servers.abs]'), 'abs MCP 必须已写入');
@@ -685,7 +685,7 @@ describe('全量安装 install --yes 不破坏既有配置', () => {
   });
 
   test('四宿主全量安装后均无 @@占位符@@ 残留 (模板替换完整)', async () => {
-    await run(['install', '--yes']);
+    await run(['install', '--all', '--yes']);
     const tplFiles = [
       join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'),
       join(sandbox, 'opencode', 'plugins', 'abs.ts'),
@@ -699,14 +699,14 @@ describe('全量安装 install --yes 不破坏既有配置', () => {
 
   test('全量安装幂等: 连续两次安装四宿主产物逐字节一致', async () => {
     await seedAll();
-    await run(['install', '--yes']);
+    await run(['install', '--all', '--yes']);
     const snap = {};
     for (const f of [PI_MCP(), OC_JSON(), CODEX_TOML(), CODEX_HOOKS(), CC_SETTINGS(),
       join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'),
       join(sandbox, 'opencode', 'plugins', 'abs.ts')]) {
       snap[f] = await fs.readFile(f, 'utf8');
     }
-    await run(['install', '--yes']);
+    await run(['install', '--all', '--yes']);
     for (const [f, before] of Object.entries(snap)) {
       assert.equal(await fs.readFile(f, 'utf8'), before, `${f} 重装必须幂等`);
     }
@@ -714,7 +714,7 @@ describe('全量安装 install --yes 不破坏既有配置', () => {
 
   test('全量卸载: 四宿主都清 abs, 且都保留他人配置', async () => {
     await seedAll();
-    await run(['install', '--yes']);
+    await run(['install', '--all', '--yes']);
     const r = await run(['uninstall', '--yes']);
     assert.equal(r.code, 0, r.stderr);
     // 各自的 abs 都没了
@@ -1222,7 +1222,7 @@ describe('安装健壮性', () => {
     // atomicWrite 失败还会留下 <file>.abs-tmp-* 残骸。
     // 用「目录占位文件路径」制造 atomicWrite 的 EISDIR。
     await fs.mkdir(join(CODEX_CFG, 'config.toml'), { recursive: true });
-    const r = await run(['install', '--yes']);
+    const r = await run(['install', '--all', '--yes']);
     assert.notEqual(r.code, 0, '有宿主失败时应非零退出');
     assert.ok(r.stdout.includes('安装失败'), `应报告失败宿主: ${r.stdout}`);
     // 后续宿主（codex 之后的 opencode / pi）必须已安装 —— 不被跳过
@@ -1251,7 +1251,7 @@ describe('安装健壮性', () => {
   test('[M2] --yes 语义: 非 TTY 下不弹交互（自动化不挂起）', async () => {
     // pickAgents 以前只看 isTTY、忽略 yes。本测试在非 TTY 下跑（spawn 无 pty），
     // 断言安装直接完成全四宿主 —— 若哪天改成 TTY-only 判定，这里会挂或超时。
-    const r = await run(['install', '--yes']);
+    const r = await run(['install', '--all', '--yes']);
     assert.equal(r.code, 0, r.stderr);
     for (const [p, name] of [
       [join(CC_CFG, 'settings.json'), 'claude-code'],

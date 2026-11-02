@@ -919,8 +919,11 @@ export function installSummary() {
   return HOSTS.map((h) => `  ${h.key.padEnd(12)} ${h.label}`).join('\n');
 }
 
-export async function runInstall({ agent, mcp = true, skill = true, yes = false } = {}) {
-  const targets = agent ? [agent] : await pickAgents(yes);
+export async function runInstall({ agent, all = false, mcp = true, skill = true, yes = false } = {}) {
+  // all=true 是显式全选的官方入口。
+  // 为何要它（2026-11-02）：默认改成只装 pi 后，「装到所有宿主」这个能力
+  //   必须有明确表达方式 —— 否则测试只能靠 --yes 的旧语义，行为一变就全挂。
+  const targets = agent ? [agent] : (all ? Object.keys(INSTALLERS) : await pickAgents(yes));
   const failed = [];
   for (const key of targets) {
     const inst = INSTALLERS[key];
@@ -976,17 +979,28 @@ export async function runUninstall({ agent } = {}) {
 }
 
 // 交互式多选（无 TTY 时回退为全部）
+/** 默认装的宿主。
+ *
+ * 2026-11-02 用户定：默认只装 pi，其余宿主 opt-in。
+ * 理由：装到不用的宿主上会往那边的配置文件里塞 hook/MCP 条目 ——
+ * 用户没在用 Claude Code / Codex / OpenCode 时，那是纯污染。
+ * 要装别的：abs install --agent claude-code（可逐个装）。
+ */
+export const DEFAULT_AGENT = 'pi';
+
 async function pickAgents(yes = false) {
-  // --yes / 非 TTY: 直接全选，绝不弹交互。
+  // --yes / 非 TTY: 装默认宿主（pi），绝不弹交互。
   // 坑: 曾经只看 isTTY，--yes 被收下却从不使用 —— 在 TTY 里跑
   //     abs install --yes（自动化/脚本）仍会弹提示并挂起等输入。
-  if (yes || !process.stdin.isTTY) return Object.keys(INSTALLERS);
+  if (yes || !process.stdin.isTTY) return [DEFAULT_AGENT];
   const readline = await import('node:readline/promises');
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  console.log('选择要安装的智能体 (逗号分隔, 回车=全部):');
+  console.log(`选择要安装的智能体 (逗号分隔, 回车=只装 ${DEFAULT_AGENT}):`);
   console.log(installSummary());
   const ans = (await rl.question('> ')).trim();
   rl.close();
-  if (!ans) return Object.keys(INSTALLERS);
+  if (!ans) return [DEFAULT_AGENT];
+  // all / * 作为显式全选的逃生门，避免把「装全部」的能力彻底拿掉
+  if (ans === 'all' || ans === '*') return Object.keys(INSTALLERS);
   return ans.split(',').map((s) => s.trim()).filter(Boolean);
 }
