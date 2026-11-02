@@ -17,13 +17,16 @@ npm install -g @fanchao8609/agent_brain_sync
 abs install
 ```
 
-`abs install` 会交互式让你勾选智能体；也可以直接指定：
+**默认只装 pi**（其余宿主 opt-in）——装到不用的宿主上会往那边配置文件塞 hook/MCP 条目。
 
 ```bash
-abs install --agent pi            # 只装 pi
-abs install                       # 全部: claude-code / codex / opencode / pi / omp
+abs install                       # 默认: 只装 pi
+abs install --all                 # 全装: claude-code / codex / opencode / pi / omp
+abs install --agent claude-code   # 只装指定宿主
 abs install --agent pi --no-mcp   # 只装 hook + skill，不要 MCP
 ```
+
+交互模式下回车 = 只装 pi；输入 `all` 才全装。
 
 装了什么：
 
@@ -122,6 +125,7 @@ abs db rebuild                            # 扫所有登记项目 → 建图数�
 abs db search <词>                        # 走库检索：FTS 拿种子 + 亮度扩散，L1 铁律恒在最前
 abs db status                             # 库体检：七层分布 / 悬挂链接 / 已入库项目
 abs db add                                # 把当前项目登记进 ~/.abs/projects.json
+abs db evolve                             # 知识进化体检：被推翻/断链/主题堆积/僵化页
 abs summon [--mark|--status]              # 会话总结托底：列出未总结 / 有更新的会话（不写盘）
 abs resolve <页名或id>                    # 反查页面路径（页改名后 id 不变）
 abs supersede <页名> [--by <新页>]        # 标记经验已失效（不删文件，保留历史；query 默认不再返回）
