@@ -67,3 +67,4 @@ bright = Math.abs(r.rank) / worst;   // → 1168694！
 - [[chinese-fts-two-gram]] — 更基础的那一层：为什么必须自切 2-gram
 - [[sqlite-vs-graph-db]] — 选型时对检索的预期
 - [[memory-box-seven-layers]] — 这套检索服务的分层机制
+- [[knowledge-self-evolution]] — 进化视角：本页「过滤要看所有出口」是同一类判据

@@ -22,6 +22,7 @@
 - 体检输出必须按类型折叠计数，同类超限只报条数+样例
 
 ## Concepts
+- [[knowledge-self-evolution]] — 知识自我进化：推翻关系进库，能看出知识在往哪走；含三个判据错误
 - [[search-relevance-pitfalls]] — 中文检索四个实测坑：单字 gram、归一化分母、高频虚词门槛、解构吃掉字段
 - [[abs-origin-problem]] — abs 的缘起与判据：服务「让琐碎经验不流失」才做，否则是自嗨
 - [[agent-end-is-not-session-end]] — agent_end 不是会话结尾：聊一句就触发，判据不能靠事件名推断时机

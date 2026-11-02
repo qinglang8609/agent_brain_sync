@@ -28,7 +28,7 @@ import { unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolveLayer, anchorsOf, decayOf, DEFAULT_LAYER } from './layers.js';
 
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 /** 库路径。ABS_DB 可覆盖（测试隔离 / 多库切换）。 */
 export function dbPath() {
@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS nodes (
   -- 因此任何查询都能命中它。实测（2026-11-01）刚 capture 一条「并发写」，log 页
   -- 亮度 3.87 排第一，压过真正的内容页 —— 这是纯噪音，必须从检索候选里排除。
   is_ledger  INTEGER NOT NULL DEFAULT 0,
+  -- 被哪一页推翻（对应 frontmatter 的 superseded-by）。
+  -- 为何要进库（2026-11-02）：知识自我进化的第一个需要 —— 能查「哪些页被推翻了、
+  -- 被谁推翻」。原来这关系只存在于 markdown 的一行 frontmatter 里，
+  -- 库只存 status 不存走向，于是「进化」在检索侧完全看不见。
+  superseded_by TEXT NOT NULL DEFAULT '',
   UNIQUE(project, dir, slug)
 );
 CREATE INDEX IF NOT EXISTS i_nodes_layer   ON nodes(layer);
@@ -239,7 +244,8 @@ function metaOf(body) {
   const title = (t.match(/^title:\s*(.+)$/m) || [])[1]?.trim() || '';
   const tags = (t.match(/^tags:\s*(.+)$/m) || [])[1]?.replace(/^\[|\]$/g, '').trim() || '';
   const st = (t.match(/^status:\s*(.+)$/m) || [])[1]?.trim() || 'active';
-  return { title, tags, status: st };
+  const sup = (t.match(/^superseded-by:\s*(.+)$/m) || [])[1]?.trim() || '';
+  return { title, tags, status: st, supersededBy: sup };
 }
 
 /** 全量重建：清表 → 重扫所有注册项目 → 重建边与断点词。
@@ -254,8 +260,8 @@ export function rebuild(handle, pages) {
     db.exec('DELETE FROM anchors; DELETE FROM edges; DELETE FROM nodes; DELETE FROM rules; DELETE FROM nodes_bigram;');
     try { db.exec("INSERT INTO fts(fts) VALUES('delete-all')"); } catch { /* 空表时无可删 */ }
 
-    const insNode = db.prepare(`INSERT INTO nodes(project,dir,slug,layer,title,tags,status,body,mtime,is_ledger)
-      VALUES(?,?,?,?,?,?,?,?,?,?)`);
+    const insNode = db.prepare(`INSERT INTO nodes(project,dir,slug,layer,title,tags,status,body,mtime,is_ledger,superseded_by)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?)`);
     const insGram = db.prepare('INSERT OR REPLACE INTO nodes_bigram(id,g) VALUES(?,?)');
     const insEdge = db.prepare('INSERT OR IGNORE INTO edges(src,dst,raw) VALUES(?,?,?)');
     const insAnchor = db.prepare('INSERT OR IGNORE INTO anchors(word,node) VALUES(?,?)');
@@ -264,11 +270,11 @@ export function rebuild(handle, pages) {
     // 第一遍：建节点，拿 id 映射 key = `project/dir/slug`
     const idOf = new Map();
     for (const p of pages) {
-      const { title, tags, status } = metaOf(p.body);
+      const { title, tags, status, supersededBy } = metaOf(p.body);
       const { layer } = resolveLayer(p.body, p.dir);
       const ledger = (p.dir === '' && LEDGER_SLUGS.has(p.slug)) ? 1 : 0;
       const r = insNode.run(p.project, p.dir, p.slug, layer, title, tags, status,
-        p.body, p.mtime || now, ledger);
+        p.body, p.mtime || now, ledger, supersededBy);
       const id = Number(r.lastInsertRowid);
       // FTS 源：正文 + 标题 + tags 切 2-gram。查询侧必须用同一个 bigrams()。
       insGram.run(id, bigrams([p.slug, title, tags, p.body].join('\n')).join(' '));
@@ -470,7 +476,9 @@ export function illuminate(handle, seeds, { hops = HOPS, limit = 10 } = {}) {
 
   const out = [];
   for (const [id, v] of bright) {
-    const n = db.prepare('SELECT id,project,dir,slug,title,layer FROM nodes WHERE id = ? AND is_ledger = 0').get(id);
+    // 扩散出口也要排除 superseded —— 入口（search）排了，出口不排就绕过去：
+    // 实测旧结论页自己不出现在种子里，却被邻居扩散点亮（亮度 0.24 带 ↝）。
+    const n = db.prepare("SELECT id,project,dir,slug,title,layer FROM nodes WHERE id = ? AND is_ledger = 0 AND status != 'superseded'").get(id);
     if (n) out.push({ ...n, bright: v.bright, from: v.from });
   }
   return out.sort((a, b) => b.bright - a.bright || a.id - b.id).slice(0, limit);

@@ -515,3 +515,22 @@ test('高频虚词组合不能靠命中数凑够门槛（加权覆盖）', async
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('superseded 页不能被扩散点亮（入口排了出口也要排）', async () => {
+  // 坑（2026-11-02 实测）：search 里排了 superseded，但 illuminate 的出口没排 ——
+  // 旧结论页自己不进种子，却被邻居扩散点亮（实测亮度 0.24，带 ↝ 标记），
+  // 等于绕过了「被推翻的经验别再依据」这条判据。
+  const { h, dir } = await freshDb();
+  try {
+    rebuild(h, [
+      page('p1', 'concepts', 'live', '---\nstatus: active\n---\n独特关键词，见 [[old]]'),
+      page('p1', 'concepts', 'old', '---\nstatus: superseded\nsuperseded-by: live\n---\n旧结论'),
+    ]);
+    const seeds = search(h, '独特关键词');
+    const lit = illuminate(h, seeds, { limit: 20 });
+    assert.ok(!lit.some((r) => r.slug === 'old'), '被推翻的页不能通过扩散出现');
+  } finally {
+    h.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

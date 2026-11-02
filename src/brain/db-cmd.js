@@ -246,3 +246,18 @@ async function cmdDbRebuildQuiet() {
   const h = openDb(dbPath());
   try { rebuild(h, pages); } finally { h.close(); }
 }
+
+/** `abs db evolve` — 知识自我进化的体检：哪些被推翻、哪些堆积、哪些该合并。 */
+export async function cmdDbEvolve({ staleDays = 90 } = {}) {
+  const path = dbPath();
+  const exists = await fs.stat(path).then(() => true).catch(() => false);
+  if (!exists) return `库不存在: ${path}\n  先跑: abs db rebuild`;
+
+  const h = openDb(path);
+  try {
+    const { evolveSignals, renderEvolve } = await import('./evolve.js');
+    return renderEvolve(evolveSignals(h, { staleDays }), { staleDays });
+  } finally {
+    h.close();
+  }
+}
