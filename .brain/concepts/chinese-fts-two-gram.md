@@ -58,3 +58,4 @@ CREATE VIRTUAL TABLE fts USING fts5(g, content='nodes_bigram', content_rowid='id
 
 - [[memory-box-seven-layers]] — 这套索引服务的是哪套检索机制
 - [[sqlite-vs-graph-db]] — 选 SQLite 时的其他考虑
+- [[search-relevance-pitfalls]] — 检索层再往上的四个坑：误命中、归一化、高频虚词、状态过滤

@@ -6,7 +6,7 @@
 import { promises as fs } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { findBrainRoot, brainPath } from '../index.js';
-import { openDb, rebuild, search, illuminate, rulesOf, stats, ensureDbDir, dbPath } from './db.js';
+import { openDb, rebuild, search, illuminate, rulesOf, stats, ensureDbDir, dbPath, lastOpenRebuilt } from './db.js';
 import { LAYERS } from './layers.js';
 
 const PAGE_DIRS = ['concepts', 'entities', 'sources', 'syntheses', 'sessions'];
@@ -136,7 +136,9 @@ export async function cmdDbSearch({ query, limit = 8 } = {}) {
       for (const r of rules) out.push(`- ${r}`);
     }
     if (!lit.length) {
-      out.push('', '（无命中。库可能是旧的：abs db rebuild 重扫）');
+      out.push('', lastOpenRebuilt()
+        ? '（库文件曾损坏被清空，现在没有内容：跑 abs db rebuild 重建）'
+        : '（无命中。库可能是旧的：abs db rebuild 重扫）');
       return out.join('\n');
     }
     out.push('', '--- 按亮度排序 ---');
@@ -161,9 +163,11 @@ export async function cmdDbStatus() {
 
   const h = openDb(path);
   try {
+    const rebuilt = lastOpenRebuilt();
     const s = stats(h);
     const out = [
       `📀 库: ${path}`,
+      ...(rebuilt ? ['⚠ 库文件曾损坏，已自动清空重建 —— 跑 abs db rebuild 恢复内容'] : []),
       `节点 ${s.nodes} | 边 ${s.edges} | 悬挂链接 ${s.dangling} | 断点词 ${s.anchors} | 铁律 ${s.rules}`,
       '',
       '--- 七层分布 ---',

@@ -24,6 +24,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { promises as fs } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolveLayer, anchorsOf, decayOf, DEFAULT_LAYER } from './layers.js';
 
@@ -33,6 +34,12 @@ export const DB_VERSION = 2;
 export function dbPath() {
   return process.env.ABS_DB || join(homedir(), '.abs', 'graph.db');
 }
+
+/** 本次进程里最后一次 openDb 是否因损坏而重建过库。
+ * 记录属内容决策，工具只报不改 —— 这里只标记，由调用方决定怎么告知，
+ * 不自己打印（库层不该有输出）。 */
+let _rebuiltAfterCorruption = false;
+export function lastOpenRebuilt() { return _rebuiltAfterCorruption; }
 
 export class DbError extends Error {
   constructor(message, cause) {
@@ -129,12 +136,33 @@ export function bigrams(s) {
     const seg = m[0];
     for (let i = 0; i + 2 <= seg.length; i++) out.push(seg.slice(i, i + 2));
   }
-  // 单个汉字：query 是「锁」「锁」这类一字词时，2-gram 切不出来，
-  // 上面循环对 1 字串一次都不执行 → 恒返回空 → 搜不到（实测「锁」0 命中）。
-  // 补成单字 gram，存储侧同样产出它（见下）。
   for (const m of text.matchAll(/[\u4e00-\u9fa5]/g)) out.push(m[0]);
   for (const m of text.matchAll(/[A-Za-z][A-Za-z0-9_-]{1,}/g)) out.push(m[0].toLowerCase());
   return [...new Set(out)];
+}
+
+/** 按「词」切 2-gram，不加单字。用于**查询侧**构造 MATCH 表达式。
+ *
+ * 为何要和平分两套（2026-11-02 深度测试发现）：
+ *   把单字也放进查询表达式会放大误命中 —— 实测查 `zzzz不存在zzz` 时，
+ *   gram 里含「不」「存」「在」，任何提到这三个字的页都会命中，
+ *   于是「一个根本不存在的词」返回了 7 页。这不是模糊匹配有用，是噪音。
+ *
+ * 存储侧仍保留单字（bigrams 不动）：这样查询本身**就是一个字**时
+ * （如「锁」），还能通过单字 gram 命中；而多字查询不会靠单字瞎连。
+ * 两侧不要求同一函数 —— 要求的是「查询产出的每个 gram 在存储侧都存在」，
+ * 而存储侧是超集，恒成立。 */
+export function queryBigrams(s) {
+  const text = String(s || '');
+  const out = new Set();
+  for (const m of text.matchAll(/[\u4e00-\u9fa5]{2,}/g)) {
+    const seg = m[0];
+    for (let i = 0; i + 2 <= seg.length; i++) out.add(seg.slice(i, i + 2));
+  }
+  // 整条查询只有单个汉字时才用单字 gram（「锁」这种一字查询仍能搜到）
+  if (out.size === 0 && /^[\u4e00-\u9fa5]$/.test(text.trim())) out.add(text.trim());
+  for (const m of text.matchAll(/[A-Za-z][A-Za-z0-9_-]{1,}/g)) out.add(m[0].toLowerCase());
+  return [...out];
 }
 
 /** 丢掉所有表（版本升级用）。库是派生品，删了由 rebuild 从 markdown 重建。 */
@@ -146,6 +174,7 @@ function dropAll(db) {
 
 /** 打开（不存在就建）库。返回 { db, close }。 */
 export function openDb(path = dbPath()) {
+  _rebuiltAfterCorruption = false;
   let db;
   try {
     db = new DatabaseSync(path);
@@ -172,6 +201,24 @@ export function openDb(path = dbPath()) {
     }
   } catch (e) {
     try { db.close(); } catch { /* 已关 */ }
+
+    // 库文件根本不是 SQLite / 结构彻底坏掉 → 删掉重建。
+    // 为何不报错让用户手删（2026-11-02 深度测试发现）：库是**派生物**
+    //   （markdown 才是真相），删了由 rebuild 从 .brain/ 全量重扫，内容不丢。
+    //   原实现只报「库结构初始化失败: file is not a database」，而 rebuild 走同一条
+    //   打开路径 —— 于是用户被卡死：修不好也删不掉（不知道删哪），只能去查源码。
+    if (/not a database|file is encrypted|malformed/i.test(e.message || '')) {
+      try {
+        for (const suffix of ['', '-wal', '-shm']) {
+          try { unlinkSync(`${path}${suffix}`); } catch { /* 不存在 */ }
+        }
+        const h = openDb(path);   // 文件已删，重来一次走全新库
+        _rebuiltAfterCorruption = true;   // 告知调用方：刚重建过，库是空的
+        return h;
+      } catch (e2) {
+        throw new DbError(`库文件损坏且无法重建 ${path}: ${e2.message}`, e2);
+      }
+    }
     if (e instanceof DbError) throw e;
     throw new DbError(`库结构初始化失败: ${e.message}`, e);
   }
@@ -299,25 +346,71 @@ function findGlobal(idOf, word) {
  * 返回 [{ id, project, dir, slug, title, layer, score }]，按 FTS 相关度排序。 */
 export function search(handle, query, { limit = 20 } = {}) {
   const { db } = handle;
-  const grams = bigrams(query);
-  // 查询切成 2-gram 后用 OR 连 —— 越多 gram 命中越相关（bm25 自己会排序）。
+  const grams = queryBigrams(query);
   if (!grams.length) return [];
   const expr = grams.map((g) => `"${g.replace(/"/g, '""')}"`).join(' OR ');
+  // 命中门槛：按 gram 的**文档频率加权**算覆盖率，不再用「命中几个」的平均数。
+  //
+  // 为何要加权（2026-11-02 深度测试发现，两轮才修对）：
+  //   FTS 的 OR 语义是「命中任意 gram 就算」。先试「命中数 ≥ 一半」，
+  //   但中文高频组合会绕过它 —— 查 `zzzz不存在zzz` 时，「不存在」切出
+  //   [不存, 存在] 两个 gram，命中 2/4 就达标，而「不存在」在图谱里到处都是。
+  //   实测真实图谱：`验证` 出现在 84% 的页里、`关联` 79%、`连接` 79% ——
+  //   这些 gram 没有区分度，却和稀有 gram 等权。
+  // 现在每个 gram 的权重 = log((总页数+1)/(出现页数+0.5))：
+  //   稀有 gram（如专有名词）权重高，常见虚词组合权重低到几乎不计。
+  //   覆盖率 = 命中 gram 的权重和 / 查询 gram 的总权重，低于 MIN_COVER 丢弃。
+  const MIN_COVER = 0.35;
+  const totalNodes = db.prepare('SELECT count(*) c FROM nodes_bigram').get().c || 1;
+  const df = new Map();
+  for (const r of db.prepare('SELECT g FROM nodes_bigram').all()) {
+    for (const g of String(r.g).split(' ')) df.set(g, (df.get(g) || 0) + 1);
+  }
+  const wOf = (g) => {
+    const d = df.get(g) || 0;
+    return d === 0 ? 3 : Math.log((totalNodes + 1) / (d + 0.5));  // 库里没有的 gram 权重最高
+  };
+  const wantWeight = grams.reduce((a, g) => a + wOf(g), 0) || 1;
   try {
+    // 取 g 列才能数命中数；多取一些候选，过滤后仍可能不够 limit
     const rows = db.prepare(`
       SELECT n.id, n.project, n.dir, n.slug, n.title, n.layer,
-             bm25(fts) AS rank
-      FROM fts JOIN nodes n ON n.id = fts.rowid
+             bm25(fts) AS rank, b.g
+      FROM fts
+      JOIN nodes_bigram b ON b.id = fts.rowid
+      JOIN nodes n ON n.id = fts.rowid
       WHERE fts MATCH ? AND n.is_ledger = 0
+        -- 被推翻的经验不出现在检索里。
+        -- 它的存在意义是「别再用它」，而不是回答「我上次怎么解决 X」——
+        -- 那会拿到一个已知错误的答案。与 abs query 的既有判据一致。
+        AND n.status != 'superseded'
       ORDER BY rank
       LIMIT ?
-    `).all(expr, limit);
-    // bm25 返回**负值且越负越相关**，不能直接当亮度用（否则最相关的最暗）。
-    // 归一：取最相关的一条为 1.0，其余按比例落到 0.3~1.0 区间 ——
-    // 保留下限是为了让「勉强命中的种子」仍能扩散，只是传得更弱。
-    if (!rows.length) return [];
-    const worst = Math.abs(rows[rows.length - 1].rank) || 1e-9;
-    return rows.map((r) => ({ ...r, bright: Math.max(0.3, Math.abs(r.rank) / worst) }));
+    `).all(expr, Math.max(limit * 4, 40));
+
+    const kept = rows.map((r) => {
+      const hitGrams = grams.filter((q) => String(r.g).includes(q));
+      const cover = hitGrams.reduce((a, g) => a + wOf(g), 0) / wantWeight;
+      return { ...r, cover, hit: hitGrams.length };
+    }).filter((r) => r.cover >= MIN_COVER);
+    if (!kept.length) return [];
+
+    // bm25 返回**负值且越负越相关**。归一成 0.3~1.0 的亮度，保证「最相关 = 1.0」。
+    //
+    // 坑（2026-11-02 深度测试发现）：原来分母取 `kept[最后一条].rank` —— 而 kept 按
+    //   rank 升序（第一行最相关），最后一条恰恰是**最不相关**的那条，其 rank 接近 0。
+    //   实测一个 4 条结果的查询里，最相关那条亮度算出 1168694.07（= |−2.42| / 2e-6），
+    //   输出一行 165 万的亮度条。分母必须取最相关的那条（第一条）。
+    const best = Math.abs(kept[0].rank) || 1e-9;
+    // 亮度 = 档位 × 档内名次。
+    //   档位由加权覆盖率决定（0.6~1.0）：全命中最高，勉强沾边压到 0.6 档再往下。
+    //   档内名次由相对 bm25 决定（0.1~1.0）：覆盖率相同但 bm25 不同的页仍可分。
+    // 下限 0.3 保留 —— 勉强命中的种子仍要能向外扩散，只是传得更弱。
+    return kept.slice(0, limit).map(({ g: _g, ...r }) => {
+      const rel = Math.min(1, Math.abs(r.rank) / best);
+      const band = 0.6 + 0.4 * r.cover;
+      return { ...r, bright: Math.max(0.3, Math.min(1, band * (0.1 + 0.9 * rel))) };
+    });
   } catch {
     // 方言/语法问题不能让搜索整体挂掉 —— 退化成空种子，由调用方决定提示
     return [];

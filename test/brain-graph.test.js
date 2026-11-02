@@ -6,7 +6,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { LAYERS, DIR_LAYER, DEFAULT_LAYER, layerOf, decayOf, resolveLayer, anchorsOf, layerConflict } from '../src/brain/layers.js';
-import { openDb, rebuild, search, illuminate, rulesOf, stats, bigrams, ensureDbDir, DbError } from '../src/brain/db.js';
+import { openDb, rebuild, search, illuminate, rulesOf, stats, bigrams, ensureDbDir, DbError, lastOpenRebuilt } from '../src/brain/db.js';
 
 // ---------- 七层规格 ----------
 
@@ -390,6 +390,128 @@ test('项目登记表与库同目录，不落到家目录', async () => {
     assert.ok(!wrongExists, `不该写到 ${wrong}`);
   } finally {
     if (saved === undefined) delete process.env.ABS_DB; else process.env.ABS_DB = saved;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('搜索：不存在的词不能靠单个 gram 误命中', async () => {
+  // 坑（2026-11-02 深度测试发现）：FTS 的 OR 语义是「命中任意 gram 就算」，
+  // 查 `zzzz不存在zzz` 时 gram 含「存在」，于是任何提到「存在」的页都命中 ——
+  // 实测返回 7 页，用户会以为图谱里真有条目。
+  const { h, dir } = await freshDb();
+  try {
+    rebuild(h, [
+      page('p1', 'concepts', 'c1', '这里存在问题需要排查'),
+      page('p1', 'concepts', 'c2', '配置必须同目录'),
+    ]);
+    assert.equal(search(h, 'zzzz不存在zzz').length, 0, '不存在的词必须 0 命中，不能靠单个 gram 沾边');
+    assert.ok(search(h, '配置').length > 0, '正常两字词仍要能搜到');
+    assert.ok(search(h, '存在').length > 0);
+  } finally {
+    h.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('queryBigrams: 单字只在整条查询是单字时才产出', async () => {
+  const { queryBigrams } = await import('../src/brain/db.js');
+  // 多字查询不得混进单字 gram，否则「不」「存」「在」会连上一切
+  const multi = queryBigrams('zzzz不存在zzz');
+  assert.ok(!multi.includes('不'), '多字查询不该含单字 gram');
+  assert.ok(!multi.includes('在'));
+  // 一字查询仍要能搜（「锁」这类）
+  assert.deepEqual(queryBigrams('锁'), ['锁']);
+});
+
+test('库文件损坏 → 自动清空重建，不把用户卡死', async () => {
+  // 坑（2026-11-02 深度测试发现）：库文件被写坏后，rebuild 走同一条打开路径，
+  // 于是只报「库结构初始化失败: file is not a database」——用户修不好也删不掉
+  // （不知道删哪），只能去查源码。库是派生物，删了从 markdown 重扫即可。
+  const dir = await fs.mkdtemp(join(tmpdir(), 'absdb-'));
+  const path = join(dir, 'g.db');
+  try {
+    await fs.writeFile(path, 'this is not a sqlite database');
+    const h = openDb(path);
+    try {
+      assert.equal(lastOpenRebuilt(), true, '要标记「刚重建过」，否则调用方会以为库本来就这样');
+      const st = rebuild(h, [page('p1', 'concepts', '甲', '内容')]);
+      assert.equal(st.nodes, 1, '重建后能正常写入');
+    } finally { h.close(); }
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('库正常时 lastOpenRebuilt 为 false（不能每次都报警）', async () => {
+  const { h, dir } = await freshDb();
+  try {
+    assert.equal(lastOpenRebuilt(), false);
+  } finally {
+    h.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('亮度必须在 0.3~1.0 之间，不能出现天文数字', async () => {
+  // 坑（2026-11-02 深度测试发现）：归一化分母取了「最不相关那条」的 rank（≈2e-6），
+  // 于是最相关那条算出 |−2.42|/2e-6 = 1168694，输出一行 165 万宽的亮度条。
+  const { h, dir } = await freshDb();
+  try {
+    rebuild(h, [
+      page('p1', 'concepts', 'full', '独特关键词戊己庚'),
+      page('p1', 'concepts', 'partial', '共同关键词甲乙丙'),
+      page('p1', 'concepts', 'other', '完全无关的话'),
+    ]);
+    const rows = search(h, '独特关键词');
+    for (const r of rows) {
+      assert.ok(r.bright >= 0.3 && r.bright <= 1, `${r.slug} 亮度 ${r.bright} 越界`);
+    }
+    const full = rows.find((r) => r.slug === 'full');
+    assert.equal(full.cover, 1, '全命中页的 cover 必须是 1（曾因解构掉 g 而恒为 0）');
+    assert.ok(full.bright > (rows.find((r) => r.slug === 'partial')?.bright ?? 0),
+      '全命中必须比只沾边的亮');
+  } finally {
+    h.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('superseded 页不出现在检索结果里', async () => {
+  const { h, dir } = await freshDb();
+  try {
+    rebuild(h, [
+      page('p1', 'concepts', 'dead', '---\nstatus: superseded\nsuperseded-by: live\n---\n独特关键词'),
+      page('p1', 'concepts', 'live', '独特关键词也在这'),
+    ]);
+    const got = search(h, '独特关键词').map((r) => r.slug);
+    assert.ok(!got.includes('dead'), '被推翻的经验不能出现在检索里（会给出已知错误的答案）');
+    assert.ok(got.includes('live'));
+  } finally {
+    h.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('高频虚词组合不能靠命中数凑够门槛（加权覆盖）', async () => {
+  // 坑（2026-11-02 深度测试发现，两轮才修对）：
+  //   先试「命中数 ≥ 一半」，但中文高频组合能绕过 —— 查 `zzzz不存在zzz` 时
+  //   「不存在」切出 [不存, 存在] 两个 gram，命中 2/4 就达标，
+  //   而「不存在」在真实图谱里到处都是（实测「验证」出现在 84% 的页里）。
+  const { h, dir } = await freshDb();
+  try {
+    // 造一堆都含「不存在」的页，模拟高频虚词
+    const pages = [];
+    for (let i = 0; i < 10; i++) pages.push(page('p1', 'concepts', `filler${i}`, '这里存在问题需要排查文档记录内容'));
+    pages.push(page('p1', 'concepts', 'target', 'zzzz 不存在的专有词'));
+    rebuild(h, pages);
+
+    // 只含「不存在」的页不该因为命中 2 个 gram 就被当成候选
+    const got = search(h, 'zzzz不存在zzz');
+    assert.ok(got.length <= 1, `不该返回 ${got.length} 页，高频组合不能凑够门槛`);
+    // 真含 zzzz 的那页仍要能命中
+    if (got.length) assert.equal(got[0].slug, 'target');
+  } finally {
+    h.close();
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
