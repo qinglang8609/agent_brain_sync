@@ -465,9 +465,25 @@ export function search(handle, query, { limit = 20 } = {}) {
     return kept.slice(0, limit).map(({ g: _g, ...r }) => {
       const rel = Math.min(1, Math.abs(r.rank) / best);
       const band = 0.6 + 0.4 * r.cover;
-      const base = band * (0.1 + 0.9 * rel);
-      // 层权重乘上去：会话/混沌层的种子亮度天然低于工具/认知层
-      return { ...r, bright: Math.max(0.3, Math.min(1, base * layerWeight(r.layer))) };
+      // 亮度保持 0.3~1.0 的可读区间，**不乘层权重**。
+      // 坑（2026-11-02 实测）：把层权重乘进亮度后，L4 的满分页只剩 0.40，
+      // 输出里一片 0.3~0.5，用户看不出谁更相关 —— 亮度失去了「一眼看强弱」的作用。
+      // 层的作用改由**排序**承担（见下面 sort），亮度回归「这一页与查询多贴」本身。
+      const bright = Math.max(0.3, Math.min(1, band * (0.1 + 0.9 * rel)));
+      return { ...r, bright };
+    }).sort((a, b) => {
+      // 排序：层优先，同层再看亮度。
+      // 为何层要排第一（2026-11-02，586 页实测）：查「静默失效」的前三名全是 L7
+      // 混沌页（临时笔记），字面 cover=1.00 但内容与主题无关；
+      // 而 L4 认知层里真正讲这个主题的页被压到后面。
+      // 判据：知识层的页即便贴得稍微松一点，也比混沌层的碎片更该先看。
+      //
+      // 例外：L1/L2 不参与排序（铁律不立页，单独在最前输出）。
+      const wa = layerWeight(a.layer);
+      const wb = layerWeight(b.layer);
+      const sa = wa * a.bright;
+      const sb = wb * b.bright;
+      return (sb - sa) || (b.bright - a.bright) || (a.id - b.id);
     });
   } catch {
     // 方言/语法问题不能让搜索整体挂掉 —— 退化成空种子，由调用方决定提示
@@ -533,7 +549,15 @@ export function illuminate(handle, seeds, { hops = HOPS, limit = 10 } = {}) {
     const n = db.prepare("SELECT id,project,dir,slug,title,layer FROM nodes WHERE id = ? AND is_ledger = 0 AND status != 'superseded'").get(id);
     if (n) out.push({ ...n, bright: v.bright, from: v.from });
   }
-  return out.sort((a, b) => b.bright - a.bright || a.id - b.id).slice(0, limit);
+  // 排序口径必须与 search 一致：层优先，同层再比亮度。
+  // 坑（2026-11-02 实测）：原来这里只按 bright 排，把 search 已经排好的层序冲掉了 ——
+  // 于是 L7 混沌页（bright 1.00）又跑到 L4 认知页（bright 0.95）前面。
+  // 层权重在这里再乘一次，为的是「扩散进来的弱页不会因为某个邻居强就压过知识页」。
+  const weight = (layer) => Math.max(0.05, 1 - decayOf(layer));
+  return out
+    .sort((a, b) => (weight(b.layer) * b.bright - weight(a.layer) * a.bright)
+      || (b.bright - a.bright) || (a.id - b.id))
+    .slice(0, limit);
 }
 
 /** L1 铁律：按项目取出。检索任何东西都必须先带上它（「不可逾越」的代码保证）。 */

@@ -206,7 +206,9 @@ export async function cmdDbSearch({ query, limit = 8 } = {}) {
     }
     out.push('', '--- 按亮度排序 ---');
     for (const p of lit) {
-      const bar = '█'.repeat(Math.max(1, Math.round(Math.min(p.bright, 3) / 3 * 12)));
+      // 亮度现在是 0.3~1.0（不再是早期可能到 165 万的异常值），
+      // 条长按 1.0 满格算：0.3 → 4 格，1.0 → 12 格。
+      const bar = '█'.repeat(Math.max(1, Math.round(Math.min(p.bright, 1) * 12)));
       const where = [p.project, p.dir, p.slug].filter(Boolean).join('/');
       const tag = p.from === 'spread' ? ' ↝' : '';
       // 跨项目的结果要显式标出来 —— 用户得知道「这条是别的项目的经验」，
