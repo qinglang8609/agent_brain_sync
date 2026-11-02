@@ -1,6 +1,7 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] release-and-local-install [[fanchao]] — 提交 git、发布版本、本地安装 (认领 2026-11-02 01a19be2-af1d-76)
 
 ## Done
 
