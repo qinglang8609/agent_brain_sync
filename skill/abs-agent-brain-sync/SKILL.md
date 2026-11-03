@@ -180,6 +180,26 @@ abs todo memo <id>                                                       # 查�
 
 经验刚冒出来就 `abs_note` 暂存（幂等去重），宁少勿滥。**跨会话任务只用 abs todo**，别用宿主原生 todo（TodoWrite / `/list`），那些不写 `.brain/todo.md`，下会话接不上。
 
+## 主动提炼（不等人说「收尾」）
+
+提炼是**你的自觉**，不是等用户发指令。两个触发时机，任中一个就主动做：
+
+1. **sources 积压**：`abs load` 顶部出现「♻ 待消化」或 `abs lint` 报 `SOURCES-PILED-UP`（> 10 条）→ 主动收拢。
+2. **一段活收尾**：任务 `done`、或踩坑后刚 `abs_note` 暂存完 → 顺手看这条值不值得提炼成规律。
+
+动作只有一步判断 + 一个落点：
+
+```bash
+abs review                        # 列出待确认的 draft 页（concepts + sources）
+# 值得留 → 用自己的判断提炼成一句话，落到正确层：
+abs capture --layer 3 "某工具怎么用/有什么坑"     # 工具经验
+abs capture "踩坑的根因与解法"                    # 认知（默认 L4）
+# 不值得留 → 否决掉：
+abs review --reject <页名>
+```
+
+**判断力在你（agent），工具只做落点**——`capture` 不替你判「这条值不值得留、归哪一层」。提炼成规律后删原 source、清指向它的引用（防死链，见 Teardown 第 5 步）。
+
 ## 收尾循环（用户明确要求收尾时才走）
 
 1. **读 todo**：`abs load`，看还有哪些没完成。
