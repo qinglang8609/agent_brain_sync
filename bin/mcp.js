@@ -11,7 +11,7 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findBrainRoot, absLogDir } from '../src/index.js';
+import { findBrainRoot, absLogDir, AbsError } from '../src/index.js';
 import { cmdBoard, cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdWrapup, cmdRule, cmdResolve, cmdSupersede } from '../src/store.js';
 
 // ---------- 技术日志: MCP 请求跟踪（调试用, 与图谱 log.md 完全分开） ----------
@@ -40,6 +40,12 @@ function withTrace(name, handler) {
       return r;
     } catch (e) {
       await tlog(`tool=${name} cwd=${args?.cwd || '-'} args=${argBrief} → THROW ${Date.now() - t0}ms | ${String(e?.message || e).slice(0, 200)}`);
+      // 带 code 的 AbsError（如 requireUser 的 NO_USER）必须走 err() 结构化返回，
+      // 保留 code + fallback 自救指引 —— 裸 rethrow 只带 message，LLM 拿到后
+      // 不知道下一步跑什么（与 CLI 侧 `[CODE] + → fallback` 的既有行为不一致）。
+      if (e instanceof AbsError) {
+        return err(e.message, { code: e.code, fallback: e.fallback || undefined });
+      }
       throw e;
     }
   };

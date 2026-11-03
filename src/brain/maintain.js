@@ -57,30 +57,37 @@ export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {})
     return `[dry-run] 将归档 ${plan.archived.length} 天 / ${plan.count} 条（每天一个文件）\n  ${brief}${why}`;
   }
 
-  // 1) 归档目标 = 当天的会话快照文件（log-<日期>.md），写进其「任务归档」段。
+  // 1) todo.md：锁内重算（拿最新内容，避免与并发 done 互相覆盖），
+  //    todo 是权威 —— 会话页/ index 都跟随它，不反向。
+  //    先写 todo 再写会话页：todo 写失败（闸门拒绝/SKIP）时会话页不写，
+  //    避免「会话页已写、看板没动」的两边不一致（原顺序相反，且会话页裸写绕过锁）。
+  let archivedFinal = [];
+  await editFile(todoP, (cur) => {
+    // 坑（2026-10-05 实测抓到）: 这里漏传 maxLines → 锁内重算的 archived 为空 →
+    // 返回 SKIP → 磁盘上的 todo.md 一个字没动（而 sessions/ 归档页已经写了，
+    // 两边不一致）。**同参数的每个调用点都要一起改**。
+    const p2 = archiveDoneInText(cur ?? '', { keepDays: days, from: today(), maxLines: TODO_MAX_LINES });
+    if (!p2.archived.length) return SKIP;
+    archivedFinal = p2.archived;   // 锁内算出的权威清单，后续写会话页/index 用它
+    return { text: p2.text };
+  });
+  if (!archivedFinal.length) {
+    return `（todo 锁内重算无归档项，已跳过）${why}`;
+  }
+
+  // 2) 归档目标 = 当天的会话快照文件（log-<日期>.md），写进其「任务归档」段。
   //    为何合一（2026-09-15 用户定）: 归档与会话快照是**同一天的记录**，分两个文件查着要开两处。
   //    边界: ① 文件不存在→建只有归档段的页（那天可能没写快照）
   //          ② 文件已存在（含 AI 手写快照）→ 只替换归档段，段外逐字保留
   //    （硬规则「已存在的人工内容一律不覆盖」由 upsertArchiveSection 保证）。
+  //    走 editFile 锁（2026-11-03 审查修复）：append 语义必须与 setMemo 同一路数，
+  //    裸 readFile+tmp+rename 会让并发 archive 互相覆盖，丢一批归档任务行。
   const sessDir = brainPath(root, 'sessions');
-  for (const g of plan.archived) {
+  await fs.mkdir(sessDir, { recursive: true });
+  for (const g of archivedFinal) {
     const pageP = join(sessDir, `${g.slug}.md`);
-    let page = null;
-    try { page = await fs.readFile(pageP, 'utf8'); } catch { /* 首次 */ }
-    const nextPage = upsertArchiveSection(page, g);
-    const tmp = join(sessDir, `.${g.slug}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
-    await fs.writeFile(tmp, nextPage, 'utf8');
-    await fs.rename(tmp, pageP);
+    await editFile(pageP, (cur) => ({ text: upsertArchiveSection(cur, g) }));
   }
-
-  // 2) todo.md：锁内重算（拿最新内容，避免与并发 done 互相覆盖）
-  await editFile(todoP, (cur) => {
-    // 坑（2026-10-05 实测抓到）: 这里漏传 maxLines → 锁内重算的 archived 为空 →
-    // 返回 SKIP → 磁盘上的 todo.md 一个字没动（而 sessions/ 归档页已经写了，
-    // 两边不一致："说归档了但看板没变"）。**同参数的每个调用点都要一起改**。
-    const p2 = archiveDoneInText(cur ?? '', { keepDays: days, from: today(), maxLines: TODO_MAX_LINES });
-    return p2.archived.length ? { text: p2.text } : SKIP;
-  });
 
   // 3) index 登记（每个日期页一行，幂等）
   // 坑（2026-09-15 修）: 原先把归档页登记到 `## Sources` 区 —— 但它们在 sessions/ 里，
@@ -88,7 +95,7 @@ export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {})
   const iP = brainPath(root, 'index.md');
   await editFile(iP, (index) => {
     if (!index) return SKIP;
-    const missing = plan.archived.filter((g) => !index.includes(`[[${g.slug}]]`));
+    const missing = archivedFinal.filter((g) => !index.includes(`[[${g.slug}]]`));
     if (!missing.length) return SKIP;
     const sIdx = index.indexOf('## Sessions');
     if (sIdx === -1) return SKIP;
@@ -100,8 +107,10 @@ export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {})
     return { text: next };
   });
 
-  const files = plan.archived.map((g) => `sessions/${g.slug}.md`).join('\n  ');
-  return `✓ 已归档 ${plan.archived.length} 天 / ${plan.count} 条\n  ${brief}\n  → ${files}${why}`;
+  const files = archivedFinal.map((g) => `sessions/${g.slug}.md`).join('\n  ');
+  const count = archivedFinal.reduce((n, g) => n + g.count, 0);
+  const briefFinal = archivedFinal.map((g) => `${g.date}(${g.count})`).join(' ');
+  return `✓ 已归档 ${archivedFinal.length} 天 / ${count} 条\n  ${briefFinal}\n  → ${files}${why}`;
 }
 
 /**

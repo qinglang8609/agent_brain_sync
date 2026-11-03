@@ -54,7 +54,21 @@ export function uniqueProjectNames(roots) {
         for (const [r, v] of cand) out.set(r, v);
         break;
       }
-      if (depth === 4) for (const [r, v] of cand) out.set(r, v);  // 兜底：认了
+      if (depth === 4) {
+        // 深度到 4 仍重名（如 ~/a/x/软件/.agents 与 ~/b/y/软件/.agents 共享 4 层尾路径）：
+        // 不能「认了」直接塞 —— 那会让两个项目拿到同一个项目名，rebuild 撞
+        // UNIQUE(project,dir,slug) 约束整体崩溃（正是本函数要避免的场景）。
+        // 给仍碰撞的条目追加序号（-2/-3…），保证互不重名且可读。
+        const byVal = new Map();
+        for (const [r, v] of cand) {
+          if (!byVal.has(v)) { byVal.set(v, []); }
+          byVal.get(v).push(r);
+        }
+        for (const [v, rs] of byVal) {
+          if (rs.length === 1) { out.set(rs[0], v); continue; }
+          rs.forEach((r, i) => out.set(r, `${v}-${i + 2}`));
+        }
+      }
     }
   }
   return out;

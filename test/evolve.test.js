@@ -224,6 +224,19 @@ test('uniqueProjectNames: 重名时加父目录前缀', async () => {
   assert.ok(r.get('/Users/fanchao/Documents/软件/.agents').includes('.agents'));
 });
 
+test('uniqueProjectNames: 深度到 4 仍重名时追加序号，绝不返回同名', async () => {
+  // 两个项目共享 4 层相同尾路径（后 4 段全同，只第 5 段不同）：
+  // 逐层加前缀到 depth=4 仍相同。旧代码在这里「认了」直接塞 → 两项目同名 →
+  // rebuild 撞 UNIQUE 约束崩溃。必须靠序号兜底保证唯一。
+  const { uniqueProjectNames } = await import('../src/brain/db-cmd.js');
+  const r = uniqueProjectNames([
+    '/a/X/Y/软件/.agents',
+    '/b/X/Y/软件/.agents',
+  ]);
+  const vals = [...r.values()];
+  assert.equal(new Set(vals).size, vals.length, `结果必须互不重名: ${JSON.stringify(vals)}`);
+});
+
 test('写了 superseded-by 但目标页不存在 → 报断链', async () => {
   await with_db(async (h) => {
     rebuild(h, [page('concepts', 'old', '---\nstatus: superseded\nsuperseded-by: 根本没这页\n---\n旧')]);

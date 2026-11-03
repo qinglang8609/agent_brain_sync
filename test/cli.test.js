@@ -725,7 +725,7 @@ describe('cli: argv 解析', () => {
   // 现在只输出规范形状；raw flag 属于纯噪音（grep 验证 opts['keep-days'] 零引用）。
   // 断言方式: 直接 eval 提取的 parseArgv（它未导出，但这段是纯函数），
   // 比走 CLI 快且能看到完整形状。
-  test('opts 只带规范键，不携带 raw 双份（keep-days/dry-run/no-mcp/no-skill）', async () => {
+  test('opts 只带规范键，不携带 raw 双份（keep-days/stale-days/dry-run/no-mcp/no-skill）', async () => {
     const src = await fs.readFile(join(REPO, 'bin', 'abs.js'), 'utf8');
     const a = src.indexOf('const FLAG_SPEC');
     const b = src.indexOf('const usage = `');
@@ -736,9 +736,14 @@ describe('cli: argv 解析', () => {
     const o = parseArgv(['todo', 'archive', '--keep-days', '5', '--dry-run']);
     assert.equal(o.keepDays, '5', '规范键 keepDays 应就位');
     assert.equal(o.dryRun, true, '规范键 dryRun 应就位');
-    for (const raw of ['keep-days', 'dry-run', 'no-mcp', 'no-skill']) {
+    for (const raw of ['keep-days', 'stale-days', 'dry-run', 'no-mcp', 'no-skill']) {
       assert.ok(!(raw in o), `raw 键 "${raw}" 不得出现在 opts: ${JSON.stringify(o)}`);
     }
+    // 坑(STALE-DAYS): --stale-days 曾未在 FLAG_SPEC 声明 → 被当布尔 true，
+    // `Number(true)||90`=1，参数 30 被静默吞进位置参数。
+    const e = parseArgv(['db', 'evolve', '--stale-days', '30']);
+    assert.equal(e.staleDays, '30', `stale-days 应解析为字符串 '30': ${JSON.stringify(e)}`);
+    assert.deepEqual(e._, ['db', 'evolve'], `30 不得落进位置参数: ${JSON.stringify(e._)}`);
     // 负向开关转正向布尔
     assert.equal(parseArgv(['install', '--no-mcp']).mcp, false);
     assert.equal(parseArgv(['install', '--no-skill']).skill, false);

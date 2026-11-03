@@ -135,6 +135,8 @@ const FLAG_SPEC = {
   'by': { type: 'string' },
   'all': { type: 'boolean' },
   'keep-days': { type: 'string' },
+  // db evolve 用：多少天没动且无人链算 stale。未声明会被静默吞成 true（同 keep-days 坑）。
+  'stale-days': { type: 'string' },
   'help': { type: 'boolean' },
   'dry-run': { type: 'boolean' },
   'full': { type: 'boolean' },
@@ -145,7 +147,7 @@ const FLAG_SPEC = {
 };
 
 /** 已被"规范键"接管的 raw flag：不再原样漏出（见 parseArgv 返回处的白名单注释）。 */
-const KNOWN_RAW = new Set(['keep-days', 'dry-run', 'no-mcp', 'no-skill']);
+const KNOWN_RAW = new Set(['keep-days', 'stale-days', 'dry-run', 'no-mcp', 'no-skill']);
 
 function parseArgv(args) {
   // 坑: parseArgs 会把**任何** `-` 开头的 token 当选项，连正文一起吃：
@@ -220,6 +222,7 @@ function parseArgv(args) {
     repair: !!values.repair,
     full: !!values.full,
     keepDays: values['keep-days'],
+    staleDays: values['stale-days'],
     dryRun: !!values['dry-run'],
     mcp: !values['no-mcp'],
     skill: !values['no-skill'],
@@ -600,7 +603,7 @@ async function main() {
         if (sub === 'rebuild') { console.log(await cmdDbRebuild({ dir: opts.dir })); break; }
         if (sub === 'search') { console.log(await cmdDbSearch({ query: rest.join(' '), limit: Number(opts.limit) || 8, full: !!opts.full })); break; }
         if (sub === 'status') { console.log(await cmdDbStatus()); break; }
-        if (sub === 'evolve') { console.log(await cmdDbEvolve({ staleDays: Number(opts['stale-days']) || 90 })); break; }
+        if (sub === 'evolve') { console.log(await cmdDbEvolve({ staleDays: Number(opts.staleDays) || 90 })); break; }
         if (sub === 'add') {
           const r = await addProject(opts.dir || process.cwd());
           console.log(`✓ 已登记项目: ${r}\n  建库: abs db rebuild`);
