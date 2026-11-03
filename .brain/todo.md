@@ -5,6 +5,7 @@
 ## Done
 
 ### 2026-11-02
+- [x] capture-herdr-clipboard-gotcha [[fanchao]] — 沉淀 herdr+pi 远程复制失败的根因与解法 【落地】 (完成 2026-11-02 01a19be2-af1d-76)
 - [x] release-and-local-install [[fanchao]] — 提交 git、发布版本、本地安装 【落地】 (完成 2026-11-02 01a19be2-af1d-76)
 - [x] index-first-plus-kinds [[fanchao]] — 索引优先（摘要+token 成本+--full）+ 观察类型分档（gotcha/decision/tradeoff） — 索引优先（摘要+token 成本+--full）+ kind 分档（gotcha/decision/tradeoff/howto，capture --kind）；23 页标 gotcha，其余留空不猜 【落地】 (完成 2026-11-02 01a19752-29b2-70)
 - [x] fix-retired-vs-replaced [[fanchao]] — evolve 区分单纯弃用与被取代 — 原来没写 superseded-by 一律报断链，误报「需求已否决」的存档页；现分 replaced/retired，只有写了 by 但目标不存在才是断链 【落地】 (完成 2026-11-02 01a19752-29b2-70)

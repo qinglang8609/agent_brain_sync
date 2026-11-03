@@ -1,4 +1,6 @@
 # 🗒 Activity Log
+## [2026-11-02 20:52] [[fanchao]] dev | 完成 定位 herdr+pi 远程复制失败：全屏鼠标跟踪截走拖选；改 tuiMode=regular 解决，用户实测复制粘贴已恢复
+## [2026-11-02 20:52] [[fanchao]] note | herdr + pi 远程复制失败：pi 全屏模式强开鼠标跟踪(?1000/1002/1003)截走拖选事件，herdr 收不到，选中复制不触发。解法 tuiMode 改 regular + fullscreenCopyOnSelect=false，重启进程生效。附带坑：pi 进程跑在 SSH 远程但 SSH_CONNECTION 等被 herdr-core 剥光，pi 以为在本地，pbcopy 写进远程机剪贴板还报成功；PI_CLIPBOARD_OSC52=1 与 pbcopy 在 herdr 里都不通
 ## [2026-11-02 12:02] [[fanchao]] dev | 完成 三件收尾：load 首屏带出最亮 3 页、悬挂链接 4→0、evolve 区分单纯弃用与被取代
 ## [2026-11-01 23:24] [[fanchao]] dev | 完成 abs log 接入会话深读：落盘时带出未总结/有更新的会话
 ## [2026-11-01 22:57] [[fanchao]] note | pi 会话目录名规则：只把 / 换成 -，下划线与点原样保留，两端各补 --。且不可逆——路径本身含 - 无法区分哪个原本是 /，只能正向拼
