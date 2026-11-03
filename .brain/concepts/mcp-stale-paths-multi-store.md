@@ -39,3 +39,4 @@ layer: 3
 - [[abs-install-layout]] — 四宿主安装器与落点
 - [[AgentBrainSync]] — 项目实体页
 - [[mcp-json-migrated-to-adapter]] — 同族：配置文件本身换了名字，只改副本没用
+- [[2026-11-03-herdr-里跑-pi-ssh]] — 同族：宿主（herdr）剥掉 SSH 环境变量，工具误判自己所在处

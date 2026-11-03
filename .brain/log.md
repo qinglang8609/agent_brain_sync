@@ -1,4 +1,7 @@
 # 🗒 Activity Log
+## [2026-11-03 13:14] [[fanchao]] note | 定义了判据却没接到使用侧，比没判据更常见：abs query 排序混流水页的根因是 lint.js 早有 isTerminal 判据，但 query 排序没用它。教训是判据定义与使用要同 commit，否则两处各写一套、改了定义也不生效
+## [2026-11-03 13:13] [[fanchao]] note | herdr 里跑 pi（SSH 远程）时复制失效：pi 全屏模式强开鼠标跟踪截走拖选事件。解法 tuiMode 改 regular。根因是 herdr-core 剥掉 SSH 环境变量，pi 误判本地会话，pbcopy 写进远程机剪贴板
+## [2026-11-03 13:13] [[fanchao]] note | herdr 里跑 pi（SSH 远程）时复制失效：pi 全屏模式强开鼠标跟踪(?1000/1002/1003)截走拖选事件，herdr 收不到选中复制。解法 tuiMode 改 regular + fullscreenCopyOnSelect=false。根因是 herdr-core 剥掉了 SSH_CONNECTION 等环境变量，pi 误判为本地会话，pbcopy 写进远程机剪贴板还报成功
 ## [2026-11-03 13:09] [[fanchao]] note | 检索有效不等于记忆被用：主动取靠「触发规则写进 skill 开场」而非「工具更聪明」。实测一场会话 agent 全程没主动调检索，不是命令不够好，是没人告诉它「有疑惑那一刻该查」。修法两条配对：主动回忆（有疑惑就 recall）+ 主动提炼（sources 积压就 review/capture），判断力在 agent、落点在工具
 ## [2026-11-03 12:14] [[fanchao]] note | 检索有效性不等于可用性：abs query 命中准确（全命中的内容页排前三），但排序不分页面类型，sessions/log-* 流水页三词全命中时和内容页同档，挤进前 10。判据 lint.js 早已有 isTerminal，只是检索没用它——'定义了判据却没接到使用侧'比'没判据'更常见
 ## [2026-11-02 20:52] [[fanchao]] dev | 完成 定位 herdr+pi 远程复制失败：全屏鼠标跟踪截走拖选；改 tuiMode=regular 解决，用户实测复制粘贴已恢复
