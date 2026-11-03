@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-11-03 13:20] [[fanchao]] dev | 完成主动记忆闭环 + 全项目审查收尾：①query 流水页/draft 草稿默认隐藏对齐 db search；②新增 abs recall 与 skill 开场「有知识库随时能查」；③补「主动提炼」触发规则；④修审查 4 个 P1（stale-days/MCP 错误/项目名消歧/归档锁）；⑤提炼 3 条 draft 成内容页。727 测试全绿，发布 1.24.0
 ## [2026-11-03 13:14] [[fanchao]] note | 定义了判据却没接到使用侧，比没判据更常见：abs query 排序混流水页的根因是 lint.js 早有 isTerminal 判据，但 query 排序没用它。教训是判据定义与使用要同 commit，否则两处各写一套、改了定义也不生效
 ## [2026-11-03 13:13] [[fanchao]] note | herdr 里跑 pi（SSH 远程）时复制失效：pi 全屏模式强开鼠标跟踪截走拖选事件。解法 tuiMode 改 regular。根因是 herdr-core 剥掉 SSH 环境变量，pi 误判本地会话，pbcopy 写进远程机剪贴板
 ## [2026-11-03 13:13] [[fanchao]] note | herdr 里跑 pi（SSH 远程）时复制失效：pi 全屏模式强开鼠标跟踪(?1000/1002/1003)截走拖选事件，herdr 收不到选中复制。解法 tuiMode 改 regular + fullscreenCopyOnSelect=false。根因是 herdr-core 剥掉了 SSH_CONNECTION 等环境变量，pi 误判为本地会话，pbcopy 写进远程机剪贴板还报成功
