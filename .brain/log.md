@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-11-03 13:09] [[fanchao]] note | 检索有效不等于记忆被用：主动取靠「触发规则写进 skill 开场」而非「工具更聪明」。实测一场会话 agent 全程没主动调检索，不是命令不够好，是没人告诉它「有疑惑那一刻该查」。修法两条配对：主动回忆（有疑惑就 recall）+ 主动提炼（sources 积压就 review/capture），判断力在 agent、落点在工具
 ## [2026-11-03 12:14] [[fanchao]] note | 检索有效性不等于可用性：abs query 命中准确（全命中的内容页排前三），但排序不分页面类型，sessions/log-* 流水页三词全命中时和内容页同档，挤进前 10。判据 lint.js 早已有 isTerminal，只是检索没用它——'定义了判据却没接到使用侧'比'没判据'更常见
 ## [2026-11-02 20:52] [[fanchao]] dev | 完成 定位 herdr+pi 远程复制失败：全屏鼠标跟踪截走拖选；改 tuiMode=regular 解决，用户实测复制粘贴已恢复
 ## [2026-11-02 20:52] [[fanchao]] note | herdr + pi 远程复制失败：pi 全屏模式强开鼠标跟踪(?1000/1002/1003)截走拖选事件，herdr 收不到，选中复制不触发。解法 tuiMode 改 regular + fullscreenCopyOnSelect=false，重启进程生效。附带坑：pi 进程跑在 SSH 远程但 SSH_CONNECTION 等被 herdr-core 剥光，pi 以为在本地，pbcopy 写进远程机剪贴板还报成功；PI_CLIPBOARD_OSC52=1 与 pbcopy 在 herdr 里都不通

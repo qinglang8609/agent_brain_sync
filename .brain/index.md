@@ -86,6 +86,7 @@
 - [[gate-exit-code-not-piped]] — 门禁静默放行：退出码被管道吞掉
 - [[tool-empty-vs-no-output]] — 工具的「空结果」不等于「没有输出」
 - [[mechanism-visible-vs-effective]] — 机制的「跑了」不等于「起作用了」
+- [[2026-11-03-检索有效不等于记忆被用-主动取靠-触发规则写进]] — 检索有效不等于记忆被用：主动取靠「触发规则写进 skill 开场」而非「工具更聪明」。实测一场会话 agent 全程没主动调检索，不是命令不够好…
 
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
