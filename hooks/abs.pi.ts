@@ -231,6 +231,10 @@ const TODO_GUIDELINES = [
   // ⑦ 文档精简九条（用户 2026-10-22 定，原文见 skill 的「文档精简」一节）：
   // 管每一行写进 .brain 的文字；与上面六条行为规则不重叠，故不合并。
   'Every line you write into .brain/ (todo rows, log rows, knowledge pages, session snapshots) must pass the nine-bullet doc-slimming rule in the abs skill: only what serves the topic (drop the rest), no unverified summaries, ordered and layered, plain declarative wording (no rhetorical questions, no guessing), no duplication (cite the other doc instead), terse prohibitions, nothing the user did not ask for, plain Chinese.',
+  // ⑧ 有疑惑先查记忆（用户 2026-11-03 定）：主动搜索不是等报错才应激，
+  //   而是「心里形成关键词/有疑问的那一刻」自己查。上面七条只讲了登记，
+  //   没讲「记下来的东西怎么取」——实测一场会话从头到尾没查过一次记忆。
+  'When a doubt forms about something the project has likely dealt with before (a design choice, a past bug, a convention), run `abs recall <关键词>` (or `abs query <词>` for wider matches) BEFORE acting on the assumption. Do not wait for an error or for the user to remind you — asking the memory is your own decision, made the moment the question arises.',
 ]
 
 /** 当前项目是否有 .brain 图谱 —— 有才加指引（没图谱的项目里这指引是噪音）。
