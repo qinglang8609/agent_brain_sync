@@ -5,6 +5,7 @@
 ## Done
 
 ### 2026-11-03
+- [x] review-fix-p1 [[fanchao]] — 全项目审查后修复 4 个 P1 缺陷 【落地】 (完成 2026-11-03 01a19be2-af1d-76)
 - [x] abs-recall-command [[fanchao]] — 新增 abs recall：卡住时按处境主动取相关页 【落地】 (完成 2026-11-03 01a19be2-af1d-76)
 - [x] query-flow-page-downrank [[fanchao]] — 检索结果里给 sessions/log-* 与 sources/ 降权，不让流水页压过内容页 【落地】 (完成 2026-11-03 01a19be2-af1d-76)
 
