@@ -1,6 +1,7 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] query-flow-draft-filter [[fanchao]] — 修 query 流水页降权力度不足 + 补 draft 草稿过滤，对齐 db search (认领 2026-11-03 01a19be2-af1d-76)
 
 ## Done
 

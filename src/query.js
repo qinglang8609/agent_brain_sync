@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { requireBrain, brainPath } from './index.js';
 import { rankPage } from './relevant.js';
 import { statusOfPage, idOfPage, supersededByOf, clip } from './store.js';
+import { DIR_LAYER, decayOf } from './brain/layers.js';
 
 // ---------- query: 检索知识图谱（多词 OR，扫全 .md 页） ----------
 const KNOWN_SLUG_HINT = /模板残留|\[\[slug\]\]/;
@@ -49,7 +50,23 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
         // 而不是回答"我上次怎么解決 X"（那会拿到一个已知错误的答案）。
         // 但它不是静默消失：计数里告知还有几条被隐藏（带 --all 能看）。
         if (st === 'superseded' && !includeSuperseded) {
-          hits.push({ hidden: true, slug });
+          hits.push({ hidden: 'superseded', slug });
+          continue;
+        }
+        // 流水页默认不进结果（2026-11-03 修）：sessions/log-* 是「那天做了什么」
+        // 的草稿记录，不是知识页。它正文里碰巧出现检索词不代表它是这条经验所在 ——
+        // 与 db search 对齐（db 里层权重把 L5 会话页压到底，query 扫 md 没有这层，
+        // 只能显式隐藏）。不是静默消失：计数告知 + --all 可看。
+        const isFlow = d === 'sessions' && /^log-/.test(slug);
+        if (isFlow && !includeSuperseded) {
+          hits.push({ hidden: 'flow', slug });
+          continue;
+        }
+        // draft（未核实）默认也隐藏（2026-11-03 修）：主动 recall 要的是「可信的
+        // 知识」，draft 是没核实的草稿，与 db search 对齐（db 里 L7 草稿被层权重
+        // 压到底、L4 draft 骨架亮度低）。与 superseded/flow 同待遇：--all 可看。
+        if (st === 'draft' && !includeSuperseded) {
+          hits.push({ hidden: 'draft', slug });
           continue;
         }
         hits.push({
@@ -63,18 +80,23 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
       }
     }
   }
-  const hidden = hits.filter((h) => h.hidden).length;
+  const hiddenSup = hits.filter((h) => h.hidden === 'superseded').length;
+  const hiddenFlow = hits.filter((h) => h.hidden === 'flow').length;
+  const hiddenDraft = hits.filter((h) => h.hidden === 'draft').length;
+  const hidden = hiddenSup + hiddenFlow + hiddenDraft;
   // 分两区：精确命中优先，模糊只作补充。
   // 坑(2026-09-16 实测): 不加区分时查 file-write-locking 返回 26 页（几乎全图）——
   //   连字符词的 2-gram 太通用，模糊命中把无关页也拉进来。
   //   规则：只要有任何精确命中，模糊命中的就不排在前面（但也不丢弃，单列一段）。
-  // 流水页降权（2026-11-02 实测）：查「并发 写 锁」时前 10 位里挤进 4 页
-  // sessions/log-*，内容页被顶下去。流水页只是「那天做了什么」的草稿记录，
-  // 正文里碰巧出现检索词不代表它是这条经验所在。判据沿用 lint.js 的
-  // isTerminal（sources/ 与 sessions/log-*），不另造一套。
-  // 只降权不剔除：真要查某天的流水，它仍在结果里，只是排到内容页之后。
-  const isFlow = (h) => h.dir === 'sources' || (h.dir === 'sessions' && /^log-/.test(h.slug));
-  const rankBy = (h) => h.fuzzyScore - (isFlow(h) ? 20 : 0);
+  // 层权重（2026-11-03 修）：query 之前只按分数排，流水页（sessions/log-*）和
+  // 草稿（sources/）与内容页同分竞争，于是 log 页挤进前 10。db search 干净的本质
+  // 是它按层权重排序 —— sessions=L5(decay 0.75)、sources=L7(decay 0.95)，亮度被
+  // 压到 0.25/0.05，而 concepts/entities/syntheses=L4(decay 0.6) 权重 0.4。
+  // 这里复用同一套 DIR_LAYER + decayOf，与 db search 对齐，不再用笼统的「降 20 分」
+  // （那个修法在命中分数接近时失效，实测「长期记忆 提炼 主动回忆」前 10 仍混 3 个 log 页）。
+  // 权重 = 1 - decay（与 db.js 的 layerWeight 同口径）。
+  const layerWeight = (h) => Math.max(0.05, 1 - decayOf(DIR_LAYER[h.dir] ?? 4));
+  const rankBy = (h) => h.fuzzyScore * layerWeight(h);
   const exactHits = hits.filter((h) => !h.hidden && h.kind === 'exact')
     .map((h) => ({ ...h, score: rankBy(h) }))
     .sort((a, b) => b.score - a.score);
@@ -85,7 +107,7 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
   const fuzzySuppressed = exactHits.length > 0 && fuzzyHits.length > 0;
   const shown = exactHits.length ? exactHits : fuzzyHits;
   if (!shown.length) {
-    const extra = hidden ? `（另外 ${hidden} 页已标记 superseded，用 abs query ${words.join(' ')} --all 查看）` : '';
+    const extra = hidden ? `（另外 ${hidden} 页被隐藏，用 abs query ${words.join(' ')} --all 查看）` : '';
     return `query [${words.join(', ')}]: 无命中。${extra}用 abs lint 看图谱健康；首次使用先 abs init。`;
   }
   // 输出条数上限（2026-09-30 补）：落实 read-side-output-must-not-scale 规则。
@@ -114,7 +136,9 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
   const tail = [];
   if (words.length > 1 && !anyFull) tail.push('', `（无页同时命中全部 ${words.length} 个词，以下按命中数排序）`);
   if (fuzzySuppressed) tail.push('', `（另有 ${fuzzyHits.length} 页字形相近但字面未命中，已隐藏 —— 它们通常不相关）`);
-  if (hidden) tail.push(``, `（${hidden} 页 superseded 已隐藏；--all 可看）`);
+  if (hiddenSup) tail.push(``, `（${hiddenSup} 页 superseded 已隐藏；--all 可看）`);
+  if (hiddenFlow) tail.push(``, `（${hiddenFlow} 页流水已隐藏；--all 可看）`);
+  if (hiddenDraft) tail.push(``, `（${hiddenDraft} 页 draft 未核实已隐藏；--all 可看）`);
   if (overflow > 0) tail.push(``, `（另有 ${overflow} 页未展示 —— 用更具体的词收窄：abs query <词1> <词2>）`);
   return [`query [${words.join(', ')}] → ${shown.length} 页（展示前 ${displayed.length} 页）:`, '', ...lines, ...tail].join('\n');
 }

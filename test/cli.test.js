@@ -412,7 +412,7 @@ describe('cli: query / lint', () => {
   beforeEach(() => run(['init', '--dir', proj]));
   test('query 多词 OR 命中', async () => {
     await fs.writeFile(join(proj, '.brain', 'concepts', 'c-x.md'),
-      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n专属词 abc 在此\n', 'utf8');
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: active\n---\n专属词 abc 在此\n', 'utf8');
     const r = await run(['query', '专属词']);
     assert.equal(r.code, 0, r.stderr);
     assert.ok(r.stdout.includes('c-x'), r.stdout);

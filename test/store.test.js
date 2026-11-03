@@ -839,7 +839,7 @@ describe('cmdQuery', () => {
   test('命中 concept 页并带页面路径', async () => {
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'docker-prisma-429.md'),
-      '---\ntags: [concept, docker]\nupdated: 2026-09-08\nstatus: draft\n---\n# 概念\n429 是连接池超限\n',
+      '---\ntags: [concept, docker]\nupdated: 2026-09-08\nstatus: active\n---\n# 概念\n429 是连接池超限\n',
       'utf8'
     );
     const out = await cmdQuery({ dir: projectA, terms: ['docker', '429'] });
@@ -849,7 +849,7 @@ describe('cmdQuery', () => {
   test('多词是 OR：任一命中即出', async () => {
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'a-page.md'),
-      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\nalpha 专属词\n',
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: active\n---\nalpha 专属词\n',
       'utf8'
     );
     const out = await cmdQuery({ dir: projectA, terms: ['专属词'] });
@@ -860,12 +860,12 @@ describe('cmdQuery', () => {
   test('tag 命中的页排在只正文命中的页前面', async () => {
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'tagged.md'),
-      '---\ntags: [concept, 专属关联词]\nstatus: draft\n---\n正文无此词\n',
+      '---\ntags: [concept, 专属关联词]\nstatus: active\n---\n正文无此词\n',
       'utf8'
     );
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'untagged.md'),
-      '---\ntags: [concept]\nstatus: draft\n---\n正文里提到 专属关联词\n',
+      '---\ntags: [concept]\nstatus: active\n---\n正文里提到 专属关联词\n',
       'utf8'
     );
     const out = await cmdQuery({ dir: projectA, terms: ['专属关联词'] });
@@ -882,12 +882,12 @@ describe('cmdQuery', () => {
   test('有精确命中时模糊命中不混入结果 (但告知条数)', async () => {
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'exact-hit-page.md'),
-      '---\ntags: [concept]\nstatus: draft\n---\n含 专有复合词XYZ 一词\n',
+      '---\ntags: [concept]\nstatus: active\n---\n含 专有复合词XYZ 一词\n',
       'utf8'
     );
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'fuzzy-only-page.md'),
-      '---\ntags: [concept]\nstatus: draft\n---\n无那个词，但字形部分相近的正文\n',
+      '---\ntags: [concept]\nstatus: active\n---\n无那个词，但字形部分相近的正文\n',
       'utf8'
     );
     const out = await cmdQuery({ dir: projectA, terms: ['专有复合词XYZ'] });
@@ -901,7 +901,7 @@ describe('cmdQuery', () => {
   test('片段跳过 frontmatter/tags 行（不得返回元数据当答案）', async () => {
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'meta-page.md'),
-      '---\ntags: [concept, 专属标签词]\nupdated: 2026-09-08\nstatus: draft\n---\n' +
+      '---\ntags: [concept, 专属标签词]\nupdated: 2026-09-08\nstatus: active\n---\n' +
       '# 概念：专属标签词\n\n## 触发场景\n真正的内容在这里 专属标签词\n',
       'utf8'
     );
@@ -914,7 +914,7 @@ describe('cmdQuery', () => {
   test('片段跳过 H1/段落标题行（标题不是内容）', async () => {
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'head-page.md'),
-      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n' +
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: active\n---\n' +
       '# 概念：独有词标题\n\n## 独有词小节\n\n正文里提到 独有词\n',
       'utf8'
     );
@@ -929,7 +929,7 @@ describe('cmdQuery', () => {
   test('片段优先取「解法/验证」这类答案段的行', async () => {
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'answer-page.md'),
-      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n' +
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: active\n---\n' +
       '# 概念\n\n## 触发场景\n开场先提一次 答案词\n\n## 🛠 解法\n真正的解法针对 答案词\n',
       'utf8'
     );
@@ -942,7 +942,7 @@ describe('cmdQuery', () => {
     // 自带 fixture：不依赖前面测试留下的页面（测试顺序不该影响结果）
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'quote-page.md'),
-      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n引号词 空格词\n',
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: active\n---\n引号词 空格词\n',
       'utf8'
     );
     const quoted = await cmdQuery({ dir: projectA, terms: ['引号词 空格词'] });
@@ -951,22 +951,21 @@ describe('cmdQuery', () => {
     assert.equal(quoted.split('\n')[0], split.split('\n')[0], '两种写法结果应一致');
   });
 
-  // 流水页降权（2026-11-02 实测）：查「并发 写 锁」时前 10 位挤进 4 页 sessions/log-*，
-  // 内容页被顶下去。流水页正文碰巧出现检索词，不代表它就是那条经验。
-  // 判据沿用 lint.js 的 isTerminal（sources/ 与 sessions/log-*）。
-  // 流水页故意给高分命中（tag + 页名 + 全命中），内容页只正文命中 ——
-  // 不降权时流水页必然排前（已做破坏验证：去掉降权此测试会红）。
-  test('流水页（sessions/log-*）不压过内容页', async () => {
+  // 流水页默认隐藏（2026-11-03 改）：从「降权 20 分排后」改成「不进默认结果」。
+  // 旧降权在命中分数接近时失效（实测「长期记忆 提炼 主动回忆」前 10 仍混 3 个 log 页，
+  // 因内容页只有 5 个、log 页补位）。对齐 db search：流水页不是知识页，不该进结果。
+  test('流水页（sessions/log-*）默认隐藏，--all 可见', async () => {
     await fs.writeFile(join(projectA, '.brain', 'concepts', 'flowrank-content.md'),
       '---\ntags: [concept]\nstatus: active\n---\n# 内容页\n仅正文提到 流水降权词\n', 'utf8');
     await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-08.md'),
       '---\ntags: [流水降权词]\nstatus: active\n---\n# 流水降权词\n流水降权词\n', 'utf8');
     const out = await cmdQuery({ dir: projectA, terms: ['流水降权词'] });
-    const iContent = out.indexOf('flowrank-content');
-    const iLog = out.indexOf('log-2026-09-08');
-    assert.ok(iContent >= 0, `内容页应在结果里: ${out}`);
-    assert.ok(iLog >= 0, `流水页不应被剔除，只是排后: ${out}`);
-    assert.ok(iContent < iLog, `内容页应排在流水页前面: ${out}`);
+    assert.ok(out.includes('flowrank-content'), `内容页应在结果里: ${out}`);
+    assert.ok(!out.includes('log-2026-09-08'), `流水页默认不应出现: ${out}`);
+    assert.ok(/流水已隐藏/.test(out), `应告知流水页被隐藏: ${out}`);
+    // --all 可见（逃生口）
+    const all = await cmdQuery({ dir: projectA, terms: ['流水降权词'], includeSuperseded: true });
+    assert.ok(all.includes('log-2026-09-08'), `--all 应能看到流水页: ${all}`);
   });
 
   test('无命中时明确提示并建议 abs init', async () => {
@@ -2536,11 +2535,14 @@ describe('page status (abs supersede)', () => {
     assert.ok(all.includes('dead') && all.includes('live'), all);
   });
 
-  test('query 标注 draft（未核实的经验要让人看得见）', async () => {
+  test('query 默认隐藏 draft，--all 可见', async () => {
     await fs.writeFile(join(projectA, '.brain', 'concepts', 'dd.md'),
       '---\nid: dd\ntags: [concept]\nstatus: draft\n---\n\n# DD 关键词 quokka\n', 'utf8');
     const out = await cmdQuery({ dir: projectA, terms: ['quokka'] });
-    assert.ok(/draft 未核实/.test(out), `draft 应被标注: ${out}`);
+    assert.ok(/被隐藏/.test(out), `draft 应被提示隐藏: ${out}`);
+    assert.ok(!out.includes('dd.md') && !out.includes('关键词 quokka'), `draft 页不应出现在默认结果: ${out}`);
+    const all = await cmdQuery({ dir: projectA, terms: ['quokka'], includeSuperseded: true });
+    assert.ok(all.includes('dd'), `--all 应能看到 draft 页: ${all}`);
   });
 
   test('lint 抓 SUPERSEDED-DANGLING（取代者页不存在）', async () => {
