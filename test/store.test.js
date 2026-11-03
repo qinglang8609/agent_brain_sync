@@ -951,6 +951,24 @@ describe('cmdQuery', () => {
     assert.equal(quoted.split('\n')[0], split.split('\n')[0], '两种写法结果应一致');
   });
 
+  // 流水页降权（2026-11-02 实测）：查「并发 写 锁」时前 10 位挤进 4 页 sessions/log-*，
+  // 内容页被顶下去。流水页正文碰巧出现检索词，不代表它就是那条经验。
+  // 判据沿用 lint.js 的 isTerminal（sources/ 与 sessions/log-*）。
+  // 流水页故意给高分命中（tag + 页名 + 全命中），内容页只正文命中 ——
+  // 不降权时流水页必然排前（已做破坏验证：去掉降权此测试会红）。
+  test('流水页（sessions/log-*）不压过内容页', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'flowrank-content.md'),
+      '---\ntags: [concept]\nstatus: active\n---\n# 内容页\n仅正文提到 流水降权词\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-08.md'),
+      '---\ntags: [流水降权词]\nstatus: active\n---\n# 流水降权词\n流水降权词\n', 'utf8');
+    const out = await cmdQuery({ dir: projectA, terms: ['流水降权词'] });
+    const iContent = out.indexOf('flowrank-content');
+    const iLog = out.indexOf('log-2026-09-08');
+    assert.ok(iContent >= 0, `内容页应在结果里: ${out}`);
+    assert.ok(iLog >= 0, `流水页不应被剔除，只是排后: ${out}`);
+    assert.ok(iContent < iLog, `内容页应排在流水页前面: ${out}`);
+  });
+
   test('无命中时明确提示并建议 abs init', async () => {
     const out = await cmdQuery({ dir: projectB, terms: ['x'] });
     assert.ok(out.includes('abs init'), out);

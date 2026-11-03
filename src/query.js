@@ -53,7 +53,7 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
           continue;
         }
         hits.push({
-          full, slug, matched: rank.matched, kind: rank.kind, fuzzyScore: rank.score, via: rank.via,
+          full, slug, dir: d, matched: rank.matched, kind: rank.kind, fuzzyScore: rank.score, via: rank.via,
           author: au ? au[1].trim() : '',
           id: idOfPage(body, slug),
           status: st,
@@ -68,11 +68,18 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
   // 坑(2026-09-16 实测): 不加区分时查 file-write-locking 返回 26 页（几乎全图）——
   //   连字符词的 2-gram 太通用，模糊命中把无关页也拉进来。
   //   规则：只要有任何精确命中，模糊命中的就不排在前面（但也不丢弃，单列一段）。
+  // 流水页降权（2026-11-02 实测）：查「并发 写 锁」时前 10 位里挤进 4 页
+  // sessions/log-*，内容页被顶下去。流水页只是「那天做了什么」的草稿记录，
+  // 正文里碰巧出现检索词不代表它是这条经验所在。判据沿用 lint.js 的
+  // isTerminal（sources/ 与 sessions/log-*），不另造一套。
+  // 只降权不剔除：真要查某天的流水，它仍在结果里，只是排到内容页之后。
+  const isFlow = (h) => h.dir === 'sources' || (h.dir === 'sessions' && /^log-/.test(h.slug));
+  const rankBy = (h) => h.fuzzyScore - (isFlow(h) ? 20 : 0);
   const exactHits = hits.filter((h) => !h.hidden && h.kind === 'exact')
-    .map((h) => ({ ...h, score: h.fuzzyScore }))
+    .map((h) => ({ ...h, score: rankBy(h) }))
     .sort((a, b) => b.score - a.score);
   const fuzzyHits = hits.filter((h) => !h.hidden && h.kind === 'fuzzy')
-    .map((h) => ({ ...h, score: h.fuzzyScore }))
+    .map((h) => ({ ...h, score: rankBy(h) }))
     .sort((a, b) => b.score - a.score);
   // 有精确命中 → 模糊全藏起来（但不静默：告知数量 + 怎么看）
   const fuzzySuppressed = exactHits.length > 0 && fuzzyHits.length > 0;
