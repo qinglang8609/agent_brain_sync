@@ -322,6 +322,107 @@ async function queryHintSection(root, todo) {
   return queryHint(root, todo);
 }
 
+/**
+ * recall：卡住时主动取「跟当前处境相关的几页」，不需要先想到检索词。
+ *
+ * 为何要它（2026-11-03 实测）：hotPages 只挂在 load 上，于是只有开工那一刻会送页。
+ *   实测一场完整会话从头到尾没调过一次 abs —— 不是检索不准（命中确实准），
+ *   而是「要人先想到发起查询」这一步天然被跳过。一个出口只开一次，就等于没开。
+ *
+ * 与 hotPages 的分工：hotPages 是开机首屏（自动、固定 3 页）；
+ *   recall 是随时可调（agent 卡住/换方向时自己跑），且能补词。
+ *   两者共用 contextKeywords + 亮度搜索，不各算一套。
+ *
+ * 词从哪来：
+ *   - 传了词 → 用它（这时它就是个带上下文的搜索，仍会补处境词）
+ *   - 没传词 → 纯靠处境（活跃 todo 的关键词 + 最近改过的文件）
+ * 全部凭空无词 → 说清楚缺什么，不返回空列表充数。
+ *
+ * @param {{dir?:string, terms?:string[], limit?:number}} opts
+ */
+export async function cmdRecall({ dir, terms, limit = 5 } = {}) {
+  const given = (terms || []).flatMap((t) => String(t).trim().split(/\s+/)).filter(Boolean);
+  let root;
+  try {
+    root = await requireBrain(dir || process.cwd());
+  } catch {
+    return '未找到 .brain/ 图谱（无记忆可查）。先在项目根运行: abs init';
+  }
+  const todo = await readTodo(root).catch(() => '');
+  let kws = [];
+  let files = [];
+  try {
+    ({ kws, files } = await contextKeywords(root, todo));
+  } catch {
+    // 拔词失败不该拦住整个 recall
+  }
+  // 手动传的词优先级最高：用户/agent 已经想清楚要什么，就别把处境词混进去稀释
+  const words = given.length ? given : kws.slice(0, 5);
+  if (!words.length) {
+    return 'recall: 无从判断当前处境（todo 空、近期无改动、也没给词）。\n'
+      + '→ 直接给词: abs recall <词1> <词2>；或先 abs todo add 把在干的事登记上。';
+  }
+  try {
+    const { openDb, search, illuminate, dbPath } = await import('./db.js');
+    const { promises: fsp } = await import('node:fs');
+    const exists = await fsp.stat(dbPath()).then(() => true).catch(() => false);
+    if (!exists) return 'recall: 图数据库还没建（亮度检索需要它）。先跑: abs db rebuild';
+
+    const project = String(root).split('/').filter(Boolean).pop() || '';
+    const h = openDb(dbPath());
+    let lit;
+    try {
+      const seeds = new Map();
+      // 整串先查（实测：`db search "并发 锁"` 能出 file-write-locking，
+      // 而逐词分开查的种子表里根本没它 —— 2-gram 索引对整串和单词的切法不同，
+      // 拆开就把最有用的命中拆没了。所以整串优先，再用逐词兜底补漏。
+      const whole = given.length ? words.join(' ') : words.join(' ');
+      for (const s of search(h, whole, { limit: 12 })) seeds.set(s.id, s);
+      for (const w of words) {
+        for (const s of search(h, w, { limit: 6 })) {
+          const prev = seeds.get(s.id);
+          if (!prev || s.bright > prev.bright) seeds.set(s.id, s);
+        }
+      }
+      if (!seeds.size) {
+        return `recall [${words.join(', ')}]: 库里没搜到相关页。\n`
+          + '→ 换个说法: abs recall <别的词>；看图谱全貌: abs query <词>。';
+      }
+      // 流水页降权（2026-11-03 实测）：不加时前 5 位里挤进 2 页 sessions/log-*，
+      // 还被排到第一，把 file-write-locking 这种真经验页顶下去。
+      // 与 query 用同一套判据（lint.js 的 isTerminal），不另造。只降权不剔除。
+      const isFlow = (r) => r.dir === 'sources' || (r.dir === 'sessions' && /^log-/.test(r.slug));
+      lit = illuminate(h, [...seeds.values()], { limit: limit * 8 })
+        .filter((r) => r.project === project)
+        .sort((a, b) => (b.bright - (isFlow(b) ? 1 : 0)) - (a.bright - (isFlow(a) ? 1 : 0)))
+        .slice(0, limit);
+    } finally {
+      h.close();
+    }
+    if (!lit.length) {
+      return `recall [${words.join(', ')}]: 搜到了种子，但本项目的页没有亮起来。\n`
+        + '→ 试试 abs query <词> 看全图命中。';
+    }
+    const rows = [`recall [${words.join(', ')}] → ${lit.length} 页（按亮度；看全文: abs resolve <页名>）`];
+    if (!given.length) {
+      const why = [
+        files.length ? `近期改动 ${files.length} 个文件` : '',
+        todo ? '活跃 todo' : '',
+      ].filter(Boolean).join(' + ');
+      if (why) rows.push(`  处境: ${why}`);
+    }
+    rows.push('');
+    for (const r of lit) {
+      const one = await fsp.readFile(brainPath(root, r.dir, `${r.slug}.md`), 'utf8').catch(() => '');
+      const about = one ? digest(one, 80) : '';
+      rows.push(`  ${r.bright.toFixed(2)} L${r.layer} [[${r.slug}]]${about ? ' — ' + about : ''}`);
+    }
+    return rows.join('\n');
+  } catch (e) {
+    return `recall 失败: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
 /** sources 堆积提醒：返回 [标题行, ...内容行] 或 null。失败静默。 */
 async function sourcesCountSection(root) {
   const nsrc = await countSources(root);

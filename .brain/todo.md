@@ -1,9 +1,11 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] query-flow-page-downrank [[fanchao]] — 检索结果里给 sessions/log-* 与 sources/ 降权，不让流水页压过内容页 (认领 2026-11-03 01a19be2-af1d-76)
 
 ## Done
+
+### 2026-11-03
+- [x] query-flow-page-downrank [[fanchao]] — 检索结果里给 sessions/log-* 与 sources/ 降权，不让流水页压过内容页 【落地】 (完成 2026-11-03 01a19be2-af1d-76)
 
 ### 2026-11-02
 - [x] capture-herdr-clipboard-gotcha [[fanchao]] — 沉淀 herdr+pi 远程复制失败的根因与解法 【落地】 (完成 2026-11-02 01a19be2-af1d-76)

@@ -2,7 +2,7 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede, cmdReview } from '../src/store.js';
+import { cmdInit, cmdStatus, cmdLoad, cmdRecall, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede, cmdReview } from '../src/store.js';
 import { cmdDbRebuild, cmdDbSearch, cmdDbStatus, cmdDbEvolve, addProject } from '../src/brain/db-cmd.js';
 import { cmdCapture } from '../src/brain/capture.js';
 import { cmdSummon } from '../src/brain/summon-cmd.js';
@@ -239,6 +239,7 @@ const usage = `abs — 跨会话记忆工具（.brain/ 图谱）
   abs todo add X --note "做什么"      登记任务 (done/state/note 管后续)
   abs note "经验一句话"               随手记经验; abs log "完成 X" 记成果
   abs query <词…>                   检索 .brain/; abs todo 看任务板
+  abs recall [词…]                  卡住时主动取相关页（不给词就按当前处境推）
 
 全部命令 (细节: abs <命令> --help):
   init [--repair]            建图谱 (当前目录)
@@ -363,6 +364,18 @@ const subUsage = {
     '参数:',
     '  --all    连 superseded(已失效)页一起返回',
   ].join('\n'),
+  recall: [
+    'abs recall — 卡住时主动取相关页（不需先想到检索词）',
+    '',
+    '用法:',
+    '  abs recall [词1 词2 …] [--limit N]',
+    '',
+    '不给词时，从当前处境推：活跃 todo 的关键词 + 最近改过的文件名。',
+    '给了词就只用你给的词，不混处境词。',
+    '',
+    '与 load 的区别: load 只在开工跑一次；recall 随时可跑（卡住/换方向时）。',
+    '与 query 的区别: query 枚全图命中；recall 只给按亮度亮的几页。',
+  ].join('\n'),
   config: [
     'abs config — 使用者姓名（写操作的作者标记）',
     '',
@@ -457,6 +470,11 @@ async function main() {
         rejectExtra(opts._, 'abs load');
         console.log(await cmdLoad({ dir: opts.dir }));
         break;
+      case 'recall': {
+        const limit = Number(opts.limit) > 0 ? Number(opts.limit) : 5;
+        console.log(await cmdRecall({ dir: opts.dir, terms: opts._, limit }));
+        break;
+      }
       case 'index':
         rejectExtra(opts._, 'abs index');
         console.log(await cmdShow({ dir: opts.dir, view: 'index' }));

@@ -19,7 +19,7 @@ export { BRAIN_SHAPE, LEGACY_MARKS, checkBrainShape } from './brain/shape.js';
 import './brain/gate.js';
 
 // ---- 只读呈现 ----
-export { cmdBoard, cmdStatus, cmdLoad, cmdShow, extractBlocks } from './brain/load.js';
+export { cmdBoard, cmdStatus, cmdLoad, cmdShow, cmdRecall, extractBlocks } from './brain/load.js';
 
 // ---- Rules ----
 export { RULES_HEADING, RULES_MAX, RULE_BODY_MAX, readRules, cmdRule } from './brain/rules.js';

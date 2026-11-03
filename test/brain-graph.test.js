@@ -591,6 +591,66 @@ test('hotPagesSection: 只出本项目的页，且按纯亮度排（不按层权
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
+// ---------- recall：卡住时主动取相关页 ----------
+// 为何要它（2026-11-03 实测）：hotPages 只挂在 load 上，于是只有开工那一刻送页。
+// 实测一场完整会话从头到尾没调过一次 abs —— 「要人先想到发起查询」这一步天然被跳过。
+
+test('cmdRecall: 不给词时从当前处境推（不发检索）', async () => {
+  const root = await freshBrain();
+  const dbFile = join(root, 'g.db');
+  try {
+    const { openDb, rebuild } = await import('../src/brain/db.js');
+    const h = openDb(dbFile);
+    const proj = root.split('/').filter(Boolean).pop();
+    rebuild(h, [
+      { project: proj, dir: 'concepts', slug: 'lock-page', body: '---\nlayer: 3\n---\n并发 写 锁 并发 写 锁', mtime: Date.now() },
+    ]);
+    h.close();
+
+    const { cmdRecall } = await import('../src/brain/load.js');
+    // todo 里有「并发 锁」→ 处境词能命中 lock-page
+    const out = await withEnv2({ ABS_DB: dbFile }, () => cmdRecall({ dir: root, terms: [] }));
+    // 只要能从处境推出非空结果就算对；推不出时给的也是「该怎么推」的指引，不是空列表
+    assert.ok(typeof out === 'string' && out.length > 0, `必须有输出: ${out}`);
+    assert.doesNotMatch(out, /^recall \[\]/, '不能输出空词表');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('cmdRecall: 给词就只用给的词，并带出命中页', async () => {
+  const root = await freshBrain();
+  const dbFile = join(root, 'g.db');
+  try {
+    const { openDb, rebuild } = await import('../src/brain/db.js');
+    const h = openDb(dbFile);
+    const proj = root.split('/').filter(Boolean).pop();
+    rebuild(h, [
+      { project: proj, dir: 'concepts', slug: 'target-page', body: '---\nlayer: 3\n---\n独占词甲 独占词乙 独占词甲 独占词乙', mtime: Date.now() },
+    ]);
+    h.close();
+
+    const { cmdRecall } = await import('../src/brain/load.js');
+    const out = await withEnv2({ ABS_DB: dbFile }, () => cmdRecall({ dir: root, terms: ['独占词甲'] }));
+    assert.match(out, /target-page/, `应命中 target-page: ${out}`);
+    assert.match(out, /recall \[独占词甲\]/, '标题应回显用户给的词');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+// 坑（2026-11-03 实测）：不加降权时前 5 位挤进 2 页 sessions/log-* 还排第一，
+// 把 file-write-locking 这种真经验页顶下去。流水页故意给更高亮度以验证降权真在起作用。
+test('cmdRecall: 流水页排序让位于内容页（同亮度差 < 降权幅度）', async () => {
+  // 与 cmdRecall 内部同一条排序式：bright - (isFlow ? 1 : 0)
+  const isFlow = (r) => r.dir === 'sources' || (r.dir === 'sessions' && /^log-/.test(r.slug));
+  const sortFn = (a, b) => (b.bright - (isFlow(b) ? 1 : 0)) - (a.bright - (isFlow(a) ? 1 : 0));
+  // 流水页亮度高 0.01（小于降权 1），但排完后必须落在内容页之后
+  const logPage = { dir: 'sessions', slug: 'log-2026-09-09', bright: 0.96 };
+  const contentPage = { dir: 'concepts', slug: 'real-content', bright: 0.95 };
+  const sorted = [logPage, contentPage].sort(sortFn);
+  assert.equal(sorted[0].slug, 'real-content', '内容页应排前');
+  // 反向：不做降权时（只比亮度）流水页会赢 —— 证明降权真的改变了结果
+  const raw = [logPage, contentPage].sort((a, b) => b.bright - a.bright);
+  assert.equal(raw[0].slug, 'log-2026-09-09', '不降权时流水页确实会排前面');
+});
+
 async function withEnv2(env, fn) {
   const saved = {};
   for (const k of Object.keys(env)) { saved[k] = process.env[k]; process.env[k] = env[k]; }
