@@ -819,14 +819,17 @@ async function installPi({ withMcp, withSkill }) {
   await atomicWrite(p, piPluginSource()); // Pi 用专用模板, 语法与 OpenCode 不同构
   steps.push(`✓ hook(ts extension) → ${p}`);
   // 圆角四边框输入框（纯 UI，与记忆功能无关，pi 专属）。
-  // 为什么要独立成第二个扩展文件：它是可选样式，用户不想要时删掉这一个文件即可，
-  // 不必动 abs.ts 这个核心 hook。模板无占位符，直接拷。
-  // 两个文件必须一起装：editor 里 import 了 format 的纯函数（抽出来是为了能单测）。
-  const roundedFiles = ['pi-rounded-editor.ts', 'pi-rounded-format.ts'];
-  for (const f of roundedFiles) {
-    await atomicWrite(join(dir, f), renderPluginTemplate(f, {}));
+  // 为什么独立成一个扩展：它是可选样式，不想要时删掉这个目录即可，不必动 abs.ts。
+  // 为什么用「目录 + index.ts」而不是两个平铺的 .ts：
+  //   pi 会把 extensions/ 下**每个顶层 .ts 都当独立扩展**并强制要求默认导出工厂函数 ——
+  //   平铺一个纯函数文件会让 pi 启动直接报错（2026-11-04 实报：
+  //   "Failed to load extension pi-rounded-format.ts: does not export a valid factory function"）。
+  //   子目录只为入口 index.ts 加载，helper 文件不参与扫描（官方多文件扩展写法）。
+  const roundedDir = join(dir, 'abs-rounded-editor');
+  for (const f of ['index.ts', 'format.ts']) {
+    await atomicWrite(join(roundedDir, f), renderPluginTemplate(`abs-rounded-editor/${f}`, {}));
   }
-  steps.push(`✓ editor(rounded box) → ${join(dir, 'pi-rounded-editor.ts')}`);
+  steps.push(`✓ editor(rounded box) → ${join(roundedDir, 'index.ts')}`);
   // MCP → ~/.pi/agent/mcp-adapter.json 的 mcpServers (stdio)
   // 坑（2026-09-30 用户实报）：曾写 mcp.json，但 pi-mcp-adapter 已不再读它
   //   （pi 自有 mcp.json 被 adapter 忽略，adapter 改读 mcp-adapter.json）→ 写了等于没写。
@@ -848,8 +851,10 @@ async function installPi({ withMcp, withSkill }) {
 async function uninstallPi() {
   const steps = [];
   await fs.rm(join(hostConfigRoot('pi'), 'agent', 'extensions', 'abs.ts'), { force: true });
-  for (const f of ['pi-rounded-editor.ts', 'pi-rounded-format.ts']) {
-    await fs.rm(join(hostConfigRoot('pi'), 'agent', 'extensions', f), { force: true });
+  // 目录形式：整个删掉。顺带清掉旧版本平铺的两个文件（1.25.0 装过那种布局）。
+  await fs.rm(join(hostConfigRoot('pi'), 'agent', 'extensions', 'abs-rounded-editor'), { recursive: true, force: true });
+  for (const legacy of ['pi-rounded-editor.ts', 'pi-rounded-format.ts']) {
+    await fs.rm(join(hostConfigRoot('pi'), 'agent', 'extensions', legacy), { force: true });
   }
   steps.push(`✓ extension 已删除`);
   steps.push(...await uninstallSkills('pi'));

@@ -18,7 +18,7 @@
  * 注意：自动补全菜单行排在底边之下、且自带内容宽度，不套竖线（否则菜单被框住会错位）。
  */
 import { CustomEditor } from '@earendil-works/pi-coding-agent'
-import { buildStatus, roundBorder, shortenModel } from './pi-rounded-format.ts'
+import { buildStatus, roundBorder, shortenModel } from './format.ts'
 
 const SIDE = '│'
 

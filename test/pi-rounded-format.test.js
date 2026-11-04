@@ -1,9 +1,9 @@
-// 圆角输入框的纯格式化函数（hooks/pi-rounded-format.ts）。
+// 圆角输入框的纯格式化函数（hooks/abs-rounded-editor/format.ts）。
 // 单测这些而不是扩展本体：扩展要 import @earendil-works/pi-coding-agent，
 // 测试进程里没有那个包；纯函数抽出来才能直接断言。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildStatus, roundBorder, shortenModel, shortTokens } from '../hooks/pi-rounded-format.ts';
+import { buildStatus, roundBorder, shortenModel, shortTokens } from '../hooks/abs-rounded-editor/format.ts';
 
 describe('圆角输入框 格式化', () => {
   it('shortenModel：去 provider 前缀与日期后缀', () => {
