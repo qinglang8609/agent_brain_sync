@@ -1,4 +1,6 @@
 # 🗒 Activity Log
+## [2026-11-04 15:48] [[fanchao]] dev | 发布 1.25.0：新增 pi 圆角四边框输入框扩展（hooks/pi-rounded-editor.ts + pi-rounded-format.ts），右上角显示「百分比/上限 模型名」，working 进边框，隐藏 footer；纯函数抽出配 8 条测试；install/uninstall 一并装两个文件。面板标题去图标、空看板只留标题、整体右移 1 格对齐输入框、昵称剥 emoji。735 测试全绿
+## [2026-11-04 15:15] [[fanchao]] dev | 去掉 todo 面板上边框：hooks/abs.pi.ts 与 abs.omp.ts 两副本各删一条 thinkingOff 满宽描边 push，首行改为标题行；plugin-behavior.test.js 把「上描边满宽」改成「无上边框」并修两处 [1]→[0]。727 测试全绿
 ## [2026-11-03 13:20] [[fanchao]] dev | 完成主动记忆闭环 + 全项目审查收尾：①query 流水页/draft 草稿默认隐藏对齐 db search；②新增 abs recall 与 skill 开场「有知识库随时能查」；③补「主动提炼」触发规则；④修审查 4 个 P1（stale-days/MCP 错误/项目名消歧/归档锁）；⑤提炼 3 条 draft 成内容页。727 测试全绿，发布 1.24.0
 ## [2026-11-03 13:14] [[fanchao]] note | 定义了判据却没接到使用侧，比没判据更常见：abs query 排序混流水页的根因是 lint.js 早有 isTerminal 判据，但 query 排序没用它。教训是判据定义与使用要同 commit，否则两处各写一套、改了定义也不生效
 ## [2026-11-03 13:13] [[fanchao]] note | herdr 里跑 pi（SSH 远程）时复制失效：pi 全屏模式强开鼠标跟踪截走拖选事件。解法 tuiMode 改 regular。根因是 herdr-core 剥掉 SSH 环境变量，pi 误判本地会话，pbcopy 写进远程机剪贴板

@@ -818,6 +818,15 @@ async function installPi({ withMcp, withSkill }) {
   const p = join(dir, 'abs.ts');
   await atomicWrite(p, piPluginSource()); // Pi 用专用模板, 语法与 OpenCode 不同构
   steps.push(`✓ hook(ts extension) → ${p}`);
+  // 圆角四边框输入框（纯 UI，与记忆功能无关，pi 专属）。
+  // 为什么要独立成第二个扩展文件：它是可选样式，用户不想要时删掉这一个文件即可，
+  // 不必动 abs.ts 这个核心 hook。模板无占位符，直接拷。
+  // 两个文件必须一起装：editor 里 import 了 format 的纯函数（抽出来是为了能单测）。
+  const roundedFiles = ['pi-rounded-editor.ts', 'pi-rounded-format.ts'];
+  for (const f of roundedFiles) {
+    await atomicWrite(join(dir, f), renderPluginTemplate(f, {}));
+  }
+  steps.push(`✓ editor(rounded box) → ${join(dir, 'pi-rounded-editor.ts')}`);
   // MCP → ~/.pi/agent/mcp-adapter.json 的 mcpServers (stdio)
   // 坑（2026-09-30 用户实报）：曾写 mcp.json，但 pi-mcp-adapter 已不再读它
   //   （pi 自有 mcp.json 被 adapter 忽略，adapter 改读 mcp-adapter.json）→ 写了等于没写。
@@ -839,6 +848,9 @@ async function installPi({ withMcp, withSkill }) {
 async function uninstallPi() {
   const steps = [];
   await fs.rm(join(hostConfigRoot('pi'), 'agent', 'extensions', 'abs.ts'), { force: true });
+  for (const f of ['pi-rounded-editor.ts', 'pi-rounded-format.ts']) {
+    await fs.rm(join(hostConfigRoot('pi'), 'agent', 'extensions', f), { force: true });
+  }
   steps.push(`✓ extension 已删除`);
   steps.push(...await uninstallSkills('pi'));
   const mcpP = join(hostConfigRoot('pi'), 'agent', 'mcp-adapter.json');

@@ -713,10 +713,16 @@ const USER_NICKNAMES = [
 let sessionNickname = ''
 
 /** 抽一条昵称。传 rnd 便于测试注入；默认 Math.random。关掉：ABS_TODO_NICK=0。 */
+/** 昵称池每条存成「emoji + 空格 + 正文」，展示时剥掉 emoji，只留正文（2026-11-04 用户要求）。 */
+export function stripNicknameEmoji(s: string): string {
+  // 循环剥：🏴‍☠️、😮‍💨 这类 ZWJ 组合 emoji 由多段拼成，只剥一次会剩下后半截。
+  return s.replace(/^(?:\p{Extended_Pictographic}[\uFE0F\u200D\u{1F3FB}-\u{1F3FF}]*)+[\s]*/u, '').trim()
+}
+
 export function pickNickname(rnd: () => number = Math.random): string {
   if (String(process.env.ABS_TODO_NICK || '') === '0') return ''
   const i = Math.min(USER_NICKNAMES.length - 1, Math.floor(rnd() * USER_NICKNAMES.length))
-  return USER_NICKNAMES[Math.max(0, i)]
+  return stripNicknameEmoji(USER_NICKNAMES[Math.max(0, i)])
 }
 
 /** 解析 todo.md 的 ## Todo 区 —— 只收未完成行（- [ ]），Done 区不计。
@@ -923,30 +929,19 @@ export function renderPanelLines(
   //   下面仍要画框和标题，所以这里只是不再提前 return。
   const colorOf = (state: string): string => (state === '搁置' ? 'dim' : state === '滞留中' ? 'muted' : state === '讨论中' ? 'dim' : 'accent')
   const lines: string[] = []
-  // 上描边：用 `thinkingOff` —— 跟 Pi 输入框描边**完全同一个色**。
-  // 排查过程（2026-10-03 用户两轮反馈）：
-  //   ① 用 dim = okhsl(229 8% 56%) → 用户说“太亮”（比输入框亮 7%）
-  //   ② 改 border = okhsl(231 57% 65%) → 用户说“怎么是蓝色的”（高饱和度蓝紫）
-  //   ③ 真相：输入框的描边是 theme.getThinkingBorderColor(level)，level=off 时
-  //      就是 thinkingOff = okhsl(229 8% 49%)（纯灰低饱和）。
-  // 教训：看到“跟宿主某个 UI 元素一致”的需求，必须去宿主源码查那个元素
-  // **实际**用了哪个主题色，不能按名字猜（border 听着像框线，其实不是输入框那个）。
-  // 满宽（不 -1）—— 对齐 pi 自己的 DynamicBorder.render：`"─".repeat(Math.max(1, width))`。
-  // 曾写 width-1 怕折行，但 pi 自己就满宽画，用户实报“右侧缺一小块”。
-  // 且我们传入的 fg() 包了一层 ANSI，ANSI 不占列宽，不会因此溢出。
-  lines.push(fg('thinkingOff', '─'.repeat(Math.max(1, width))))
+  // 上描边行已删除（2026-11-04 用户要求「去掉上边框」）。
+  // 历史：那行曾用 `thinkingOff` 对齐 pi 输入框描边色（排查三轮才定色）。
+  // 首行现在是标题行。
+  //
   // 昵称附在作者名后（会话内固定，启动时随机抽）。
   const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
-  const title = whoPart ? `📋 todo (${data.total}) — ${whoPart}` : `📋 todo (${data.total})`
-  lines.push(clipToWidth(fg('accent', title), width))
+  const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
+  // 前导一格空格：对齐输入框内文本（输入框左右竖线内侧各留一格，见 hooks/pi-rounded-editor.ts）。
+  lines.push(clipToWidth(' ' + fg('accent', title), width))
 
   const lastIdx = data.rows.length - 1
-  // 空看板：标题下摆一行事实（与 system prompt 里的看板段同口径）。
-  // 只摆事实、不写劝告 —— 「记得登记」那类已被 13 次尝试证明无效（见 OPENING_RULES 注解）。
-  if (data.total === 0) {
-    lines.push(clipToWidth(`  ${fg('dim', '（无未完成任务）')}`, width))
-    return lines
-  }
+  // 空看板只显示标题行（2026-11-04 用户要求去掉「（无未完成任务）」那行）。
+  if (data.total === 0) return lines
   data.rows.forEach((t, i) => {
     // `└─` 只给最后一条 —— 不管它有没有子项。
     // （2026-10-03 审查修正：原条件 `i === lastIdx && !t.note` 会让“末条带子项”时
@@ -960,7 +955,7 @@ export function renderPanelLines(
     const box = fg('dim', '[ ]')
     const head = `${fg('dim', branch)} ${box} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
-    lines.push(clipToWidth(head + desc, width))
+    lines.push(clipToWidth(' ' + head + desc, width))
     if (t.kids && t.kids.length) {
       // 子项：标准 md 嵌套列表 → 画成树
       //   ├─ [ ] 子项一
@@ -978,7 +973,7 @@ export function renderPanelLines(
     }
   })
 
-  if (data.hidden > 0) lines.push(clipToWidth(fg('dim', `  +${data.hidden} more`), width))
+  if (data.hidden > 0) lines.push(clipToWidth(fg('dim', `   +${data.hidden} more`), width))
   return lines
 }
 /** 隐藏面板。**必须主动 requestRender** —— 否则数据清了、屏幕还留着旧画面。
@@ -1002,7 +997,7 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
     const md = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8')
     const who = await currentUser()
     const data = parseOpenTasks(md, PANEL_MAX_ROWS, who)
-    // 任务为空**也显示面板**（摆一行「（无未完成任务）」），只有无图谱才隐藏。
+    // 任务为空**也显示面板**（只留标题行），只有无图谱才隐藏。
     // 曾写 data.total === 0 → hidePanel；用户 2026-10-06 要求改掉。
     // factory 形式：render(width) 每帧拿真实宽度 → 按宽度截断，不再断字。
     // 动画：phase 存在模块级，render 时读当前值；定时器只在本帧重绘，不重建 widget。

@@ -341,10 +341,16 @@ const USER_NICKNAMES = [
 let sessionNickname = ''
 
 /** 抽一条昵称。传 rnd 便于测试注入；默认 Math.random。关掉：ABS_TODO_NICK=0。 */
+/** 昵称池每条存成「emoji + 空格 + 正文」，展示时剥掉 emoji，只留正文（2026-11-04 用户要求）。 */
+export function stripNicknameEmoji(s: string): string {
+  // 循环剥：🏴‍☠️、😮‍💨 这类 ZWJ 组合 emoji 由多段拼成，只剥一次会剩下后半截。
+  return s.replace(/^(?:\p{Extended_Pictographic}[\uFE0F\u200D\u{1F3FB}-\u{1F3FF}]*)+[\s]*/u, '').trim()
+}
+
 export function pickNickname(rnd: () => number = Math.random): string {
   if (String(process.env.ABS_TODO_NICK || '') === '0') return ''
   const i = Math.min(USER_NICKNAMES.length - 1, Math.floor(rnd() * USER_NICKNAMES.length))
-  return USER_NICKNAMES[Math.max(0, i)]
+  return stripNicknameEmoji(USER_NICKNAMES[Math.max(0, i)])
 }
 
 /** 解析 todo.md 的 ## Todo 区 —— 只收未完成行（- [ ]），Done 区不计。
@@ -516,19 +522,15 @@ export function renderPanelLines(
   // ★ 空看板不返回空数组：面板是「机制在不在」的常驻指示，进去就看不见 = 不知道机制活着。
   const colorOf = (state: string): string => (state === '搁置' ? 'dim' : state === '滞留中' ? 'muted' : state === '讨论中' ? 'dim' : 'accent')
   const lines: string[] = []
-  // 上描边用 `thinkingOff` —— 与输入框描边同一个色（pi 版排查三轮才确认：不能按名字猜主题色）。
-  // 满宽（不 -1）—— 对齐宿主自己的 DynamicBorder.render。
-  lines.push(fg('thinkingOff', '─'.repeat(Math.max(1, width))))
+  // 上描边行已删除（2026-11-04 与 pi 版同步，用户要求「去掉上边框」）。首行现在是标题行。
   const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
-  const title = whoPart ? `📋 todo (${data.total}) — ${whoPart}` : `📋 todo (${data.total})`
-  lines.push(clipToWidth(fg('accent', title), width))
+  const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
+  // 前导一格空格：对齐输入框内文本（输入框左右竖线内侧各留一格，见 hooks/pi-rounded-editor.ts）。
+  lines.push(clipToWidth(' ' + fg('accent', title), width))
 
   const lastIdx = data.rows.length - 1
-  // 空看板：标题下摆一行事实。只摆事实、不写劝告。
-  if (data.total === 0) {
-    lines.push(clipToWidth(`  ${fg('dim', '（无未完成任务）')}`, width))
-    return lines
-  }
+  // 空看板只显示标题行（2026-11-04 用户要求去掉「（无未完成任务）」那行）。
+  if (data.total === 0) return lines
   data.rows.forEach((t, i) => {
     // `└─` 只给最后一条 —— 不管它有没有子项（否则末条带子项时全篇没有收尾）。
     const isLast = i === lastIdx
@@ -538,7 +540,7 @@ export function renderPanelLines(
     const box = fg('dim', '[ ]')
     const head = `${fg('dim', branch)} ${box} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
-    lines.push(clipToWidth(head + desc, width))
+    lines.push(clipToWidth(' ' + head + desc, width))
     if (t.kids && t.kids.length) {
       // 子项：标准 md 嵌套列表 → 画成树
       const stem = isLast ? '  ' : fg('dim', '│ ')
@@ -552,7 +554,7 @@ export function renderPanelLines(
     }
   })
 
-  if (data.hidden > 0) lines.push(clipToWidth(fg('dim', `  +${data.hidden} more`), width))
+  if (data.hidden > 0) lines.push(clipToWidth(fg('dim', `   +${data.hidden} more`), width))
   return lines
 }
 

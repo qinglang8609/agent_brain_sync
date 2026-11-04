@@ -1111,8 +1111,8 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     };
     const lines = renderPanelLines(data, 'me', 80, fg);
     const taskLines = lines.filter((l) => l.includes('[进行中]'));
-    assert.ok(taskLines[0].startsWith('├─'), `首条应 ├─: ${taskLines[0]}`);
-    assert.ok(taskLines[1].startsWith('└─'), `末条（带断点）应 └─: ${taskLines[1]}`);
+    assert.ok(taskLines[0].trimStart().startsWith('├─'), `首条应 ├─: ${taskLines[0]}`);
+    assert.ok(taskLines[1].trimStart().startsWith('└─'), `末条（带断点）应 └─: ${taskLines[1]}`);
   });
 
   // ★ 2026-10-16 用户要求：面板是 todo.md 的只读视图 ——
@@ -1145,35 +1145,31 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(kid1.includes('├─'), `多条子项的第一条用 ├─: ${JSON.stringify(kid1)}`);
     assert.ok(kid2.includes('└─'), `最后一条子项用 └─: ${JSON.stringify(kid2)}`);
     // 子项缩进在父任务下（父任务是 ├─，故子项行以 '│ ' 起）
-    assert.ok(kid1.startsWith('│ '), `子项应缩进在父任务下: ${JSON.stringify(kid1)}`);
+    assert.ok(kid1.trimStart().startsWith('│ '), `子项应缩进在父任务下: ${JSON.stringify(kid1)}`);
   });
 
-  test('上描边满宽（不得留余量，否则右侧缺一块）', async () => {
+  // 2026-11-04 用户要求「去掉上边框」：首行直接是标题，不再有 `─` 描边线。
+  test('无上边框：首行是标题，且不含描边线', async () => {
     const { renderPanelLines } = await loadPanelFns();
-    // 用真 ANSI 包装模拟 pi 的 theme.fg
-    const fg = (c, s) => `\x1b[38;5;240m${s}\x1b[0m`;
-    const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+    const fg = (c, s) => s;
     const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', kids: [] }], hidden: 0 };
     for (const w of [40, 80, 120]) {
-      const line = renderPanelLines(data, 'me', w, fg, 0, '')[0];
-      const got = [...strip(line)].length;
-      // 对齐 pi 自己的 DynamicBorder："─".repeat(Math.max(1, width))
-      assert.equal(got, w, `width=${w} 描边应满宽，实际 ${got}（差了 ${w - got} 列）`);
+      const lines = renderPanelLines(data, 'me', w, fg, 0, '');
+      assert.ok(lines[0].includes('Todo ('), `首行应是标题: ${JSON.stringify(lines[0])}`);
+      assert.ok(!lines.some((l) => /─{5,}/.test(l)), `不得有描边线:\n${lines.join('\n')}`);
     }
   });
 
   // ★ 2026-10-06 用户要求反转了旧行为：「即便 todo 没有列表，也要在 pi 上显示」。
   //   旧行为（空→不渲染任何行→面板自动隐藏）已作废。
   //   理由：一进 pi 就看不见面板 = 不知道 abs 活着没（跟「看不到 load」同一类问题）。
-  test('空任务列表 → 仍渲染框+标题+（无未完成任务）一行', async () => {
+  // 2026-11-04 用户要求：没任务时不显示「（无未完成任务）」，只留标题一行。
+  test('空任务列表 → 只有标题一行', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const lines = renderPanelLines({ total: 0, rows: [], hidden: 0 }, 'me', 80, (c, s) => s);
-    assert.ok(lines.length > 0, '空看板也要画面板（不得返回空数组）');
-    const text = lines.join('\n');
-    assert.ok(text.includes('📋 todo'), `标题要在:\n${text}`);
-    assert.ok(text.includes('（无未完成任务）'), `要摆明“无任务”这个事实:\n${text}`);
-    // 纯事实：不得夹带劝告（「记得登记」那类已被 13 次尝试证明无效）。
-    assert.ok(!/记得|别忘了|请登记|应该登记/.test(text), `不得夹带劝告:\n${text}`);
+    assert.equal(lines.length, 1, `空看板应只有标题一行，实际 ${lines.length} 行:\n${lines.join('\n')}`);
+    assert.ok(lines[0].includes('Todo ('), `唯一那行应是标题: ${JSON.stringify(lines[0])}`);
+    assert.ok(!lines[0].includes('（无未完成任务）'), `不得出现那句提示: ${JSON.stringify(lines[0])}`);
   });
 
   // 动画（2026-10-03 用户需求）：三个小符依次由空心变实心，只给「进行中」的行。
@@ -1218,18 +1214,18 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   });
 
   // 审查发现（2026-10-03）：原池子正文长 9-15 字，标题会被窄终端截断。
-  // 用户定下 4-8 字，并把池子扩到 50+ 条。两条不变式都锁住。
-  test('昵称池：每条以 emoji 开头，正文 4-8 字，总条数 50+', async () => {
+  // 用户定下 4-8 字，并把池子扩到 50+ 条。
+  // 2026-11-04 用户要求标题不带表情 → pickNickname 剥掉开头的 emoji，只返回正文。
+  test('昵称池：返回纯正文（无 emoji），4-8 字，总条数 50+', async () => {
     const { pickNickname } = await loadPanelFns();
     const seen = new Set();
     for (let i = 0; i < 500; i++) seen.add(pickNickname());
     assert.ok(seen.size >= 50, `池子应有 50+ 条: ${seen.size}`);
-    // 每条 = emoji + 空格 + 正文
-    const badEmoji = [...seen].filter((s) => !/^\p{Extended_Pictographic}/u.test(s));
-    assert.equal(badEmoji.length, 0, `以下条目缺 emoji: ${badEmoji.join(' | ')}`);
+    // 标题不得带表情（emoji 已剥离）
+    const badEmoji = [...seen].filter((s) => /^\p{Extended_Pictographic}/u.test(s));
+    assert.equal(badEmoji.length, 0, `以下条目仍带 emoji: ${badEmoji.join(' | ')}`);
     const badLen = [...seen].filter((s) => {
-      const body = s.replace(/^\p{Extended_Pictographic}[\uFE0F\u200D\s]*/u, '').trim();
-      const n = [...body].length;
+      const n = [...s.trim()].length;
       return n < 4 || n > 8;
     });
     assert.equal(badLen.length, 0, `以下条目正文不在 4-8 字: ${badLen.join(' | ')}`);
@@ -1252,7 +1248,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const fg = (c, s) => s;
     const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', kids: [] }], hidden: 0 };
     const nick = '📞 听到电话铃响就窒息的接听恐惧症';
-    const wide = renderPanelLines(data, 'fanchao', 200, fg, -1, nick)[1];
+    const wide = renderPanelLines(data, 'fanchao', 200, fg, -1, nick)[0];
     assert.match(wide, /fanchao/, '应含作者名');
     assert.match(wide, /接听恐惧症/, `应含昵称: ${wide}`);
     const narrow = renderPanelLines(data, 'fanchao', 40, fg, -1, nick);
@@ -1267,7 +1263,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       return w;
     };
     for (const l of narrow) assert.ok(dw2(l) <= 40, `窄宽度溢出(${dw2(l)}): ${strip2(l)}`);
-    const plain = renderPanelLines(data, 'fanchao', 200, fg, -1, '')[1];
+    const plain = renderPanelLines(data, 'fanchao', 200, fg, -1, '')[0];
     assert.ok(!plain.includes('·'), `无昵称不该有分隔符: ${plain}`);
   });
 
