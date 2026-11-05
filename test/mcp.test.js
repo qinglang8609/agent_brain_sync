@@ -42,7 +42,15 @@ afterEach(async () => {
 async function startServer(cwd, envOverride = {}) {
   child = spawn(process.execPath, [MCP], {
     cwd: cwd || sandbox,
-    env: { ...process.env, ABS_LOG: '0', ABS_USER: 'tester', ABS_CONFIG_DIR: join(sandbox, 'abs-cfg'), ...envOverride },
+    env: {
+      ...process.env, ABS_LOG: '0', ABS_USER: 'tester',
+      ABS_CONFIG_DIR: join(sandbox, 'abs-cfg'),
+      // 库也要隔离（2026-11-05）：abs_search 走 ~/.abs/graph.db，
+      // 而多个测试文件并行跑时会同时 rebuild 同一个库 → "database is locked"。
+      // 默认落到沙盒，需要真库的测试用 envOverride 显式覆盖。
+      ABS_DB: join(sandbox, 'graph.db'),
+      ...envOverride,
+    },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   // 丢弃 stderr(不干扰); 等待子进程起来
@@ -312,10 +320,17 @@ test('abs_search 默认不给铁律（省 token），include_rules 才给', asyn
   await initBrain(projA);
   await startServer();
   await initHandshake();
-  // 先建库（abs_search 走 ~/.abs/graph.db，不走 query 的逐文件读）
-  await tool('abs_note', { text: '并发写入要加锁，否则后写盖掉先写', cwd: projA });
-  const { cmdDbRebuild } = await import('../src/brain/db-cmd.js');
-  await cmdDbRebuild({ dir: projA });
+  // 先建库（abs_search 走 graph.db，不走 query 的逐文件读）。
+  // ABS_DB 指向沙盒库，避免与并行跑的其它测试文件抢同一个库（database is locked）。
+  const prevDb = process.env.ABS_DB;
+  process.env.ABS_DB = join(sandbox, 'graph.db');
+  try {
+    await tool('abs_note', { text: '并发写入要加锁，否则后写盖掉先写', cwd: projA });
+    const { cmdDbRebuild } = await import('../src/brain/db-cmd.js');
+    await cmdDbRebuild({ dir: projA });
+  } finally {
+    if (prevDb === undefined) delete process.env.ABS_DB; else process.env.ABS_DB = prevDb;
+  }
 
   const plain = await tool('abs_search', { cwd: projA, query: '并发写' });
   const text = textOf(plain);
