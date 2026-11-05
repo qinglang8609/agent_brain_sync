@@ -125,3 +125,43 @@ export function layerConflict(body, dirName) {
   if (!expect || expect === r.layer) return null;
   return `layer: ${r.layer} 与目录 ${dirName}/（默认 ${expect}）不符`;
 }
+
+/** 会话页的骨架段名（由 ingest.js 的 SHAPES 决定，这里只用于判「填没填」）。
+ *  与 ingest 的 SHAPES 必须同步 —— 加新形状时两处都要改。 */
+export const DIGEST_SECTIONS = ['出了什么问题', '怎么解决的', '验证什么命令',
+  '做了什么操作', '结果怎样', '下次注意事项', '谈成了什么', '没结论的地方'];
+
+/** 会话页的三段骨架里有没有任何一段写了真内容。
+ *
+ * 为何要这个判据（2026-11-05 实测）：`ingest --auto` 每次关会话都落一张空骨架，
+ *   而空骨架的「用户原话」段有高词频、正文又短 —— bm25 天然占优。
+ *   实测造 20 张空骨架后查「登录超时」：前 12 名全是空页，
+ *   真正讲过这个问题的知识页被彻底挤出结果。
+ *   所以「未填」必须能被算出来，才能把它们排除出检索。
+ *
+ * 判据：骨架段内除占位注释与空行外还有没有真内容。
+ * 不看 status —— 人可能填完忘了改 active，用 status 会漏判。
+ * 只看骨架段，不数「用户原话/改过的文件」—— 那两段是素材，不是填写成果。 */
+export function digestFilled(body) {
+  const lines = String(body || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const h = lines[i].match(/^##\s+(.+?)\s*$/);
+    if (!h || !DIGEST_SECTIONS.includes(h[1].trim())) continue;
+    for (let j = i + 1; j < lines.length; j++) {
+      const t = lines[j].trim();
+      if (/^##\s/.test(t)) break;                            // 下一段开始
+      if (!t) continue;
+      if (t.startsWith('<!--') || t === '-->') continue;      // 占位注释不算填
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 这一页是不是「没人填过的会话页骨架」。入库时算一次，存成 unfilled 列。
+ * 非会话页一律 false（只有 ingest 落的页才可能是空骨架）。 */
+export function isUnfilledDigest(body) {
+  const t = String(body || '');
+  if (!/^kind:\s*session-digest$/m.test(t)) return false;
+  return !digestFilled(t);
+}
