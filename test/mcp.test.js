@@ -336,3 +336,20 @@ test('abs_search 默认不给铁律（省 token），include_rules 才给', asyn
   const text = textOf(plain);
   assert.ok(!/L1 铁律/.test(text), `默认不该返回铁律（开工时 load 会给）:\n${text.slice(0, 300)}`);
 });
+
+// 删除任务（2026-11-05）：用户报「每次删除任务可烦人了」——
+// 原来 MCP 只暴露 state=搁置（先不做、留在看板上），没有真正的删除。
+test('abs_task action=remove 能删掉任务（含子项）', async () => {
+  await initBrain(projA);
+  await startServer();
+  await initHandshake();
+  await tool('abs_task', { cwd: projA, action: 'start', id: 'MCP-RM', note: '要删的' });
+  await tool('abs_task', { cwd: projA, action: 'note', id: 'MCP-RM', note: '子项' });
+
+  const r = await tool('abs_task', { cwd: projA, action: 'remove', id: 'MCP-RM' });
+  assert.match(textOf(r), /已删除任务 MCP-RM/, textOf(r));
+
+  const md = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
+  assert.ok(!md.includes('MCP-RM'), `任务该消失:\n${md}`);
+  assert.ok(!md.includes('子项'), `子项也该消失:\n${md}`);
+});

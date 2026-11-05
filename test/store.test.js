@@ -3368,3 +3368,56 @@ describe('陈旧 ↳ 子项 + 报告体：读取不能崩（2026-11-05）', () =
     );
   });
 });
+
+// 删除任务（2026-11-05 用户报「每次删除任务可烦人了」——
+// 原来只有 state=搁置，而搁置是「先不做，还留在看板上」，不是删除）。
+describe('todo remove — 删除任务', () => {
+  test('连子项一起删，且不误删别的任务', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'rm-'));
+    try {
+      await cmdInit({ dir: root });
+      // cmdTask 层只认 start/done/... 这些内部动作；'add' 是 CLI 的别名（bin/abs.js 里转成 start）
+      await cmdTask({ dir: root, action: 'start', id: 'DEL', note: '要删的' });
+      await cmdTask({ dir: root, action: 'note', id: 'DEL', note: '子项一' });
+      await cmdTask({ dir: root, action: 'note', id: 'DEL', note: '子项二' });
+      await cmdTask({ dir: root, action: 'start', id: 'KEEP', note: '要保留的' });
+
+      const out = await cmdTask({ dir: root, action: 'remove', id: 'DEL' });
+      assert.match(out, /已删除任务 DEL/);
+      assert.match(out, /连同 2 条子项/, `要报告删了几条子项: ${out}`);
+
+      const md = await fs.readFile(join(root, '.brain', 'todo.md'), 'utf8');
+      assert.ok(!md.includes('DEL'), `任务行该消失:\n${md}`);
+      assert.ok(!md.includes('子项一') && !md.includes('子项二'), `子项也该消失:\n${md}`);
+      assert.ok(md.includes('KEEP'), `不该误删别的任务:\n${md}`);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('不存在的 id 明确报 NO_MATCH，不静默成功', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'rm-'));
+    try {
+      await cmdInit({ dir: root });
+      const out = await cmdTask({ dir: root, action: 'remove', id: 'NOT-EXIST' });
+      assert.match(out, /NO_MATCH/);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('Done 区的任务删不掉（历史不许篡改）', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'rm-'));
+    try {
+      await cmdInit({ dir: root });
+      await cmdTask({ dir: root, action: 'start', id: 'DONE1', note: '做完了' });
+      await cmdTask({ dir: root, action: 'done', id: 'DONE1', as: '落地' });
+      const out = await cmdTask({ dir: root, action: 'remove', id: 'DONE1' });
+      assert.match(out, /NO_MATCH/, `Done 区的条目不该被删: ${out}`);
+      const md = await fs.readFile(join(root, '.brain', 'todo.md'), 'utf8');
+      assert.ok(md.includes('DONE1'), `Done 记录必须还在:\n${md}`);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});

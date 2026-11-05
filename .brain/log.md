@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-11-05 17:32] [[fanchao]] dev | 新增 abs todo remove：删除任务（连子项），rm/del 别名；MCP 侧 abs_task action=remove 同步支持。原来只有 state=搁置（先不做、留在看板上），用户报「每次删除任务可烦人了」。边界：不存在的 id 报 NO_MATCH、Done 区历史删不掉。800 测试全绿
 ## [2026-11-05 16:13] [[fanchao]] dev | 发布 1.26.0：11 commit 推送 origin/main（pre-push 796 全绿），npm publish 后等传播延迟直查 registry 确认 1.26.0，本地全局安装并重装 hook/skill/MCP；安装版端到端验证（落页+load提醒+summon记账）全通
 ## [2026-11-05 15:34] [[fanchao]] dev | 修账本并发丢数据：①writeLedger 的 tmp 名用 Date.now() 无随机段，同毫秒并发撞名→rename ENOENT；②readLedger+改+writeLedger 非原子，两个会话同时关闭后写的盖掉先写的。实测旧写法并发 30 次只剩 1 条丢 29 条。新增 updateLedger（走 lock.js 的 editFile 加锁），ingest 与 summon --mark 都改用它。破坏验证：改回无锁测试立刻红。794 测试全绿
 ## [2026-11-05 15:28] [[fanchao]] dev | 真机验证 hook detached 落页链路（首次真正跑通）：用与 hook 完全一致的方式（detached+unref+stdio ignore）验证——①正常调用能落页；②父进程立即退出后子进程仍完成落页。此前只有「路径能调」的证据，没有「关闭会话时真的会落」的证据

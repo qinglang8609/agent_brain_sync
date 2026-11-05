@@ -351,6 +351,7 @@ const subUsage = {
     '  abs todo child-undone <id> [--n N] 取消勾',
     '  abs todo memo <id> "随手记（可多句）"  任务笔记 → sessions/，不上看板；无文字=查看',
     '  abs todo state <id> --note 进行中|讨论中|滞留中|搁置',
+    '  abs todo remove <id>              删除任务（连子项，不可恢复；只是先不做请用 state 搁置）',
     '  abs todo done <id> [--as 落地|否决|仅方案] [结语文字]',
     '  abs todo archive [--keep-days N] [--dry-run]',
     '',
@@ -431,6 +432,12 @@ const TODO_ACTIONS = {
   state: 'state', // 改行首状态标记：进行中|讨论中|滞留中|搁置（原地，不搬区）
   rename: 'rename', // 改任务 id：人工起错名、或旧 id 不可读时用
   done: 'done',
+  // 删除任务（2026-11-05 用户要求）：连子项一起移除，不可恢复。
+  // 与 state=搁置 语义不同 —— 搁置是「先不做，还留在看板上」，删除是「从未登记过」。
+  // rm 是别名：用户说「删除」时想敲的通常是 rm/del。
+  remove: 'remove',
+  rm: 'remove',
+  del: 'remove',
 };
 
 /** abs config —— 读/写用户设置（目前只有 user）。 */

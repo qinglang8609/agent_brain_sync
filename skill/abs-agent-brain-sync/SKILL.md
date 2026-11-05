@@ -40,7 +40,7 @@ MCP 侧走 `abs_search`（等价于 `abs db search --no-rules`）—— 比 `abs
 ```bash
 abs load                          # 开机读状态
 abs query <词>                    # 字面 OR 命中，输出短；MCP 侧更推荐 abs_search（更准）
-abs todo add <id> --note "做什么"   # 登记；note/memo/state/done 见「进行中」
+abs todo add <id> --note "做什么"   # 登记；note/memo/state/done/remove 见「进行中」
 abs capture [--layer 1-6] [--kind …] "…"   # 按七层判定落点后写入（L7 走 abs note）
 abs summon                        # 列出没落页的会话（只读，不写盘）
 abs ingest <会话文件或 id>         # 把一场 pi 会话落成会话页（带 session id 双向回溯）
@@ -200,6 +200,9 @@ todo 是随改随写的活看板，和 git commit 同反射。
 
 **四个落点的区别**：
 
+- `remove` = **删除**，连子项一起移除，**不可恢复**。记错了/重复了/与事实不符时用。
+  与 `state 搁置` 的区别：搁置是「先不做，任务还留在看板上」，下个会话还会问你；
+  删除是「当作从未登记过」。Done 区的条目删不掉（历史不许篡改）。
 - `note` = **子项**，一句话**追加式**（每次多一条，不覆盖），上看板。
 - `memo` = **随手记**，可多句**追加式**，不占看板。
 - `abs_note` = 提炼过的**经验/坑**，一句话结论 → `sources/` 待提炼。

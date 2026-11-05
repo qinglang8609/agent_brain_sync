@@ -137,6 +137,45 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
     });
     return cc.length ? `✓ ${id} 状态 → [${note}]` : `[NO_MATCH] 未找到含 "${id}" 的未完成任务行，或状态未变`;
   }
+  // 删除任务（2026-11-05 用户要求「每次删除任务可烦人了」）。
+  // 与 state=搁置 的区别（别混）：
+  //   搁置 = 先不做，任务**留在看板上**，下个会话还会看见它并问你要不要接着干
+  //   删除 = 从看板移除，当作从未登记过（记错了/重复了/与事实不符）
+  // 为何必须连子项一起删：只删任务行会留下无主的缩进子项，
+  //   normalizeTodo 重建分区时它们会被当孤儿清掉 —— 那种「清掉」是静默的，
+  //   而这里要让整块消失是**显式**的，且报告删了几条。
+  if (action === 'remove') {
+    const f = brainPath(root, 'todo.md');
+    let removed = null;
+    await editFile(f, (cur) => {
+      if (cur === null) return SKIP;
+      const lines = cur.split('\n');
+      const wantId = String(id).replace(/[\u200b\u200c\u200d\ufeff]/g, '');
+      for (let i = 0; i < lines.length; i++) {
+        if (idOfTaskLine(lines[i]) !== wantId) continue;
+        // 收集这一行 + 紧跟的所有子项行（缩进列表项 / 旧 ↳ 写法）
+        const block = [lines[i]];
+        let j = i + 1;
+        while (j < lines.length) {
+          const nx = lines[j];
+          if (!nx.trim()) break;
+          const kid = parseChild(nx);
+          const legacy = /^\s+↳\s/.test(nx);
+          if ((kid && kid.indent > 0) || legacy) { block.push(nx); j++; continue; }
+          break;
+        }
+        removed = { body: lines[i], kids: block.length - 1 };
+        lines.splice(i, block.length);
+        return { text: lines.join('\n') };
+      }
+      return SKIP;
+    });
+    if (!removed) return `[NO_MATCH] 未找到含 "${id}" 的未完成任务行`;
+    // 只删未完成区：Done 区的条目是历史，删了等于篡改记录。
+    // idOfTaskLine 只认 `- [ ]`，所以到这里的一定是未完成的。
+    const kidNote = removed.kids ? `（连同 ${removed.kids} 条子项）` : '';
+    return `✓ 已删除任务 ${id}${kidNote}\n  原行: ${removed.body.trim().slice(0, 90)}\n  说明: 删除是不可恢复的移除；只是「先不做」请用 abs todo state ${id} --note 搁置`;
+  }
   if (action === 'note') {
     if (!note) return '用法: abs todo note <id> --note "进度"\n  建议前缀（load 会把它们单独抽出来，让人一眼看到）:\n    验证: <跑过的命令/结果>\n    边界: <这方案治不了什么>\n    阻塞: <在等什么，卡在哪>';
     const r = await setBreakpoint(root, { id, text: note });
