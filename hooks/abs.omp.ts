@@ -130,6 +130,27 @@ function snapshotWrapup(cwd: string): void {
   } catch {} // fire-and-forget
 }
 
+/** 会话关闭时把这场会话落成会话页（2026-11-05，与 pi 侧同一机制）。
+ *
+ * 为何挂 session_shutdown 而不靠 agent 主动调：「靠提醒让 LLM 养成习惯」本仓已
+ * 两次实测否证（concept remind-vs-gate）；收尾必须由机械事件触发。
+ *
+ * 为何传 --session 而不是 --last：`--last` 按文件 mtime 选，同时开两个会话时会选错
+ * —— pi 侧实测「关会话 A 却落了 B 的页」。这里能拿到 sid 就传，拿不到才退回 --last。
+ *
+ * 为何不往对话里插话：走到 shutdown 已经没有对话了，只落盘，输出丢弃。
+ * 下次开工 abs load 会把未填的会话页摆出来 —— 摆事实，判断仍归 agent。 */
+function snapshotSessionPage(cwd: string, sid = ""): void {
+  const args = ["ingest", "--auto"]
+  if (sid) args.push("--session", sid); else args.push("--last")
+  try {
+    const child = spawn(process.execPath, [ABS_BIN, ...args], {
+      cwd: cwd || process.cwd(), stdio: "ignore", detached: true,
+    })
+    child.unref()
+  } catch {} // fire-and-forget，失败不影响关会话
+}
+
 /** 定位当前项目的 .brain/：只看 cwd 本身，不向上搜索（防爬到家目录图谱）。 */
 async function findBrain(cwd: string): Promise<string | null> {
   const d = cwd || process.cwd()
@@ -525,8 +546,8 @@ export function renderPanelLines(
   // 上描边行已删除（2026-11-04 与 pi 版同步，用户要求「去掉上边框」）。首行现在是标题行。
   const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
   const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
-  // 前导一格空格：对齐输入框内文本（输入框左右竖线内侧各留一格，见 hooks/pi-rounded-editor.ts）。
-  lines.push(clipToWidth(' ' + fg('accent', title), width))
+  // 空看板标题前加 1 格（与输入框文字对齐）；有任务时不加，任务行顶到最左（2026-11-04 用户）。
+  lines.push(clipToWidth((data.total === 0 ? ' ' : '') + fg('accent', title), width))
 
   const lastIdx = data.rows.length - 1
   // 空看板只显示标题行（2026-11-04 用户要求去掉「（无未完成任务）」那行）。
@@ -540,7 +561,7 @@ export function renderPanelLines(
     const box = fg('dim', '[ ]')
     const head = `${fg('dim', branch)} ${box} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
-    lines.push(clipToWidth(' ' + head + desc, width))
+    lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
       // 子项：标准 md 嵌套列表 → 画成树
       const stem = isLast ? '  ' : fg('dim', '│ ')
@@ -554,7 +575,7 @@ export function renderPanelLines(
     }
   })
 
-  if (data.hidden > 0) lines.push(clipToWidth(fg('dim', `   +${data.hidden} more`), width))
+  if (data.hidden > 0) lines.push(clipToWidth(fg('dim', `  +${data.hidden} more`), width))
   return lines
 }
 
@@ -845,6 +866,7 @@ export default function absOmpExtension(pi: ExtensionAPI): void {
   pi.on("session_shutdown", (_e: SessionShutdownEvent, ctx: ExtensionContext) => {
     stopAnimTimer() // 面板没了，动画定时器必须一起停（否则残留定时器白刷已丢弃的 tui）
     snapshotWrapup(ctx.cwd)
+    snapshotSessionPage(ctx.cwd, sessionIdFor(ctx))
     logHook("session_shutdown").catch(() => {})
   })
 }

@@ -125,6 +125,37 @@ function snapshotWrapup(cwd: string): void {
   } catch {} // fire-and-forget
 }
 
+/** 会话关闭时把这场会话落成会话页（2026-11-05）。
+ *
+ * 为何挂这里而不是靠 agent 主动调：本仓已两次实测「靠提醒让 LLM 养成习惯」必失败
+ * （concept remind-vs-gate）——「有疑惑就查」这种规矩写进 skill 开场后也仍然漏
+ * （concept 检索有效不等于记忆被用）。所以收尾不能靠它想起来，得靠机械事件。
+ *
+ * 为何用 session_shutdown 而不是 agent_end：agent_end 是**每一轮回复**结束都触发，
+ * 2026-09-21/22 两次实测被用户当场指出「聊一句话就触发」；而且往对话里插消息
+ * 这条路已被 2026-09-18 / 2026-10-05 两次用户实报（任务中断 / 卡顿）否决。
+ * session_shutdown 是真正关会话，此刻 jsonl 已写完（实测 347 行 0 坏行），读得到全文。
+ *
+ * 为何不往对话里回话：这里没有对话了。它只落盘，输出丢弃。
+ * 下次开工 abs load 会把未填的会话页摆出来 —— 摆事实，判断仍归 agent。
+ *
+ * 判据在 ingest 的 --auto 里（只收真改过文件的会话）；这里只负责把它叫起来。 */
+function snapshotSessionPage(cwd: string, sid = ""): void {
+  // ★ 传本会话 id，不用 --last 猜（2026-11-05 实测修正）：
+  //   `--last` 按文件 mtime 选，同时开两个会话时会选错 ——
+  //   实测关会话 A 却落了 B 的页，因为 B 的 jsonl 更新。
+  //   hook 这侧本来就能拿到会话 id（sessionIdFor），传下去即可精确定位。
+  //   取不到 id 时才退回 --last（老版本语境 / 宿主不提供），至少还能落一场。
+  const args = ["ingest", "--auto"];
+  if (sid) args.push("--session", sid); else args.push("--last");
+  try {
+    const child = spawn(process.execPath, [ABS_BIN, ...args], {
+      cwd: cwd || process.cwd(), stdio: "ignore", detached: true,
+    })
+    child.unref()
+  } catch {} // fire-and-forget，失败不影响关会话
+}
+
 /** 定位当前项目的 .brain/：只看 cwd 本身，不向上搜索（防爬到家目录图谱）。 */
 async function findBrain(cwd: string): Promise<string | null> {
   const d = cwd || process.cwd()
@@ -936,8 +967,8 @@ export function renderPanelLines(
   // 昵称附在作者名后（会话内固定，启动时随机抽）。
   const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
   const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
-  // 前导一格空格：对齐输入框内文本（输入框左右竖线内侧各留一格，见 hooks/pi-rounded-editor.ts）。
-  lines.push(clipToWidth(' ' + fg('accent', title), width))
+  // 空看板标题前加 1 格（与输入框文字对齐）；有任务时不加，任务行顶到最左（2026-11-04 用户）。
+  lines.push(clipToWidth((data.total === 0 ? ' ' : '') + fg('accent', title), width))
 
   const lastIdx = data.rows.length - 1
   // 空看板只显示标题行（2026-11-04 用户要求去掉「（无未完成任务）」那行）。
@@ -955,7 +986,7 @@ export function renderPanelLines(
     const box = fg('dim', '[ ]')
     const head = `${fg('dim', branch)} ${box} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
-    lines.push(clipToWidth(' ' + head + desc, width))
+    lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
       // 子项：标准 md 嵌套列表 → 画成树
       //   ├─ [ ] 子项一
@@ -973,7 +1004,7 @@ export function renderPanelLines(
     }
   })
 
-  if (data.hidden > 0) lines.push(clipToWidth(fg('dim', `   +${data.hidden} more`), width))
+  if (data.hidden > 0) lines.push(clipToWidth(fg('dim', `  +${data.hidden} more`), width))
   return lines
 }
 /** 隐藏面板。**必须主动 requestRender** —— 否则数据清了、屏幕还留着旧画面。
@@ -1205,6 +1236,7 @@ export default function absPiHook(pi: ExtensionAPI): void {
   pi.on("session_shutdown", (_e: any, ctx: any) => {
     stopAnimTimer() // 面板没了，动画定时器必须一起停（否则残留定时器白刷已丢弃的 tui）
     snapshotWrapup((ctx && ctx.cwd) || process.cwd())
+    snapshotSessionPage((ctx && ctx.cwd) || process.cwd(), sessionIdFor(ctx))
     logHook("session_shutdown").catch(() => {})
   })
 }

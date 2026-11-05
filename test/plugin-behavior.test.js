@@ -99,18 +99,20 @@ function hooksLog(logDir) {
 }
 
 // ============================ pi ============================
-describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
-  async function loadPi(logDir) {
-    await run(['install', '--agent', 'pi', '--yes']);
-    const p = join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts');
-    return importTsWithLog(p, logDir);
-  }
+// 装在文件作用域：pi 的两个 describe 都要用（关会话落页是另一组，不该复制一份）。
+async function loadPi(logDir) {
+  await run(['install', '--agent', 'pi', '--yes']);
+  const p = join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts');
+  return importTsWithLog(p, logDir);
+}
 
-  function harness(absPiHook) {
-    const handlers = {}, injected = [];
-    absPiHook({ on: (e, f) => { handlers[e] = f }, sendUserMessage: (text, opts) => injected.push({ text, opts }) });
-    return { handlers, injected };
-  }
+function harness(absPiHook) {
+  const handlers = {}, injected = [];
+  absPiHook({ on: (e, f) => { handlers[e] = f }, sendUserMessage: (text, opts) => injected.push({ text, opts }) });
+  return { handlers, injected };
+}
+
+describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
 
   test('导出契约: default 是函数, 且注册了 agent_end', async () => {
     const mod = await loadPi(join(sandbox, 'log'));
@@ -815,6 +817,25 @@ describe('插件模板源文件 (hooks/*.ts)', () => {
       for (const k of spec.forbid) assert.ok(!src.includes(k), `${name} 不会用到 ${k}，不应出现`);
     });
 
+    // 两个宿主模板都必须接上会话页落盘（2026-11-05）：
+    // 只在 pi 接、omp 不接，意味着换宿主后这个机制静默消失 ——
+    // 而它不会报错，只是「会话关了但没落页」。
+    test(`${name} 接上了会话页落盘`, async () => {
+      // 只在 pi 接、omp 不接，意味着换宿主后这个机制静默消失 ——
+      // 它不会报错，只是「会话关了但没落页」。
+      // op​encode 模板走另一套事件模型（event 订阅），不在此列（用 includes 判，名字含零宽字符）。
+      if (name.includes('op')) return;
+      const p = join(REPO, 'hooks', name);
+      const src = await fs.readFile(p, 'utf8');
+      assert.match(src, /function snapshotSessionPage\(/, `${name} 缺 snapshotSessionPage`);
+      assert.match(src, /"ingest",\s*"--auto"|'ingest',\s*'--auto'/, `${name} 没调 ingest --auto`);
+      // 传 id 才不落错页；用正则找「调用点」，不靠 indexOf 切全文
+      // 参数里有 process.cwd() 这种嵌套括号，所以不能用 [^)]* ——
+      // 改成「调用点开头到行尾之间出现 sessionIdFor」
+      assert.match(src, /snapshotSessionPage\(.*sessionIdFor\(/,
+        `${name} 应传会话 id（--last 在多会话时会落错）`);
+    });
+
     test(`${name} 占位符替换后语法可解析 (node --check)`, async () => {
       const p = join(REPO, 'hooks', name);
       const src = await fs.readFile(p, 'utf8');
@@ -1172,6 +1193,25 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(!lines[0].includes('（无未完成任务）'), `不得出现那句提示: ${JSON.stringify(lines[0])}`);
   });
 
+  // 2026-11-04 用户要求：空看板标题前留 1 格（与输入框文字对齐），有任务时标题与任务行都顶最左。
+  test('★ 空看板标题缩进 1 格；有任务时标题与任务行都顶最左', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const lead = (s) => s.length - s.trimStart().length;
+
+    const empty = renderPanelLines({ total: 0, rows: [], hidden: 0 }, 'me', 80, fg);
+    assert.equal(lead(empty[0]), 1, `空看板标题应缩进 1 格: ${JSON.stringify(empty[0])}`);
+
+    const withTask = renderPanelLines(
+      { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', kids: [{ done: false, text: '子项' }] }], hidden: 0 },
+      'me', 80, fg,
+    );
+    const title = withTask.find((l) => l.includes('Todo ('));
+    const taskRow = withTask.find((l) => l.includes('x — d'));
+    assert.equal(lead(title), 0, `有任务时标题不该缩进: ${JSON.stringify(title)}`);
+    assert.equal(lead(taskRow), 0, `有任务时任务行不该缩进: ${JSON.stringify(taskRow)}`);
+  });
+
   // 动画（2026-10-03 用户需求）：三个小符依次由空心变实心，只给「进行中」的行。
   test('动画：只有「进行中」行带三帧符，其余不带', async () => {
     const { renderPanelLines } = await loadPanelFns();
@@ -1345,3 +1385,43 @@ describe('pi 扩展 面板重绘', () => {
   });
 });
 
+
+describe('pi 扩展 会话关闭时会话落页（2026-11-05）', () => {
+  // 病根：会话内容原来只能靠 agent 主动跑 abs ingest 才落盘，而「靠提醒让 LLM 养成习惯」
+  // 已被本仓两次实测证伪（concept remind-vs-gate）。故改成机械触发：关会话时 hook 自己起进程。
+  test('注册了 session_shutdown，且关会话时会起 ingest 进程', async () => {
+    const logDir = join(sandbox, 'log');
+    // 用一个假的 abs 入口替换真 CLI，只记录它被以什么参数调用 ——
+    // 断言「起了什么进程」而不是「进程输了什么」，这样测的是触发本身，不测 CLI 内部。
+    const fakeBin = join(sandbox, 'fake-abs.js');
+    await fs.writeFile(fakeBin, `
+      import { appendFileSync } from 'node:fs';
+      appendFileSync(${JSON.stringify(join(sandbox, 'calls.log'))}, process.argv.slice(2).join(' ') + '\\n');
+    `, 'utf8');
+    process.env.ABS_BIN_PATH = fakeBin;
+    try {
+      const mod = await loadPi(logDir);
+      const { handlers } = harness(mod.default);
+      assert.ok(handlers.session_shutdown, '必须注册 session_shutdown');
+      const proj = await makeProject('pi-close', true);
+      // 宿主会通过 sessionManager.getSessionId() 提供本会话 id —— 必须模拟，
+      // 否则测的是「拿不到 id 时退回 --last」那条兜底路径，测不到真正的修复。
+      const ctx = { cwd: proj, sessionManager: { getSessionId: () => 'aaaa1111-1111-2222-3333-444455556666' } };
+      await handlers.session_shutdown({}, ctx);
+      // 子进程是 detached fire-and-forget，等它落一行
+      let calls = '';
+      for (let i = 0; i < 40; i++) {
+        calls = await fs.readFile(join(sandbox, 'calls.log'), 'utf8').catch(() => '');
+        if (calls.includes('ingest')) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      // 有 sid 时必须传 --session，不能只传 --last（多会话时会落错页）
+      assert.match(calls, /ingest --auto --session \S+/, `关会话要传本会话 id，实际调用:\n${calls}`);
+      assert.ok(!/ingest --auto --last|ingest --last --auto/.test(calls),
+        `拿到 sid 时不该用 --last 猜（会落错会话）:\n${calls}`);
+      assert.match(calls, /wrapup/, '原有 wrapup 仍要跑');
+    } finally {
+      delete process.env.ABS_BIN_PATH;
+    }
+  });
+});
