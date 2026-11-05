@@ -1,6 +1,7 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] db-search-no-rules-mcp [[fanchao]] — db search 加 --no-rules，并发到 MCP 暴露 abs_search (认领 2026-11-05 01a1a9c6-6907-71)
 
 ## Done
 

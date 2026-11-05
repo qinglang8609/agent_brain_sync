@@ -13,6 +13,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findBrainRoot, absLogDir, AbsError } from '../src/index.js';
 import { cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdRule, cmdResolve, cmdSupersede } from '../src/store.js';
+// abs_search 用：db search 的实现（它比 cmdQuery 强 —— 带亮度排序、能扩散、能跨项目）
+import { cmdDbSearch } from '../src/brain/db-cmd.js';
 
 // ---------- 技术日志: MCP 请求跟踪（调试用, 与图谱 log.md 完全分开） ----------
 // 落 ~/.abs/log/mcp.log: 每次工具调用一行 [时间] tool cwd 参数摘要 → 耗时/结果摘要。
@@ -201,6 +203,36 @@ tool(
       return err(text, {
         code: 'NO_MATCH',
         fallback: '换更具体的词重试（支持多个词 OR）；或读 .brain/index.md 看完整清单',
+      });
+    }
+    return { content: [{ type: 'text', text }] };
+  }
+);
+
+tool(
+  'abs_search',
+  '按亮度检索知识图谱（跨项目）：比 abs_query 更强 —— 带亮度排序、能从邻居页扩散、能查到别的项目的经验（标 [跨项目]）。'
+  + '适合「我上次怎么解决 X」这类回忆。铁律默认省略（开工时 abs_load 会给），需要时传 include_rules=true。',
+  {
+    cwd: z.string().describe('项目根目录（.brain/ 所在处）'),
+    query: z.string().describe('检索词（一句话或几个词都行，中文两字以上即可）'),
+    limit: z.number().int().min(1).max(20).optional().describe('最多几页，默认 8'),
+    include_rules: z.boolean().optional().describe('true=连 L1 铁律一起返回（默认省略，省 token）'),
+  },
+  async ({ cwd, query, limit, include_rules }) => {
+    // 库是全局的（~/.abs/graph.db），不需要 findBrainRoot —— 但先确认项目本身有图谱，
+    // 否则用户在一个陌生目录调用会得到「别的项目的结果」而不自知。
+    const root = await findBrainRoot(cwd || process.cwd());
+    if (!root) return errNoBrain(cwd || process.cwd());
+    const text = await cmdDbSearch({
+      query: String(query || ''),
+      limit: Number(limit) || 8,
+      noRules: !include_rules,
+    });
+    if (/库还没建|无命中/.test(text)) {
+      return err(text, {
+        code: 'NO_MATCH',
+        fallback: '库可能是旧的：跑 abs db rebuild 重扫；或换更具体的词',
       });
     }
     return { content: [{ type: 'text', text }] };

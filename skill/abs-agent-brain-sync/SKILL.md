@@ -14,11 +14,16 @@ description: "USE FOR abs / agent-brain-sync 跨会话记忆与任务续接。�
 怎么查：
 
 ```bash
-abs recall <关键词>     # 有疑问时用：按亮度出最相关的几页（不给词就从当前处境推）
-ab query <词>           # 想拿更全：多词 OR，枚举全图命中
-db search <词>          # 更高级：种子扩散亮起相关页，先出铁律
-abs resolve <页名>      # 拿到页名后反查路径，只读那一页
+abs recall <关键词>       # 有疑问时用：按亮度出最相关的几页（不给词就从当前处境推）
+abs query <词>            # 多词 OR，枚举全图字面命中；输出短（页名+摘要），省 token
+abs db search <词>        # CLI：亮度排序 + 邻居扩散 + 跨项目；加 --no-rules 省掉 18 条铁律
+abs resolve <页名>        # 拿到页名后反查路径，只读那一页
 ```
+
+MCP 侧走 `abs_search`（等价于 `abs db search --no-rules`）—— 比 `abs_query` 强：
+带亮度排序、能从邻居页扩散、能查到别的项目（标 `[跨项目]`）。
+两者是**详略两档**，不是重复：`abs_query` 给字面命中的页名+摘要，最省；
+`abs_search` 给亮度与扩散，找「我上次怎么解决 X」时更准。
 
 查完只读命中那几页，**绝不通读 `.brain/`**。答用 `[[页面名]]` 标来源。
 
@@ -30,11 +35,11 @@ abs resolve <页名>      # 拿到页名后反查路径，只读那一页
 
 ## 命令速查
 
-完整帮助 `abs help`。读写优先走 MCP（`abs_load`/`abs_task`/`abs_note`/`abs_query`/`abs_lint`/`abs_rule`），比 CLI 快；`abs wrapup`/`abs teardown-check` 是 hook 内部命令。分工：hook 记技术日志；CLI/MCP 实时落盘；skill 负责深提炼 + 收尾 + 修 index。
+完整帮助 `abs help`。读写优先走 MCP（`abs_load`/`abs_task`/`abs_note`/`abs_search`/`abs_query`/`abs_lint`/`abs_rule`），比 CLI 快；`abs wrapup`/`abs teardown-check` 是 hook 内部命令。分工：hook 记技术日志；CLI/MCP 实时落盘；skill 负责深提炼 + 收尾 + 修 index。
 
 ```bash
 abs load                          # 开机读状态
-abs query <词>                    # 检索；abs resolve <页名> 反查路径
+abs query <词>                    # 字面 OR 命中，输出短；MCP 侧更推荐 abs_search（更准）
 abs todo add <id> --note "做什么"   # 登记；note/memo/state/done 见「进行中」
 abs capture [--layer 1-6] [--kind …] "…"   # 按七层判定落点后写入（L7 走 abs note）
 abs summon                        # 列出没落页的会话（只读，不写盘）

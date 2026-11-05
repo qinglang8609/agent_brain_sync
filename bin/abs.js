@@ -153,6 +153,9 @@ const FLAG_SPEC = {
   //           --auto 只落真改过文件的会话（纯聊天不落页）。
   'last': { type: 'boolean' },
   'auto': { type: 'boolean' },
+  // db search 用：不输出 L1 铁律（查主题时它们是噪音；开工看铁律是 load 的职责）。
+  // ★ 不声明会被 parseArgs 当布尔 true —— 见上面 kind 的注释。
+  'no-rules': { type: 'boolean' },
 };
 
 /** 已被"规范键"接管的 raw flag：不再原样漏出（见 parseArgv 返回处的白名单注释）。 */
@@ -618,7 +621,7 @@ async function main() {
         const sub = opts._[0];
         const rest = opts._.slice(1);
         if (sub === 'rebuild') { console.log(await cmdDbRebuild({ dir: opts.dir })); break; }
-        if (sub === 'search') { console.log(await cmdDbSearch({ query: rest.join(' '), limit: Number(opts.limit) || 8, full: !!opts.full })); break; }
+        if (sub === 'search') { console.log(await cmdDbSearch({ query: rest.join(' '), limit: Number(opts.limit) || 8, full: !!opts.full, noRules: !!opts['no-rules'] })); break; }
         if (sub === 'status') { console.log(await cmdDbStatus()); break; }
         if (sub === 'evolve') { console.log(await cmdDbEvolve({ staleDays: Number(opts.staleDays) || 90 })); break; }
         if (sub === 'add') {
