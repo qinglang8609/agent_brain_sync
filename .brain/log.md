@@ -1,4 +1,18 @@
 # 🗒 Activity Log
+## [2026-11-05 15:34] [[fanchao]] dev | 修账本并发丢数据：①writeLedger 的 tmp 名用 Date.now() 无随机段，同毫秒并发撞名→rename ENOENT；②readLedger+改+writeLedger 非原子，两个会话同时关闭后写的盖掉先写的。实测旧写法并发 30 次只剩 1 条丢 29 条。新增 updateLedger（走 lock.js 的 editFile 加锁），ingest 与 summon --mark 都改用它。破坏验证：改回无锁测试立刻红。794 测试全绿
+## [2026-11-05 15:28] [[fanchao]] dev | 真机验证 hook detached 落页链路（首次真正跑通）：用与 hook 完全一致的方式（detached+unref+stdio ignore）验证——①正常调用能落页；②父进程立即退出后子进程仍完成落页。此前只有「路径能调」的证据，没有「关闭会话时真的会落」的证据
+## [2026-11-05 15:24] [[fanchao]] dev | 补 omp 宿主的会话页接线：abs.omp.ts 有 session_shutdown 事件但没接 ingest（只在 pi 接过），换宿主后机制会静默消失。加 snapshotSessionPage + 传 sessionIdFor，并为两个模板补「接线存在」的测试（破坏验证：撤掉传 sid 会红）。792 测试全绿
+## [2026-11-05 14:45] [[fanchao]] dev | 填好本场会话页（第 2 张已填页）+ 修 headlineOf 半句判据：本场页标题原来被抓成「找一下所有会话中…我/」（用户打字中途回车）。加「未完成结尾」判据，但刻意不含「的/了」——实测它们会误杀「去掉不必要的」「不想要了」这类完整句。789 测试全绿
+## [2026-11-05 14:40] [[fanchao]] dev | 修多会话落错页：hook 原来只传 --last（按 mtime 选文件），同时开两个会话时关 A 会落 B 的页。改为传本会话 id（--session，sessionIdFor 已有但没用上），取不到才退回 --last。破坏验证：撤掉传参会红。785 测试全绿
+## [2026-11-05 14:36] [[fanchao]] dev | 文档同步 + 安装自检：宿主 SKILL 落后仓库 28 行（新机制说明全缺），重装对齐；install 末尾加陈旧入口自检（判据是文件里有没有 ingest，不是文件存不存在），治「先装 hook、后重装包」那段空窗。782 测试全绿
+## [2026-11-05 14:31] [[fanchao]] dev | 修两个判据不一致：①daysWithSnapshot 把 session-<日期>-s<id>.md 也当整天快照，导致同一天只落一场就把其余几场永久埋掉（真机 14 天存在多场会话，最多一天 10 场）；②ingest 落页不记账，summon 永远催已落页的会话。改为：单场会话页不算整天快照；落页即记账（--mark 并入默认）。779 测试全绿
+## [2026-11-05 13:07] [[fanchao]] dev | 完成 ingest 兜底修正：①idsOf 匹配失败时用文件名哈希（原来退成 sunknown，同一天两场会互相覆盖丢会话）；②核实 hook 端到端可用——12:24 那次失败原因是 hook 12:23 装好但全局包 12:27 才重装，中间调用的是不存在的命令。真机路径验证通过。776 测试全绿
+## [2026-11-05 13:03] [[fanchao]] dev | 完成空骨架页三层防护：①入库算 unfilled 列；②检索种子排除；③扩散出口也排除（入口排了出口不排就会从邻居绕进来，实测知识页链到空骨架后它以 ↝0.24 出现在结果里）；④load 提醒改按日期倒序并明说「别想着全填」。774 测试全绿
+## [2026-11-05 12:53] [[fanchao]] dev | 完成 zj_shop 会话页试点 + 修两个真问题：①陈旧 ↳ 子项 + 报告体让 readTodo 直接崩（迁移改了行签名而 prevSig 用原签名，存量宽容失效，整项目 load 变不可用）→ 让 prev 走同一迁移；②headlineOf 抓出粘贴的需求文档当摘要 → 改判据优先短句、跳文档体。771 测试全绿
+## [2026-11-05 12:38] [[fanchao]] dev | 审查收尾：修 ingest 记空 md5（内容不变误报有更新）、capture L5 产出坏页、L7 死代码；撤回 hook 公共模块方案（安装产物是自包含单文件，改了会崩）；沉淀 npm install -g . 是软链但 hook 模板是拷贝。765 测试全绿
+## [2026-11-05 12:21] [[fanchao]] dev | 完成命令面精简：capture --layer 7 改拒（与 abs note 落点相同）、MCP 删 abs_board（被 load 完全覆盖）与 abs_wrapup（hook 内部命令）；MCP 工具 13→11。758 测试全绿，实际握手验证 tools/list 确认
+## [2026-11-05 11:50] [[fanchao]] dev | 完成会话页机制（abs ingest）：把整场会话落成结构化页，按改过文件机械判三种形状（技术/业务操作/讨论），frontmatter 记 session-id 双向回溯；会话页检索亮度乘 0.5 防淹知识页；lint NO-TAIL 按 kind 分档（decision/tradeoff 写取舍依据即可）。753 测试全绿（新增 13+1+3）
+## [2026-11-05 11:49] [[fanchao]] note | 会话本身也是知识：只沉淀编程经验会让知识图谱漏掉大部分会话内容（实测 92 场只提炼出 3 条规律，因为多数会话在干具体活）。落点 abs ingest：按改过什么文件机械判三种形状，与会话靠 session-id 双向挂钩
 ## [2026-11-04 15:51] [[fanchao]] dev | 修复 1.25.0 的加载失败：pi 把 extensions/ 下每个顶层 .ts 都当独立扩展并要求默认导出，纯函数文件导致 pi 启动报错。改成官方多文件写法「目录 + index.ts」，helper 不参与扫描；install/uninstall 同步改，并清理旧版平铺文件。发布 1.25.1
 ## [2026-11-04 15:48] [[fanchao]] dev | 发布 1.25.0：新增 pi 圆角四边框输入框扩展（hooks/pi-rounded-editor.ts + pi-rounded-format.ts），右上角显示「百分比/上限 模型名」，working 进边框，隐藏 footer；纯函数抽出配 8 条测试；install/uninstall 一并装两个文件。面板标题去图标、空看板只留标题、整体右移 1 格对齐输入框、昵称剥 emoji。735 测试全绿
 ## [2026-11-04 15:15] [[fanchao]] dev | 去掉 todo 面板上边框：hooks/abs.pi.ts 与 abs.omp.ts 两副本各删一条 thinkingOff 满宽描边 push，首行改为标题行；plugin-behavior.test.js 把「上描边满宽」改成「无上边框」并修两处 [1]→[0]。727 测试全绿

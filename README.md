@@ -75,7 +75,7 @@ pi 与 omp 宿主额外多一层 UI（其它宿主没有）：**编辑器上方�
 - **子项（缩进的 `- [ ]`）挂在父任务下**；`├─` / `└─` 表结构
 - **子项可各自勾选**：`  - [ ] 一句话` → `  - [x] 一句话`；全部勾上才能 `done` 父任务
 - **「进行中」带三点动画**`○○○ → ●●○ → ●●●`（250ms/帧）—— 一眼看出哪条在跑
-- **实时刷新**：我调 `abs_task` / `abs_board` 后立即重画，不用等我讲完话
+- **实时刷新**：我调 `abs_task` 后立即重画，不用等我讲完话
 - **上描边与输入框同色满宽**（主题色 `thinkingOff`，跟 pi 输入框的边框一致）
 - 窄终端按显示宽度截断（CJK 计 2 列），不溢出
 
@@ -120,13 +120,15 @@ abs todo done    TASK-1
 abs note "一句话经验" --tags 坑,docker    # 经验暂存 → sources/
 abs log "完成 X"                          # 记一行流水；abs log 无参 = 查看
 abs query <词>                            # 检索图谱（多词 OR）；已被推翻的经验默认隐藏（--all 可看）
-abs capture [--layer 1-7] [--kind …] "一句话"  # 按七层判层后落到位（--kind: gotcha|decision|tradeoff|howto）
+abs capture [--layer 1-6] [--kind …] "一句话"  # 按七层判层后落到位（L7 用 abs note；--kind: gotcha|decision|tradeoff|howto）
 abs db rebuild                            # 扫所有登记项目 → 建图数据库（~/.abs/graph.db）
 abs db search <词> [--full]              # 走库检索：默认只给摘要+token 成本，--full 才附正文
 abs db status                             # 库体检：七层分布 / 悬挂链接 / 已入库项目
 abs db add                                # 把当前项目登记进 ~/.abs/projects.json
 abs db evolve                             # 知识进化体检：被推翻/断链/主题堆积/僵化页
-abs summon [--mark|--status]              # 会话总结托底：列出未总结 / 有更新的会话（不写盘）
+abs summon [--status]                   # 列出还没落页的会话（只读，不写盘）
+abs ingest <会话文件或 id>                 # 把一场 pi 会话落成会话页（session-id 双向回溯）
+                                           #   已填 → 亮度×0.5；未填 → 整页不进检索
 abs resolve <页名或id>                    # 反查页面路径（页改名后 id 不变）
 abs supersede <页名> [--by <新页>]        # 标记经验已失效（不删文件，保留历史；query 默认不再返回）
 abs status                                # 当前项目 + 图谱概要

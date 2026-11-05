@@ -71,7 +71,6 @@ node --test test/evolve.test.js   # 7 个判据测试
 「lint 误报 `[[todo]]` 死链」这句里）。
 
 ## 主动总结：每处落盘都查一遍会话
-
 `abs log` 与 `abs capture` 都在落盘时扫一遍 pi 会话历史，
 带出「未总结 / 有更新」的会话。逻辑收在 `summonTail`（summon.js），两处共用一份，
 避免各写一份后漂移。

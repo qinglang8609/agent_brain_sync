@@ -100,3 +100,5 @@ npm test                                # 全量 671 个
 
 - [[sqlite-vs-graph-db]] — 为什么不用 Neo4j 的取舍
 - [[chinese-fts-two-gram]] — 中文分词那个坑的细节
+- [[session-digest-design]] — 会话页同样要降权：正文长、词频高会压过知识页
+- [[入口出口同一判据]] — 「流水页必须排除」那条实测的延续：扩散出口也得排

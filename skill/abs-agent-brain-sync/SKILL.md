@@ -36,7 +36,9 @@ abs resolve <页名>      # 拿到页名后反查路径，只读那一页
 abs load                          # 开机读状态
 abs query <词>                    # 检索；abs resolve <页名> 反查路径
 abs todo add <id> --note "做什么"   # 登记；note/memo/state/done 见「进行中」
-abs capture [--layer 1-7] [--kind …] "…"   # 按七层判定落点后写入（--kind 分作用）
+abs capture [--layer 1-6] [--kind …] "…"   # 按七层判定落点后写入（L7 走 abs note）
+abs summon                        # 列出没落页的会话（只读，不写盘）
+abs ingest <会话文件或 id>         # 把一场 pi 会话落成会话页（带 session id 双向回溯）
 abs note "经验" [--tags a,b]      # 暂存经验（一律 L7 混沌层）
 abs concept <slug> --title "…"    # 建概念页骨架
 abs rule add "一句话"             # 加 Rules；abs lint 体检；abs init 建图谱
@@ -121,9 +123,9 @@ abs rule add "一句话"             # 加 Rules；abs lint 体检；abs init �
 | L2 规则 | 这个项目要遵守的做法 | `concepts/` + `layer: 2` | `abs capture --layer 2` |
 | L3 工具 | 某工具怎么用、有什么坑 | `concepts/` + `layer: 3` | `abs capture --layer 3` |
 | L4 认知 | 踩坑的根因与解法 | `concepts/` + `layer: 4` | `abs capture "…"`（默认） |
-| L5 会话 | 这次做了什么 | `log.md` / `sessions/` | `abs log` / `abs todo done` |
+| L5 会话 | 这次做了什么 | `log.md` / `sessions/` | `abs log`（当天工作）/ `abs ingest`（一场会话） |
 | L6 断点 | 双链词 | 不立页，机器自动抽 | 不接手写 |
-| L7 混沌 | 还没想清的碎片 | `sources/` | `abs capture --layer 7` |
+| L7 混沌 | 还没想清的碎片 | `sources/` | `abs note`（capture 的 L7 已拒，同一个落点） |
 
 判据不明时用 L4 —— 但**知道是工具经验就写 L3**：实测算过，本仓 52 页 concepts 里 23 页其实是 L3。
 
@@ -138,6 +140,43 @@ abs rule add "一句话"             # 加 Rules；abs lint 体检；abs init �
 
 不传就不写（旧页留空，不强制补）。实测只有 `gotcha` 能靠 tags/标题机械识别，
 另三类判据在内容里 —— 别拿关键词瞎猜。
+
+**尾巴按 kind 分档**（`abs lint` 的 NO-TAIL）：`gotcha`/`howto` 必须有验证命令；
+`decision`/`tradeoff` 写「当时依据什么选的」（取舍依据，不是可跑的命令）；
+无 `kind` 的旧页保持原要求。理由：决策类知识天生没有验证命令，硬要写就是编。
+
+## 会话总结（把整场会话变成知识）
+
+abs 不只记编程经验 —— **会话本身的结论也是知识**。两条路径，用途不同：
+
+| 想要 | 命令 | 产出 |
+|---|---|---|
+| 一场会话干了什么/谈成了什么 | `abs ingest <会话文件或 id 前 8 位>` | `sessions/session-<日期>-s<id8>.md`，带三种骨架之一 |
+| 还没落页的会话 | `abs summon` | 清单，不写盘 |
+
+`abs ingest` 按「改过什么文件」机械判形状，不让模型猜：
+
+- **技术类**（改了代码）→ 出了什么问题 / 怎么解决的 / 验证什么命令
+- **业务操作类**（只改数据/配置/文档）→ 做了什么操作 / 结果怎样 / 下次注意事项
+- **讨论类**（一个文件没改）→ 谈成了什么 / 没结论的地方
+
+它只给骨架和素材（用户原话、改过的文件、工具调用次数），**不写结论** —— 内容要读会话后填。
+
+**与会话的双向挂钩**（不要手改这三行）：`session`（pi 会话 id）、`session-file`（jsonl 文件名）、
+`project`（会话发生时的 cwd）。页文件名也带会话 id 前 8 位，拿会话文件能反查有没有总结过。
+
+会话页在检索里的待遇按「填没填」分两档（判据 `digestFilled`，`layers.js`）：
+
+| 状态 | 检索 |
+|---|---|
+| **已填**（骨架段有真内容） | 亮度乘 0.5，能搜到也能扩散，但不抢知识页位置 |
+| **未填**（骨架段只有占位注释） | **整页排除**，种子和扩散都进不来 |
+
+未填整页排除的理由（实测）：空骨架的「用户原话」段词频高、正文又短，bm25 天然占优。
+造 20 张空骨架后查「登录超时」，前 12 名全是空页，真正讲过该问题的知识页被彻底挤出结果。
+
+`abs load` 顶部会列出未填的张数（最多 5 个页名，按日期倒序）。**不必全部填** ——
+挑最近、有结论的几场；其余留着当流水，不填也不会污染检索。
 
 `abs capture` 之后跑 `abs db rebuild` 让图数据库收录，否则检索拿不到它。
 

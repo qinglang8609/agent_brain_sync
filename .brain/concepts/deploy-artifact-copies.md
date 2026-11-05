@@ -88,6 +88,7 @@ grep -c "你要验证的那行关键字" ~/.abs/log/hooks.log   # 0 就是在跑
 - [[abs-install-layout]] — 四宿主安装器与各落点路径
 - [[agents-skills-not-ownerless]] — skill 扇出的落点归属（别写 ~/.agents/skills/）
 - [[mcp-stale-paths-multi-store]] — MCP 注册会被多个外部 store 盖过
+- [[npm-global-is-symlink]] — 同一个仓里「软链 vs 拷贝」两类产物：前者改完即生效，后者必须重装
 - [[host-plugin-silent-failure]] — 装上≠加载≠触发（本页是它的"部署侧"兄弟）
 - [[silent-data-loss-diagnosis]] — 同族：先确认事实，再推理
 - [[opencode-inject-channel-verdict]] — 本次 probe 污染就是在该实验中被发现的

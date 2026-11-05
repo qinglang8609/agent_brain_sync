@@ -70,6 +70,7 @@ status: active
 ## 关联连接
 - [[fanchao]] — 本页沉淀者
 - [[validation-gate-on-shared-write-path]] — 姊妹页：闸门自身的失效（判据极性、存量处理）
+- [[迁移路径绕过存量宽容]] — 姊妹页：闸门的「存量放行」会被同一条管线上的迁移打穿
 - [[remind-vs-gate]] — 提醒 vs 闸门：只有闸门被验证有效，但闸门也要配出路
 - [[feature-delete-not-patch]] — 同族思路：先问「这个东西该不该存在」再谈怎么改
 - [[incomplete-state-no-auto-decide]] — 不完整状态下的闸门判据：拒绝并给下一步
