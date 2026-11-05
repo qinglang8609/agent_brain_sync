@@ -26,9 +26,9 @@ import { promises as fs } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { resolveLayer, anchorsOf, decayOf, DEFAULT_LAYER } from './layers.js';
+import { resolveLayer, anchorsOf, decayOf, DEFAULT_LAYER, isUnfilledDigest } from './layers.js';
 
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 /** 库路径。ABS_DB 可覆盖（测试隔离 / 多库切换）。 */
 export function dbPath() {
@@ -73,6 +73,13 @@ CREATE TABLE IF NOT EXISTS nodes (
   -- 因此任何查询都能命中它。实测（2026-11-01）刚 capture 一条「并发写」，log 页
   -- 亮度 3.87 排第一，压过真正的内容页 —— 这是纯噪音，必须从检索候选里排除。
   is_ledger  INTEGER NOT NULL DEFAULT 0,
+  -- 会话页骨架还没人填（只认 kind=session-digest）。1 = 空骨架。
+  -- 为何要单开一列（2026-11-05 实测）：ingest --auto 每次关会话都落一张空骨架，
+  --   而空骨架的「用户原话」段有高词频、正文又短 —— bm25 天然占优。
+  --   实测造 20 张空骨架后查「登录超时」：前 12 名全是空页，真正讲过这个问题的
+  --   知识页被彻底挤出结果。降到 0.5 亮度不够（它们仍然霸榜），必须整个排除。
+  --   填好后自动重算 → 重新参与检索并享受 0.5 折扣。
+  unfilled   INTEGER NOT NULL DEFAULT 0,
   -- 被哪一页推翻（对应 frontmatter 的 superseded-by）。
   -- 为何要进库（2026-11-02）：知识自我进化的第一个需要 —— 能查「哪些页被推翻了、
   -- 被谁推翻」。原来这关系只存在于 markdown 的一行 frontmatter 里，
@@ -260,6 +267,18 @@ export function estTokens(s) {
   return Math.round(cjk / 1.5 + rest / 4);
 }
 
+/** 会话页在检索里的亮度折扣。
+ *
+ * 为何要降权（2026-11-05 用户定，方案里选择「亮度乘 0.5」）：
+ *   `abs ingest` 把会话落成页后，sessions/ 里会出现大量正文很长的页。
+ *   会话页正文天然长、词频高，bm25 天然占优 —— 不降权就会把真正的内容页淹掉。
+ *   同一个病本仓已经踩过一次（log-2026-11-02 第八节：会话流水页压过知识页）。
+ *   0.5 是起步值：能搜到、能被双链扩散带出，但不会抢占榜单首位。
+ *
+ * 判据用 kind 而不是目录：sessions/ 里还有当天流水（log-<日期>），
+ * 那是另一类页，不该被这条折扣管。 */
+export const SESSION_DIGEST_DISCOUNT = 0.5;
+
 /** 从页正文取一句话摘要：优先 frontmatter 的 description，退化到首个非标题行。
  *  与 relevant.js 的 digest 同思路，但这里在库侧用（不读文件）。 */
 export function digest(body, maxLen = 90) {
@@ -301,8 +320,8 @@ export function rebuild(handle, pages) {
     db.exec('DELETE FROM anchors; DELETE FROM edges; DELETE FROM nodes; DELETE FROM rules; DELETE FROM nodes_bigram;');
     try { db.exec("INSERT INTO fts(fts) VALUES('delete-all')"); } catch { /* 空表时无可删 */ }
 
-    const insNode = db.prepare(`INSERT INTO nodes(project,dir,slug,layer,title,tags,status,body,mtime,is_ledger,superseded_by,kind)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const insNode = db.prepare(`INSERT INTO nodes(project,dir,slug,layer,title,tags,status,body,mtime,is_ledger,superseded_by,kind,unfilled)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
     const insGram = db.prepare('INSERT OR REPLACE INTO nodes_bigram(id,g) VALUES(?,?)');
     const insEdge = db.prepare('INSERT OR IGNORE INTO edges(src,dst,raw) VALUES(?,?,?)');
     const insAnchor = db.prepare('INSERT OR IGNORE INTO anchors(word,node) VALUES(?,?)');
@@ -314,8 +333,10 @@ export function rebuild(handle, pages) {
       const { title, tags, status, supersededBy, kind } = metaOf(p.body);
       const { layer } = resolveLayer(p.body, p.dir);
       const ledger = (p.dir === '' && LEDGER_SLUGS.has(p.slug)) ? 1 : 0;
+      // 空骨架会话页在检索里整页排除（见 SCHEMA 里 unfilled 列的注释）
+      const unfilled = isUnfilledDigest(p.body) ? 1 : 0;
       const r = insNode.run(p.project, p.dir, p.slug, layer, title, tags, status,
-        p.body, p.mtime || now, ledger, supersededBy, kind);
+        p.body, p.mtime || now, ledger, supersededBy, kind, unfilled);
       const id = Number(r.lastInsertRowid);
       // FTS 源：正文 + 标题 + tags 切 2-gram。查询侧必须用同一个 bigrams()。
       insGram.run(id, bigrams([p.slug, title, tags, p.body].join('\n')).join(' '));
@@ -470,6 +491,10 @@ export function search(handle, query, { limit = 20 } = {}) {
       JOIN nodes_bigram b ON b.id = fts.rowid
       JOIN nodes n ON n.id = fts.rowid
       WHERE fts MATCH ? AND n.is_ledger = 0
+        -- 未填的空骨架会话页不参与检索（2026-11-05 实测）：
+        -- 它们正文短、素材段词频高，bm25 天然占优。实测 20 张空页就把
+        -- 真正讲过该问题的知识页彻底挤出结果 —— 降权不够，必须整页排除。
+        AND n.unfilled = 0
         -- 被推翻的经验不出现在检索里。
         -- 它的存在意义是「别再用它」，而不是回答「我上次怎么解决 X」——
         -- 那会拿到一个已知错误的答案。与 abs query 的既有判据一致。
@@ -512,7 +537,10 @@ export function search(handle, query, { limit = 20 } = {}) {
         // 输出里一片 0.3~0.5，用户看不出谁更相关 —— 亮度失去了「一眼看强弱」的作用。
         // 层的作用改由**排序**承担（见下面 sort），亮度回归「这一页与查询多贴」本身。
         const bright = Math.max(0.3, Math.min(1, band * (0.1 + 0.9 * rel)));
-        return { ...r, bright };
+        // 会话页降权（2026-11-05）：见 SESSION_DIGEST_DISCOUNT 的注释。
+        // 扣亮度而不扣排序权重 —— 亮度是输出给人看的东西，权重是内部排序秩序。
+        const discounted = r.kind === 'session-digest' ? bright * SESSION_DIGEST_DISCOUNT : bright;
+        return { ...r, bright: discounted };
       })
       // 排序：层优先，同层再看亮度。
       // 为何层要排第一（2026-11-02，586 页实测）：查「静默失效」的前三名全是 L7
@@ -591,7 +619,12 @@ export function illuminate(handle, seeds, { hops = HOPS, limit = 10 } = {}) {
   for (const [id, v] of bright) {
     // 扩散出口也要排除 superseded —— 入口（search）排了，出口不排就绕过去：
     // 实测旧结论页自己不出现在种子里，却被邻居扩散点亮（亮度 0.24 带 ↝）。
-    const n = db.prepare("SELECT id,project,dir,slug,title,layer,kind,body FROM nodes WHERE id = ? AND is_ledger = 0 AND status != 'superseded'").get(id);
+    //
+    // ★ 同一条判据也要管 unfilled（2026-11-05 实测）：入口排了空骨架，
+    //   出口不排就会从邻居扩散进来 —— 实测知识页链到一张空骨架页后，
+    //   查「缓存穿透」时它以 `↝ 0.24` 出现在结果里。亮度虽低，但占了结果位，
+    //   且带 ↝ 标记看起来像有效线索，比直接排掉更容易误导。
+    const n = db.prepare("SELECT id,project,dir,slug,title,layer,kind,body FROM nodes WHERE id = ? AND is_ledger = 0 AND status != 'superseded' AND unfilled = 0").get(id);
     if (n) {
       // 与 search 保持同一形态：索引优先，只给摘要与成本，不带正文。
       // 坑（2026-11-02 实测）：这里原来只查少数字段，于是 CLI 侧读不到 digest/tokens，

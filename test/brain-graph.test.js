@@ -79,6 +79,16 @@ function page(project, dir, slug, body) {
   return { project, dir, slug, body, mtime: Date.now() };
 }
 
+// 会话页（abs ingest 落的页）：body 需要带 kind frontmatter 才会被降权。
+// 会话页（abs ingest 落的页）。默认带上**已填**的骨架段 ——
+// 未填的空骨架会被整页排除出检索（见 db.js 的 unfilled 列），
+// 要测「降权」必须先让它是已填状态，否则连候选都进不去。
+function digestPage(project, slug, body) {
+  const filled = '## 出了什么问题\n' + body + '\n';
+  return page(project, 'sessions', slug,
+    `---\nkind: session-digest\nlayer: 5\n---\n\n${filled}`);
+}
+
 test('bigrams 存储与查询两侧一致（否则静默失配）', () => {
   const g = bigrams('静默失效');
   assert.ok(g.includes('静默'));
@@ -130,8 +140,7 @@ test('搜索：两字中文词能命中（trigram 方案在这里会失败）', 
   }
 });
 
-test('搜索：种子亮度有区分度，不全等', async () => {
-  const { h, dir } = await freshDb();
+test('搜索：种子亮度有区分度，不全等', async () => {  const { h, dir } = await freshDb();
   try {
     rebuild(h, [
       page('p1', 'concepts', 'a', '并发写 并发写 并发写'),
@@ -258,12 +267,21 @@ test('capture: 不传 layer 默认 L4', async () => {
   }
 });
 
-test('capture: L7 落 sources/', async () => {
+// 2026-11-05 改判据：L7 不再接 capture。
+// 理由：`abs note` 与 `abs capture --layer 7` 是**同一个落点**
+// （实测两边都写 sources/，文件名与正文结构一致）。两个入口做同一件事，
+// 每次都得先选一个，而选错没有任何后果 —— 纯认知负担。
+// 按本仓判据「与已有功能重叠 → 复用/删，别新增」（concept feature-delete-not-patch），
+// 保留被真实用过 228 次的 note，capture 这边直接拒并给出等价命令。
+test('capture: L7 被拒，并指向 abs note（同一个落点不再留两个入口）', async () => {
   const root = await freshBrain();
   try {
     const out = await cmdCapture({ dir: root, text: '某个地方好像会慢但没查清', layer: '7' });
-    assert.match(out, /L7 混沌层/);
-    assert.match(out, /sources\//);
+    assert.match(out, /✗ L7/, `应明确拒绘: ${out}`);
+    assert.match(out, /abs note/, `应给出等价命令: ${out}`);
+    // 关键：拒了就不能落盘 —— 否则两个入口还是都留着
+    const files = await fs.readdir(join(root, '.brain', 'sources')).catch(() => []);
+    assert.deepEqual(files, [], `被拒时不能写 files: ${files}`);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -712,4 +730,115 @@ test('estTokens 估算合理（中文比英文占 token 多）', async () => {
   assert.ok(zh > 0 && en > 0);
   // 同样字符数下，中文 token 更多（1.5 字符/token vs 4 字符/token）
   assert.ok(zh / 14 > en / 38, '中文每字符占的 token 应多于英文');
+});
+
+test('会话页降权：同等相关度下，session-digest 的亮度是普通页的一半', async () => {
+  const { h, dir } = await freshDb();
+  try {
+    // 两页正文完全相同 → bm25 与覆盖率一致，唯一的差别只能是 kind 折扣。
+    // 这是「会话页不能压过知识页」那条判断的最小可验证形态。
+    rebuild(h, [
+      page('p1', 'concepts', 'k', '会话记录 甲乙丙'),
+      digestPage('p1', 's', '会话记录 甲乙丙'),
+    ]);
+    const seeds = search(h, '会话记录');
+    const bySlug = new Map(seeds.map((s) => [s.slug, s]));
+    const k = bySlug.get('k');
+    const s = bySlug.get('s');
+    assert.ok(k && s, '两页都要被搜到（降权不等于排除）');
+    assert.ok(s.bright < k.bright, `会话页亮度应更低，实际 k=${k.bright} s=${s.bright}`);
+    // 折扣是 SESSION_DIGEST_DISCOUNT(0.5)，但两页的 bm25 不会完全相等
+    // （会话页多了 frontmatter 与骨架段，进 FTS 的文本不同）。
+    // 所以只断言「确实被打了折」这一条契约，不锁死精确比例 ——
+    // 锁死会一改骨架就误报（本次就因给测试页加骨架段而红过一次）。
+    const ratio = s.bright / k.bright;
+    assert.ok(ratio < 0.8, `会话页必须明显低于普通页，实比 ${ratio.toFixed(3)}`);
+    assert.ok(ratio > 0.2, `折扣不该到「等于排除」的地步，实比 ${ratio.toFixed(3)}`);
+  } finally {
+    h.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// 审查修复（2026-11-05）：L5 / L7 不再接 capture。
+// 病根：它们各自的落点都有硬规则，capture 生成的页必然违规 —— 命令自己产出坏数据。
+//   L5 → sessions/：当天只允许 log-<日期>.md、tags 必须 session-log 类
+//   L7 → sources/：与 abs note 完全同一落点（实测文件名与正文结构一致）
+test('capture: L5 被拒（落 sessions/ 会违反命名与 tags 规则），指向 log/ingest', async () => {
+  const root = await freshBrain();
+  try {
+    const out = await cmdCapture({ dir: root, text: '测试会话层', layer: '5' });
+    assert.match(out, /✗ L5/, `应明确拒绝: ${out}`);
+    assert.match(out, /abs log/, `应指向 abs log: ${out}`);
+    assert.match(out, /abs ingest/, `应指向 abs ingest: ${out}`);
+    // 关键：拒了就不能落盘，否则用户拿到一张会被自己 lint 反复报错的页
+    const files = await fs.readdir(join(root, '.brain', 'sessions')).catch(() => []);
+    assert.deepEqual(files, [], `被拒时不能写文件: ${files}`);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+// 空骨架会话页整页排除（2026-11-05 实测）。
+// 病根：ingest --auto 每次关会话都落一张空骨架；空骨架的「用户原话」段词频高、
+// 正文又短，bm25 天然占优。实测造 20 张空页后查「登录超时」，前 12 名全是空页，
+// 真正讲过这个问题的知识页被彻底挤出结果 —— 原来 0.5 降权不够，必须整页排除。
+test('空骨架会话页不进检索；填好后自动回来', async () => {
+  const { h, dir } = await freshDb();
+  try {
+    const skeleton = (slug) => page('p1', 'sessions', slug,
+      '---\nkind: session-digest\nlayer: 5\n---\n\n'
+      + '## 出了什么问题\n<!-- 具体症状 -->\n\n## 怎么解决的\n<!-- 根因 -->\n\n'
+      + '## 用户原话\n- 缓存穿透 缓存穿透 缓存穿透\n');
+
+    rebuild(h, [
+      page('p1', 'concepts', 'real', '缓存穿透的解法是布隆过滤器'),
+      skeleton('s1'),
+      skeleton('s2'),
+      skeleton('s3'),
+    ]);
+    let hits = search(h, '缓存穿透').map((r) => r.slug);
+    assert.ok(hits.includes('real'), `知识页必须搜得到: ${hits}`);
+    assert.ok(!hits.some((s) => s.startsWith('s')), `空骨架不该进结果: ${hits}`);
+
+    // 填好其中一张 → 它应该重新参与检索
+    rebuild(h, [
+      page('p1', 'concepts', 'real', '缓存穿透的解法是布隆过滤器'),
+      page('p1', 'sessions', 's1',
+        '---\nkind: session-digest\nlayer: 5\n---\n\n'
+        + '## 出了什么问题\n缓存穿透把库打挂了\n\n## 怎么解决的\n上布隆过滤器'),
+      skeleton('s2'),
+    ]);
+    hits = search(h, '缓存穿透').map((r) => r.slug);
+    assert.ok(hits.includes('s1'), `填好后必须回来: ${hits}`);
+    assert.ok(!hits.includes('s2'), `没填的仍要排除: ${hits}`);
+  } finally {
+    h.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// 出口也要排除空骨架（2026-11-05 实测）。
+// 病根：入口 search 排了 unfilled，出口 illuminate 不排 —— 空骨架会从邻居扩散进来。
+// 实测：知识页链到一张空骨架页后，查「缓存穿透」时它以 `↝ 0.24` 出现在结果里。
+// 带 ↝ 标记的低亮度结果比直接排掉更误导：看起来像有效线索。
+test('空骨架会话页也不许从扩散进来（入口出口同一判据）', async () => {
+  const { h, dir } = await freshDb();
+  try {
+    const skeleton = page('p1', 'sessions', 'sk1',
+      '---\nkind: session-digest\nlayer: 5\n---\n\n'
+      + '## 出了什么问题\n<!-- 具体症状 -->\n\n## 用户原话\n- 缓存穿透\n');
+    // 知识页显式链到那张空骨架 —— 扩散本来会顺着这条边点亮它
+    const real = page('p1', 'concepts', 'real',
+      '缓存穿透的解法是布隆过滤器\n\n## 关联连接\n- [[sk1]] — 那场会话\n');
+    rebuild(h, [real, skeleton]);
+
+    const lit = illuminate(h, search(h, '布隆过滤器'), { limit: 20 });
+    const slugs = lit.map((r) => r.slug);
+    assert.ok(slugs.includes('real'), `知识页要在: ${slugs}`);
+    assert.ok(!slugs.includes('sk1'), `空骨架不该被扩散带出: ${slugs}`);
+  } finally {
+    h.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
