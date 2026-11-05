@@ -48,6 +48,36 @@ export function hasTail(body) {
 }
 const PAGE_MAX_BYTES = 8 * 1024;
 
+/** 决策/权衡类页的尾巴：要的是「当时依据什么选的」，不是可跑的命令。
+ *
+ * 为何单开一套词（2026-11-05）：这类知识天生没有验证命令 ——
+ * 「为什么选 SQLite 不选 Neo4j」只能给取舍依据，硬要写「跑什么命令确认」就是编。
+ * 判据仍要看得见的东西：可选方案、各自代价、最后按哪条定的。
+ *
+ * 词表比 TAIL_WORDS 窄很多 —— 这里要的是「依据」，不是任何动作词都算。 */
+const BASIS_WORDS = '依据|代价|取舍|放弃|为什么|原因|权衡|选[了择定]|不考虑|代价|对比';
+
+/** 决策类页有没有给出「当时凭什么这么选」。
+ * 与 hasTail 同形（段标题 + 段内有真内容），只是词表不同 ——
+ * 不共用一个函数是因为两边词表不同，合用会把「验证」也算成「依据」。 */
+export function hasBasisTail(body) {
+  const lines = String(body || '').split('\n');
+  const headRe = new RegExp(`^#{2,6}[^\\n]*(${BASIS_WORDS})`);
+  for (let i = 0; i < lines.length; i++) {
+    if (!headRe.test(lines[i])) continue;
+    const lvl = lines[i].match(/^#+/)[0].length;
+    for (let j = i + 1; j < lines.length; j++) {
+      const t = lines[j].trim();
+      const h = lines[j].match(/^(#+)\s/);
+      if (h && h[1].length <= lvl) break;
+      if (!t) continue;
+      if (t.startsWith('<!--') || t === '-->') continue;
+      return true;
+    }
+  }
+  return new RegExp(`^\\s*(?:\\d+\\.|[-*])\\s*\\**[^\\n]{0,20}(${BASIS_WORDS})`, 'm').test(String(body || ''));
+}
+
 // source 页超龄未提炼的天数阈值（SOURCE-UNDISTILLED）。
 // 7 天 = 跨过至少一个完整工作周还没人提炼，基本等于被遗忘。
 const SOURCE_STALE_DAYS = 7;
@@ -96,6 +126,9 @@ export async function listPages(vault) {
         indexed: indexText.includes(`[[${f.replace(/\.md$/, '')}]]`),
         status: statusOfPage(body, fm ? fm[1] : ''),
         supersededBy: supersededByOf(body),
+        // kind 与 status 同源，都在 frontmatter。
+        // 尾巴规则要按它分档（见 checkPage 的 NO-TAIL）。
+        kind: ((fm ? fm[1] : '').match(/^kind:\s*(.+)$/m) || [])[1]?.trim() || '',
       });
     }
   }
@@ -228,7 +261,20 @@ function checkPage(pg, names, linkedNames, inbound) {
     }
   }
   if (pg.dir === 'concepts' && !hasTail(pg.body)) {
-    issues.push(`NO-TAIL: ${pg.rel}（无「做完怎么确认」；尾巴写清跑什么/看什么/按什么判据，别只有头）`);
+    // 尾巴按 kind 分档（2026-11-05）：原来「必须写验证命令」对所有 concepts 页一律要求，
+    // 后果是「当时为什么这样选」这类决策知识根本落不了地 —— 决策没有可跑的验证命令，
+    // 硬写就是编。用户 2026-11-05 定的方向是让 abs 成为大型知识图谱，
+    // 那就不能只有「故障排查」一种知识形态。
+    //
+    //   gotcha / howto → 仍要验证尾巴（现状不变，这两类真有可验证的东西）
+    //   decision / tradeoff → 写「当时依据什么选的」即可
+    //   无 kind 的旧页 → 保持现状，不回溯（不把历史页一夜变红）
+    const needsVerify = !pg.kind || pg.kind === 'gotcha' || pg.kind === 'howto';
+    if (needsVerify) {
+      issues.push(`NO-TAIL: ${pg.rel}（无「做完怎么确认」；尾巴写清跑什么/看什么/按什么判据，别只有头）`);
+    } else if (!hasBasisTail(pg.body)) {
+      issues.push(`NO-TAIL: ${pg.rel}（kind=${pg.kind} 不要求验证命令，但要有「当时依据什么选的」：写可选方案、各自代价、最后按哪条定的）`);
+    }
   }
   // 「任务随手记」（abs todo memo）不登记 index：它是**某任务的过程草稿**，
   // 数量随任务数增长且生命周期短（任务完就没人看），登记会把 index 冲垮 ——
@@ -262,9 +308,14 @@ async function checkGraph(root, pages) {
   }
 
   // SESSIONS-NAMING: sessions/ 的一天一文件契约
+  // 例外（2026-11-05）：`abs ingest` 落的会话页叫 `session-<日期>-s<id8>.md`，
+  // 它不是「当天工作流水」，而是**一场具体会话的结构化记录** ——
+  // 同一天可以有好几场，硬套「一天一个 log」会把它挤掉。
+  // 判据用 slug 前缀 `session-`：这是 ingest 独占的命名空间，与 log-<日期> 不交叉。
   const sessByDate = new Map();
   for (const pg of pages) {
     if (pg.dir !== 'sessions') continue;
+    if (/^session-/.test(pg.slug)) continue;
     const m = pg.slug.match(/^(?:log-)?(\d{4}-\d{2}-\d{2})/);
     if (!m) continue;
     const tags = String(pg.frontmatter).match(/^tags:\s*(.+)$/m)?.[1] || '';
@@ -287,9 +338,9 @@ async function checkGraph(root, pages) {
   for (const pg of pages) {
     if (pg.dir !== 'sessions') continue;
     const tags = String(pg.frontmatter).match(/^tags:\s*(.+)$/m)?.[1] || '';
-    if (!/session-log|todo-archive|archive/.test(tags)) {
+    if (!/session-log|todo-archive|archive|session-digest/.test(tags)) {
       issues.push(`SESSIONS-MISPLACED: ${pg.rel}（tags: ${tags.trim()} 不属 sessions/；` +
-        `当天工作写进 \`log-<日期>.md\` 正文，暂存线索用 \`abs note\` 落 sources/）`);
+        `当天工作写进 \`log-<日期>.md\` 正文；一场会话的结构化记录用 \`abs ingest\`）`);
     }
   }
 

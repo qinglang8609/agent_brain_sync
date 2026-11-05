@@ -448,6 +448,33 @@ async function reconcileOneStore(p, keys) {
  * 故这里只做**只读检测 + 告警**，绝不代它删除或改写（那是别人的目录）。
  * @returns {string|null} 一行告警文案；无需告警时 null
  */
+/** 安装后自检：hook 指向的入口是否真的跟得上当前代码。
+ *
+ * 为何要它（2026-11-05 实测踩到）：hook 烧进去的是**绝对路径**，指向全局包。
+ *   那天先装了 hook（12:23），全局包四分钟后才重装（12:27）——
+ *   中间真实关闭会话时，hook 调的是一个当时还不存在的命令，静默失败。
+ *   fire-and-forget 的错误全被吞掉，所以「装好了」和「能用」看起来一模一样。
+ *
+ * 判据：看那个文件里有没有本次安装所依赖的命令，**而不是看文件存在**。
+ *   文件存在只证明路径对，不证明内容新。
+ *
+ * @returns {string|null} 有问题时返回要打印的提示，正常返回 null。
+ */
+export function staleBinWarning(binOverride) {
+  let bin, src;
+  try {
+    bin = binOverride || stableBinPath('abs.js');
+    src = fsSync.readFileSync(bin, 'utf8');
+  } catch { return null; }   // 自检失败不该影响安装结果
+  // ingest 是 2026-11 新增的；缺它说明指向的是旧包，hook 触发时会「未知命令」
+  if (/'ingest'/.test(src)) return null;
+  return [
+    '⚠ hook 指向的 abs 缺少 ingest 命令，会话关闭时不会自动落会话页。',
+    `  实际指向: ${bin}`,
+    '  修法: npm install -g .   然后重跑本安装',
+  ].join('\n');
+}
+
 function agentsSkillWarning() {
   const p = join(homedir(), '.agents', 'skills', 'abs-agent-brain-sync', 'SKILL.md');
   if (!fsSync.existsSync(p)) return null;
@@ -976,6 +1003,9 @@ export async function runInstall({ agent, all = false, mcp = true, skill = true,
     const w = agentsSkillWarning();
     if (w) console.log('\n' + w);
   }
+  const stale = staleBinWarning();
+  if (stale) console.log('\n' + stale);
+
   console.log('\n完成。项目内运行 abs init 建图谱; 会话里说 "abs load" 续接。');
 }
 

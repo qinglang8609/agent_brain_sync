@@ -1351,3 +1351,38 @@ describe('安装树一致性守卫: 包内无 skill 时显式报错', () => {
     assert.ok(!/没有可安装的 skill/.test(out), '正常包不该触发守卫: ' + out);
   }, { timeout: 30000 });
 });
+
+// 安装后自检（2026-11-05 实测）：hook 指向的入口是否跟得上当前代码。
+// 病根：先装 hook（烧进绝对路径），全局包几分钟后才重装 —— 中间真实关会话时
+// hook 调的是当时还不存在的命令，fire-and-forget 把错误全吞了。
+// 判据是「那个文件里有没有本次依赖的命令」，不是「文件存在」。
+describe('安装后自检：hook 指向的入口是否陈旧', () => {
+  const dir = join(tmpdir(), `abs-stale-${process.pid}`);
+
+  test('旧包（缺 ingest）→ 告警，且给出可执行的修法', async () => {
+    const { staleBinWarning } = await import('../src/install.js');
+    await fs.mkdir(dir, { recursive: true });
+    const fake = join(dir, 'old-abs.js');
+    // 模拟 2026-11 之前的包：没有 ingest 命令
+    await fs.writeFile(fake, "case 'load': break;\ncase 'summon': break;\n", 'utf8');
+    const w = staleBinWarning(fake);
+    assert.ok(w, '缺 ingest 必须告警（否则「装好了」和「能用」看起来一样）');
+    assert.match(w, /缺少 ingest/);
+    assert.match(w, /npm install -g \./, '必须给具体命令');
+    assert.match(w, /实际指向/, '要指出它到底指向哪');
+    assert.ok(w.includes(fake), `要报出真实路径: ${w}`);
+  });
+
+  test('新包（含 ingest）→ 不告警，不误报', async () => {
+    const { staleBinWarning } = await import('../src/install.js');
+    await fs.mkdir(dir, { recursive: true });
+    const fake = join(dir, 'new-abs.js');
+    await fs.writeFile(fake, "case 'ingest': break;\n", 'utf8');
+    assert.equal(staleBinWarning(fake), null);
+  });
+
+  test('路径读不到 → 返回 null（自检失败不该影响安装）', async () => {
+    const { staleBinWarning } = await import('../src/install.js');
+    assert.equal(staleBinWarning(join(dir, 'not-exist.js')), null);
+  });
+});

@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findBrainRoot, absLogDir, AbsError } from '../src/index.js';
-import { cmdBoard, cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdWrapup, cmdRule, cmdResolve, cmdSupersede } from '../src/store.js';
+import { cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdRule, cmdResolve, cmdSupersede } from '../src/store.js';
 
 // ---------- 技术日志: MCP 请求跟踪（调试用, 与图谱 log.md 完全分开） ----------
 // 落 ~/.abs/log/mcp.log: 每次工具调用一行 [时间] tool cwd 参数摘要 → 耗时/结果摘要。
@@ -76,8 +76,14 @@ function tool(name, description, schema, handler) {
 // 分级标注（借 OpenContext 的 P0/P1/P2 惯例）：P0=每次开机必调；P1=干活中按需；P2=诊断/收尾。
 // 后来人（和 AI）照这个顺序调，别一上来就 lint。
 //   P0  abs_resolve_project / abs_load
-//   P1  abs_board / abs_task / abs_query / abs_note / abs_resolve
-//   P2  abs_status / abs_rule / abs_lint / abs_wrapup
+//   P1  abs_task / abs_query / abs_note / abs_resolve
+//   P2  abs_status / abs_rule / abs_lint
+//
+// 2026-11-05 删两个（用户定，判据见 concept feature-delete-not-patch）：
+//   abs_board  ── 它吐的内容已被 abs_load 完全覆盖（load 里就有 Todo Board 段），
+//                 是「与已有功能重叠 → 删」的又一例。
+//   abs_wrapup ── 它是 hook 的内部命令（session_shutdown 自己会跑），
+//                 给人调没有意义；暴露成工具只会诱使 agent 手动跑一遍。
 tool(
   'abs_resolve_project',
   '定位当前项目的 .brain 图谱根（只认给定目录本身的 .brain/，不向上搜索）。多项目隔离的唯一入口。',
@@ -91,17 +97,6 @@ tool(
       });
     }
     return { content: [{ type: 'text', text: root }] };
-  }
-);
-
-tool(
-  'abs_board',
-  '读取当前项目 todo 看板（含任务与子项）。先 resolve 得到项目，再传其根目录。',
-  { cwd: z.string().describe('项目根目录（.brain/ 所在处）') },
-  async ({ cwd }) => {
-    const root = await findBrainRoot(cwd || process.cwd());
-    if (!root) return errNoBrain(cwd || process.cwd());
-    return { content: [{ type: 'text', text: await cmdBoard({ dir: root }) }] };
   }
 );
 
@@ -273,17 +268,6 @@ tool(
     const root = await findBrainRoot(cwd || process.cwd());
     if (!root) return errNoBrain(cwd || process.cwd());
     return { content: [{ type: 'text', text: await cmdConcept({ dir: root, slug, title, tags, desc }) }] };
-  }
-);
-
-tool(
-  'abs_wrapup',
-  '收尾保险：把当前 todo 未完成任务快照到 ~/.abs/log/wrapup.log（下会话 load 时展示滞留对账）。',
-  { cwd: z.string().describe('项目根目录（.brain/ 所在处）') },
-  async ({ cwd }) => {
-    const root = await findBrainRoot(cwd || process.cwd());
-    if (!root) return errNoBrain(cwd || process.cwd());
-    return { content: [{ type: 'text', text: await cmdWrapup({ dir: root }) }] };
   }
 );
 

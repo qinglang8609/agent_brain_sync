@@ -9,6 +9,14 @@ import { keywords, recentFiles, topicStrength, digest } from '../relevant.js';
 import { readIfExists, recentLogLines } from '../text.js';
 import { listPages } from '../lint.js';
 import { SOURCES_MAX } from '../lint.js';
+// 判「会话页骨架填没填」的唯一真源在 layers.js（入库侧 db.js 也用它算 unfilled 列）。
+// 两处必须同一个判据 —— 否则会出现「load 说不算未填、检索却把它排除掉」的矛盾。
+import { digestFilled } from './layers.js';
+
+/** 未填会话页在 load 里最多列几个页名（其余折叠成条数）。
+ *  为何要限：会话页数量只增不减，全列会让 load 首屏随规模膨胀
+ *  —— 违反本仓「读取侧输出不得随规模增长」。5 个够 agent 判断先填哪张。 */
+const SESSION_UNFILLED_SHOW = 5;
 import { checkBrainShape } from './shape.js';
 import { rulesSection } from './rules.js';
 import { collapseIndex } from '../page.js';
@@ -142,6 +150,16 @@ export async function cmdLoad({ dir }) {
     const hot = await hotPagesSection(root, todo);
     if (hot) sections.push('', hot);
   } catch { /* 同上，失败静默 */ }
+  // 未填会话页提醒（2026-11-05）：ingest/hook 落的是空骨架，内容要人填。
+  // 若不在开工时摆出来，「落了没填」就永远没人知道 —— 等于采集了不消化。
+  // 与 sources 提醒同一个位置、同一种语气：只给线索，判断仍归 agent。
+  try {
+    const sessWarn = await unfilledSessionSection(root);
+    if (sessWarn) {
+      const at = sections.findIndex((s) => String(s).startsWith('--- Rules'));
+      sections.splice(at === -1 ? 1 : at, 0, ...sessWarn);
+    }
+  } catch { /* 提醒失败不影响 load */ }
   // sources 堆积提醒：与「滞留」同构 —— 放在每次开工必经的顶部，而不是等人跑 lint。
   // 只数目录条目（不读文件），零成本。提炼仍手工：这里只负责送达，不替判断。
   try {
@@ -421,6 +439,58 @@ export async function cmdRecall({ dir, terms, limit = 5 } = {}) {
   } catch (e) {
     return `recall 失败: ${e instanceof Error ? e.message : String(e)}`;
   }
+}
+
+/** 会话页 fill 判据：骨架段是否还没人填。
+ *
+ * 为何要这个判据（2026-11-05）：`abs ingest` / hook 的 --auto 落的是**空骨架**，
+ *   内容要读会话后填。但「落了没填」原来没有任何地方看得见 —— 落盘等于进了黑洞，
+ *   正是本仓反复踩的「采集了不消化」。这里只判「填没填」，不判「该不该留」。
+ *
+ * 判据与 lint 的 hasTail 同源：段内除了占位注释与空行之外还有没有真内容。
+ * 只认 ingest 生成的三种骨架段名（见 ingest.js 的 SHAPES）——它们都带
+ * `<!-- 提示 -->` 占位；任何一段有了真内容就算填过。
+ *
+ * 不看 status：人可能填完忘了改 active。用 status 当判据会漏报，
+ * 反过来「status: draft 但已填」也不该反复提醒。 */
+/** 未填会话页提醒：返回 [标题行, ...内容行] 或 null。失败静默。
+ *
+ * 守「读取侧输出不随规模增长」：只列表头最多 SESSION_UNFILLED_SHOW 个页名，
+ * 其余折叠成条数。页名够用 —— agent 要读哪张再 abs resolve 那一张，别在这贴正文。 */
+async function unfilledSessionSection(root) {
+  let files;
+  try {
+    files = await fs.readdir(brainPath(root, 'sessions'));
+  } catch { return null; }
+  const unfilled = [];
+  for (const f of files) {
+    if (!f.endsWith('.md') || !f.startsWith('session-')) continue;
+    const body = await fs.readFile(brainPath(root, 'sessions', f), 'utf8').catch(() => '');
+    if (!body) continue;
+    // 只认 ingest 落的页：它有 kind: session-digest。手写页不该被催。
+    if (!/^kind:\s*session-digest$/m.test(body)) continue;
+    if (!digestFilled(body)) unfilled.push(f.replace(/\.md$/, ''));
+  }
+  if (!unfilled.length) return null;
+  // 按日期倒序（2026-11-05 实测修正）：原来按 readdir 顺序（≈文件名升序），
+  // 60 张时列出来的是 18/27/36/45/54 —— 随机五张，既不是最近的也不是最该填的。
+  // 页名形如 session-<日期>-s<id8>，日期就在里面，直接按名字倒排即可。
+  unfilled.sort((a, b) => b.localeCompare(a));
+  const show = unfilled.slice(0, SESSION_UNFILLED_SHOW);
+  const rows = [
+    `📝 未填会话页 ${unfilled.length} 张（会话已落盘，内容还没人读）`,
+    ...show.map((s) => `  - ${s}`),
+  ];
+  if (unfilled.length > show.length) {
+    rows.push(`  …另有 ${unfilled.length - show.length} 张更早的（不逐条列，守读取侧不膨胀）`);
+  }
+  // 数量大时明说「别想着全填」——否则这个提醒会变成一种罪疚感，而不是决策依据。
+  if (unfilled.length > SESSION_UNFILLED_SHOW) {
+    rows.push('  挑最近、且有结论的那几场填；其余留着当流水，不填也不用管（它们不进检索）。');
+  }
+  rows.push('→ 填法: abs resolve <页名> 读那张 → 按骨架段写内容 → status 改 active');
+  rows.push('');
+  return rows;
 }
 
 /** sources 堆积提醒：返回 [标题行, ...内容行] 或 null。失败静默。 */

@@ -110,7 +110,7 @@ describe('mcp: 握手 + 工具清单', () => {
     await initHandshake();
     const r = await call('tools/list', {});
     const names = (r.result?.tools || []).map((t) => t.name);
-    for (const n of ['abs_board', 'abs_load', 'abs_status', 'abs_task', 'abs_query', 'abs_lint', 'abs_note', 'abs_concept', 'abs_resolve_project']) {
+    for (const n of ['abs_load', 'abs_status', 'abs_task', 'abs_query', 'abs_lint', 'abs_note', 'abs_concept', 'abs_resolve_project']) {
       assert.ok(names.includes(n), `缺工具 ${n}`);
     }
   });
@@ -154,9 +154,9 @@ describe('mcp: 工具调用', () => {
     await startServer(projA);
   });
 
-  test('abs_task start → abs_board 反映任务', async () => {
+  test('abs_task start → abs_load 的看板段反映任务', async () => {
     await tool('abs_task', { action: 'start', id: 'M1', note: '做 M', cwd: projA });
-    const b = await tool('abs_board', { cwd: projA });
+    const b = await tool('abs_load', { cwd: projA });
     assert.ok(textOf(b).includes('M1'), textOf(b));
   });
 
@@ -187,7 +187,7 @@ describe('mcp: 工具调用', () => {
   test('abs_task done 归位 Done', async () => {
     await tool('abs_task', { action: 'start', id: 'MD', note: 'x', cwd: projA });
     await tool('abs_task', { action: 'done', id: 'MD', cwd: projA });
-    const b = await tool('abs_board', { cwd: projA });
+    const b = await tool('abs_load', { cwd: projA });
     assert.ok(/Done/.test(textOf(b)), textOf(b));
   });
 
@@ -241,9 +241,9 @@ describe('mcp: 工具调用', () => {
 
 // ---------- 无 .brain 项目 / 隔离 ----------
 describe('mcp: 无图谱与隔离', () => {
-  test('proj-b 无图谱: abs_board isError 且提示 abs init', async () => {
+  test('proj-b 无图谱: abs_load isError 且提示 abs init', async () => {
     await startServer(projB);
-    const r = await tool('abs_board', { cwd: projB });
+    const r = await tool('abs_load', { cwd: projB });
     assert.ok(r.result?.isError, '无图谱应 isError');
     assert.ok(textOf(r).includes('abs init'), textOf(r));
   });
@@ -252,7 +252,7 @@ describe('mcp: 无图谱与隔离', () => {
     await initBrain(projA); // 只有 A 有 .brain
     await startServer(sandbox);
     // proj-b 向上走: proj-b → sandbox → /tmp..., 不会横跳 proj-a
-    const r = await tool('abs_board', { cwd: join(projB, 'sub') });
+    const r = await tool('abs_load', { cwd: join(projB, 'sub') });
     assert.ok(r.result?.isError, `proj-b 不应命中 proj-a: ${textOf(r)}`);
   });
 });
@@ -266,14 +266,14 @@ describe('mcp: 请求跟踪日志 (mcp.log)', () => {
     await fs.mkdir(logDir, { recursive: true });
     await initBrain(projA);
     await startServer(projA, { ABS_LOG_DIR: logDir, ABS_LOG: '1' });
-    await tool('abs_board', { cwd: projA });
+    await tool('abs_load', { cwd: projA });
     // 等日志落盘(追加写是异步的)
     let text = '';
     for (let i = 0; i < 20 && !text; i++) {
       await new Promise((r) => setTimeout(r, 50));
       text = await fs.readFile(join(logDir, 'mcp.log'), 'utf8').catch(() => '');
     }
-    assert.ok(text.includes('tool=abs_board'), `mcp.log 应记录工具名: ${text}`);
+    assert.ok(text.includes('tool=abs_load'), `mcp.log 应记录工具名: ${text}`);
     assert.ok(/OK \d+ms/.test(text), `应记录耗时与结果: ${text}`);
   });
 
@@ -282,12 +282,12 @@ describe('mcp: 请求跟踪日志 (mcp.log)', () => {
     await fs.mkdir(logDir, { recursive: true });
     await startServer(sandbox, { ABS_LOG_DIR: logDir, ABS_LOG: '1' });
     // 无 .brain 的项目 → isError
-    await tool('abs_board', { cwd: projB });
+    await tool('abs_load', { cwd: projB });
     let text = '';
     for (let i = 0; i < 20 && !text; i++) {
       await new Promise((r) => setTimeout(r, 50));
       text = await fs.readFile(join(logDir, 'mcp.log'), 'utf8').catch(() => '');
     }
-    assert.ok(/tool=abs_board .*ERR/.test(text), `失败也应留痕: ${text}`);
+    assert.ok(/tool=abs_load .*ERR/.test(text), `失败也应留痕: ${text}`);
   });
 });

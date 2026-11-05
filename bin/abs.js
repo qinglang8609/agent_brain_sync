@@ -6,6 +6,7 @@ import { cmdInit, cmdStatus, cmdLoad, cmdRecall, cmdTask, cmdLog, cmdQuery, cmdL
 import { cmdDbRebuild, cmdDbSearch, cmdDbStatus, cmdDbEvolve, addProject } from '../src/brain/db-cmd.js';
 import { cmdCapture } from '../src/brain/capture.js';
 import { cmdSummon } from '../src/brain/summon-cmd.js';
+import { cmdIngest } from '../src/brain/ingest.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { readFileSync } from 'node:fs';
@@ -144,6 +145,14 @@ const FLAG_SPEC = {
   'repair': { type: 'boolean' },
   'no-mcp': { type: 'boolean' },
   'no-skill': { type: 'boolean' },
+  // ingest 用：强制重建已有会话页。
+  // ★ 不声明就会被 parseArgs 当布尔 true（见上面 kind 的注释）。
+  // （--mark 已在 summon 那里声明过，两家共用，不能重复写 —— no-dupe-keys 会报）
+  'force': { type: 'boolean' },
+  // ingest 用：--last 取最近一场会话（hook 在 session_shutdown 调，不用给 id）；
+  //           --auto 只落真改过文件的会话（纯聊天不落页）。
+  'last': { type: 'boolean' },
+  'auto': { type: 'boolean' },
 };
 
 /** 已被"规范键"接管的 raw flag：不再原样漏出（见 parseArgv 返回处的白名单注释）。 */
@@ -250,8 +259,9 @@ const usage = `abs — 跨会话记忆工具（.brain/ 图谱）
   todo                       任务看板 (add/note/state/done/archive)
   index | log | status       索引 / 流水 / 概要
   note <经验> [--tags a,b]   经验暂存 → sources/
-  capture [--layer 1-7] "…"  按七层判定落点后直接写入 (不传=L4)
+  capture [--layer 1-6] "…"  按层判定落点后直接写入 (不传=L4; L7 用 abs note)
   summon [--mark|--status]   会话总结托底: 列出未总结/有更新的会话 (不写盘)
+  ingest <会话文件>           把一场 pi 会话落成会话页 (带 session id 双向回溯)
   concept <slug> --title …   建概念页骨架
   query <词…> [--all]       检索知识页 (多词 OR)
   db rebuild|search|status|evolve  图数据库: 建库 / 亮度搜索 / 体检 / 进化体检
@@ -553,6 +563,13 @@ async function main() {
       }
       case 'summon': {
         console.log(await cmdSummon({ dir: opts.dir, mark: !!opts.mark, full: !!opts.full, status: !!opts.status, limit: Number(opts.limit) || 15 }));
+        break;
+      }
+      case 'ingest': {
+        console.log(await cmdIngest({
+          dir: opts.dir, file: opts._.join(' '), force: !!opts.force, mark: !!opts.mark,
+          last: !!opts.last, auto: !!opts.auto, session: opts.session,
+        }));
         break;
       }
       case 'capture': {

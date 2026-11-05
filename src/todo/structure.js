@@ -181,7 +181,24 @@ export function enforceBrainFormat(text, spec, prev) {
   //   为什么：不做这个区分，库里只要有一条历史脏行，**所有写入全部失败** ——
   //   实测真库（corp_agent）就因一条超长断点 + 8 条 `[]()` 条目，
   //   连 `abs rule add` 都做不到，整个图谱变成只读。
-  const prevSig = prev == null ? null : violationSignatures(String(prev));
+  //
+  // ★ prev 也要过同一道 ↳ 迁移（2026-11-05 实测踩到）：
+  //   上面把 src 里的 `  ↳ 内容: …` 迁成 `  - [ ] …`，行的签名随之变形；
+  //   而 prevSig 若直接取 prev 的原始签名，就对不上迁移后的行 ——
+  //   存量坏子项（超长/报告体）会被判成「本次新引入」，写入失败。
+  //   实测症状：zj_shop 的 load 直接崩 —— readTodo 的惰性迁移一走写盘就抛错，
+  //   于是 abs load / abs todo 全部失效，且该状态不会自愈。
+  //   修法：让 prev 走**同一次迁移**再取签名，两边签名体系才一致。
+  let prevForSig = prev;
+  if (prev != null && spec?.h1 === '# 📋 Todo Board') {
+    const lp = String(prev).split('\n');
+    for (let i = 0; i < lp.length; i++) {
+      const conv = migrateLegacyChild(lp[i]);
+      if (conv !== null && conv !== lp[i]) lp[i] = conv;
+    }
+    prevForSig = lp.join('\n');
+  }
+  const prevSig = prevForSig == null ? null : violationSignatures(String(prevForSig));
   if (spec?.h1 === '# 📋 Todo Board') assertTodoContent(src, prevSig);
   // ★ 标签白名单闸门放在**旧标记归一之后**（见下面 legacy 段之后）——
   // 旧标签（`## Backlog` / `## Today / In Progress`）是**待迁移**的，不是非法新标签。

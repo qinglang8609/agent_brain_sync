@@ -1660,6 +1660,38 @@ describe('cmdLint', () => {
   });
 
   // 实例: codebuddy 的 2026-09-07-ui-fixes.md（tags: [source]）等页错位在 sessions/。
+  // 尾巴按 kind 分档（2026-11-05）：决策类知识天生没有可跑的验证命令，
+  // 硬要写就是编。用户定的方向是 abs 要做大型知识图谱 —— 不能只有故障排查一种形态。
+  test('NO-TAIL 分档: kind=decision 给出取舍依据就放行（不要求验证命令）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'pickdb.md'),
+      '---\ntags: [concept]\nkind: decision\nupdated: 2026-11-05\nstatus: active\n---\n' +
+      '# 概念：为什么用 SQLite\n\n## 触发场景\n想换图数据库\n\n' +
+      '## 当时的依据\n放弃 Neo4j：多养一个常驻进程，而本场景是开工时查一次\n',
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/NO-TAIL[^\n]*pickdb\.md/.test(out), `决策类有依据就不该报 NO-TAIL: ${out}`);
+  });
+
+  test('NO-TAIL 分档: kind=decision 既无验证也无依据仍要报', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'nobasis.md'),
+      '---\ntags: [concept]\nkind: decision\nupdated: 2026-11-05\nstatus: active\n---\n' +
+      '# 概念：选了个方案\n\n## 触发场景\n要选一个\n\n## 结论\n选了 A\n',
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/NO-TAIL[^\n]*nobasis\.md/.test(out), `只有结论没有依据，应报: ${out}`);
+  });
+
+  test('NO-TAIL 分档: kind=gotcha 仍要验证尾巴（现状不变）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'gotcha1.md'),
+      '---\ntags: [concept]\nkind: gotcha\nupdated: 2026-11-05\nstatus: active\n---\n' +
+      '# 概念：一个坑\n\n## 触发场景\nX\n\n## 当时的依据\n因为这么想过\n',
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    // 「依据」不是 gotcha 要的东西 —— 坑必须给出怎么确认不再犯
+    assert.ok(/NO-TAIL[^\n]*gotcha1\.md/.test(out), `坑类只写依据不够，应报: ${out}`);
+  });
+
+  // SESSIONS-MISPLACED: sessions/ 里放 source 页会被报出
   test('SESSIONS-MISPLACED: sessions/ 里放 source 页会被报出', async () => {
     await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-09-exhaust.md'),
       '---\ntags: [source]\nupdated: 2026-09-09\nstatus: draft\n---\n# 来源：X\n', 'utf8');
@@ -1668,8 +1700,7 @@ describe('cmdLint', () => {
   });
 
   // 归档页（旧命名 todo-archive tag）与快照（session-log）都必须放行 —— 否则全局误报。
-  test('SESSIONS-MISPLACED 不误报: session-log 与 todo-archive 都放行', async () => {
-    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-10-todo归档.md'),
+  test('SESSIONS-MISPLACED 不误报: session-log 与 todo-archive 都放行', async () => {    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-10-todo归档.md'),
       '---\ntags: [todo-archive, 历史]\nupdated: 2026-09-10\nstatus: reviewed\n---\n# Todo 归档\n', 'utf8');
     await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-10.md'),
       '---\ntags: [session-log]\nupdated: 2026-09-10\nstatus: active\n---\n# X\n', 'utf8');
@@ -3282,5 +3313,58 @@ describe('load 遇到无法自动归一的文件要报出来', () => {
     await fs.writeFile(join(projectA, '.brain', 'index.md'), '随便一个标题\n\n## Concepts\n', 'utf8');
     const out = await cmdLoad({ dir: projectA });
     assert.match(out, /无头文件不自动改/, out);
+  });
+});
+
+// 回归（2026-11-05 实测踩到）：陈旧 `↳` 子项 + 报告体 → 整个项目的 abs load 崩掉。
+//
+// 病根：enforceBrainFormat 先把 `  ↳ 内容: …` 迁成 `  - [ ] …`，行签名随之变形；
+// 而 prevSig 取的是 prev 的**原始**签名，对不上迁移后的行 → 存量坏子项被判成
+// 「本次新引入」→ 写盘失败 → readTodo 的惰性迁移抛错 → abs load / abs todo 全废，
+// 且不会自愈（每次读都重走同一条路）。
+//
+// 实测样本：zj_shop 的 deploy-migration-009 下挂了一条 200+ 字、含 ①②③ 清单的
+// `  ↳ 内容:` 子项。修法：prev 也过同一次迁移再取签名。
+describe('陈旧 ↳ 子项 + 报告体：读取不能崩（2026-11-05）', () => {
+  test('readTodo: 历史 ↳ 报告体子项只是被迁移，不让整个读失败', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'legacy-'));
+    try {
+      await fs.mkdir(join(root, '.brain'), { recursive: true });
+      await fs.writeFile(join(root, '.brain', 'todo.md'), [
+        '# 📋 Todo Board',
+        '',
+        '## Todo',
+        '- [ ] [进行中] deploy-x [[fanchao]] — 待部署',
+        '  ↳ 内容: ①补 8 个会员等级节点(含 pid 回填自愈) ②插 2 条种子 ③清理旧口径行(安全阀: 只删特定行)',
+        '',
+        '## Done',
+        '',
+      ].join('\n'), 'utf8');
+      const text = await readTodo(root);
+      assert.ok(text.includes('deploy-x'), `必须读得到内容，实际抛错或为空: ${text}`);
+      // 迁移发生：↳ 写法变成标准缩进子项
+      assert.ok(text.includes('- [ ] ①补'), `↳ 应被迁成缩进子项: ${text}`);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('★ 破坏验证：把 prev 的迁移去掉，enforceBrainFormat 立刻拒写', async () => {
+    // 这两条钉住的是同一条契约：prev 必须先过 ↳ 迁移，签名才能和迁移后的文本对上。
+    // 上面那条测「现在能读」，这条测「为什么能读」—— 少了它就是会崩。
+    const { enforceBrainFormat } = await import('../src/todo/structure.js');
+    const { BRAIN_SHAPE } = await import('../src/brain/shape.js');
+    const spec = BRAIN_SHAPE['todo.md'];
+    const prev = [
+      '# 📋 Todo Board', '', '## Todo',
+      '- [ ] [进行中] deploy-x [[fanchao]] — 待部署',
+      '  ↳ 内容: ①补 8 个节点 ②插 2 条种子 ③清理旧行',
+      '', '## Done', '',
+    ].join('\n');
+    // 写入内容 = 同一个库（闸门内部会把 ↳ 迁成缩进子项），应通过
+    assert.doesNotThrow(
+      () => enforceBrainFormat(prev, spec, prev),
+      '存量坏子项只该被迁移，不该拒绝写入',
+    );
   });
 });

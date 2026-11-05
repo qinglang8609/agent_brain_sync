@@ -22,12 +22,13 @@ import { autoIndex } from './db-cmd.js';
 import { summonTail } from './summon.js';
 
 /** 层 → 落点目录。L1/L6 不立页，由下面的分支单独处理。 */
+// 落点目录。L1/L6 不立页、L5/L7 不在 capture 职责内，都由下面的分支单独处理。
+// （2026-11-05 审查删掉 `7: 'sources'`：L7 改成直接拒后它已是死代码，
+//   留着会让下个读者以为走 capture 就能落混沌层。）
 const LAYER_DIR = {
   2: 'concepts',
   3: 'concepts',
   4: 'concepts',
-  5: 'sessions',
-  7: 'sources',
 };
 
 /** 判据表：输入时就看得到，不用记。 */
@@ -37,9 +38,9 @@ export function layerGuide() {
     ['2', '规则', '这个项目要遵守的做法', 'abs capture --layer 2 "…"'],
     ['3', '工具', '某工具怎么用、有什么坑', 'abs capture --layer 3 "…"'],
     ['4', '认知', '踩坑的根因与解法（默认）', 'abs capture "…"'],
-    ['5', '会话', '这次会话做了什么', 'abs log / abs todo done'],
+    ['5', '会话', '这次会话做了什么', 'abs log / abs ingest'],
     ['6', '断点', '双链词，机器自动抽，不用手写', '（无）'],
-    ['7', '混沌', '还没想清的碎片', 'abs capture --layer 7 "…"'],
+    ['7', '混沌', '还没想清的碎片', '用 abs note（同一个落点）'],
   ];
   return [
     '按七层判定这一句该落在哪：',
@@ -58,7 +59,8 @@ export async function cmdCapture({ dir, text, layer, tags, title, kind }) {
 
   if (!clean) {
     return [
-      '用法: abs capture [--layer 1-7] [--kind gotcha|decision|tradeoff|howto] "一句话" [--tags a,b] [--title "页标题"]',
+      '用法: abs capture [--layer 1-6] [--kind gotcha|decision|tradeoff|howto] "一句话" [--tags a,b] [--title "页标题"]',
+      '  注: L7（混沌/碎片）用 abs note，两者落点相同，不再留两个入口。',
       '',
       layerGuide(),
     ].join('\n');
@@ -77,6 +79,34 @@ export async function cmdCapture({ dir, text, layer, tags, title, kind }) {
   // L6 是机器自动抽的双链词，不接受手动写入 —— 手写会让断点词表失真
   if (L === 6) {
     return '✗ L6 断点层是机器从双链里自动抽的词，不接手写。\n  想加索引词：在页面正文写 [[词]]，abs db rebuild 时会自动收录。';
+  }
+
+  // L7 混沌层：`abs note` 与 `abs capture --layer 7` 是**同一个落点**
+  //   （都进 sources/，同样的文件名与正文结构）。实测 2026-11-05 确认。
+  //   两个入口做同一件事 = 每次都得先选一个，而选不选对没有任何后果 ——
+  //   纯认知负担。按本仓判据「与已有功能重叠 → 复用/删，别新增」
+  //   （concept feature-delete-not-patch），保留被真实用过 228 次的 note，
+  //   这里直接拒，并给出等价命令 —— 不静默转发（静默转发会把两个入口都留着）。
+  if (L === 7) {
+    return [
+      '✗ L7 混沌层用 abs note，不用 capture。',
+      `  abs note "${clip(clean, 40)}"`,
+      '  两者落点完全相同（都进 sources/）；note 是这条主路径，别再二选一。',
+    ].join('\n');
+  }
+
+  // L5 会话层同样不接 capture（2026-11-05 审查发现）：它落 sessions/，
+  //   而 sessions/ 有两条硬规则（lint 的 SESSIONS-NAMING / SESSIONS-MISPLACED）——
+  //   当天只允许 `log-<日期>.md`、tags 必须是 session-log 类。capture 生成的
+  //   `<日期>-<内容>.md` + `tags: [concept]` 必然被这两条同时报错。
+  //   实测：`abs capture --layer 5 "x"` → lint 报 2 个问题。命令自己产出坏数据。
+  //   真实用法各有正主：当天工作 → abs log；一场会话的结构化记录 → abs ingest。
+  if (L === 5) {
+    return [
+      '✗ L5 会话层不接 capture（它落 sessions/，会违反那里的命名与 tags 规则）。',
+      '  当天工作成果 → abs log "完成 X：…"',
+      '  一场会话的结构化记录 → abs ingest --last（或给会话 id）',
+    ].join('\n');
   }
 
   // L1 铁律：复用 cmdRule 的门槛（≤42 字、禁链接），不另起一套
