@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-11-05 16:13] [[fanchao]] dev | 发布 1.26.0：11 commit 推送 origin/main（pre-push 796 全绿），npm publish 后等传播延迟直查 registry 确认 1.26.0，本地全局安装并重装 hook/skill/MCP；安装版端到端验证（落页+load提醒+summon记账）全通
 ## [2026-11-05 15:34] [[fanchao]] dev | 修账本并发丢数据：①writeLedger 的 tmp 名用 Date.now() 无随机段，同毫秒并发撞名→rename ENOENT；②readLedger+改+writeLedger 非原子，两个会话同时关闭后写的盖掉先写的。实测旧写法并发 30 次只剩 1 条丢 29 条。新增 updateLedger（走 lock.js 的 editFile 加锁），ingest 与 summon --mark 都改用它。破坏验证：改回无锁测试立刻红。794 测试全绿
 ## [2026-11-05 15:28] [[fanchao]] dev | 真机验证 hook detached 落页链路（首次真正跑通）：用与 hook 完全一致的方式（detached+unref+stdio ignore）验证——①正常调用能落页；②父进程立即退出后子进程仍完成落页。此前只有「路径能调」的证据，没有「关闭会话时真的会落」的证据
 ## [2026-11-05 15:24] [[fanchao]] dev | 补 omp 宿主的会话页接线：abs.omp.ts 有 session_shutdown 事件但没接 ingest（只在 pi 接过），换宿主后机制会静默消失。加 snapshotSessionPage + 传 sessionIdFor，并为两个模板补「接线存在」的测试（破坏验证：撤掉传 sid 会红）。792 测试全绿

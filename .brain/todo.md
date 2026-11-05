@@ -1,11 +1,11 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] wrapup-push-release [[fanchao]] — 收尾沉淀 → 推送 git → 发版 1.26.0 → 本地安装验证 (认领 2026-11-05 01a1a9c6-6907-71)
 
 ## Done
 
 ### 2026-11-05
+- [x] wrapup-push-release [[fanchao]] — 收尾沉淀 → 推送 git → 发版 1.26.0 → 本地安装验证 — 收尾沉淀+11commit推送（pre-push 796全绿）+npm发布1.26.0（直查registry确认）+本地安装重装hook/skill/MCP+安装版端到端验证全通 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
 - [x] db-search-no-rules-mcp [[fanchao]] — db search 加 --no-rules，并发到 MCP 暴露 abs_search — db search 加 --no-rules（43→22 行）+ MCP 暴露 abs_search（12 工具）；推翻「query/db search 重复」的原判断——实测是详略两档；796 全绿连跑三次 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
 - [x] audit-fixes [[fanchao]] — 修审查发现：ingest md5 空串、capture L5 产出坏页、L7 死代码、两 hook 重复函数 — 修 md5 空串/L5 坏页/L7 死代码；hook 公共模块方案经核实会崩（单文件安装）已撤回；765 全绿 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
 - [x] load-unfilled-session-pages [[fanchao]] — abs load 顶部加「未填会话页」段（只数条数+页名），并真机验证 hook 接线 — load 顶部加未填会话页段（只数条数+页名）；真机验证查出 hook 指向全局包缺 ingest，重装后端到端跑通 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
