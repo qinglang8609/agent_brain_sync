@@ -78,7 +78,7 @@ function isRealUserText(t) {
 }
 
 /** 会话文件 md5。判「内容有没有变」的唯一可靠判据。 */
-async function md5Of(file) {
+export async function md5Of(file) {
   const buf = await fs.readFile(file).catch(() => null);
   if (!buf) return null;
   return createHash('md5').update(buf).digest('hex');
@@ -89,14 +89,21 @@ export async function digestSession(file) {
   let raw;
   try { raw = await fs.readFile(file, 'utf8'); } catch { return null; }
   const out = {
-    file, start: '', endedAt: '', day: '',
-    users: [], filesEdited: new Map(), toolCalls: 0,
+    file, start: '', endedAt: '', day: '', id: '', cwd: '',
+    users: [], filesEdited: new Map(), toolCalls: 0, lastAssist: '',
   };
   for (const l of raw.split('\n')) {
     if (!l) continue;
     let o;
     try { o = JSON.parse(l); } catch { continue; }
-    if (o.type === 'session') { out.start = o.timestamp || ''; out.cwd = o.cwd; continue; }
+    if (o.type === 'session') {
+      out.start = o.timestamp || '';
+      out.cwd = o.cwd;
+      // 会话 id 是「这份资料属于哪场会话」的唯一凭据 —— pi 把它放在首行，
+      // 文件名里也有，但文件名会被改，id 不会。
+      out.id = o.id || '';
+      continue;
+    }
     if (o.type !== 'message') continue;
     if (o.timestamp) out.endedAt = o.timestamp;
     const m = o.message || {};
@@ -104,17 +111,28 @@ export async function digestSession(file) {
       const t = textOf(m.content).trim();
       if (isRealUserText(t)) out.users.push(t);
     } else if (m.role === 'assistant' && Array.isArray(m.content)) {
+      let said = '';
       for (const c of m.content) {
-        if (!c || c.type !== 'toolCall') continue;
+        if (!c) continue;
+        if (c.type === 'text' && c.text) said += c.text;
+        if (c.type !== 'toolCall') continue;
         out.toolCalls++;
         const p = c.arguments && c.arguments.path;
         if (p && typeof p === 'string' && ['edit', 'write'].includes(c.name)) {
           out.filesEdited.set(p, (out.filesEdited.get(p) || 0) + 1);
         }
       }
+      // 只留最后一轮说了什么（会话的收尾结论通常在这），不存全文 ——
+      // 全文动辄几百 KB，存进来就是「读取侧随规模增长」。
+      if (said.trim()) out.lastAssist = said.trim();
     }
   }
   out.day = (out.start || '').slice(0, 10);
+  if (!out.id) {
+    // 兜底：文件名形如 `2026-11-05T03-35-14-951Z_<id>.jsonl`
+    const m = String(file).match(/^[^_]+_([0-9a-f-]{16,})\.jsonl$/);
+    if (m) out.id = m[1];
+  }
   return out;
 }
 
@@ -130,6 +148,12 @@ async function daysWithSnapshot(brainSessionsDir) {
   let files;
   try { files = await fs.readdir(brainSessionsDir); } catch { return days; }
   for (const f of files) {
+    // ★ 只认「整天快照」，不认单场会话页（2026-11-05 实测修正）：
+    //   `log-<日期>.md` 是人写的一天流水 —— 那天确实整理过了，跳过合理。
+    //   但 `session-<日期>-s<id8>.md` 是**一场会话一张**（abs ingest 的产物）。
+    //   按天跳过它，会让「同一天只落了一场」把其余几场永久埋掉：
+    //   实测真实项目有 14 天存在多场会话（最多一天 10 场），落一场就全跳过。
+    if (f.startsWith('session-')) continue;
     const m = f.match(/(\d{4}-\d{2}-\d{2})/);
     if (m) days.add(m[1]);
   }
@@ -148,9 +172,42 @@ export async function readLedger(path = ledgerPath()) {
 /** 写账本（原子：tmp + rename）。 */
 export async function writeLedger(ledger, path = ledgerPath()) {
   await fs.mkdir(join(path, '..'), { recursive: true });
-  const tmp = `${path}.tmp-${Date.now()}`;
+  // tmp 名必须带随机后缀（2026-11-05 实测）：
+  //   原来用 `${path}.tmp-${Date.now()}`。同一毫秒内起两个进程（同时关两个会话）
+  //   会生成**完全相同**的 tmp 名 —— 前一个 rename 把文件改走后，后一个 rename
+  //   对着已经不存在的老名字操作，抛 ENOENT。实测 20 个并发直接炸出这个错。
+  //   仓库其它落盘点（ingest 的页、notes）早就在用 `${Date.now()}-${random}`，
+  //   这里漏了随机段。
+  const tmp = `${path}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   await fs.writeFile(tmp, JSON.stringify(ledger, null, 2) + '\n');
   await fs.rename(tmp, path);
+}
+
+/** 读-改-写账本的**并发安全**版本。
+ *
+ * 为何要它（2026-11-05 实测）：`readLedger` + 修改 + `writeLedger` 是一组
+ *   非原子操作。两个会话同时关闭 → 两个 ingest 进程各自读到同一份旧账本 →
+ *   各自加一条 → 后写的盖掉先写的，**先写那条静默消失**。
+ *   后果不是报错，是某场会话下次又被当作「未落页」重新催一遍。
+ *
+ * 用 lock.js 的 editFile（它按文件加 .lock 串行化，是仓库既定的写法）。
+ * 账本不在 BRAIN_SHAPE 里，故不会过 index/todo/log 的格式闸门。
+ *
+ * @param {(book:object)=>void} mutator 就地修改 book
+ */
+export async function updateLedger(mutator, path = ledgerPath()) {
+  const { promises: fsp } = await import('node:fs');
+  await fsp.mkdir(join(path, '..'), { recursive: true });
+  const { editFile } = await import('../lock.js');
+  await editFile(path, async (current) => {
+    let book;
+    try {
+      const j = JSON.parse(String(current || ''));
+      book = (j && typeof j.files === 'object') ? j : { version: 1, files: {} };
+    } catch { book = { version: 1, files: {} }; }
+    await mutator(book);
+    return { text: JSON.stringify(book, null, 2) + '\n' };
+  });
 }
 
 /**
@@ -295,7 +352,7 @@ export async function summonTail(root, { limit = 8 } = {}) {
       }
     }
     if (pending > limit) lines.push(`  …另有 ${pending - limit} 场（abs summon 看全量）`);
-    lines.push('  落哪条由你判断: abs capture --layer N "…"  |  abs summon --mark 记账不再提');
+    lines.push('  落哪条由你判断: abs ingest <会话文件名>  |  abs capture --layer N "…"');
     return '\n' + lines.join('\n');
   } catch {
     return '';

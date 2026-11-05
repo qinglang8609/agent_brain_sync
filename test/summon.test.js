@@ -214,3 +214,81 @@ test('summon:false 时不扫会话（note/capture 内部调用 log 的场景）'
     assert.doesNotMatch(out, /场会话待总结/, '内部调用不该带会话清单，否则每次写经验都刷一遍');
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+// ---------- 单场会话页不算「整天快照」（2026-11-05 实测）----------
+// 病根：daysWithSnapshot 认任何带日期的文件名。原先只有 `log-<日期>.md`（人写的一天流水），
+// 按天跳过是对的。但 abs ingest 的产物是 `session-<日期>-s<id8>.md` —— **一场一张**。
+// 按天跳过它，会让「同一天只落了一场」把其余几场永久埋掉。
+// 实测真实项目有 14 天存在多场会话（最多一天 10 场）。
+test('单场会话页不算整天快照：同一天其他会话仍要被列出', async () => {
+  const sb = await sandbox();
+  const proj = sb.proj;
+  // 同一天三场会话
+  const ids = ['a1', 'a2', 'a3'];
+  for (const [i, id] of ids.entries()) {
+    const name = `2026-11-04T0${i + 1}-00-00-000Z_${id}00000-1111-2222-3333-444455556666.jsonl`;
+    const f = join(sb.piSessions, name);
+    await fs.writeFile(f, makeSession({ start: '2026-11-04T01:00:00.000Z', userTexts: [`会话 ${id} 的内容`] }));
+    await makeStale(f);
+  }
+  // 只落了一场会话页
+  await fs.writeFile(join(sb.sessions, 'session-2026-11-04-sa100000.md'),
+    '---\nkind: session-digest\n---\n\n## 出了什么问题\n某问题\n', 'utf8');
+
+  await withEnv({ ABS_PI_SESSIONS: sb.piDir, ABS_SUMMON_LEDGER: join(sb.root, 'l.json') }, async () => {
+    const r = await scanProject(proj);
+    assert.equal(r.fresh.length, 3, `三场都该列出（单场页不代表整天），实际 ${r.fresh.length}: ${JSON.stringify(r.fresh.map((x) => x.name))}`);
+  });
+});
+
+test('人写的一天快照 log-<日期>.md 仍然整天跳过（旧行为不变）', async () => {
+  const sb = await sandbox();
+  const name = '2026-11-04T01-00-00-000Z_b1000000-1111-2222-3333-444455556666.jsonl';
+  const f = join(sb.piSessions, name);
+  await fs.writeFile(f, makeSession({ start: '2026-11-04T01:00:00.000Z', userTexts: ['某场会话内容'] }));
+  await makeStale(f);
+  await fs.writeFile(join(sb.sessions, 'log-2026-11-04.md'),
+    '---\ntags: [session-log]\n---\n\n## 本会话做了什么\n某事\n', 'utf8');
+
+  await withEnv({ ABS_PI_SESSIONS: sb.piDir, ABS_SUMMON_LEDGER: join(sb.root, 'l.json') }, async () => {
+    const r = await scanProject(sb.proj);
+    assert.equal(r.fresh.length, 0, '人已整理过那天 → 不该再催');
+    assert.equal(r.skipped.length, 1);
+  });
+});
+
+// ---------- 账本并发写（2026-11-05 实测）----------
+// 病根：readLedger + 改 + writeLedger 是一组非原子操作。
+// 两个会话同时关闭 → 两个 ingest 各自读到同一份旧账本 → 各自加一条 →
+// 后写的盖掉先写的，**先写那条静默消失** → 下轮 summon 又把它当「未落页」催。
+// 实测旧写法并发 30 次：只剩 1 条，丢了 29 条。
+test('★ updateLedger: 并发 30 次写入，一条都不能丢', async () => {
+  const { updateLedger, readLedger } = await import('../src/brain/summon.js');
+  const dir = await fs.mkdtemp(join(tmpdir(), 'ledger-race-'));
+  const path = join(dir, 'l.json');
+  try {
+    await fs.writeFile(path, JSON.stringify({ version: 1, files: {} }));
+    await Promise.all(Array.from({ length: 30 }, (_, i) => updateLedger((book) => {
+      book.files[`sess-${i}`] = { md5: 'x', day: '2026-11-05' };
+    }, path)));
+    const b = await readLedger(path);
+    assert.equal(Object.keys(b.files).length, 30,
+      `并发写入不该丢记录，实际只剩 ${Object.keys(b.files).length} 条`);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeLedger: tmp 名带随机段（同毫秒并发不撞名）', async () => {
+  const { writeLedger } = await import('../src/brain/summon.js');
+  const dir = await fs.mkdtemp(join(tmpdir(), 'ledger-tmp-'));
+  const path = join(dir, 'l.json');
+  try {
+    // 同时发 10 个写 —— 旧写法用 Date.now() 会撞名，后到的 rename 抛 ENOENT
+    await Promise.all(Array.from({ length: 10 }, (_, i) => writeLedger({ version: 1, files: { [`k${i}`]: {} } }, path)));
+    const left = (await fs.readdir(dir)).filter((f) => f.includes('.tmp-'));
+    assert.deepEqual(left, [], `不该残留 tmp 文件: ${left}`);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

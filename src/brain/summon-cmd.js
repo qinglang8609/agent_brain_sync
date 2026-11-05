@@ -10,7 +10,7 @@
 import { resolve } from 'node:path';
 import { findBrainRoot } from '../index.js';
 import {
-  scanProject, renderScan, readLedger, writeLedger, markSummarized, ledgerPath,
+  scanProject, renderScan, readLedger, updateLedger, markSummarized, ledgerPath,
 } from './summon.js';
 
 /** 解析项目根：显式 --dir 优先，否则用当前目录的图谱根。 */
@@ -50,8 +50,9 @@ export async function cmdSummon({ dir, mark = false, full = false, limit = 15, s
 
   // --mark：记为已提取。不写知识页 —— 那是人的判断，不是本命令的。
   if (!pending.length) return '✓ 没有待提取的会话，账本未改动。';
-  markSummarized(book, pending);
-  await writeLedger(book, path);
+  // updateLedger 加锁改写（2026-11-05）：与 ingest 落页并发时，
+  // 两个「读 → 改 → 写」会互相盖掉，先写那条静默消失。
+  await updateLedger((latest) => { markSummarized(latest, pending); }, path);
   return [
     `✓ 已记账 ${pending.length} 个会话（下次不再列出）`,
     `  账本: ${path}`,
