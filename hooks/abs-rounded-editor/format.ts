@@ -1,7 +1,7 @@
 /**
  * 圆角输入框的纯格式化函数（无宿主依赖，可单测）。
  *
- * 单独成文件的原因：hooks/pi-rounded-editor.ts 要 import `@earendil-works/pi-coding-agent`，
+ * 单独成文件的原因：hooks/abs-rounded-editor/index.ts 要 import `@earendil-works/pi-coding-agent`，
  * 测试进程里没有这个包；把纯函数抽出来才能直接 import 断言。
  */
 
