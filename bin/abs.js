@@ -122,14 +122,17 @@ async function refreshHosts(yes) {
     return;
   }
   if (freshEntry !== resolveBinPath()) console.log(`  用新装的副本执行: ${freshEntry}`);
-  // --all：update 的语义是「把升好的版本铺到所有已装宿主」，不能二次弹窗重选。
-  //   旧代码调 runInstall({agent: undefined}) 在 TTY 下会弹菜单，回车只装 pi ——
-  //   另装过 omp / Claude Code 的机器升级后那几个宿主永远不刷新（2026-11-07 实报）。
-  const args = ['install', '--all'];
+  // 宿主选择交给新副本的交互菜单：**默认勾 pi，其余多选**（2026-11-07 用户定）。
+  //   不传 --yes —— 传了等于「不问、只装 pi」，另装过 omp / Claude Code 的机器
+  //   那几个宿主升级后永远不刷新（实报）。
+  //   也不用 --all —— 那会往没在用的宿主配置里写条目，与「默认只装 pi、
+  //   其余 opt-in」的既定策略相反。
+  const args = ['install'];
+  // 已是非交互场景（update --yes、脚本、CI）时不模拟菜单，交给 pickAgents 走默认 pi。
   if (yes) args.push('--yes');
   const code = await runInherit(process.execPath, [freshEntry, ...args]);
   if (code !== 0) {
-    console.error(`\n✗ 刷新宿主失败（退出码 ${code}）。手动重跑：node ${freshEntry} install --all`);
+    console.error(`\n✗ 刷新宿主失败（退出码 ${code}）。手动重跑：node ${freshEntry} install`);
     process.exit(1);
   }
   console.log('\n完成。重启宿主（pi / omp / opencode / claude-code / codex）后新 hook 生效。');

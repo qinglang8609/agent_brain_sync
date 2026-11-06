@@ -1017,7 +1017,12 @@ const INSTALLERS = {
 };
 
 export function installSummary() {
-  return HOSTS.map((h) => `  ${h.key.padEnd(12)} ${h.label}`).join('\n');
+  // 标出默认项，否则用户看不出「回车 = 只装 pi」到底装哪个（2026-11-07 用户要求：
+  // 默认勾 pi，其余多选）。
+  return HOSTS.map((h) => {
+    const mark = h.key === DEFAULT_AGENT ? '  ← 默认（回车只装这个，要多个请用逗号列出）' : '';
+    return `  ${h.key.padEnd(12)} ${h.label}${mark}`;
+  }).join('\n');
 }
 
 export async function runInstall({ agent, all = false, mcp = true, skill = true, yes = false } = {}) {

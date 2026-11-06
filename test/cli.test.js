@@ -554,10 +554,11 @@ describe('cli: 未知命令/help', () => {
     assert.match(src, /freshInstallEntry/, '必须有「定位新副本」的实现');
     assert.match(src, /npm', \['prefix', '-g'/, '必须用 npm prefix -g 定位新包');
     assert.match(src, /runInherit/, '必须用子进程执行，而不是自己跑（自己跑就是旧模板）');
-    // update 里刷新宿主必须用 --all：旧代码传 agent:undefined，TTY 下会弹菜单，
-    // 回车只装 pi —— 另装过 omp / Claude Code 的机器那几个宿主永远不刷新。
+    // 宿主选择交给交互菜单：默认勾 pi、其余多选（2026-11-07 用户定）。
+    // 不能传 --all —— 那会往没在用的宿主配置里写条目，与「默认只装 pi、其余 opt-in」相反。
+    assert.ok(!/args = \['install', '--all'\]/.test(src), 'update 不得用 --all（会污染未使用的宿主）');
+    assert.match(src, /const args = \['install'\]/, 'update 应走交互菜单选宿主');
     assert.match(src, /if \(yes\) args\.push\('--yes'\)/, 'update 应把 --yes 透传给子进程');
-    assert.match(src, /const args = \['install', '--all'\]/, 'update 必须用 install --all 铺到所有宿主');
   });
 });
 
