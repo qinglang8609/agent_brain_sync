@@ -264,6 +264,29 @@ describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
       assert.equal(await fireRound(), 1, '新会话必须重新摆一次开局状态');
     });
 
+    // ★ 第三个 bug（2026-11-06 用户实报）：「用 new 开新会话，只有当我输入 abs 的时候
+    //   铁律和知识才加载进来」。根因是去重 key 只有 cwd，而**一个会话可能持续好几天、
+    //   期间 new 出来的新会话不一定重发带 ctx 的 session_start** —— 于是某个目录只要
+    //   注入过一次，此后整个进程生命周期永远 skip。
+    //   日志实证：agent_brain_sync 当天 4 次全 skip，一次 on 都没有。
+    //   修复：key 加会话 id。这条用例模拟「没有 session_start 的第二个会话」。
+    test('★ 第二个会话即使没有 session_start，也必须重新注入（按会话 id 去重）', async () => {
+      const { handlers, fireRound, ctx } = await setupLoad('pi-load-newsess', join(sandbox, 'log'));
+      // 会话 A：注入 + 送达
+      await handlers.session_start({ reason: 'startup' }, { ...ctx, sessionManager: { getSessionId: () => 'sess-A' }, hasUI: false });
+      assert.equal(await fireRound(), 1);
+      await handlers.agent_end({ messages: [] }, ctx);
+      assert.equal(await fireRound(), 0, '同会话内已停');
+
+      // 会话 B：**故意不调 session_start** —— 模拟 new 在同一进程里换 sid
+      // 但宿主没重发该事件。修复前这里会是 0（永远 skip）。
+      const ctxB = { ...ctx, sessionManager: { getSessionId: () => 'sess-B' } };
+      const options = { promptGuidelines: [] };
+      await handlers.before_agent_start({ prompt: 'hi', systemPromptOptions: options }, ctxB);
+      const injected = options.promptGuidelines.filter((g) => g.startsWith('[开工] ')).length;
+      assert.equal(injected, 1, '换会话了就必须重新摆开局状态（改前这里是 0，复现了用户报的 bug）');
+    });
+
     // ★ 第二个 bug（2026-10-06 用户实报）：标记原是【会话级单值】，但 load 内容取自
     //   cwd/.brain/ —— 每个目录不同。任一目录拿到 load 后，其它目录全被永久跳过。
     //   日志干净复现：07:40:10 on@~/.agents → 07:40:17 delivered → 07:40:43 skip@agent_brain_sync

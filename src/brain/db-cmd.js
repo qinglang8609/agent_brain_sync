@@ -190,7 +190,7 @@ export async function cmdDbRebuild({ dir } = {}) {
 }
 
 /** `abs db search <词>` —— 走库搜索：FTS 种子 → 亮度扩散。 */
-export async function cmdDbSearch({ query, limit = 8, full = false, noRules = false } = {}) {
+export async function cmdDbSearch({ query, limit = 8, full = false, noRules = false, cmdName = 'db search' } = {}) {
   const q = String(query || '').trim();
   if (!q) return '用法: abs db search <词>';
 
@@ -207,7 +207,9 @@ export async function cmdDbSearch({ query, limit = 8, full = false, noRules = fa
     const seeds = search(h, q, { limit: 12 });
     const lit = illuminate(h, seeds, { limit });
 
-    const out = [`db search [${q}] → 种子 ${seeds.length} 条，亮起 ${lit.length} 页`];
+    // 命令名随调用方式变（2026-11-06）：顶层叫 search，别名仍走 db search。
+    // 直接印死 'db search' 会让新命令的输出自相矛盾。
+    const out = [`${cmdName} [${q}] → 种子 ${seeds.length} 条，亮起 ${lit.length} 页`];
     // --no-rules：不输出 L1 铁律（2026-11-05）。
     // 为何要它：铁律 18 条，占输出近一半。开工时（abs load）确实该先看，
     // 但「查一个主题」时它们是噪音 —— 实测同一查询 43 行里有 4 行是铁律区，
@@ -265,7 +267,7 @@ export async function cmdDbSearch({ query, limit = 8, full = false, noRules = fa
     } else {
       out.push('', '（L1 铁律恒在最前；↝ 表示由邻居扩散点亮，非直接命中）');
     }
-    out.push('（只给摘要与成本；要看全文: abs db search <词> --full  或  abs resolve <页名>）');
+    out.push(`（只给摘要与成本；要看全文: abs ${cmdName} <词> --full  或  abs resolve <页名>）`);
     if (project && !noRules) {
       out.push(`（铁律只显示本项目 "${project}" 的 —— 别的项目的铁律不外借）`);
     }

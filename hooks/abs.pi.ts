@@ -307,8 +307,24 @@ async function hasBrain(cwd: string): Promise<boolean> {
  *     07:40:17 agent_end load_delivered           cwd=~/.agents   ← 置位
  *     07:40:43 before_agent_start load_guide=skip cwd=agent_brain_sync ← ✗ 被跳过
  *   而 pi 一个会话里 `turn_end` 会在多个 cwd 间交替（多个项目目录同时挂着）。
- *   **不要再改回单个布尔量** —— 一改回去就重现「在 A 说过话，B 再也看不到 load」。 */
+ *   **不要再改回单个布尔量** —— 一改回去就重现「在 A 说过话，B 再也看不到 load」。
+ *
+ * ★ 语义三：**按「会话 + 目录」分，不是只按目录**（2026-11-06 用户实报后修的第三个 bug）。
+ *   病根：这个 Set 只在 `session_start` 清空，而**一个会话可能持续好几天、跨几十次 cwd 切换**，
+ *   期间的 `new`（在同一进程里新建会话）不一定重发带 ctx 的 `session_start`。
+ *   于是某个目录只要注入过一次，此后整个进程生命周期里永远 skip。
+ *   日志实证（~/.abs/log/hooks.log 2026-11-06）：agent_brain_sync 出现 4 次全是 skip，
+ *   一次 on 都没有；而 Code/ren 连着 3 次 on。用户原话：
+ *   「用 new 开新会话，没有主动运行 abs，只有当我输入 abs 的时候铁律和知识才加载进来」。
+ *   修法：key 带上会话 id —— 换会话就该重新摆一次开局状态。
+ *   **不要再改回只按 cwd** —— 那就重现「新会话开局是空的」。 */
 const loadInjected = new Set<string>()
+
+/** 注入去重用的 key：会话 id + cwd。
+ *  会话 id 取不到时退化为纯 cwd（老行为，至少不会因空 id 而每轮重注入刷屏）。 */
+function loadKeyOf(cwd: string, sid: string): string {
+  return sid ? `${sid}::${cwd}` : cwd
+}
 
 /** 本轮已注入 load、正等 `agent_end` 确认送达的 **cwd**（见 loadInjected 的注解）。
  *  与 loadInjected 的分工：这是「抛出去了」，那是「对方接到了」。
@@ -1175,7 +1191,8 @@ export default function absPiHook(pi: ExtensionAPI): void {
         // 注意这里**不置 loadInjected** —— 注入点只是在 prompt 提交后、agent loop 前，
         // 对话还没发出去；此刻置位会让被中断的那轮白烧掉标记（见 loadInjected 注解）。
         let loadState = 'skip'
-        if (!loadInjected.has(cwd)) {
+        const loadKey = loadKeyOf(cwd, sidNow)
+        if (!loadInjected.has(loadKey)) {
           const loadText = await readLoadForGuide(cwd)
           // 首轮硬规则（方案 B，2026-10-06）—— 与 load 同一机会（同目录只一次）。
           // 为何挂在这里而不另设 flag：两者都是「开工那一刻只说一次」，
@@ -1183,11 +1200,11 @@ export default function absPiHook(pi: ExtensionAPI): void {
           const rulesOn = injectOpeningRules(event?.systemPromptOptions)
           if (loadText) {
             injectLoadGuideline(event?.systemPromptOptions, loadText)
-            loadPending = cwd // 送达确认交给 agent_end
+            loadPending = loadKey // 送达确认交给 agent_end（key 与注入判定同源）
             loadState = 'on'
           } else {
             loadState = 'empty'
-            loadInjected.add(cwd) // 失败也不重试：不每轮白查一次盘
+            loadInjected.add(loadKey) // 失败也不重试：不每轮白查一次盘
           }
           if (rulesOn) openingRulesLogged = true
         }
@@ -1220,13 +1237,13 @@ export default function absPiHook(pi: ExtensionAPI): void {
       await logHook(`agent_end:seen cwd=${cwd} brain=${brain || 'none'}`).catch(() => {})
     }
     // 送达确认（2026-10-06 方案 A）：走到这里 = 这轮真跑完了 → 才算“LLM 看到了”。
-    // 中断/ESC 掉的那轮不会到 agent_end → 该 cwd 入不了集合 → 下轮自动补注入。
+    // 中断/ESC 掉的那轮不会到 agent_end → 该 key 入不了集合 → 下轮自动补注入。
     // 这是**唯一**该写 loadInjected 的地方（别挪回 before_agent_start）。
     if (loadPending) {
       loadInjected.add(loadPending)
       const done = loadPending
       loadPending = ''
-      await logHook(`agent_end load_delivered cwd=${done} seen=[${[...loadInjected].join(',')}]`).catch(() => {})
+      await logHook(`agent_end load_delivered key=${done} seen=[${[...loadInjected].join(',')}]`).catch(() => {})
     }
     // 每轮 spawn 已删除（2026-10-05 用户实报"卡顿"）：agentEndSeen 一旦置位，
     // 下面那个条件就恒真 → 每轮结束都起一个 node 进程，纯属白烧。

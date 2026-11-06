@@ -1,6 +1,7 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] command-surface-cleanup [[fanchao]] — 命令面 27→14（保留别名）、SKILL 303→~120 行分层、单一入口表；代码结构不动 (认领 2026-11-06 01a1a9c6-6907-71)
 
 ## Done
 
@@ -20,13 +21,8 @@
 - [x] pi-inputbox-rounded-border [[fanchao]] — pi 输入框改成左右两侧都有边线 + 圆角 【落地】 (完成 2026-11-04 01a1a566-2588-75)
 - [x] pi-todo-panel-border [[fanchao]] — 去掉 pi todo 面板上边框（两副本同步） 【落地】 (完成 2026-11-04 01a1a566-2588-75)
 
-### 2026-11-03
-- [x] query-flow-draft-filter [[fanchao]] — 修 query 流水页降权力度不足 + 补 draft 草稿过滤，对齐 db search 【落地】 (完成 2026-11-03 01a19be2-af1d-76)
-- [x] review-fix-p1 [[fanchao]] — 全项目审查后修复 4 个 P1 缺陷 【落地】 (完成 2026-11-03 01a19be2-af1d-76)
-- [x] abs-recall-command [[fanchao]] — 新增 abs recall：卡住时按处境主动取相关页 【落地】 (完成 2026-11-03 01a19be2-af1d-76)
-- [x] query-flow-page-downrank [[fanchao]] — 检索结果里给 sessions/log-* 与 sources/ 降权，不让流水页压过内容页 【落地】 (完成 2026-11-03 01a19be2-af1d-76)
-
 ### Archived
+- [[log-2026-11-03]] 完成任务 4 条
 - [[log-2026-11-02]] 完成任务 9 条
 - [[log-2026-11-01]] 完成任务 11 条
 - [[log-2026-10-22]] 完成任务 4 条

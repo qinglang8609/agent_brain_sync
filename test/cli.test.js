@@ -511,10 +511,13 @@ describe('cli: 未知命令/help', () => {
     assert.notEqual(r.code, 0);
     assert.ok(r.stderr.includes('未知命令'), r.stderr);
   });
-  test('help 零退出并含用法', async () => {
+  test('help 零退出，且按「要做什么」分组（不是按命令名罗列）', async () => {
     const r = await run(['help']);
     assert.equal(r.code, 0);
-    assert.ok(r.stdout.includes('常用') && r.stdout.includes('abs load'), r.stdout);
+    // 2026-11-06 重写：27 个命令平铺记不住，改成「开工/找东西/写知识/写任务/会话/维护」六组。
+    // 判据：必须能一眼看到开工第一件事，且分组标题在。
+    assert.match(r.stdout, /【开工】/, `help 应有分组标题:\n${r.stdout.slice(0,400)}`);
+    assert.ok(r.stdout.includes('abs load'), 'help 必须列出开工第一件事');
   });
 
   // 回归: 用户报"abs update 看不到新版本" —— 因为当时根本没有 update/--version 命令。
@@ -531,8 +534,10 @@ describe('cli: 未知命令/help', () => {
   test('help 列出 update 与 --version (自我管理命令可发现)', async () => {
     const r = await run(['help']);
     assert.equal(r.code, 0);
-    assert.ok(/^\s+update\b/m.test(r.stdout), 'help 应列出 update');
-    assert.ok(r.stdout.includes('--version'), 'help 应列出 --version');
+    // 新格式把自我管理放进【其它】组，行首多了 "abs " 前缀 —— 断言放宽到「出现该词」，
+    // 但保留原意：升级动作必须有入口，不能藏起来。
+    assert.ok(/abs update\b/.test(r.stdout), `help 应列出 update:\n${r.stdout.slice(-600)}`);
+    assert.ok(/update/.test(r.stdout) && r.stdout.includes('install'), '升级/安装入口要可见');
   });
 });
 
@@ -699,7 +704,7 @@ describe('cli: argv 解析', () => {
   test('help 常用四条，且四条都真存在 (或 --help 可用)', async () => {
     const r = await run(['help']);
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /常用/, 'help 应有「常用」段');
+    assert.match(r.stdout, /【开工】/, 'help 应有「开工」段（最常用的入口）');
     // 四条命令逐条验证真的可调用（防止写了个不存在的命令）
     for (const cmd of [['load'], ['query', 'x']]) {
       const rr = await run([...cmd, '--help'], { cwd: REPO });

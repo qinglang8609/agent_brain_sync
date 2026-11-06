@@ -151,6 +151,8 @@ const FLAG_SPEC = {
   'force': { type: 'boolean' },
   // ingest 用：--last 取最近一场会话（hook 在 session_shutdown 调，不用给 id）；
   //           --auto 只落真改过文件的会话（纯聊天不落页）。
+  // ingest 用：--list 只看「哪些会话没落页」不写入（原 abs summon 的职责）
+  'list': { type: 'boolean' },
   'last': { type: 'boolean' },
   'auto': { type: 'boolean' },
   // db search 用：不输出 L1 铁律（查主题时它们是噪音；开工看铁律是 load 的职责）。
@@ -247,36 +249,51 @@ function parseArgv(args) {
   }
   return o;
 }
-const usage = `abs — 跨会话记忆工具（.brain/ 图谱）
+const usage = `abs — 跨会话记忆（.brain/ 图谱）
 
-常用:
-  abs load                          开工先跑: 读状态、接上次的活
-  abs todo add X --note "做什么"      登记任务 (done/state/note 管后续)
-  abs note "经验一句话"               随手记经验; abs log "完成 X" 记成果
-  abs query <词…>                   检索 .brain/; abs todo 看任务板
-  abs recall [词…]                  卡住时主动取相关页（不给词就按当前处境推）
+怎么用：按你要做的事找，不用记命令名。旧名都还能用，会自动提示新名。
 
-全部命令 (细节: abs <命令> --help):
-  init [--repair]            建图谱 (当前目录)
-  load                       开机读状态
-  todo                       任务看板 (add/note/state/done/archive)
-  index | log | status       索引 / 流水 / 概要
-  note <经验> [--tags a,b]   经验暂存 → sources/
-  capture [--layer 1-6] "…"  按层判定落点后直接写入 (不传=L4; L7 用 abs note)
-  summon [--mark|--status]   会话总结托底: 列出未总结/有更新的会话 (不写盘)
-  ingest <会话文件>           把一场 pi 会话落成会话页 (带 session id 双向回溯)
-  concept <slug> --title …   建概念页骨架
-  query <词…> [--all]       检索知识页 (多词 OR)
-  db rebuild|search|status|evolve  图数据库: 建库 / 亮度搜索 / 体检 / 进化体检
-  resolve <页名…>            反查页面路径
-  supersede <页名> [--by 页] 标经验已失效
-  review [--accept 页…|--reject 页…]  待确认页队列 (draft 升 active/否决)
-  lint                       图谱体检 (死链/超限)
-  rule [add "一句话"]        硬规则读写
-  install|uninstall [--agent <宿主>] [--no-mcp] [--no-skill]
-  update                     升级并刷新 hook/skill
-  config [set user <名字>]   使用者姓名 (写操作需先设置)
-  --version | help           版本 / 本帮助
+【开工】读状态，接上次的活
+  abs load                  必跑。Rules + 图谱计数 + 任务板 + 最近流水
+  abs recall [词…]          卡住时用：按当前处境推相关页（不给词也行）
+
+【找东西】
+  abs search <词>           推荐。亮度排序 + 邻居扩散 + 跨项目
+  abs query <词…> [--all]   要字面精确时用：多词 OR，输出更短
+  abs resolve <页名…>       有了页名，反查文件路径
+
+【写知识】（三者落点不同，别混）
+  abs note "一句话"         随手一句经验 → sources/ 待提炼
+  abs concept <slug> --title "…"   要成页 → concepts/（自动带四段骨架）
+  abs rule add "一句话"     要约束 → index 的 Rules（≤42 字）
+
+【写任务】
+  abs todo                  看板
+  abs todo add <id> --note "做什么"
+  abs todo note <id> --note "进度"      追加子项
+  abs todo done <id> --as 落地|否决|仅方案 [结语]
+  abs todo state <id> --note 进行中|讨论中|滞留中|搁置
+  abs todo remove <id>      删除（连子项，不可恢复）
+
+【会话】
+  abs ingest [--list]       把一场 pi 会话落成结构化页；--list 看还有哪些没落
+
+【维护】
+  abs lint                  体检：死链 / 超限 / 待提炼
+  abs review                待确认的 draft 页（升 active 或否决）
+  abs supersede <页> --by <新页>   标经验已失效（不删文件）
+  abs show index|log|status 看完整索引 / 流水 / 概要
+  abs db rebuild|status|evolve     重建库 / 库体检 / 进化体检
+  abs init [--repair]       建图谱
+
+【其它】
+  abs install|uninstall [--agent <宿主>] [--no-mcp] [--no-skill]
+  abs update                升级并刷新 hook/skill
+  abs config set user <名字>  使用者姓名（写操作需先设置）
+
+旧名（仍可用，会提示新名）：
+  index/log/status → show   |  capture → concept  |  db search → search
+  summon → ingest --list    |  db add → init
 
 注: wrapup / teardown-check 是 hook 内部命令。
 `;
@@ -493,26 +510,70 @@ async function main() {
         rejectExtra(opts._, 'abs load');
         console.log(await cmdLoad({ dir: opts.dir }));
         break;
+      // 顶层 search（2026-11-06）：MCP 侧一直叫 abs_search，CLI 却要敲 `db search` —— 名实不符。
+      // 现在 CLI 与 MCP 同名，`db search` 保留为别名（转指向这里并提示一次）。
+      case 'search': {
+        if (opts.help) {
+          console.log('abs search — 按亮度检索知识图谱\n\n'
+            + '用法: abs search <词> [--limit N] [--full] [--no-rules] [--rules]\n\n'
+            + '  亮度排序 + 邻居扩散 + 跨项目（标 [跨项目]）。\n'
+            + '  默认省略 L1 铁律（开工时 abs load 会给）；要看加 --rules。\n'
+            + '  --full 附正文；--limit 最多几页（默认 8）。\n\n'
+            + '与 abs query 的区别：这是详略两档不是重复 ——\n'
+            + '  query 给字面 OR 命中的页名+摘要，最省 token；\n'
+            + '  search 给亮度与扩散，找「我上次怎么解决 X」更准。');
+          break;
+        }
+        if (!opts._.length) throw new Error('✗ 缺检索词\n  用法: abs search <词> [--limit N] [--full] [--no-rules]');
+        // 顶层 search 默认省略铁律（2026-11-06）：它是「查一个主题」的工具，
+        // 18 条铁律占输出近一半、每次都是噪音。要看铁律显式 --rules，或跑 abs load。
+        // db search 那个别名仍保持旧默认（带铁律），不改变老脚本的行为。
+        console.log(await cmdDbSearch({
+          query: opts._.join(' '), limit: Number(opts.limit) || 8,
+          full: !!opts.full, noRules: !opts.rules, cmdName: 'search',
+        }));
+        break;
+      }
       case 'recall': {
         const limit = Number(opts.limit) > 0 ? Number(opts.limit) : 5;
         console.log(await cmdRecall({ dir: opts.dir, terms: opts._, limit }));
         break;
       }
+      // ── 只读视图：统一到 abs show <视图>，旧名保留为别名并提示 ──
+      // （2026-11-06 命令面整理：index/log/status 都是「看某个文件的现状」，
+      //  三个顶层命令占三个名额却只有一个心智动作 —— 看。合成 show 一个入口。）
+      case 'show': {
+        const v = opts._[0];
+        if (!v) {
+          console.log('用法: abs show index|log|status\n  index=完整索引  log=操作流水  status=图谱概要');
+          break;
+        }
+        rejectExtra(opts._.slice(1), 'abs show index|log|status');
+        if (v === 'status') console.log(await cmdStatus({ dir: opts.dir }));
+        else if (v === 'index' || v === 'log') console.log(await cmdShow({ dir: opts.dir, view: v }));
+        else console.log(`✗ 未知视图 "${v}"。可用: index | log | status`);
+        break;
+      }
       case 'index':
         rejectExtra(opts._, 'abs index');
+        console.log('（abs index 已改名 → abs show index）');
         console.log(await cmdShow({ dir: opts.dir, view: 'index' }));
         break;
       case 'log': {
         // 无参=查看 log.md；带参=追加一行 (用户/AI 主动记; hook 生命周期事件走技术日志 hooks.log, 不经这里)
+        // ★ log 有双职责，不能并进 show：带参时它是**写**操作。
+        //   所以只把「无参查看」这一半指向 show，写的那半保持不变、也不提示改名。
         if (opts._.length) {
           console.log(await cmdLog({ dir: opts.dir, title: opts._.join(' '), kind: opts.kind }));
         } else {
+          console.log('（查看流水已改名 → abs show log；abs log "完成 X" 仍是记成果）');
           console.log(await cmdShow({ dir: opts.dir, view: 'log' }));
         }
         break;
       }
       case 'status':
         rejectExtra(opts._, 'abs status');
+        console.log('（abs status 已改名 → abs show status）');
         console.log(await cmdStatus({ dir: opts.dir }));
         break;
       // abs todo —— 无子命令=看板；带子命令=任务写操作
@@ -572,10 +633,18 @@ async function main() {
         break;
       }
       case 'summon': {
+        // 别名（2026-11-06）：并进 ingest --list —— 两者是同一件事的两半
+        // （summon 说「哪些没落页」，ingest 负责落）。分两个顶层命令只是多记一个词。
+        console.log('（abs summon 已改名 → abs ingest --list）');
         console.log(await cmdSummon({ dir: opts.dir, mark: !!opts.mark, full: !!opts.full, status: !!opts.status, limit: Number(opts.limit) || 15 }));
         break;
       }
       case 'ingest': {
+        // --list：只看「还有哪些会话没落页」，不写入（原来的 abs summon）
+        if (opts.list) {
+          console.log(await cmdSummon({ dir: opts.dir, mark: false, full: !!opts.full, status: false, limit: Number(opts.limit) || 15 }));
+          break;
+        }
         console.log(await cmdIngest({
           dir: opts.dir, file: opts._.join(' '), force: !!opts.force, mark: !!opts.mark,
           last: !!opts.last, auto: !!opts.auto, session: opts.session,
@@ -628,7 +697,13 @@ async function main() {
         const sub = opts._[0];
         const rest = opts._.slice(1);
         if (sub === 'rebuild') { console.log(await cmdDbRebuild({ dir: opts.dir })); break; }
-        if (sub === 'search') { console.log(await cmdDbSearch({ query: rest.join(' '), limit: Number(opts.limit) || 8, full: !!opts.full, noRules: !!opts['no-rules'] })); break; }
+        if (sub === 'search') {
+          // 别名（2026-11-06）：顶层已改叫 abs search。留着是为了不打断现有习惯与脚本，
+          // 但每次提示一次 —— 不提示的话旧名会永远活着，命令面又变宽。
+          console.log('（abs db search 已改名 → abs search）');
+          console.log(await cmdDbSearch({ query: rest.join(' '), limit: Number(opts.limit) || 8, full: !!opts.full, noRules: !!opts['no-rules'] }));
+          break;
+        }
         if (sub === 'status') { console.log(await cmdDbStatus()); break; }
         if (sub === 'evolve') { console.log(await cmdDbEvolve({ staleDays: Number(opts.staleDays) || 90 })); break; }
         if (sub === 'add') {
