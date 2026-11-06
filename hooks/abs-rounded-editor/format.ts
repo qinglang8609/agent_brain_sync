@@ -33,6 +33,44 @@ export function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, '')
 }
 
+/** 终端显示宽度：CJK/全角记 2 列，其余记 1 列。
+ *
+ * ★ 为何必需（2026-11-07 用户实报「输入框右下角底下的线冒出来了」）：
+ *   之前 roundBorder 按**字符数**算宽度，而左下角标签里有中文昵称
+ *   （如「转发锦鲤求暴富」7 个汉字实际占 14 列）—— 少算了 7 列，
+ *   多出的宽度就把右下角圆角挤出了屏幕。
+ *   右侧状态栏一直没出问题是因为它只有 ASCII。
+ *
+ * 与 abs.pi.ts 的 dispWidth 同规则，但不共享（两个扩展各自独立安装）。 */
+export function textWidth(s: string): number {
+  const plain = stripAnsi(s)
+  let w = 0
+  for (const ch of plain) {
+    const cp = ch.codePointAt(0) || 0
+    const wide =
+      (cp >= 0x1100 && cp <= 0x115f) ||
+      (cp >= 0x2e80 && cp <= 0xa4cf) ||
+      (cp >= 0xac00 && cp <= 0xd7a3) ||
+      (cp >= 0xf900 && cp <= 0xfaff) ||
+      (cp >= 0xfe30 && cp <= 0xfe6f) ||
+      (cp >= 0xff00 && cp <= 0xff60) ||
+      (cp >= 0xffe0 && cp <= 0xffe6) ||
+      (cp >= 0x1f300 && cp <= 0x1f64f) ||
+      (cp >= 0x1f900 && cp <= 0x1f9ff)
+    w += wide ? 2 : 1
+  }
+  return w
+}
+
+/** 从尾部去掉 n 列。边框行只由 ASCII `─`（U+2500，各 1 列）与空格组成，
+ *  每字符 1 列，故直接按字符截。
+ *  ★ 不要在这里用宽字符判断 —— 之前写 `cp >= 0x1100` 把 U+2500 当成了 2 列，
+ *    导致削掉一半、边框变长（2026-11-07 踩过）。 */
+function dropCols(s: string, n: number): string {
+  if (n <= 0) return s
+  return s.slice(0, Math.max(0, s.length - n))
+}
+
 /**
  * 推理强度 → 主题色 token。空串表示「不上色，沿用默认色」。
  *
@@ -52,12 +90,14 @@ export function thinkingColorToken(level: string | null | undefined): string {
 }
 
 /**
- * 把一行边框文本换成「左圆角 + 左标签 + 中段 + 右圆角」，可见宽度保持原样。
+ * 把一行边框文本换成「左圆角 + 左标签 + 中段 + 右圆角」，**显示宽度**保持原样。
  * 边框行内含 ANSI 时直接 slice 会切坏转义序列，所以先剥色、改字、再整行着色。
  *
- * leftLabel 贴在圆角之后（如 `╭ fanchao · 昵称 ───── ╮`），右侧先剥掉 1 个 `─`
- * 再用 ` leftLabel ` 填上 —— 宽度严格不变（靠空格凑，不靠增减划线）。
- * 右侧 label 贴最右端。哪个放不下就丢掉哪个（宁可没有，也不让边框溢出折行）。
+ * ★ 宽度一律按 textWidth（CJK = 2 列）算，不按字符数 —— 标签里的中文昵称
+ *   按字符数算会少算一半，多出的宽度把右下角圆角挤到屏幕外（2026-11-07 实报）。
+ *
+ * leftLabel 贴在左圆角之后；label 贴最右端。哪个放不下就丢掉哪个
+ * （宁可没有，也不让边框溢出折行）。
  */
 export function roundBorder(
   line: string,
@@ -67,31 +107,29 @@ export function roundBorder(
   label = '',
   leftLabel = '',
 ): string {
-  // 宽度按字符数算（不是显示宽度）。成立的前提：line 只含 ASCII 的 `─` 与空格
-  // —— pi 的边框行正是如此。若将来边框里出现中日韩宽字符，这里要改用 visibleWidth。
   const plain = stripAnsi(line)
   if (plain.length === 0) return line
-  // 原边框行宽 = width-2；两端圆角各占 1 列，合起来正好 width。
-  // 注意：line 本身已去掉两端圆角位，故 mid 宽度 = plain.length。
+  // mid 是两端圆角之间的那段；总宽 = 1(左圆角) + mid 宽 + 1(右圆角)。
   let mid = plain
 
   // 右 label 先做（从右端拿 `─` 换），再做左侧 —— 否则两侧都从右端切，位置会互相错。
-  // label 两侧各留 1 空格；放不下就不要 label。
-  if (label && label.length + 2 < mid.length) {
-    mid = mid.slice(0, mid.length - label.length - 2) + ' ' + label + ' '
+  // 注意：剥掉 **lw** 列后接 ` label `，两者宽度相等，故总宽不变。
+  if (label) {
+    const lw = textWidth(label) + 2
+    if (lw < textWidth(mid)) mid = dropCols(mid, lw) + ' ' + label + ' '
   }
 
-  // 左 label 插到**最左端**（圆角之后），即 working 图标之前。
+  // 左 label 插到最左端（圆角之后，即 working 图标之前）。
   // ★ 从**中间**剥等长的 `─`，不能从右端剥 —— 右端可能已经是右 label，
-  //   再从右端切就会把它末尾拼掉（2026-11-07 实测：「8.0%/1.0M m」变成「8.0」）。
-  // 前面多占「1 空格 + label + 1 空格」，就在尾巴之前切掉同样多。
+  //   再从右端切就会把它末尾拼掉（实测：「8.0%/1.0M m」变成「8.0」）。
   // 两侧各留 1 空格：否则 `╰fanchao` 贴死圆角，看着像缺了一角。
   if (leftLabel) {
-    const need = leftLabel.length + 2
+    const lw = textWidth(leftLabel) + 2
     // 右 label 已占的尾巴宽度：保留它，从它之前切。
-    const tailLen = label && label.length + 2 < mid.length ? label.length + 2 : 0
-    if (need + tailLen < mid.length) {
-      mid = ' ' + leftLabel + ' ' + mid.slice(0, mid.length - need - tailLen) + mid.slice(mid.length - tailLen)
+    const tailLen = label && textWidth(label) + 2 < textWidth(mid) ? textWidth(label) + 2 : 0
+    if (lw + tailLen < textWidth(mid)) {
+      const body = dropCols(mid.slice(0, mid.length - tailLen), lw)
+      mid = ' ' + leftLabel + ' ' + body + mid.slice(mid.length - tailLen)
     }
   }
   return fg(left + mid + right)
