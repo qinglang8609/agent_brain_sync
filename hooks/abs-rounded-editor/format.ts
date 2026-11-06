@@ -52,10 +52,12 @@ export function thinkingColorToken(level: string | null | undefined): string {
 }
 
 /**
- * 把一行边框文本换成「左圆角 + 中段 + 右圆角」，可见宽度保持原样。
+ * 把一行边框文本换成「左圆角 + 左标签 + 中段 + 右圆角」，可见宽度保持原样。
  * 边框行内含 ANSI 时直接 slice 会切坏转义序列，所以先剥色、改字、再整行着色。
  *
- * label 贴在最右端；放不下就丢掉 label（宁可没有，也不让边框溢出折行）。
+ * leftLabel 贴在圆角之后（如 `╭ fanchao · 昵称 ───── ╮`），右侧先剥掉 1 个 `─`
+ * 再用 ` leftLabel ` 填上 —— 宽度严格不变（靠空格凑，不靠增减划线）。
+ * 右侧 label 贴最右端。哪个放不下就丢掉哪个（宁可没有，也不让边框溢出折行）。
  */
 export function roundBorder(
   line: string,
@@ -63,16 +65,34 @@ export function roundBorder(
   left: string,
   right: string,
   label = '',
+  leftLabel = '',
 ): string {
   // 宽度按字符数算（不是显示宽度）。成立的前提：line 只含 ASCII 的 `─` 与空格
   // —— pi 的边框行正是如此。若将来边框里出现中日韩宽字符，这里要改用 visibleWidth。
   const plain = stripAnsi(line)
   if (plain.length === 0) return line
   // 原边框行宽 = width-2；两端圆角各占 1 列，合起来正好 width。
+  // 注意：line 本身已去掉两端圆角位，故 mid 宽度 = plain.length。
   let mid = plain
+
+  // 右 label 先做（从右端拿 `─` 换），再做左侧 —— 否则两侧都从右端切，位置会互相错。
   // label 两侧各留 1 空格；放不下就不要 label。
   if (label && label.length + 2 < mid.length) {
     mid = mid.slice(0, mid.length - label.length - 2) + ' ' + label + ' '
+  }
+
+  // 左 label 插到**最左端**（圆角之后），即 working 图标之前。
+  // ★ 从**中间**剥等长的 `─`，不能从右端剥 —— 右端可能已经是右 label，
+  //   再从右端切就会把它末尾拼掉（2026-11-07 实测：「8.0%/1.0M m」变成「8.0」）。
+  // 前面多占「1 空格 + label + 1 空格」，就在尾巴之前切掉同样多。
+  // 两侧各留 1 空格：否则 `╰fanchao` 贴死圆角，看着像缺了一角。
+  if (leftLabel) {
+    const need = leftLabel.length + 2
+    // 右 label 已占的尾巴宽度：保留它，从它之前切。
+    const tailLen = label && label.length + 2 < mid.length ? label.length + 2 : 0
+    if (need + tailLen < mid.length) {
+      mid = ' ' + leftLabel + ' ' + mid.slice(0, mid.length - need - tailLen) + mid.slice(mid.length - tailLen)
+    }
   }
   return fg(left + mid + right)
 }

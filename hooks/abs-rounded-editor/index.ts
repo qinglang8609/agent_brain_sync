@@ -18,12 +18,27 @@
  * 注意：自动补全菜单行排在底边之下、且自带内容宽度，不套竖线（否则菜单被框住会错位）。
  */
 import { CustomEditor } from '@earendil-works/pi-coding-agent'
+import { readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { buildStatus, roundBorder, shortenModel, thinkingColorToken } from './format.ts'
+// 昵称池跟 todo 面板共用一份 —— 2026-11-07 用户要求把「作者名 · 随机语」从面板
+// 搬到输入框左下角，两边必须用同一个池才叫「搬」。
+// 为何用 ../abs.ts：安装后两者分别在 ~/.pi/agent/extensions/abs.ts 与
+// extensions/abs-rounded-editor/index.ts，相对路径稳定。
+// 代价：删掉 abs.ts 会让本扩展导入失败 —— 可接受，因为 abs.ts 是主扩展，
+// 输入框样式是它的附属；单独删主扩展就不是合法使用形态了。
+import { pickNickname } from '../abs.ts'
 
 const SIDE = '│'
 
 /** 右上角状态文本，如 `8.0%/1.0M deepseek-v4.1-flash`。render() 拿不到 ctx，故由事件回调维护。 */
 let statusLabel = ''
+
+/** 左下角标签：`fanchao · 昵称`（2026-11-07 用户要求从面板搬到这里）。
+ *  session_start 时算一次 —— 不能每帧抽，否则每帧重绘就是个疯狂滚动的老虎机。
+ *  空串 = 不显示（无用户名也无昵称时）。 */
+let cornerLabel = ''
 
 /** 当前推理强度（off/minimal/low/medium/high/xhigh/max）。render() 拿不到 ctx，同样这里存。
  *  用途：输入文字随推理强度变色（2026-11-06 用户需求）。 */
@@ -68,10 +83,37 @@ export class RoundedEditor extends CustomEditor {
       // 输入框内容是用户手打的纯文本，行内不会有 reset 把后半行冲掉。
       out.push(wrap(SIDE) + (effortFg ? effortFg(body) : body) + wrap(SIDE))
     }
-    out.push(roundBorder(lines[bottomIdx], wrap, '╰', '╯'))
+    // 下边框：作者名 + 昵称贴左侧（2026-11-07 用户要求）。
+    out.push(roundBorder(lines[bottomIdx], wrap, '╰', '╯', '', cornerLabel))
     // 自动补全行原样透传（不套竖线）。
     for (let i = bottomIdx + 1; i < lines.length; i++) out.push(lines[i])
     return out
+  }
+}
+
+/** 读出作者名：与 abs.pi.ts 的 currentUser 同规则（ABS_USER > ~/.abs/config.json）。
+ *  不在该文件导出 currentUser 是因为它依赖更多模块级状态，且本处只需这两行。 */
+async function readUser(): Promise<string> {
+  const env = String(process.env.ABS_USER || '').trim()
+  if (env) return env
+  try {
+    const dir = process.env.ABS_CONFIG_DIR || join(homedir(), '.abs')
+    const raw = await readFile(join(dir, 'config.json'), 'utf8')
+    const u = JSON.parse(raw).user
+    return typeof u === 'string' ? u.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+/** 算出左下角标签：`fanchao · 昵称`。缺哪段就省哪段，都为空格返回空串（不画）。 */
+async function refreshCornerLabel(): Promise<void> {
+  try {
+    const who = await readUser()
+    const nick = pickNickname()
+    cornerLabel = [who, nick].filter(Boolean).join(' · ')
+  } catch {
+    cornerLabel = ''
   }
 }
 
@@ -100,6 +142,11 @@ export default function piRoundedEditor(pi: any): void {
     // 主题 getter（带 fg 的那个）—— 见 themeGetter 注释。
     themeGetter = () => ctx.ui?.theme
     refreshStatus(ctx)
+    // 左下角标签：每次会话开一次（含 reload/new/resume），会话内固定不变。
+    // 与面板旧的昵称行为一致 —— 用户要的是「搬过去」，不是改规则。
+    refreshCornerLabel()
+      .then(() => ctx.ui?.requestRender?.())
+      .catch(() => {})
     // 第四个参数 embedWorkingStatus: true —— working 状态进上边框，不再单独占一行。
     ctx.ui.setEditorComponent(
       (tui: any, theme: any, keybindings: any) =>

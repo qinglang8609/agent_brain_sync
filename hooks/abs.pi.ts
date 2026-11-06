@@ -1017,9 +1017,11 @@ export function renderPanelLines(
   // 历史：那行曾用 `thinkingOff` 对齐 pi 输入框描边色（排查三轮才定色）。
   // 首行现在是标题行。
   //
-  // 昵称附在作者名后（会话内固定，启动时随机抽）。
-  const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
-  const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
+  // 标题只有计数。**作者名与昵称已从面板去掉**（2026-11-07 用户要求「去掉」）——
+  // 它们改用输入框左下角显示（见 hooks/abs-rounded-editor）。面板不再占这两段宽度，
+  // 窄终端下任务行因此能多显示几个字。
+  // **不要再往标题后面拼作者名/昵称** —— 那就与输入框左下角重复了。
+  const title = `Todo (${data.total})`
   // 标题也顶最左（2026-11-04 用户）。旧代码曾在空看板时多缩 1 格，2026-11-06 空看板
   // 已整块不显示（见 refreshTodoPanel），那个分支没意义了。
   lines.push(clipToWidth(fg(main, title), width))

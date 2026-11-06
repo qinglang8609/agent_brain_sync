@@ -1387,28 +1387,18 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     }
   });
 
-  test('昵称：附在作者名后，窄宽度不溢出', async () => {
+  // ★ 2026-11-07 用户要求：作者名与昵称从面板**去掉**，搬到输入框左下角。
+  //   面板标题只剩计数 —— 窄终端下任务行因此能多显示几个字。
+  test('★ 面板标题只有计数，不再含作者名与昵称', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const fg = (c, s) => s;
     const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', kids: [] }], hidden: 0 };
     const nick = '📞 听到电话铃响就窒息的接听恐惧症';
     const wide = renderPanelLines(data, 'fanchao', 200, fg, -1, nick)[0];
-    assert.match(wide, /fanchao/, '应含作者名');
-    assert.match(wide, /接听恐惧症/, `应含昵称: ${wide}`);
-    const narrow = renderPanelLines(data, 'fanchao', 40, fg, -1, nick);
-    const strip2 = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
-    const dw2 = (s) => {
-      let w = 0;
-      for (const ch of strip2(s)) {
-        const cp = ch.codePointAt(0) || 0;
-        const wideCh = (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0x1f300 && cp <= 0x1f64f);
-        w += wideCh ? 2 : 1;
-      }
-      return w;
-    };
-    for (const l of narrow) assert.ok(dw2(l) <= 40, `窄宽度溢出(${dw2(l)}): ${strip2(l)}`);
-    const plain = renderPanelLines(data, 'fanchao', 200, fg, -1, '')[0];
-    assert.ok(!plain.includes('·'), `无昵称不该有分隔符: ${plain}`);
+    assert.ok(wide.includes('Todo (1)'), `应含计数: ${wide}`);
+    assert.ok(!wide.includes('fanchao'), `标题不得再含作者名: ${wide}`);
+    assert.ok(!wide.includes('接听恐惧症'), `标题不得再含昵称: ${wide}`);
+    assert.ok(!wide.includes('·'), `不得有分隔符: ${wide}`);
   });
 
   test('动画帧：10 帧盲文循环、每帧 1 列宽（不拖宽面板）', async () => {

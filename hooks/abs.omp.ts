@@ -571,8 +571,9 @@ export function renderPanelLines(
   const flow = off ? 'dim' : 'muted'
   const lines: string[] = []
   // 上描边行已删除（2026-11-04 与 pi 版同步，用户要求「去掉上边框」）。首行现在是标题行。
-  const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
-  const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
+  // 标题只有计数（2026-11-07 与 pi 版同步）：作者名与昵称已搬到输入框左下角，
+  // 面板不再重复占宽度。**不要再往标题后拼作者名/昵称**。
+  const title = `Todo (${data.total})`
   // 标题顶最左（2026-11-04 用户）。旧代码空看板时多缩 1 格，2026-11-06 与 pi 版同步删去 ——
   // 空看板已整块不显示（见 refreshTodoPanel）。
   lines.push(clipToWidth(fg(main, title), width))
