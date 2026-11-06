@@ -1,6 +1,7 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] todo-panel-color-by-effort [[fanchao]] — todo 面板文字色 + 输入框文字色跟随推理强度 (认领 2026-11-06 01a1b105-5425-71)
 
 ## Done
 

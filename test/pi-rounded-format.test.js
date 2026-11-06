@@ -3,7 +3,7 @@
 // 测试进程里没有那个包；纯函数抽出来才能直接断言。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildStatus, roundBorder, shortenModel, shortTokens } from '../hooks/abs-rounded-editor/format.ts';
+import { buildStatus, roundBorder, shortenModel, shortTokens, thinkingColorToken } from '../hooks/abs-rounded-editor/format.ts';
 
 describe('圆角输入框 格式化', () => {
   it('shortenModel：去 provider 前缀与日期后缀', () => {
@@ -72,5 +72,32 @@ describe('圆角输入框 格式化', () => {
     assert.ok(visible.startsWith('╭') && visible.endsWith('╮'), visible);
     // 不得残留裸的 ESC 或残缺序列
     assert.ok(!/\x1b(?!\[)/.test(got), '不得出现残缺转义序列');
+  });
+});
+
+// ===== 输入框文字跟着推理强度变色（2026-11-06 用户需求）=====
+// 为何要测：theme 里确实有这七档 token，但若映射拼错（如 'minimal' → 'thinkingminimal'），
+// theme.fg 会静默返回不上色的文本 —— 颜色悄悄没了，没有断言就发现不了。
+describe('thinkingColorToken — 推理强度 → 主题 token', () => {
+  it('★ 七档齐全，且拼法对上主题（thinking + 首字母大写）', () => {
+    assert.equal(thinkingColorToken('minimal'), 'thinkingMinimal');
+    assert.equal(thinkingColorToken('low'), 'thinkingLow');
+    assert.equal(thinkingColorToken('medium'), 'thinkingMedium');
+    assert.equal(thinkingColorToken('high'), 'thinkingHigh');
+    assert.equal(thinkingColorToken('xhigh'), 'thinkingXhigh');
+    assert.equal(thinkingColorToken('max'), 'thinkingMax');
+  });
+
+  it('★ off / 空值 → 空串（不上色，用默认前景色）', () => {
+    // 不能返回 thinkingOff：主题给它的是接近背景的暗灰，染文字会看不清。
+    assert.equal(thinkingColorToken('off'), '');
+    assert.equal(thinkingColorToken(''), '');
+    assert.equal(thinkingColorToken(null), '');
+    assert.equal(thinkingColorToken(undefined), '');
+  });
+
+  it('容错：带空白、大小写异常不炸', () => {
+    assert.equal(thinkingColorToken('  high  '), 'thinkingHigh');
+    assert.equal(thinkingColorToken('HIGH'), 'thinkingHIGH');
   });
 });

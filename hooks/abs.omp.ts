@@ -508,6 +508,10 @@ const TODO_ANIM_MS = 250
 
 /** 动画相位（每 tick +1）。模块级 —— 闭包 flag 在重复注册时不共享。 */
 let animPhase = 0
+
+/** 当前推理强度。模块级理由同上：widget factory 拿不到 ctx。
+ *  omp 宿主有无这个字段未验证 —— 取不到就是空串，面板退回 accent，行为与以前一致。 */
+let effortLevel = ''
 let animTimer: ReturnType<typeof setInterval> | undefined
 
 /** 启动/保持动画定时器。重复调用不会叠加（已存在则不动）。
@@ -532,6 +536,21 @@ export function todoAnimFrame(phase: number): string {
   return TODO_ANIM_FRAMES[i]
 }
 
+/**
+ * 推理强度 → 主题色 token。空串表示「不上推理色，用兼底色」。
+ *
+ * 规则：`thinking` + 首字母大写（thinkingMinimal…thinkingMax）。
+ * off 返回空串而不是 `thinkingOff`：那个色接近背景，染文字会看不清（2026-11-06 用户定）。
+ *
+ * ★ 与 pi 版（hooks/abs.pi.ts 的 effortToken）逐字同义，但不共享：两个模板分别装到不同宿主，
+ *   独立成文件才能各自删除/升级。
+ */
+export function effortToken(level: string | null | undefined): string {
+  const l = String(level || '').trim()
+  if (!l || l === 'off') return ''
+  return 'thinking' + l[0].toUpperCase() + l.slice(1)
+}
+
 export function renderPanelLines(
   data: { total: number; rows: { state: string; id: string; desc: string; kids?: { done: boolean; text: string }[] }[]; hidden: number },
   who: string,
@@ -539,15 +558,20 @@ export function renderPanelLines(
   fg: (color: string, s: string) => string,
   animPhase = -1,
   nickname = '',
+  effort = '',
 ): string[] {
   // ★ 空看板不返回空数组：面板是「机制在不在」的常驻指示，进去就看不见 = 不知道机制活着。
-  const colorOf = (state: string): string => (state === '搁置' ? 'dim' : state === '滞留中' ? 'muted' : state === '讨论中' ? 'dim' : 'accent')
+  // ★ 主色跟推理强度走（2026-11-06 与 pi 版同步）：标题、[状态]、树线、复选框、
+  //   进行中动画同用一色，与输入框描边同色系。off（或未传）退回原 accent。
+  //   灰阶不动：描述与子项文字保持 dim/muted，否则整片一色分不出层次。
+  //   omp 宿主目前不传 effort（它没有 thinkingLevel 这个入口）→ 行为与以前一致。
+  const main = effortToken(effort) || 'accent'
   const lines: string[] = []
   // 上描边行已删除（2026-11-04 与 pi 版同步，用户要求「去掉上边框」）。首行现在是标题行。
   const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
   const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
   // 空看板标题前加 1 格（与输入框文字对齐）；有任务时不加，任务行顶到最左（2026-11-04 用户）。
-  lines.push(clipToWidth((data.total === 0 ? ' ' : '') + fg('accent', title), width))
+  lines.push(clipToWidth((data.total === 0 ? ' ' : '') + fg(main, title), width))
 
   const lastIdx = data.rows.length - 1
   // 空看板只显示标题行（2026-11-04 用户要求去掉「（无未完成任务）」那行）。
@@ -556,21 +580,22 @@ export function renderPanelLines(
     // `└─` 只给最后一条 —— 不管它有没有子项（否则末条带子项时全篇没有收尾）。
     const isLast = i === lastIdx
     const branch = isLast ? '└─' : '├─'
-    const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg('accent', todoAnimFrame(animPhase)) : ''
+    const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg(main, todoAnimFrame(animPhase)) : ''
     // 复选框 `[ ]`：面板是 todo.md 的只读视图，就该长成 todo 原貌。
-    const box = fg('dim', '[ ]')
-    const head = `${fg('dim', branch)} ${box} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
+    const box = fg(main, '[ ]')
+    // 状态标签统一跟主色（2026-11-06 与 pi 版同步：靠符号和文字区分状态，不靠颜色）。
+    const head = `${fg(main, branch)} ${box} ${fg(main, `[${t.state}]`)} ${fg('text', t.id)}${anim}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
       // 子项：标准 md 嵌套列表 → 画成树
-      const stem = isLast ? '  ' : fg('dim', '│ ')
+      const stem = isLast ? '  ' : fg(main, '│ ')
       const n = t.kids.length
       t.kids.forEach((k, ki) => {
         const kb = ki === n - 1 ? '└─' : '├─'
-        const kbox = fg('dim', k.done ? '[x]' : '[ ]')
+        const kbox = fg(main, k.done ? '[x]' : '[ ]')
         const ktext = fg(k.done ? 'dim' : 'muted', k.text)
-        lines.push(clipToWidth(`${stem} ${fg('dim', kb)} ${kbox} ${ktext}`, width))
+        lines.push(clipToWidth(`${stem} ${fg(main, kb)} ${kbox} ${ktext}`, width))
       })
     }
   })
@@ -605,7 +630,7 @@ async function refreshTodoPanel(ui: ExtensionUIContext | undefined, cwd: string)
         lastTui = tui   // 供 hidePanel 在「无动画」时也能请求重绘
         return {
           render: (width: number) =>
-            renderPanelLines(data, who, width, (c: string, s: string) => theme.fg(c, s), animPhase, sessionNickname),
+            renderPanelLines(data, who, width, (c: string, s: string) => theme.fg(c, s), animPhase, sessionNickname, effortLevel),
           invalidate: () => {},
         }
       },
@@ -736,7 +761,8 @@ export default function absOmpExtension(pi: ExtensionAPI): void {
     resetThrottle()
     // 本会话的随机昵称 —— 在这里抽一次（不是每帧抽，否则面板会疯狂闪）。
     sessionNickname = pickNickname()
-    logHook(`session_start nickname=${sessionNickname || '(off)'}`).catch(() => {})
+    effortLevel = String((ctx && (ctx as any).thinkingLevel) || '')
+    logHook(`session_start nickname=${sessionNickname || '(off)'} effort=${effortLevel || '(off)'}`).catch(() => {})
     // 启动时就画出面板。时序：omp 在 session_start 时已给 ctx.ui（无 UI 时是 noOp）。
     // ⚠ omp 的 session_start 事件**没有 reason 字段**（pi 有）—— 别照抄 pi 版的 reason= 。
     const cwd = (ctx && ctx.cwd) || process.cwd()
@@ -787,6 +813,14 @@ export default function absOmpExtension(pi: ExtensionAPI): void {
   pi.on("turn_end", (_event: TurnEndEvent, ctx: ExtensionContext) => {
     logHook(`turn_end panel refresh cwd=${ctx.cwd}`).catch(() => {})
     refreshTodoPanel(ctx.ui, ctx.cwd).catch(() => {})
+  })
+
+  // 切推理强度 → 面板主色跟着变（2026-11-06 与 pi 版同步）。
+  // omp 是否发这个事件尚未验证 —— 不发就只是一个空订阅，不影响任何现有行为。
+  pi.on("thinking_level_select", (event: any, ctx: any) => {
+    effortLevel = String(event?.level || (ctx && ctx.thinkingLevel) || "")
+    logHook(`thinking_level_select level=${effortLevel || "(off)"}`).catch(() => {})
+    refreshTodoPanel(ctx?.ui, (ctx && ctx.cwd) || process.cwd()).catch(() => {})
   })
 
   // 往 system prompt 注入静态指引 —— **omp 的通道与 pi 不同**：

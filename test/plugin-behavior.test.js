@@ -1262,6 +1262,63 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(!/[○●]{3}/.test(lines.join('\n')), '关闭时不该出现动画符');
   });
 
+  // ===== 推理强度变色（2026-11-06 用户需求）=====
+  // 为何要测：颜色错了不报错，只是看着不对 —— 没有断言就没人能发现它回归了。
+  // 测法：fg 返回真 ANSI 序列（带 token 名做标记），再抽 `\x1b[<n>m[token]` 看谁被包住。
+  // ★ 必须用真 ANSI，不能用 `[token]文本` 冒充：后者是**可见字符**，会把行宽顶爆、
+  //   触发 clipToWidth 截断，测出来的是宽度 bug 而非颜色 bug（已踩一次）。
+  const tok = (c) => `\x1b[38;5;${c}m`
+  const TOKEN_CODE = {
+    thinkingHigh: 99, accent: 98, dim: 97, muted: 96, text: 95,
+  }
+  const tagFg = (c, s) => `${tok(TOKEN_CODE[c] ?? 90)}${s}\x1b[0m`
+  test('★ 面板主色跟推理强度：标题/[状态]/树线/复选框都用 thinkingXxx', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const data = {
+      total: 2,
+      rows: [
+        { state: '搁置', id: 'a', desc: '描述甲', kids: [] },
+        { state: '进行中', id: 'b', desc: '描述乙', kids: [{ done: false, text: '子项' }] },
+      ],
+      hidden: 0,
+    };
+    const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
+    const high = tok(TOKEN_CODE.thinkingHigh)
+    // 标题、两种状态、树线、复选框 —— 全部应为 thinkingHigh
+    assert.ok(all.includes(`${high}Todo (2)`), `标题应用推理强度色:\n${all}`);
+    assert.ok(all.includes(`${high}[搁置]`), `搁置状态应用推理强度色:\n${all}`);
+    assert.ok(all.includes(`${high}[进行中]`), `进行中状态应用推理强度色:\n${all}`);
+    assert.ok(all.includes(`${high}├─`), `树线应用推理强度色:\n${all}`);
+    assert.ok(all.includes(`${high}[ ]`), `复选框应用推理强度色:\n${all}`);
+    // 灰阶保留：描述与子项文字不能被推理强度色盖掉
+    assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}描述甲`), `描述应保持 muted:\n${all}`);
+    assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}子项`), `子项文字应保持 muted:\n${all}`);
+  });
+
+  test('★ 推理强度 off / 未传 → 退回 accent（不能变成 thinkingOff 的暗灰）', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', kids: [] }], hidden: 0 };
+    for (const effort of ['off', '', undefined, null]) {
+      const all = renderPanelLines(data, 'me', 120, tagFg, -1, '', effort).join('\n');
+      assert.ok(all.includes(`${tok(TOKEN_CODE.accent)}Todo (1)`), `effort=${effort} 应退回 accent:\n${all}`);
+      assert.ok(!all.includes(tok(TOKEN_CODE.thinkingHigh)), `effort=${effort} 不得上推理色:\n${all}`);
+    }
+  });
+
+  test('★ 推理强度各档映射到对应主题 token', async () => {
+    const { effortToken } = await loadPanelFns();
+    assert.equal(effortToken('minimal'), 'thinkingMinimal');
+    assert.equal(effortToken('low'), 'thinkingLow');
+    assert.equal(effortToken('medium'), 'thinkingMedium');
+    assert.equal(effortToken('high'), 'thinkingHigh');
+    assert.equal(effortToken('xhigh'), 'thinkingXhigh');
+    assert.equal(effortToken('max'), 'thinkingMax');
+    assert.equal(effortToken('off'), '');
+    assert.equal(effortToken(''), '');
+    assert.equal(effortToken(null), '');
+    assert.equal(effortToken(undefined), '');
+  });
+
   // 昵称（2026-10-03 用户需求）：用户给定的俏皮话池里随机抽，附在作者名后。
   test('昵称：随机抽取且确定性可测（注入 rnd）', async () => {
     const { pickNickname } = await loadPanelFns();

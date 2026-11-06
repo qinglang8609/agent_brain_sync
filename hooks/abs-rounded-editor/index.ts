@@ -18,12 +18,25 @@
  * 注意：自动补全菜单行排在底边之下、且自带内容宽度，不套竖线（否则菜单被框住会错位）。
  */
 import { CustomEditor } from '@earendil-works/pi-coding-agent'
-import { buildStatus, roundBorder, shortenModel } from './format.ts'
+import { buildStatus, roundBorder, shortenModel, thinkingColorToken } from './format.ts'
 
 const SIDE = '│'
 
 /** 右上角状态文本，如 `8.0%/1.0M deepseek-v4.1-flash`。render() 拿不到 ctx，故由事件回调维护。 */
 let statusLabel = ''
+
+/** 当前推理强度（off/minimal/low/medium/high/xhigh/max）。render() 拿不到 ctx，同样这里存。
+ *  用途：输入文字随推理强度变色（2026-11-06 用户需求）。 */
+let effortLevel = ''
+
+/** 取当前主题实例的 getter。
+ *
+ * ★ 为何不能把主题从构造函数里拿：pi 传给编辑器了的是 `getEditorTheme()`，
+ *  那对象只有 `{ borderColor, selectList }`，**没有 `fg`** —— 直接用它上色会静默无效
+ *  （不报错，只是没颜色）。真正带 fg 的是 `ctx.ui.theme`（interactive-mode 的 getter）。
+ * ★ 为何存 getter 而不是存实例：`/theme` 切主题后 ctx.ui.theme 返回**新实例**，
+ *  存旧实例会継续用旧主题的色板。 */
+let themeGetter: (() => any) | null = null
 
 export class RoundedEditor extends CustomEditor {
   render(width: number): string[] {
@@ -34,6 +47,11 @@ export class RoundedEditor extends CustomEditor {
 
     const borderColor = (this as any).borderColor?.bind(this)
     const wrap = (s: string) => (borderColor ? borderColor(s) : s)
+    // 文字色 = 推理强度色；off（或取不到）时为空 → 不着色，用终端默认前景色。
+    const token = thinkingColorToken(effortLevel)
+    const themeNow = themeGetter?.()
+    const effortFg =
+      token && typeof themeNow?.fg === 'function' ? (s: string) => themeNow.fg(token, s) : null
     const out: string[] = []
 
     // 上边框：原本是整行 `─`（含 working 图标与滚动提示），两端换圆角，右端贴状态。
@@ -43,7 +61,12 @@ export class RoundedEditor extends CustomEditor {
     const bottomIdx = lines.length - 1 - autocompleteHeight
 
     for (let i = 1; i < bottomIdx; i++) {
-      out.push(wrap(SIDE) + lines[i] + wrap(SIDE))
+      const body = lines[i]
+      // 推理强度色染**输入文字**（2026-11-06 用户）。边框不动 —— 边框本来就是 pi 按
+      // 同一档强度上的色（interactive-mode 的 updateEditorBorderColor），两者自然同色。
+      // 整行包裹而不逐字：光标由 \x1b[7m 反转标记，与前景色互不干扰；
+      // 输入框内容是用户手打的纯文本，行内不会有 reset 把后半行冲掉。
+      out.push(wrap(SIDE) + (effortFg ? effortFg(body) : body) + wrap(SIDE))
     }
     out.push(roundBorder(lines[bottomIdx], wrap, '╰', '╯'))
     // 自动补全行原样透传（不套竖线）。
@@ -59,11 +82,23 @@ function refreshStatus(ctx: any): void {
   } catch {
     statusLabel = shortenModel(ctx?.model?.id ?? '')
   }
+  refreshEffort(ctx)
+}
+
+/** 读出当前推理强度。`ctx.thinkingLevel` 是 pi 官方给扩展的入口（effective level）。 */
+function refreshEffort(ctx: any): void {
+  try {
+    effortLevel = String(ctx?.thinkingLevel || '')
+  } catch {
+    effortLevel = ''
+  }
 }
 
 export default function piRoundedEditor(pi: any): void {
   pi.on('session_start', (_event: unknown, ctx: any) => {
     if (!ctx?.ui?.setEditorComponent) return
+    // 主题 getter（带 fg 的那个）—— 见 themeGetter 注释。
+    themeGetter = () => ctx.ui?.theme
     refreshStatus(ctx)
     // 第四个参数 embedWorkingStatus: true —— working 状态进上边框，不再单独占一行。
     ctx.ui.setEditorComponent(
@@ -77,6 +112,14 @@ export default function piRoundedEditor(pi: any): void {
   // 切模型时更新右上角名字（/model、Ctrl+P 都走这个事件）。
   pi.on('model_changed', (_event: any, ctx: any) => {
     refreshStatus(ctx)
+    ctx?.ui?.requestRender?.()
+  })
+
+  // 切推理强度时重刷输入框文字色（2026-11-06 用户需求）。
+  // 为何不能只靠 session_start 那一次：/model 的强度档位、Alt+T 之类的切换不改会话，
+  // 不重建编辑器也就不会重新读 effortLevel —— 文字会停在旧色。
+  pi.on('thinking_level_select', (_event: any, ctx: any) => {
+    refreshEffort(ctx)
     ctx?.ui?.requestRender?.()
   })
 

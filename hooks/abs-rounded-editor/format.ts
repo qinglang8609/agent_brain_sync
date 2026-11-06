@@ -34,6 +34,24 @@ export function stripAnsi(s: string): string {
 }
 
 /**
+ * 推理强度 → 主题色 token。空串表示「不上色，沿用默认色」。
+ *
+ * 规则：`thinking` + 首字母大写，正好对上主题里的 thinkingMinimal…thinkingMax 七档。
+ * 为什么 off 返回空串而不是 `thinkingOff`：主题给 thinkingOff 的是接近背景的暗灰
+ * （dark.json: `okhsl(229 8% 49%)`），拿它去染文字会看不清。用户 2026-11-06 定的是
+ * 「off 时保持默认色」。
+ *
+ * ★ 同一份逻辑在 hooks/abs.pi.ts 里也有一份（`effortColorToken`）。不抽公共模块是故意的：
+ *   安装后 `abs.ts` 与 `abs-rounded-editor/` 是两个可独立删除的扩展，抽成共享文件会让
+ *   「删掉输入框样式目录」连带把 todo 面板搞崩。
+ */
+export function thinkingColorToken(level: string | null | undefined): string {
+  const l = String(level || '').trim()
+  if (!l || l === 'off') return ''
+  return 'thinking' + l[0].toUpperCase() + l.slice(1)
+}
+
+/**
  * 把一行边框文本换成「左圆角 + 中段 + 右圆角」，可见宽度保持原样。
  * 边框行内含 ANSI 时直接 slice 会切坏转义序列，所以先剥色、改字、再整行着色。
  *

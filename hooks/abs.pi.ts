@@ -939,6 +939,10 @@ const TODO_ANIM_MS = 250
 let animPhase = 0
 let animTimer: ReturnType<typeof setInterval> | undefined
 
+/** 当前推理强度（off/minimal/low/…/max）。模块级，理由同上：widget factory 每帧重新调，
+ *  拿不到 ctx，只能由事件回调先存好。2026-11-06 用户需求：面板主色跟推理强度走。 */
+let effortLevel = ''
+
 /** 启动/保持动画定时器。重复调用不会叠加（已存在则不动）。
  * getTui 是为了每 tick 拿**当前**的 tui 引用 —— widget 可能因刷新被重建，
  * 持旧的引用会调到一个已被丢弃的 renderer。 */
@@ -963,6 +967,24 @@ export function todoAnimFrame(phase: number): string {
   return TODO_ANIM_FRAMES[i]
 }
 
+/**
+ * 推理强度 → 主题色 token。空串表示「不上推理色，用调用方给的兼底色」。
+ *
+ * 规则：`thinking` + 首字母大写，正好对上主题里的 thinkingMinimal…thinkingMax 七档。
+ * 为什么 off 返回空串而不是 `thinkingOff`：主题给 thinkingOff 的是接近背景的暗灰
+ * （dark.json: `okhsl(229 8% 49%)`），拿它去染文字会看不清。用户 2026-11-06 定的是
+ * 「off 时保持默认色」。
+ *
+ * ★ 同一份逻辑在 hooks/abs-rounded-editor/format.ts 里也有一份（`thinkingColorToken`）。
+ *   不抽公共模块是故意的：安装后 `abs.ts` 与 `abs-rounded-editor/` 是两个可独立删除的扩展，
+ *   抽成共享文件会让「删掉输入框样式目录」连带把 todo 面板搞崩。
+ */
+export function effortToken(level: string | null | undefined): string {
+  const l = String(level || '').trim()
+  if (!l || l === 'off') return ''
+  return 'thinking' + l[0].toUpperCase() + l.slice(1)
+}
+
 export function renderPanelLines(
   data: { total: number; rows: { state: string; id: string; desc: string; kids?: { done: boolean; text: string }[] }[]; hidden: number },
   who: string,
@@ -970,11 +992,16 @@ export function renderPanelLines(
   fg: (color: string, s: string) => string,
   animPhase = -1,
   nickname = '',
+  effort = '',
 ): string[] {
   // ★ 空看板不再直接返回空数组（2026-10-06 用户要求：「即便 todo 没有列表，也要在 pi 上显示」）。
   //   理由与看板段一致：面板是「机制在不在」的常驻指示，进去就看不见 = 不知道机制活着。
   //   下面仍要画框和标题，所以这里只是不再提前 return。
-  const colorOf = (state: string): string => (state === '搁置' ? 'dim' : state === '滞留中' ? 'muted' : state === '讨论中' ? 'dim' : 'accent')
+  //
+  // ★ 主色跟推理强度走（2026-11-06 用户需求）：标题、[状态]、树线 ├─└─、复选框 [ ]、
+  //   进行中动画同用一色，与 pi 输入框描边/文字同色系。off（或未传）退回原 accent。
+  //   灰阶不动：描述（— 后面）与子项文字保持 dim/muted，否则整片一色分不出层次。
+  const main = effortToken(effort) || 'accent'
   const lines: string[] = []
   // 上描边行已删除（2026-11-04 用户要求「去掉上边框」）。
   // 历史：那行曾用 `thinkingOff` 对齐 pi 输入框描边色（排查三轮才定色）。
@@ -984,7 +1011,7 @@ export function renderPanelLines(
   const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
   const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
   // 空看板标题前加 1 格（与输入框文字对齐）；有任务时不加，任务行顶到最左（2026-11-04 用户）。
-  lines.push(clipToWidth((data.total === 0 ? ' ' : '') + fg('accent', title), width))
+  lines.push(clipToWidth((data.total === 0 ? ' ' : '') + fg(main, title), width))
 
   const lastIdx = data.rows.length - 1
   // 空看板只显示标题行（2026-11-04 用户要求去掉「（无未完成任务）」那行）。
@@ -996,11 +1023,12 @@ export function renderPanelLines(
     const isLast = i === lastIdx
     const branch = isLast ? '└─' : '├─'
     // 进行中的行带一个小动画（其余行不加，避免满屏都在跳）
-    const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg('accent', todoAnimFrame(animPhase)) : ''
+    const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg(main, todoAnimFrame(animPhase)) : ''
     // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
-    const box = fg('dim', '[ ]')
-    const head = `${fg('dim', branch)} ${box} ${fg(colorOf(t.state), `[${t.state}]`)} ${fg('text', t.id)}${anim}`
+    const box = fg(main, '[ ]')
+    // 状态标签统一跟主色（2026-11-06 用户定：靠符号和文字区分状态，不靠颜色）。
+    const head = `${fg(main, branch)} ${box} ${fg(main, `[${t.state}]`)} ${fg('text', t.id)}${anim}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
@@ -1009,13 +1037,13 @@ export function renderPanelLines(
       //   └─ [x] 子项二
       // 树线前缀 = 父任务的 │（非末条）或空格（末条），与父任务分支对齐。
       // 勾过的用 dim 压暗（一眼看出哪些已完成），未勾用正常色。
-      const stem = isLast ? '  ' : fg('dim', '│ ')
+      const stem = isLast ? '  ' : fg(main, '│ ')
       const n = t.kids.length
       t.kids.forEach((k, ki) => {
         const kb = ki === n - 1 ? '└─' : '├─'
-        const kbox = fg('dim', k.done ? '[x]' : '[ ]')
+        const kbox = fg(main, k.done ? '[x]' : '[ ]')
         const ktext = fg(k.done ? 'dim' : 'muted', k.text)
-        lines.push(clipToWidth(`${stem} ${fg('dim', kb)} ${kbox} ${ktext}`, width))
+        lines.push(clipToWidth(`${stem} ${fg(main, kb)} ${kbox} ${ktext}`, width))
       })
     }
   })
@@ -1063,6 +1091,7 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
               (c: string, s: string) => theme.fg(c, s),
               animPhase,
               sessionNickname,
+              effortLevel,
             ),
           invalidate: () => {},
         }
@@ -1099,7 +1128,9 @@ export default function absPiHook(pi: ExtensionAPI): void {
     // 本会话的随机昵称 —— 在这里抽一次（不是每帧抽，否则面板会疯狂闪）。
     // 每次 session_start（startup/reload/new/resume/fork）重抽 → “每次打开 pi 都是随机的”。
     sessionNickname = pickNickname()
-    logHook(`session_start nickname=${sessionNickname || '(off)'}`).catch(() => {})
+    // 推理强度同样存在模块级：面板主色要跟它走，而 widget factory 拿不到 ctx。
+    effortLevel = String((ctx && ctx.thinkingLevel) || '')
+    logHook(`session_start nickname=${sessionNickname || '(off)'} effort=${effortLevel || '(off)'}`).catch(() => {})
     // 启动/重载时就画出面板（reason=startup|reload|new|resume|fork）。
     // 时序：pi 在 session_start 时已给 ctx.ui（无 UI 时是 noOp，调了不报错），
     // 但设 setWidget 需真的 TUI —— 故用 hasUI 挡一下并留痕，便于判定“没显示”的原因。
@@ -1157,6 +1188,14 @@ export default function absPiHook(pi: ExtensionAPI): void {
     const cwd = (ctx && ctx.cwd) || process.cwd()
     logHook(`turn_end panel refresh cwd=${cwd}`).catch(() => {})
     refreshTodoPanel(ctx?.ui, cwd).catch(() => {})
+  })
+
+  // 切推理强度 → 面板主色跟着变（2026-11-06 用户需求）。
+  // 不重建 widget、只重读 effortLevel 再刷新：面板数据没变，成本与一次 turn_end 刷一样。
+  pi.on("thinking_level_select", (event: any, ctx: any) => {
+    effortLevel = String(event?.level || (ctx && ctx.thinkingLevel) || "")
+    logHook(`thinking_level_select level=${effortLevel || "(off)"}`).catch(() => {})
+    refreshTodoPanel(ctx?.ui, (ctx && ctx.cwd) || process.cwd()).catch(() => {})
   })
 
   // todo 及时性验证（2026-10-03）：往 system prompt 的 Guidelines 段追加静态条目。
