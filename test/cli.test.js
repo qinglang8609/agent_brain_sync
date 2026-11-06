@@ -539,6 +539,26 @@ describe('cli: 未知命令/help', () => {
     assert.ok(/abs update\b/.test(r.stdout), `help 应列出 update:\n${r.stdout.slice(-600)}`);
     assert.ok(/update/.test(r.stdout) && r.stdout.includes('install'), '升级/安装入口要可见');
   });
+
+  // ★ 2026-11-07 实报：远程机器 abs update 报「升级 1.26.0 → 1.28.0」，
+  //   但 ~/.pi/ 里仍是旧模板、界面一点没变。
+  //   根因是双副本：/usr/bin/abs 指向 /usr/lib/…（1.26.0，PATH 优先），
+  //   npm 把新版装在 /opt/node…/（1.28.0，不在 PATH）。跑 update 的是旧副本，
+  //   它用自己那份**旧 src/install.js** 把旧模板写进宿主，hook 路径也烧成旧副本。
+  //   修法：升级后用 `npm prefix -g` 找到新包，把「刷新宿主」转交新副本执行。
+  //
+  // 为何用源码断言而不是跑真实 update：后者要连 npm registry，测试不能联网。
+  // 这里钉住「转交机制存在」，真机行为已在 fxh-mb 用双副本环境实测（含破坏验证）。
+  test('★ update 把刷新宿主转交给新装副本（防双副本写旧模板）', async () => {
+    const src = await fs.readFile(CLI, 'utf8');
+    assert.match(src, /freshInstallEntry/, '必须有「定位新副本」的实现');
+    assert.match(src, /npm['\"],\s*\['prefix',\s*'-g'\]/, '必须用 npm prefix -g 定位新包');
+    assert.match(src, /runInherit/, '必须用子进程执行，而不是自己跑（自己跑就是旧模板）');
+    // update 里刷新宿主必须用 --all：旧代码传 agent:undefined，TTY 下会弹菜单，
+    // 回车只装 pi —— 另装过 omp / Claude Code 的机器那几个宿主永远不刷新。
+    assert.match(src, /if \(yes\) args\.push\('--yes'\)/, 'update 应把 --yes 透传给子进程');
+    assert.match(src, /const args = \['install', '--all'\]/, 'update 必须用 install --all 铺到所有宿主');
+  });
 });
 
 // ---------- 子命令 --help 不得触发实际动作 ----------

@@ -9,7 +9,7 @@ import { cmdSummon } from '../src/brain/summon-cmd.js';
 import { cmdIngest } from '../src/brain/ingest.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -84,9 +84,78 @@ async function cmdUpdate({ yes }) {
     process.exit(1);
   }
   console.log(r);
+  // ★ 重装宿主必须交给**刚装好的那份新代码**去做，不能用本进程（2026-11-07 实报）。
+  //
+  // 病根：本进程是旧版 bin/abs.js，通过 import 加载的也是**旧版 src/install.js**。
+  //   旧 install.js 里的 stableBinPath() 用 process.execPath 推导全局包路径，
+  //   于是 hook 模板里的 @@ABS_BIN@@ 被烧成**旧副本**的路径，模板快照也是旧的。
+  //   结果：npm 已升到新版（npm ls -g 显示 1.28.0），但 ~/.pi/ 里写的还是旧模板，
+  //   界面一点没变，而且 hook 从此指向旧副本 —— 下一版继续错。
+  //   实测（fxh-mb）：/usr/bin/abs -> /usr/lib/...（1.26.0，PATH 优先）
+  //   与 /opt/node.../bin/abs -> /opt/...（1.28.0，npm 的 prefix，不在 PATH）。
+  //
+  // 修法：升级后用 `npm prefix -g` 算出新包的真实路径，把「刷新宿主」转交给
+  //   那个新包的 bin/abs.js 执行（子进程）。它算 stableBinPath 时会指向自己。
+  //   找不到新包才退回本进程的 runInstall（至少不比原来差）。
+  const freshEntry = await freshInstallEntry();
   console.log('\n刷新四宿主 hook/skill（hook 脚本烧的是绝对路径 + 模板快照，升级后必须重装）…');
-  await runInstall({ agent: undefined, mcp: true, skill: true, yes: yes !== false });
-  console.log(`\n完成。重启宿主（pi / omp / opencode / claude-code / codex）后新 hook 生效。`);
+  if (freshEntry) {
+    if (freshEntry !== resolveBinPath()) console.log(`  用新装的副本执行: ${freshEntry}`);
+    // --all：update 的语义是「把升好的版本铺到所有已装宿主」，不能二次弹窗重选。
+    //   旧代码调 runInstall({agent: undefined}) 在 TTY 下会弹菜单，回车只装 pi ——
+    //   另装过 omp / Claude Code 的机器升级后那几个宿主永远不刷新（2026-11-07 实报）。
+    const args = ['install', '--all'];
+    if (yes) args.push('--yes');
+    const code = await runInherit(process.execPath, [freshEntry, ...args]);
+    if (code !== 0) {
+      console.error(`\n✗ 刷新宿主失败（退出码 ${code}）。手动重跑：node ${freshEntry} install --all`);
+      process.exit(1);
+    }
+  } else {
+    console.log('  ⚠ 未定位到新安装的副本，用当前进程刷新（可能仍是旧模板）');
+    await runInstall({ agent: undefined, mcp: true, skill: true, yes: yes !== false });
+  }
+  console.log('\n完成。重启宿主（pi / omp / opencode / claude-code / codex）后新 hook 生效。');
+}
+
+/** 本进程正在跑的那个 bin/abs.js 的绝对路径（用于判断是否需要转交）。 */
+function resolveBinPath() {
+  try { return resolve(fileURLToPath(import.meta.url)); } catch { return ''; }
+}
+
+/**
+ * 找出**刚升级好的**那份 bin/abs.js。找不到返回 null。
+ *
+ * 为何不用 ABS_DIR：那正是本进程所在目录 —— 在「PATH 里的 abs 与 npm prefix 不是同一份」
+ * 的机器上它就是旧副本（fxh-mb 实测：PATH 里是 /usr/bin/abs 指向 1.26.0，
+ * npm 把 1.28.0 装在 /opt/node.../lib/node_modules）。
+ */
+async function freshInstallEntry() {
+  let pkgName = '';
+  try { pkgName = JSON.parse(readFileSync(join(ABS_DIR, 'package.json'), 'utf8')).name || ''; } catch { return null; }
+  if (!pkgName) return null;
+  // ① npm 自己报告的全局 prefix 最可信 —— 它正是刚 `npm i -g` 写入的位置。
+  const prefix = await runCmd('npm', ['prefix', '-g']);
+  const cands = [];
+  if (prefix) {
+    cands.push(join(prefix, 'lib', 'node_modules', pkgName, 'bin', 'abs.js'));
+    cands.push(join(prefix, 'node_modules', pkgName, 'bin', 'abs.js'));
+  }
+  // ② 本进程 node 所在根（nvm 形态与 prefix 一致；跨副本情况靠 ① 兜）
+  try { cands.push(join(dirname(dirname(process.execPath)), 'lib', 'node_modules', pkgName, 'bin', 'abs.js')); } catch {}
+  for (const c of cands) {
+    try { if (existsSync(c)) return c; } catch {}
+  }
+  return null;
+}
+
+/** 跑子进程并把输出直接接到本进程。返回退出码。 */
+function runInherit(cmd, args) {
+  return new Promise((resolvePromise) => {
+    const c = spawn(cmd, args, { stdio: 'inherit' });
+    c.on('error', () => resolvePromise(1));
+    c.on('close', (code) => resolvePromise(code === null ? 1 : code));
+  });
 }
 
 const [,, cmd, ...rest] = process.argv;
