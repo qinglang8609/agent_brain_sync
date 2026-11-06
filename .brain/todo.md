@@ -1,6 +1,7 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] release-publish-local [[fanchao]] — 提交未提交改动、推送、npm 发布、本地全局更新 (认领 2026-11-06 01a1b105-5425-71)
 
 ## Done
 
