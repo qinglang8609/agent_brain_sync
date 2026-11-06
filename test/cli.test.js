@@ -552,7 +552,7 @@ describe('cli: 未知命令/help', () => {
   test('★ update 把刷新宿主转交给新装副本（防双副本写旧模板）', async () => {
     const src = await fs.readFile(CLI, 'utf8');
     assert.match(src, /freshInstallEntry/, '必须有「定位新副本」的实现');
-    assert.match(src, /npm['\"],\s*\['prefix',\s*'-g'\]/, '必须用 npm prefix -g 定位新包');
+    assert.match(src, /npm', \['prefix', '-g'/, '必须用 npm prefix -g 定位新包');
     assert.match(src, /runInherit/, '必须用子进程执行，而不是自己跑（自己跑就是旧模板）');
     // update 里刷新宿主必须用 --all：旧代码传 agent:undefined，TTY 下会弹菜单，
     // 回车只装 pi —— 另装过 omp / Claude Code 的机器那几个宿主永远不刷新。

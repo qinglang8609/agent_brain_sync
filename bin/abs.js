@@ -64,10 +64,17 @@ async function cmdUpdate({ yes }) {
   const cmp = cmpVersion(cur, latest);
   console.log(`当前: ${cur}`);
   console.log(`最新: ${latest}`);
+
   if (cmp === 0) {
-    console.log('已是最新，无需升级。');
+    // ★ 版本对不代表宿主模板对（2026-11-07 实报）。
+    //   现场：以前被双副本的旧代码刷过宿主，版本号已被 npm 推上去，但 ~/.pi/
+    //   里仍是旧模板 —— 此时报「已是最新」然后什么都不做，用户以为升级完了，
+    //   界面却永远不变。故照样刷新一遍（install 幂等，无副作用）。
+    console.log('已是最新，仍刷新一次宿主模板（幂等）。');
+    await refreshHosts(yes);
     return;
   }
+
   // 本地比 registry 新 —— 典型场景：开发中从源码装过全局，或在改一个未发布的版本。
   // 此时不能走 npm i -g @latest：那会把本地版**降级**覆盖掉（2026-10-06 实际发生：
   // 源码 1.16.2 被拉回 registry 的 1.16.1）。只比较 `===` 而没有方向判断，就是这个坑。
@@ -77,6 +84,7 @@ async function cmdUpdate({ yes }) {
     console.log('  想把它正式发布：      npm publish（在源码目录，发布后 update 即恢复正常）');
     return;
   }
+
   console.log(`\n升级 ${cur} → ${latest} …`);
   const r = await runCmd('npm', ['i', '-g', '@fanchao8609/agent_brain_sync@latest']);
   if (r === null) {
@@ -84,36 +92,45 @@ async function cmdUpdate({ yes }) {
     process.exit(1);
   }
   console.log(r);
-  // ★ 重装宿主必须交给**刚装好的那份新代码**去做，不能用本进程（2026-11-07 实报）。
-  //
-  // 病根：本进程是旧版 bin/abs.js，通过 import 加载的也是**旧版 src/install.js**。
-  //   旧 install.js 里的 stableBinPath() 用 process.execPath 推导全局包路径，
-  //   于是 hook 模板里的 @@ABS_BIN@@ 被烧成**旧副本**的路径，模板快照也是旧的。
-  //   结果：npm 已升到新版（npm ls -g 显示 1.28.0），但 ~/.pi/ 里写的还是旧模板，
-  //   界面一点没变，而且 hook 从此指向旧副本 —— 下一版继续错。
-  //   实测（fxh-mb）：/usr/bin/abs -> /usr/lib/...（1.26.0，PATH 优先）
-  //   与 /opt/node.../bin/abs -> /opt/...（1.28.0，npm 的 prefix，不在 PATH）。
-  //
-  // 修法：升级后用 `npm prefix -g` 算出新包的真实路径，把「刷新宿主」转交给
-  //   那个新包的 bin/abs.js 执行（子进程）。它算 stableBinPath 时会指向自己。
-  //   找不到新包才退回本进程的 runInstall（至少不比原来差）。
+  await refreshHosts(yes);
+}
+
+/**
+ * 把宿主 hook/skill/编辑器刷新一遍。
+ *
+ * ★ 必须交给**刚装好的那份新代码**去做，不能用本进程（2026-11-07 实报）。
+ *
+ * 病根：本进程是旧版 bin/abs.js，通过 import 加载的也是**旧版 src/install.js**。
+ *   旧 install.js 的 stableBinPath() 用 process.execPath 推导全局包路径，于是
+ *   hook 模板里的 @@ABS_BIN@@ 被烧成**旧副本**的路径，模板快照也是旧的。
+ *   结果：npm 已升到新版（npm ls -g 显示 1.28.0），但 ~/.pi/ 里写的还是旧模板，
+ *   界面一点没变，而且 hook 从此指向旧副本 —— 下一版继续错。
+ *   实测（fxh-mb）：/usr/bin/abs → /usr/lib/...（1.26.0，PATH 优先）
+ *   与 /opt/node.../bin/abs → /opt/...（1.28.0，npm 的 prefix，不在 PATH）。
+ *
+ * 修法：用 `npm prefix -g` 算出新包的真实路径，把刷新转交给那个新包的
+ *   bin/abs.js 执行（子进程）。它算 stableBinPath 时会指向自己。
+ *   找不到新包才退回本进程的 runInstall（至少不比原来差）。
+ */
+async function refreshHosts(yes) {
   const freshEntry = await freshInstallEntry();
   console.log('\n刷新四宿主 hook/skill（hook 脚本烧的是绝对路径 + 模板快照，升级后必须重装）…');
-  if (freshEntry) {
-    if (freshEntry !== resolveBinPath()) console.log(`  用新装的副本执行: ${freshEntry}`);
-    // --all：update 的语义是「把升好的版本铺到所有已装宿主」，不能二次弹窗重选。
-    //   旧代码调 runInstall({agent: undefined}) 在 TTY 下会弹菜单，回车只装 pi ——
-    //   另装过 omp / Claude Code 的机器升级后那几个宿主永远不刷新（2026-11-07 实报）。
-    const args = ['install', '--all'];
-    if (yes) args.push('--yes');
-    const code = await runInherit(process.execPath, [freshEntry, ...args]);
-    if (code !== 0) {
-      console.error(`\n✗ 刷新宿主失败（退出码 ${code}）。手动重跑：node ${freshEntry} install --all`);
-      process.exit(1);
-    }
-  } else {
+  if (!freshEntry) {
     console.log('  ⚠ 未定位到新安装的副本，用当前进程刷新（可能仍是旧模板）');
     await runInstall({ agent: undefined, mcp: true, skill: true, yes: yes !== false });
+    console.log('\n完成。重启宿主（pi / omp / opencode / claude-code / codex）后新 hook 生效。');
+    return;
+  }
+  if (freshEntry !== resolveBinPath()) console.log(`  用新装的副本执行: ${freshEntry}`);
+  // --all：update 的语义是「把升好的版本铺到所有已装宿主」，不能二次弹窗重选。
+  //   旧代码调 runInstall({agent: undefined}) 在 TTY 下会弹菜单，回车只装 pi ——
+  //   另装过 omp / Claude Code 的机器升级后那几个宿主永远不刷新（2026-11-07 实报）。
+  const args = ['install', '--all'];
+  if (yes) args.push('--yes');
+  const code = await runInherit(process.execPath, [freshEntry, ...args]);
+  if (code !== 0) {
+    console.error(`\n✗ 刷新宿主失败（退出码 ${code}）。手动重跑：node ${freshEntry} install --all`);
+    process.exit(1);
   }
   console.log('\n完成。重启宿主（pi / omp / opencode / claude-code / codex）后新 hook 生效。');
 }

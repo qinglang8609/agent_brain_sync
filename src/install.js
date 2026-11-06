@@ -5,6 +5,7 @@
 //   - Codex:      ~/.codex/hooks.json。
 //   - OpenCode / Pi: 官方只吃 TS plugin/extension(无 shell-hook 配置) → 初版给出手工指引。
 // 纪律: 幂等(重复安装=更新)、原子写(tmp+rename)、卸载只删自己装的、写入前备份。
+import { execFileSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import * as fsSync from 'node:fs';
 import { homedir } from 'node:os';
@@ -472,6 +473,62 @@ export function staleBinWarning(binOverride) {
     '⚠ hook 指向的 abs 缺少 ingest 命令，会话关闭时不会自动落会话页。',
     `  实际指向: ${bin}`,
     '  修法: npm install -g .   然后重跑本安装',
+  ].join('\n');
+}
+
+/**
+ * 双副本检测：本机是否还装着**另一份**本包？
+ *
+ * ★ 为何需要（2026-11-07 实报）：远程机器有两份全局安装 ——
+ *   /usr/bin/abs → /usr/lib/node_modules/...（旧）
+ *   npm prefix → /opt/node.../lib/node_modules/...（新）
+ *   PATH 里 `/usr/bin` 在前，于是 `abs update` 跑的是旧副本；它用自己那份旧
+ *   install.js 刷宿主，把旧模板和旧 bin 路径写进 ~/.pi/，界面一点不变。
+ *
+ * 这里只做**检测与报告**，不自动改 PATH —— 改用户 shell 配置是越权动作。
+ * 正确修法在 bin/abs.js 的 cmdUpdate 里（把刷新动作转交给 npm prefix 下的新副本）；
+ * 本函数负责让「装完之后仍然指错」这件事在输出里可见，而不是静默。
+ *
+ * @returns {string|null} 有另一份时返回提示，否则 null。
+ */
+export function duplicateInstallWarning() {
+  let pkgName = '';
+  try {
+    pkgName = JSON.parse(fsSync.readFileSync(join(ABS_DIR, 'package.json'), 'utf8')).name || '';
+  } catch { return null; }
+  if (!pkgName) return null;
+
+  // ★ 只关心「两份都是全局安装」的情形。
+  //   从开发仓库直接跑 install（self 不在 node_modules 下）是正常的开发流程，
+  //   此时与全局那份版本不同是预期的 —— 那不是双副本故障，报出来只会是噪声
+  //   （2026-11-07 自测时先误报了一次）。
+  if (!/[\\/]node_modules[\\/]/.test(ABS_DIR)) return null;
+
+  let npmRoot;
+  try {
+    npmRoot = execFileSync('npm', ['prefix', '-g'], { encoding: 'utf8' }).trim();
+  } catch { return null; }
+  if (!npmRoot) return null;
+
+  // npm prefix 下的那份（「正确」的那份）与本进程所在那份（可能正是旧副本）
+  const correct = [join(npmRoot, 'lib', 'node_modules', pkgName), join(npmRoot, 'node_modules', pkgName)]
+    .find((x) => fsSync.existsSync(x));
+  if (!correct) return null;
+  const self = ABS_DIR;
+  try {
+    if (fsSync.realpathSync(correct) === fsSync.realpathSync(self)) return null;  // 同一份，正常
+  } catch { return null; }
+
+  let correctVer = '?', selfVer = '?';
+  try { correctVer = JSON.parse(fsSync.readFileSync(join(correct, 'package.json'), 'utf8')).version || '?'; } catch {}
+  try { selfVer = JSON.parse(fsSync.readFileSync(join(self, 'package.json'), 'utf8')).version || '?'; } catch {}
+
+  return [
+    '⚠ 本机存在两份 abs 全局安装，本次安装用的是：',
+    `     ${self}  (v${selfVer})`,
+    '  npm 装的那份在：',
+    `     ${correct}  (v${correctVer})`,
+    `  修法: 用新那份重跑 —— node ${join(correct, 'bin', 'abs.js')} install --all`,
   ].join('\n');
 }
 
@@ -1005,6 +1062,8 @@ export async function runInstall({ agent, all = false, mcp = true, skill = true,
   }
   const stale = staleBinWarning();
   if (stale) console.log('\n' + stale);
+  const dup = duplicateInstallWarning();
+  if (dup) console.log('\n' + dup);
 
   console.log('\n完成。项目内运行 abs init 建图谱; 会话里说 "abs load" 续接。');
 }

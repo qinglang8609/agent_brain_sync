@@ -1386,3 +1386,23 @@ describe('安装后自检：hook 指向的入口是否陈旧', () => {
     assert.equal(staleBinWarning(join(dir, 'not-exist.js')), null);
   });
 });
+
+// ---------- 双副本检测（2026-11-07 实报）----------
+// 远程机器 /usr/bin/abs 指向 /usr/lib/…（1.26.0），npm 把新版装在 /opt/… ——
+// 跑 update 的是旧副本，它用自己那份旧 install.js 刷宿主，界面永远不变。
+// 检测只负责让这件事在输出里可见（正确修法在 bin/abs.js 的 cmdUpdate）。
+describe('duplicateInstallWarning', () => {
+  test('★ 从开发仓库调用不误报（仓库不在 node_modules 下，与全局版本不同是正常的）', async () => {
+    const { duplicateInstallWarning } = await import('../src/install.js');
+    // 本测试进程 import 的就是仓库源码，ABS_DIR 不含 node_modules —— 必须返回 null。
+    // 踩过：第一版没这道闸，开发机自测时把自己报成了「双副本」。
+    assert.equal(duplicateInstallWarning(), null);
+  });
+
+  test('函数存在且可安全调用（npm 不可用等异常情况不抛）', async () => {
+    const { duplicateInstallWarning } = await import('../src/install.js');
+    assert.equal(typeof duplicateInstallWarning, 'function');
+    // 不应抛异常 —— 自检失败只返回 null
+    assert.doesNotThrow(() => duplicateInstallWarning());
+  });
+});
