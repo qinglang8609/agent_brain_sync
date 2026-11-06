@@ -573,12 +573,11 @@ export function renderPanelLines(
   // 上描边行已删除（2026-11-04 与 pi 版同步，用户要求「去掉上边框」）。首行现在是标题行。
   const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
   const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
-  // 空看板标题前加 1 格（与输入框文字对齐）；有任务时不加，任务行顶到最左（2026-11-04 用户）。
-  lines.push(clipToWidth((data.total === 0 ? ' ' : '') + fg(main, title), width))
+  // 标题顶最左（2026-11-04 用户）。旧代码空看板时多缩 1 格，2026-11-06 与 pi 版同步删去 ——
+  // 空看板已整块不显示（见 refreshTodoPanel）。
+  lines.push(clipToWidth(fg(main, title), width))
 
   const lastIdx = data.rows.length - 1
-  // 空看板只显示标题行（2026-11-04 用户要求去掉「（无未完成任务）」那行）。
-  if (data.total === 0) return lines
   data.rows.forEach((t, i) => {
     // `└─` 只给最后一条 —— 不管它有没有子项（否则末条带子项时全篇没有收尾）。
     const isLast = i === lastIdx
@@ -626,6 +625,9 @@ async function refreshTodoPanel(ui: ExtensionUIContext | undefined, cwd: string)
     const md = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8')
     const who = await currentUser()
     const data = parseOpenTasks(md, PANEL_MAX_ROWS, who)
+    // ★ 无任务就不显示面板（2026-11-06 与 pi 版同步，推翻了「空看板也画标题行」）。
+    //   **不要再改回空看板也显示** —— 用户刚把那个行为提掉。
+    if (data.total === 0) { hidePanel(ui); return }
     let tuiRef: RenderTui | null = null
     ui.setWidget(
       PANEL_KEY,

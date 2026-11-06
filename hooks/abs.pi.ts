@@ -1020,12 +1020,11 @@ export function renderPanelLines(
   // 昵称附在作者名后（会话内固定，启动时随机抽）。
   const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
   const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
-  // 空看板标题前加 1 格（与输入框文字对齐）；有任务时不加，任务行顶到最左（2026-11-04 用户）。
-  lines.push(clipToWidth((data.total === 0 ? ' ' : '') + fg(main, title), width))
+  // 标题也顶最左（2026-11-04 用户）。旧代码曾在空看板时多缩 1 格，2026-11-06 空看板
+  // 已整块不显示（见 refreshTodoPanel），那个分支没意义了。
+  lines.push(clipToWidth(fg(main, title), width))
 
   const lastIdx = data.rows.length - 1
-  // 空看板只显示标题行（2026-11-04 用户要求去掉「（无未完成任务）」那行）。
-  if (data.total === 0) return lines
   data.rows.forEach((t, i) => {
     // `└─` 只给最后一条 —— 不管它有没有子项。
     // （2026-10-03 审查修正：原条件 `i === lastIdx && !t.note` 会让“末条带子项”时
@@ -1084,8 +1083,13 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
     const md = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8')
     const who = await currentUser()
     const data = parseOpenTasks(md, PANEL_MAX_ROWS, who)
-    // 任务为空**也显示面板**（只留标题行），只有无图谱才隐藏。
-    // 曾写 data.total === 0 → hidePanel；用户 2026-10-06 要求改掉。
+    // ★ 无任务就不显示面板（2026-11-06 用户要求，**推翻了 2026-10-06 的旧决定**）。
+    //   旧决定是「即便 todo 没有列表，也要在 pi 上显示」，理由：面板是「机制在不在」的
+    //   常驻指示，看不见就不知道机制活着。用户 2026-11-06 把它改回来了：
+    //   「当没有任务的时候 就别显示 todo 面板了」—— 一行占着编辑器上方是纯噪音。
+    //   **不要再改回「空看板也显示标题行」** —— 那就是用户刚提掉的东西。
+    //   （想知道机制活没活看别处：abs load 的流水、~/.abs/log/hooks.log。）
+    if (data.total === 0) { hidePanel(ui); return }
     // factory 形式：render(width) 每帧拿真实宽度 → 按宽度截断，不再断字。
     // 动画：phase 存在模块级，render 时读当前值；定时器只在本帧重绘，不重建 widget。
     let tuiRef: any = null
@@ -1114,8 +1118,7 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
     const needAnim = data.rows.some((t) => t.state === '进行中')
     if (needAnim) startAnimTimer(() => tuiRef)
     else stopAnimTimer()
-    // ★ 无动画时得自己刷一帧（2026-10-06）。
-    //   旧代码靠“任务清空→hidePanel”顺带 requestRender；现在空看板不隐藏了，
+    // ★ 无动画时得自己刷一帧。
     //   若这里不主动刷，从“有任务”变成“无任务”时屏幕会冻结在旧帧
     //   （标题还写着旧计数）—— 与 2026-10-05 那个静默 bug 同一族。
     //   仍在 needAnim 时不用管：定时器每帧会刷。

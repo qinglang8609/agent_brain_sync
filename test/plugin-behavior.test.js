@@ -1208,22 +1208,20 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   //   旧行为（空→不渲染任何行→面板自动隐藏）已作废。
   //   理由：一进 pi 就看不见面板 = 不知道 abs 活着没（跟「看不到 load」同一类问题）。
   // 2026-11-04 用户要求：没任务时不显示「（无未完成任务）」，只留标题一行。
-  test('空任务列表 → 只有标题一行', async () => {
+  // ★ 2026-11-06 用户要求：「当没有任务的时候 就别显示 todo 面板了」。
+  //   推翻了 2026-10-06「空看板也要显示」的旧决定 —— 空看板现在由 refreshTodoPanel
+  //   直接 hidePanel，根本不会进渲染层。这里只验渲染层不因空输入而抛。
+  test('空任务列表：不抛异常（隐藏由 refreshTodoPanel 做，不在渲染层）', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const lines = renderPanelLines({ total: 0, rows: [], hidden: 0 }, 'me', 80, (c, s) => s);
-    assert.equal(lines.length, 1, `空看板应只有标题一行，实际 ${lines.length} 行:\n${lines.join('\n')}`);
-    assert.ok(lines[0].includes('Todo ('), `唯一那行应是标题: ${JSON.stringify(lines[0])}`);
-    assert.ok(!lines[0].includes('（无未完成任务）'), `不得出现那句提示: ${JSON.stringify(lines[0])}`);
+    assert.ok(Array.isArray(lines), '必须返回数组，不得抛');
   });
 
-  // 2026-11-04 用户要求：空看板标题前留 1 格（与输入框文字对齐），有任务时标题与任务行都顶最左。
-  test('★ 空看板标题缩进 1 格；有任务时标题与任务行都顶最左', async () => {
+  // 2026-11-04 用户要求：有任务时标题与任务行都顶最左（不缩进）。
+  test('★ 有任务时标题与任务行都顶最左', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const fg = (c, s) => s;
     const lead = (s) => s.length - s.trimStart().length;
-
-    const empty = renderPanelLines({ total: 0, rows: [], hidden: 0 }, 'me', 80, fg);
-    assert.equal(lead(empty[0]), 1, `空看板标题应缩进 1 格: ${JSON.stringify(empty[0])}`);
 
     const withTask = renderPanelLines(
       { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', kids: [{ done: false, text: '子项' }] }], hidden: 0 },
@@ -1483,7 +1481,10 @@ describe('pi 扩展 面板重绘', () => {
     const before = renders;
     await handlers['turn_end'][0]({}, c);
     await new Promise((r) => setTimeout(r, 800));
-    assert.equal(widget, 'shown', '任务清空后面板仍要显示（2026-10-06 改；旧行为是隐藏）');
+    // ★ 2026-11-06 用户要求：「当没有任务的时候 就别显示 todo 面板了」。
+    //   推翻了 2026-10-06「任务清空后面板仍要显示」。
+    assert.equal(widget, 'hidden', '任务清空后面板应隐藏（2026-11-06 改；推翻 10-06 的旧行为）');
+    // 重绘仍然必须发生 —— 否则数据清了、屏幕还留着旧帧（2026-10-05 那个坑）。
     assert.ok(renders > before, `重绘仍必须发生（否则屏幕不刷）: ${before} → ${renders}`);
   });
 });
