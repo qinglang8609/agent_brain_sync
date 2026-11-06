@@ -1,9 +1,11 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] command-surface-cleanup [[fanchao]] — 命令面 27→14（保留别名）、SKILL 303→~120 行分层、单一入口表；代码结构不动 (认领 2026-11-06 01a1a9c6-6907-71)
 
 ## Done
+
+### 2026-11-06
+- [x] command-surface-cleanup [[fanchao]] — 命令面 27→14（保留别名）、SKILL 303→~120 行分层、单一入口表；代码结构不动 — help 按意图分六组；index/log/status→show、db search→search、summon→ingest --list（旧名保留别名）；SKILL 303→107 行，长尾移两页；capture/concept 实测非重复保留。801 全绿 【落地】 (完成 2026-11-06 01a1a9c6-6907-71)
 
 ### 2026-11-05
 - [x] wrapup-push-release [[fanchao]] — 收尾沉淀 → 推送 git → 发版 1.26.0 → 本地安装验证 — 收尾沉淀+11commit推送（pre-push 796全绿）+npm发布1.26.0（直查registry确认）+本地安装重装hook/skill/MCP+安装版端到端验证全通 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
