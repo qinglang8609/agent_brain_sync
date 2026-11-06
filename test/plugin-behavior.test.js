@@ -1250,8 +1250,25 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const lines = renderPanelLines(data, 'me', 80, fg, 0);
     const doing = lines.find((l) => l.includes('doing'));
     const wait = lines.find((l) => l.includes('wait'));
-    assert.match(doing, /[○●]{3}/, `进行中行应有三符动画: ${doing}`);
-    assert.ok(!/[○●]{3}/.test(wait), `滞留中行不该有动画: ${wait}`);
+    assert.match(doing, /[\u2800-\u28FF]/, `进行中行应有盲文 spinner: ${doing}`);
+    assert.ok(!/[\u2800-\u28FF]/.test(wait), `滞留中行不该有动画: ${wait}`);
+  });
+
+  // 2026-11-06 用户要求：「●○○ 改成一个字符的、动画吧 放在 [进行中] 后面」。
+  test('★ 单字符 spinner 紧跟在 [进行中] 之后、任务 id 之前', async () => {
+    const { renderPanelLines, todoAnimFrame } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const data = { total: 1, rows: [{ state: '进行中', id: 'doing', desc: '干活', kids: [] }], hidden: 0 };
+    const line = renderPanelLines(data, 'me', 80, fg, 0)[1];
+    const frame = todoAnimFrame(0);
+    const iState = line.indexOf('[进行中]');
+    const iAnim = line.indexOf(frame);
+    const iId = line.indexOf('doing');
+    assert.ok(iState >= 0 && iAnim >= 0 && iId >= 0, `三个部件都得在: ${JSON.stringify(line)}`);
+    assert.ok(iState < iAnim, `spinner 应在 [进行中] 之后: ${JSON.stringify(line)}`);
+    assert.ok(iAnim < iId, `spinner 应在任务 id 之前: ${JSON.stringify(line)}`);
+    // 只占 1 列（用户明确要单字符），不能是把三点并排
+    assert.equal([...frame].length, 1, `帧应为单字符: ${JSON.stringify(frame)}`);
   });
 
   test('动画：animPhase=-1 时完全不显示（开关作用）', async () => {
@@ -1259,7 +1276,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const fg = (c, s) => s;
     const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', kids: [] }], hidden: 0 };
     const lines = renderPanelLines(data, 'me', 80, fg, -1);
-    assert.ok(!/[○●]{3}/.test(lines.join('\n')), '关闭时不该出现动画符');
+    assert.ok(!/[\u2800-\u28FF]/.test(lines.join('\n')), '关闭时不该出现动画符');
   });
 
   // ===== 推理强度变色（2026-11-06 用户需求）=====
@@ -1295,13 +1312,22 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}子项`), `子项文字应保持 muted:\n${all}`);
   });
 
-  test('★ 推理强度 off / 未传 → 退回 accent（不能变成 thinkingOff 的暗灰）', async () => {
+  test('★ 推理强度 off / 未传 → 整块面板用灰阶（不留 accent 高亮）', async () => {
     const { renderPanelLines } = await loadPanelFns();
-    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', kids: [] }], hidden: 0 };
+    const data = {
+      total: 1,
+      rows: [{ state: '进行中', id: 'x', desc: '描述', kids: [{ done: false, text: '子项' }] }],
+      hidden: 0,
+    };
     for (const effort of ['off', '', undefined, null]) {
-      const all = renderPanelLines(data, 'me', 120, tagFg, -1, '', effort).join('\n');
-      assert.ok(all.includes(`${tok(TOKEN_CODE.accent)}Todo (1)`), `effort=${effort} 应退回 accent:\n${all}`);
+      const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', effort).join('\n');
+      // 用户原话：「当推理关闭的时候 todo 面板文字应该全是灰色」
+      assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}Todo (1)`), `effort=${effort} 主色应为 muted:\n${all}`);
+      assert.ok(!all.includes(tok(TOKEN_CODE.accent)), `effort=${effort} 不得留 accent 高亮:\n${all}`);
       assert.ok(!all.includes(tok(TOKEN_CODE.thinkingHigh)), `effort=${effort} 不得上推理色:\n${all}`);
+      // 描述/子项降一阶到 dim：主色已是 muted，同色就看不出主次
+      assert.ok(all.includes(`${tok(TOKEN_CODE.dim)}描述`), `effort=${effort} 描述应为 dim:\n${all}`);
+      assert.ok(all.includes(`${tok(TOKEN_CODE.dim)}子项`), `effort=${effort} 子项应为 dim:\n${all}`);
     }
   });
 
@@ -1387,23 +1413,20 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(!plain.includes('·'), `无昵称不该有分隔符: ${plain}`);
   });
 
-  test('动画帧：6 帧循环且每帧宽度固定（不拖宽面板）', async () => {
+  test('动画帧：10 帧盲文循环、每帧 1 列宽（不拖宽面板）', async () => {
     const { todoAnimFrame } = await loadPanelFns();
     const seq = [];
-    for (let p = 0; p < 6; p++) {
+    for (let p = 0; p < 10; p++) {
       const f = todoAnimFrame(p);
-      assert.equal([...f].length, 3, `帧应为 3 列: ${f}`);
+      // 宽度恒定是硬要求：面板每 100ms 重绘，宽度一变整行就左右抖。
+      assert.equal([...f].length, 1, `帧应为 1 列: ${JSON.stringify(f)}`);
       seq.push(f);
     }
-    // 不断言“6 帧各不相同” —— 帧序列含回退（呼吸感），本就该有重复元素。
-    // 断言真实意图：起点全空心、中途全实心、且确实在变化。
-    assert.equal(seq[0], '○○○', `首帧应全空心: ${seq[0]}`);
-    assert.ok(seq.includes('●●●'), `应有一帧全实心: ${seq.join(',')}`);
-    assert.ok(new Set(seq).size >= 3, `帧应有变化: ${seq.join(',')}`);
-    // 循环：第 7 帧回到第 1 帧
-    assert.equal(todoAnimFrame(6), todoAnimFrame(0), '应循环回第 0 帧');
+    assert.equal(new Set(seq).size, 10, `10 帧应各不相同: ${seq.join(',')}`);
+    // 循环：第 11 帧回到第 1 帧
+    assert.equal(todoAnimFrame(10), todoAnimFrame(0), '应循环回第 0 帧');
     // 负数相位不该抛（防御）
-    assert.equal([...todoAnimFrame(-1)].length, 3);
+    assert.equal([...todoAnimFrame(-1)].length, 1);
   });
 });
 

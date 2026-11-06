@@ -503,8 +503,8 @@ function clipToWidth(s: string, width: number): string {
 
 // 「进行中」行的迷你动画：三个小符号依次由空心变实心。
 // 帧宽固定 3 列 —— 宽度不变才不会让面板每帧抖动。
-const TODO_ANIM_FRAMES = ['○○○', '●○○', '●●○', '●●●', '●●○', '●○○']
-const TODO_ANIM_MS = 250
+const TODO_ANIM_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const TODO_ANIM_MS = 100
 
 /** 动画相位（每 tick +1）。模块级 —— 闭包 flag 在重复注册时不共享。 */
 let animPhase = 0
@@ -562,10 +562,13 @@ export function renderPanelLines(
 ): string[] {
   // ★ 空看板不返回空数组：面板是「机制在不在」的常驻指示，进去就看不见 = 不知道机制活着。
   // ★ 主色跟推理强度走（2026-11-06 与 pi 版同步）：标题、[状态]、树线、复选框、
-  //   进行中动画同用一色，与输入框描边同色系。off（或未传）退回原 accent。
-  //   灰阶不动：描述与子项文字保持 dim/muted，否则整片一色分不出层次。
-  //   omp 宿主目前不传 effort（它没有 thinkingLevel 这个入口）→ 行为与以前一致。
-  const main = effortToken(effort) || 'accent'
+  //   进行中动画同用一色，与输入框描边同色系。
+  // ★ off 时整块面板用灰阶：高亮色只在真的开着推理时给。
+  //   主色 muted（中灰），描述与子项降一阶到 dim（深灰），两阶保留层次。
+  //   omp 宿主目前不传 effort → 走 off 分支，面板为灰阶。
+  const off = !effortToken(effort)
+  const main = effortToken(effort) || 'muted'
+  const flow = off ? 'dim' : 'muted'
   const lines: string[] = []
   // 上描边行已删除（2026-11-04 与 pi 版同步，用户要求「去掉上边框」）。首行现在是标题行。
   const whoPart = who ? who + (nickname ? ` · ${nickname}` : '') : nickname
@@ -580,12 +583,13 @@ export function renderPanelLines(
     // `└─` 只给最后一条 —— 不管它有没有子项（否则末条带子项时全篇没有收尾）。
     const isLast = i === lastIdx
     const branch = isLast ? '└─' : '├─'
+    // 单字符 spinner 紧跟 [进行中]（2026-11-06 与 pi 版同步）。
     const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg(main, todoAnimFrame(animPhase)) : ''
     // 复选框 `[ ]`：面板是 todo.md 的只读视图，就该长成 todo 原貌。
     const box = fg(main, '[ ]')
     // 状态标签统一跟主色（2026-11-06 与 pi 版同步：靠符号和文字区分状态，不靠颜色）。
-    const head = `${fg(main, branch)} ${box} ${fg(main, `[${t.state}]`)} ${fg('text', t.id)}${anim}`
-    const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
+    const head = `${fg(main, branch)} ${box} ${fg(main, `[${t.state}]`)}${anim} ${fg('text', t.id)}`
+    const desc = t.desc ? ` ${fg('dim', '—')} ${fg(flow, t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
       // 子项：标准 md 嵌套列表 → 画成树
@@ -594,7 +598,7 @@ export function renderPanelLines(
       t.kids.forEach((k, ki) => {
         const kb = ki === n - 1 ? '└─' : '├─'
         const kbox = fg(main, k.done ? '[x]' : '[ ]')
-        const ktext = fg(k.done ? 'dim' : 'muted', k.text)
+        const ktext = fg(k.done ? 'dim' : flow, k.text)
         lines.push(clipToWidth(`${stem} ${fg(main, kb)} ${kbox} ${ktext}`, width))
       })
     }

@@ -928,12 +928,16 @@ function clipToWidth(s: string, width: number): string {
   return out + '…'
 }
 // ---------------------------------------------------------------------------
-// “进行中”行的迷你动画（2026-10-03 用户需求）：三个小符号依次由空心变实心。
-// 帧宽固定 3 列 —— 宽度不变才不会让面板每帧抖动（这也是不用 ⠋⠙⠹ 那种 spinner 的原因：
-// 那个只闪一个符，用户明确要的是“三个点依次点亮”）。
-// 平铺 6 帧：亮→全亮→退回（呼吸感），而不是全亮后硬跳回全空。
-const TODO_ANIM_FRAMES = ['○○○', '●○○', '●●○', '●●●', '●●○', '●○○']
-const TODO_ANIM_MS = 250
+// “进行中”行的迷你动画。
+//
+// 2026-10-03 用户要的是三个点依次点亮；2026-11-06 改成**单字符盲文 spinner**
+// （用户原话：「●○○ 改成一个字符的、动画吧 放在 [进行中] 后面」）。
+//
+// 为何用盲文点阵而不是 ⠋⠙⠹ 之外的 ASCII 旋转符：
+//   ⠿ 系符号在等宽字体里都是 1 列宽，且视觉上是个转动的方框，比 | / - \ 均匀。
+// 为何帧宽必须恒定：面板每 250ms 重绘，宽度一变整行就会左右抖。盲文恰好全是 1 列。
+const TODO_ANIM_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const TODO_ANIM_MS = 100
 
 /** 动画相位（每 tick +1）。模块级 —— 同 agentEndSeen，闭包 flag 在重复注册时不共享。 */
 let animPhase = 0
@@ -999,9 +1003,15 @@ export function renderPanelLines(
   //   下面仍要画框和标题，所以这里只是不再提前 return。
   //
   // ★ 主色跟推理强度走（2026-11-06 用户需求）：标题、[状态]、树线 ├─└─、复选框 [ ]、
-  //   进行中动画同用一色，与 pi 输入框描边/文字同色系。off（或未传）退回原 accent。
-  //   灰阶不动：描述（— 后面）与子项文字保持 dim/muted，否则整片一色分不出层次。
-  const main = effortToken(effort) || 'accent'
+  //   进行中动画同用一色，与 pi 输入框描边/文字同色系。
+  // ★ off 时整块面板用灰阶（同日用户补提：「当推理关闭的时候 todo 面板文字应该全是灰色」）——
+  //   高亮色只在真的开着推理时给，否则「推理关了面板还在发光」让人误以为还在深度思考。
+  //   主色用 muted（中灰），描述与子项降一阶到 dim（深灰），两阶灰保留层次，不一整片平。
+  const off = !effortToken(effort)
+  const main = effortToken(effort) || 'muted'
+  // 描述/未勾子项的颜色：开着推理时 muted（比主色暗、又不至于暗到看不清）；
+  // off 时主色已经是 muted，描述得再降一阶用 dim，否则两者同色分不出主次。
+  const flow = off ? 'dim' : 'muted'
   const lines: string[] = []
   // 上描边行已删除（2026-11-04 用户要求「去掉上边框」）。
   // 历史：那行曾用 `thinkingOff` 对齐 pi 输入框描边色（排查三轮才定色）。
@@ -1023,13 +1033,15 @@ export function renderPanelLines(
     const isLast = i === lastIdx
     const branch = isLast ? '└─' : '├─'
     // 进行中的行带一个小动画（其余行不加，避免满屏都在跳）
+    // 单字符 spinner 紧跟 [进行中]：靠前放才能一眼看到（放行尾会被长描述挤到前面去看不见）。
+    // 2026-11-06 用户要求：「放在 [进行中] 后面」。
     const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg(main, todoAnimFrame(animPhase)) : ''
     // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
     const box = fg(main, '[ ]')
     // 状态标签统一跟主色（2026-11-06 用户定：靠符号和文字区分状态，不靠颜色）。
-    const head = `${fg(main, branch)} ${box} ${fg(main, `[${t.state}]`)} ${fg('text', t.id)}${anim}`
-    const desc = t.desc ? ` ${fg('dim', '—')} ${fg('muted', t.desc)}` : ''
+    const head = `${fg(main, branch)} ${box} ${fg(main, `[${t.state}]`)}${anim} ${fg('text', t.id)}`
+    const desc = t.desc ? ` ${fg('dim', '—')} ${fg(flow, t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
       // 子项：标准 md 嵌套列表 → 画成树
@@ -1042,7 +1054,7 @@ export function renderPanelLines(
       t.kids.forEach((k, ki) => {
         const kb = ki === n - 1 ? '└─' : '├─'
         const kbox = fg(main, k.done ? '[x]' : '[ ]')
-        const ktext = fg(k.done ? 'dim' : 'muted', k.text)
+        const ktext = fg(k.done ? 'dim' : flow, k.text)
         lines.push(clipToWidth(`${stem} ${fg(main, kb)} ${kbox} ${ktext}`, width))
       })
     }
