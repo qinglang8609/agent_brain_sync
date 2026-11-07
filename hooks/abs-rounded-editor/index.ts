@@ -18,7 +18,7 @@
  * 注意：自动补全菜单行排在底边之下、且自带内容宽度，不套竖线（否则菜单被框住会错位）。
  */
 import { CustomEditor } from '@earendil-works/pi-coding-agent'
-import { buildStatus, roundBorder, shortenModel, thinkingColorToken } from './format.ts'
+import { buildStatus, effortAnsi, paintAnsi, roundBorder, shortenModel } from './format.ts'
 
 const SIDE = '│'
 
@@ -46,12 +46,18 @@ export class RoundedEditor extends CustomEditor {
     if (lines.length < 2) return lines
 
     const borderColor = (this as any).borderColor?.bind(this)
-    const wrap = (s: string) => (borderColor ? borderColor(s) : s)
-    // 文字色 = 推理强度色；off（或取不到）时为空 → 不着色，用终端默认前景色。
-    const token = thinkingColorToken(effortLevel)
+    // 文字色 + 边框色 = 推理强度的主色；off（或取不到）时为空 → 文字不上色、边框交回 pi 自己的边框色。
+    // 选 24 位色还是 256 色，问主题自己的 getColorMode()，与 pi 其他文字一致。
     const themeNow = themeGetter?.()
-    const effortFg =
-      token && typeof themeNow?.fg === 'function' ? (s: string) => themeNow.fg(token, s) : null
+    let colorMode = 'truecolor'
+    try { colorMode = String(themeNow?.getColorMode?.() || 'truecolor') } catch {}
+    const ansi = effortAnsi(effortLevel, colorMode)
+    const effortFg = ansi ? (s: string) => paintAnsi(ansi, s) : null
+    // ★ 边框也跟着上主色（2026-11-07 用户补提：「输入框也是要改颜色」）。
+    //   前一轮只染了文字，结果输入框空着时框里没字、屏幕上只剩 pi 那圈紫/橙色边框，
+    //   看起来就像完全没改 —— 边框不跟着变，这个功能肉眼就看不见。
+    //   roundBorder 本来就是「剥掉原色 → 整行重新上色」，故把上色函数传进 wrap 即可。
+    const wrap = effortFg ?? ((s: string) => (borderColor ? borderColor(s) : s))
     const out: string[] = []
 
     // 上边框：原本是整行 `─`（含 working 图标与滚动提示），两端换圆角，右端贴状态。
@@ -62,9 +68,8 @@ export class RoundedEditor extends CustomEditor {
 
     for (let i = 1; i < bottomIdx; i++) {
       const body = lines[i]
-      // 推理强度色染**输入文字**（2026-11-06 用户）。边框不动 —— 边框本来就是 pi 按
-      // 同一档强度上的色（interactive-mode 的 updateEditorBorderColor），两者自然同色。
-      // 整行包裹而不逐字：光标由 \x1b[7m 反转标记，与前景色互不干扰；
+      // 推理强度主色染**输入文字**（2026-11-06 用户需求，2026-11-07 换成用户指定的六档色）。
+      // 边框同色（见上面 wrap）。整行包裹而不逐字：光标由 \x1b[7m 反转标记，与前景色互不干扰；
       // 输入框内容是用户手打的纯文本，行内不会有 reset 把后半行冲掉。
       out.push(wrap(SIDE) + (effortFg ? effortFg(body) : body) + wrap(SIDE))
     }
