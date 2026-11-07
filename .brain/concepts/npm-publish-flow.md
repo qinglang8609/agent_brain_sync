@@ -56,6 +56,18 @@ npm install -g @fanchao8609/agent_brain_sync
 宿主 agent 键 `cl​aude-code / co​dex / op​encode / pi` 含**零宽空格**（品牌名防误触），手打或经某些 shell 会带/漏这个不可见字符导致匹配不上。pi/co​dex 是纯 ASCII 没这问题，cl​aude-code/op​encode 有。
 🛠 解法：用干净字节构造 agent 名再传（`printf` 携 ZWSP），**别在命令行手打那些词**；一次只能装一个（`--agent` 会互相覆盖）。完整安装矩阵/ZWSP 构造法见 [[abs-install-layout]]。
 
+### 坑 8：npm 本地元数据有缓存 → 刚发布的版本装不上（2026-11-07 实测）
+
+publish 1.28.6 已成功（registry 有），但本机 `npm view <pkg> version` 一直报 1.28.5，
+`npm i -g <pkg>@1.28.6` 直接 `ETARGET No matching version found` —— 都是本机缓存的旧元数据在答话。
+
+🛠 判据与解法：
+- 看真实版本别信 `npm view`，直读 registry：`curl -s https://registry.npmjs.org/<scope>%2F<pkg> | jq -r .dist-tags.latest`
+- 装的时候加 `--prefer-online`：`npm i -g <pkg>@x.y.z --prefer-online`（实测 15 秒装好）
+- **别** `npm cache clean --force` 一刀切：那是清整机缓存，为一条元数据付的代价太大
+
+装完按坑 5 验证，再 `abs install --agent pi` 刷新宿主副本，最后 grep 新符号确认三处（全局包 / ~/.pi / 仓库）都是新码。
+
 ## 关键点
 - **发布名与 bin 命令独立**：包名可 scoped（@user/pkg），bin 命令照旧（`abs`）。别被包名占位劝退，scoped 是 npm 官方给的解法。
 - **product 形态 = 发布包 vs 开发 repo 分离**：`which abs` 指向发布包，开发 repo 只是源码。详见 [[deploy-artifact-copies]]。

@@ -1,11 +1,11 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] release-effort-color [[fanchao]] (认领 2026-11-07 01a1b50b-9994-71)
 
 ## Done
 
 ### 2026-11-07
+- [x] release-effort-color [[fanchao]] — 1.28.6 已提交+打标+推送+npm publish；全局包与 ~/.pi 宿主副本已更新到新码（--prefer-online 绕过元数据缓存） 【落地】 (完成 2026-11-07 01a1b50b-9994-71)
 - [x] release-1.28.5 [[fanchao]] — 提交待提交改动、bump 版本、npm publish、本地安装验证 — 820 测试与 check 全绿；3 个 commit（48aeaee feat、964419d docs、fcfd4fd 1.28.5）推 main 并打 tag v1.28.5；npm publish 1.28.5；本地 npm pack 后 npm i -g 真实安装（95 依赖），abs --version=1.28.5，pi 与 omp 宿主扩展重装且与 repo 副本一致。registry 传播延迟，npm view 此刻仍返回 1.28.4 【落地】 (完成 2026-11-07 01a1b538-e9cd-74)
 - [x] pi-reasoning-color-palette [[fanchao]] — 推理色从绿色阶换成用户逐档给的六档灰蓝 hex（max #ACB8CD … minimal #505867）；pi 版注释说色相是用户挑的，换色只许按用户给的值改 — 六档灰蓝色值落在 hooks/abs.pi.ts 与 abs-rounded-editor/format.ts，测试 820 全绿；终端实际观感未在本轮重看 【落地】 (完成 2026-11-07)
 - [x] pi-reasoning-color-green [[fanchao]] — 推理色改绿色阶（max 纯绿 00ff00 → minimal 006300 逐档变暗），todo 面板主色元素 + 输入框文字与边框同色；off 保持灰阶；进行中动画换四帧圆圈 ◐◓◑◒（200ms）。821 测试 + check 绿，已装到 ~/.pi。 【落地】 (完成 2026-11-07 01a1b50b-9994-71)
