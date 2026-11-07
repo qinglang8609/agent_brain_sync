@@ -1,11 +1,11 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] release-1.28.4 [[fanchao]] — 落库并发布 1.28.4：先跑测试，再 bump、提交推送、npm publish、本地全局安装与 pi 扩展重装 (认领 2026-11-07 01a1b500-de50-72)
 
 ## Done
 
 ### 2026-11-07
+- [x] release-1.28.4 [[fanchao]] — 落库并发布 1.28.4：先跑测试，再 bump、提交推送、npm publish、本地全局安装与 pi 扩展重装 — 测试 817 全绿；提交 2 个 commit 并推 main 与 tag v1.28.4；npm publish 1.28.4；npm i -g 到 1.28.4 并 grep 验证新代码；宿主扩展与 skill 副本一致 【落地】 (完成 2026-11-07 01a1b500-de50-72)
 - [x] revert-corner-nickname [[fanchao]] — 去掉输入框左下角 fanchao·昵称，还原到 todo 面板 (认领 2026-11-07 01a1b4e1-7408-74) 【落地】 (完成 2026-11-07 01a1b4f1-5d83-74)
 - [x] model-label-refresh [[fanchao]] — 排查：pi 切换模型后输入框上的模型名未及时刷新 — 事件名改对（model_changed→model_select），用户重启后切模型实测正常 【落地】 (完成 2026-11-07 01a1b4e1-7408-74)
   - [x] 根因：pi 事件名是 model_select，扩展监听的 model_changed 不存在；两副本（repo hooks/ 与 ~/.pi/agent/extensions/）都已改。待用户重启 pi 切模型实测
