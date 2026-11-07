@@ -1,6 +1,7 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] release-effort-color [[fanchao]] (认领 2026-11-07 01a1b50b-9994-71)
 
 ## Done
 
