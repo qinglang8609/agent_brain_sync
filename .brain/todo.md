@@ -1,10 +1,13 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] release-1.28.5 [[fanchao]] — 提交待提交改动、bump 版本、npm publish、本地安装验证 (认领 2026-11-07 01a1b538-e9cd-74)
 
 ## Done
 
 ### 2026-11-07
+- [x] pi-reasoning-color-palette [[fanchao]] — 推理色从绿色阶换成用户逐档给的六档灰蓝 hex（max #ACB8CD … minimal #505867）；pi 版注释说色相是用户挑的，换色只许按用户给的值改 — 六档灰蓝色值落在 hooks/abs.pi.ts 与 abs-rounded-editor/format.ts，测试 820 全绿；终端实际观感未在本轮重看 【落地】 (完成 2026-11-07)
+- [x] pi-reasoning-color-green [[fanchao]] — 推理色改绿色阶（max 纯绿 00ff00 → minimal 006300 逐档变暗），todo 面板主色元素 + 输入框文字与边框同色；off 保持灰阶；进行中动画换四帧圆圈 ◐◓◑◒（200ms）。821 测试 + check 绿，已装到 ~/.pi。 【落地】 (完成 2026-11-07 01a1b50b-9994-71)
 - [x] release-1.28.4 [[fanchao]] — 落库并发布 1.28.4：先跑测试，再 bump、提交推送、npm publish、本地全局安装与 pi 扩展重装 — 测试 817 全绿；提交 2 个 commit 并推 main 与 tag v1.28.4；npm publish 1.28.4；npm i -g 到 1.28.4 并 grep 验证新代码；宿主扩展与 skill 副本一致 【落地】 (完成 2026-11-07 01a1b500-de50-72)
 - [x] revert-corner-nickname [[fanchao]] — 去掉输入框左下角 fanchao·昵称，还原到 todo 面板 (认领 2026-11-07 01a1b4e1-7408-74) 【落地】 (完成 2026-11-07 01a1b4f1-5d83-74)
 - [x] model-label-refresh [[fanchao]] — 排查：pi 切换模型后输入框上的模型名未及时刷新 — 事件名改对（model_changed→model_select），用户重启后切模型实测正常 【落地】 (完成 2026-11-07 01a1b4e1-7408-74)
