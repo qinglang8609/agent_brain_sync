@@ -1,10 +1,14 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] release-1.28.4 [[fanchao]] — 落库并发布 1.28.4：先跑测试，再 bump、提交推送、npm publish、本地全局安装与 pi 扩展重装 (认领 2026-11-07 01a1b500-de50-72)
 
 ## Done
 
 ### 2026-11-07
+- [x] revert-corner-nickname [[fanchao]] — 去掉输入框左下角 fanchao·昵称，还原到 todo 面板 (认领 2026-11-07 01a1b4e1-7408-74) 【落地】 (完成 2026-11-07 01a1b4f1-5d83-74)
+- [x] model-label-refresh [[fanchao]] — 排查：pi 切换模型后输入框上的模型名未及时刷新 — 事件名改对（model_changed→model_select），用户重启后切模型实测正常 【落地】 (完成 2026-11-07 01a1b4e1-7408-74)
+  - [x] 根因：pi 事件名是 model_select，扩展监听的 model_changed 不存在；两副本（repo hooks/ 与 ~/.pi/agent/extensions/）都已改。待用户重启 pi 切模型实测
 - [x] release-1.28.0 [[fanchao]] — 推送 8 commit、发版 1.28.0、本地全局更新与宿主重装 【落地】 (完成 2026-11-07 01a1b105-5425-71)
 - [x] author-in-editor-corner [[fanchao]] — 作者名+昵称放输入框底部左上角 【落地】 (完成 2026-11-07 01a1b105-5425-71)
 - [x] hide-empty-panel [[fanchao]] — 无任务时不显示 todo 面板 【落地】 (完成 2026-11-07 01a1b105-5425-71)

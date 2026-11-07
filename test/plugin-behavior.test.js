@@ -1387,18 +1387,18 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     }
   });
 
-  // ★ 2026-11-07 用户要求：作者名与昵称从面板**去掉**，搬到输入框左下角。
-  //   面板标题只剩计数 —— 窄终端下任务行因此能多显示几个字。
-  test('★ 面板标题只有计数，不再含作者名与昵称', async () => {
+  // ★ 2026-11-07 用户要求还原：作者名与昵称搬回面板标题（曾搬到输入框左下角，
+  //   用户实测「在输入框这里很难看」，又搬回来 —— 前因：9d628ba 那次搬出去，本次搬回来）。
+  test('★ 面板标题带作者名与昵称（2026-11-07 还原）', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const fg = (c, s) => s;
     const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', kids: [] }], hidden: 0 };
     const nick = '📞 听到电话铃响就窒息的接听恐惧症';
     const wide = renderPanelLines(data, 'fanchao', 200, fg, -1, nick)[0];
     assert.ok(wide.includes('Todo (1)'), `应含计数: ${wide}`);
-    assert.ok(!wide.includes('fanchao'), `标题不得再含作者名: ${wide}`);
-    assert.ok(!wide.includes('接听恐惧症'), `标题不得再含昵称: ${wide}`);
-    assert.ok(!wide.includes('·'), `不得有分隔符: ${wide}`);
+    assert.ok(wide.includes('fanchao'), `标题应含作者名: ${wide}`);
+    assert.ok(wide.includes('接听恐惧症'), `标题应含昵称: ${wide}`);
+    assert.ok(wide.includes('·'), `应有分隔符: ${wide}`);
   });
 
   test('动画帧：10 帧盲文循环、每帧 1 列宽（不拖宽面板）', async () => {
