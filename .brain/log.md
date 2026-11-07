@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-11-07 17:13] [[fanchao]] note | 发版 1.28.5 时 npm i -g . 会把全局包装成指向仓库的符号链接（依赖从仓库 node_modules 解析），要真实安装得先 npm pack 再 npm i -g ./xxx.tgz
 ## [2026-11-07 16:18] [[fanchao]] note | 染输入框颜色要连边框一起染：空输入框里没字，只染文字等于没改。pi 的边框色来自主题 borderColor，扩展要用 roundBorder 的整行重新上色路径盖掉它。
 ## [2026-11-07 15:51] [[fanchao]] dev | 还原 1.28.0 搬走的作者名·昵称：面板标题恢复为 Todo (n) — fanchao·昵称（abs.pi.ts/abs.omp.ts），输入框左下角标签及 readUser/pickNickname 搬运逻辑删除（leftLabel 参数保留），顺带 model_select 事件名修复切模型不刷新。817 测试全绿 + check 过；pi/omp 三份安装副本用 install 同步并逐一比对。用户重启 pi 生效
 ## [2026-11-07 01:14] [[fanchao]] dev | 审查后修双副本升级死循环（1.28.1→1.28.3）：①远程机器 fxh-mb 有 /usr/bin/abs→/usr/lib（1.26.0，PATH 优先）与 /opt（npm prefix，1.28.x）两份全局包，跑 update 的是旧副本，它用自己那份旧 install.js 刷宿主，版本号被 npm 推上去了但宿主模板永远是旧的，且下次 update 仍走旧副本 —— 死循环。②修法：update 升级后用 npm prefix -g 定位新包，把刷新转交给新包自进程执行。③但修复救不了已卡住的机器（跑的还是旧代码），故加 duplicateInstallWarning 让双副本可见；判据收紧为「两份都在 node_modules 下」，否则开发仓库自测会误报。④abs update 在版本相等时原直接 return，模板过期就没救 —— 改成照样刷新（幂等）。⑤宿主选择曾被我写成 install --all，与「默认只装 pi、其余 opt-in」相反，用户指出后改为交互菜单 + pi 标「默认」，--yes/非交互仍只装 pi。817 测试全绿，fxh-mb 真机含破坏验证
