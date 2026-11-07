@@ -1300,7 +1300,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       hidden: 0,
     };
     const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
-    const high = green(118, 130, 152)
+    const high = green(141, 151, 170)
     assert.ok(all.includes(`${high}Todo (2)`), `标题应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[搁置]`), `搁置状态应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[进行中]`), `进行中状态应用推理强度色:\n${all}`);
@@ -1322,11 +1322,11 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const { effortAnsi } = await loadPanelFns();
     const HEX = {
       max: [0xAC, 0xB8, 0xCD],
-      xhigh: [0x95, 0xA5, 0xC3],
-      high: [0x76, 0x82, 0x98],
-      medium: [0x69, 0x73, 0x87],
-      low: [0x5C, 0x65, 0x77],
-      minimal: [0x50, 0x58, 0x67],
+      xhigh: [0x9C, 0xAB, 0xC7],
+      high: [0x8D, 0x97, 0xAA],
+      medium: [0x74, 0x7E, 0x93],
+      low: [0x65, 0x6F, 0x83],
+      minimal: [0x58, 0x61, 0x71],
     };
     for (const [level, rgb] of Object.entries(HEX)) {
       assert.equal(effortAnsi(level), `38;2;${rgb.join(';')}`, `${level} 色值不符`);
@@ -1355,11 +1355,11 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
 
   test('★ 推理强度各档映射到绿色阶 ANSI', async () => {
     const { effortAnsi } = await loadPanelFns();
-    assert.equal(effortAnsi('minimal'), '38;2;80;88;103');
-    assert.equal(effortAnsi('low'), '38;2;92;101;119');
-    assert.equal(effortAnsi('medium'), '38;2;105;115;135');
-    assert.equal(effortAnsi('high'), '38;2;118;130;152');
-    assert.equal(effortAnsi('xhigh'), '38;2;149;165;195');
+    assert.equal(effortAnsi('minimal'), '38;2;88;97;113');
+    assert.equal(effortAnsi('low'), '38;2;101;111;131');
+    assert.equal(effortAnsi('medium'), '38;2;116;126;147');
+    assert.equal(effortAnsi('high'), '38;2;141;151;170');
+    assert.equal(effortAnsi('xhigh'), '38;2;156;171;199');
     assert.equal(effortAnsi('max'), '38;2;172;184;205');
     assert.equal(effortAnsi('off'), '');
     assert.equal(effortAnsi(''), '');
@@ -1367,8 +1367,8 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(effortAnsi(undefined), '');
     // 256 色终端走 38;5（灰蓝只能退到灰阶档）
     assert.equal(effortAnsi('max', '256color'), '38;5;250');
-    assert.equal(effortAnsi('high', '256color'), '38;5;244');
-    assert.equal(effortAnsi('low', '256color'), '38;5;241');
+    assert.equal(effortAnsi('high', '256color'), '38;5;247');
+    assert.equal(effortAnsi('low', '256color'), '38;5;243');
   });
 
   // 昵称（2026-10-03 用户需求）：用户给定的俏皮话池里随机抽，附在作者名后。
