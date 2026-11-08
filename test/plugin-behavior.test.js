@@ -1322,12 +1322,12 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   test('★ 六档色值等于用户指定的 hex', async () => {
     const { effortAnsi } = await loadPanelFns();
     const HEX = {
-      max: [0xAC, 0xB8, 0xCD],
-      xhigh: [0x95, 0xA5, 0xC3],
-      high: [0x76, 0x82, 0x98],
-      medium: [0x69, 0x73, 0x87],
-      low: [0x5C, 0x65, 0x77],
-      minimal: [0x50, 0x58, 0x67],
+      max: [0xC5, 0xCD, 0xDC],
+      xhigh: [0xA8, 0xB6, 0xCC],
+      high: [0x96, 0xA6, 0xC6],
+      medium: [0x7A, 0x8A, 0xA0],
+      low: [0x5E, 0x6C, 0x84],
+      minimal: [0x46, 0x52, 0x6A],
     };
     for (const [level, rgb] of Object.entries(HEX)) {
       assert.equal(effortAnsi(level), `38;2;${rgb.join(';')}`, `${level} 色值不符`);
@@ -1350,20 +1350,20 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
 
   test('★ 推理强度各档映射到绿色阶 ANSI', async () => {
     const { effortAnsi } = await loadPanelFns();
-    assert.equal(effortAnsi('minimal'), '38;2;80;88;103');
-    assert.equal(effortAnsi('low'), '38;2;92;101;119');
-    assert.equal(effortAnsi('medium'), '38;2;105;115;135');
-    assert.equal(effortAnsi('high'), '38;2;118;130;152');
-    assert.equal(effortAnsi('xhigh'), '38;2;149;165;195');
-    assert.equal(effortAnsi('max'), '38;2;172;184;205');
+    assert.equal(effortAnsi('minimal'), '38;2;70;82;106');
+    assert.equal(effortAnsi('low'), '38;2;94;108;132');
+    assert.equal(effortAnsi('medium'), '38;2;122;138;160');
+    assert.equal(effortAnsi('high'), '38;2;150;166;198');
+    assert.equal(effortAnsi('xhigh'), '38;2;168;182;204');
+    assert.equal(effortAnsi('max'), '38;2;197;205;220');
     assert.equal(effortAnsi('off'), '');
     assert.equal(effortAnsi(''), '');
     assert.equal(effortAnsi(null), '');
     assert.equal(effortAnsi(undefined), '');
     // 256 色终端走 38;5（灰蓝只能退到灰阶档）
-    assert.equal(effortAnsi('max', '256color'), '38;5;250');
-    assert.equal(effortAnsi('high', '256color'), '38;5;244');
-    assert.equal(effortAnsi('low', '256color'), '38;5;241');
+    assert.equal(effortAnsi('max', '256color'), '38;5;189');
+    assert.equal(effortAnsi('high', '256color'), '38;5;110');
+    assert.equal(effortAnsi('low', '256color'), '38;5;103');
   });
 
   // 昵称（2026-10-03 用户需求）：用户给定的俏皮话池里随机抽，附在作者名后。

@@ -84,12 +84,12 @@ function dropCols(s: string, n: number): string {
  *   「删掉输入框样式目录」连带把 todo 面板搞崩。
  */
 export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
-  max: { rgb: '172;184;205', ansi256: 250 },
-  xhigh: { rgb: '149;165;195', ansi256: 248 },
-  high: { rgb: '118;130;152', ansi256: 244 },
-  medium: { rgb: '105;115;135', ansi256: 242 },
-  low: { rgb: '92;101;119', ansi256: 241 },
-  minimal: { rgb: '80;88;103', ansi256: 240 },
+  max: { rgb: '197;205;220', ansi256: 189 },
+  xhigh: { rgb: '168;182;204', ansi256: 152 },
+  high: { rgb: '150;166;198', ansi256: 110 },
+  medium: { rgb: '122;138;160', ansi256: 110 },
+  low: { rgb: '94;108;132', ansi256: 103 },
+  minimal: { rgb: '70;82;106', ansi256: 240 },
 }
 
 export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {

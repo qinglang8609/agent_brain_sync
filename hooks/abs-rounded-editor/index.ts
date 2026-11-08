@@ -48,8 +48,9 @@ export class RoundedEditor extends CustomEditor {
     const borderColor = (this as any).borderColor?.bind(this)
     // 现代暗色方案（2026-11-08）：文字 #F8FAFC，边框 #444C56，不再跟推理强度变色。
     // 光标色 / 输入框背景 / 聚焦外发光是 pi 编辑器内部画的，扩展接管不了，先不动。
-    const textFg = (s: string) => paintAnsi('38;2;150;170;198', s)
-    const lineFg = (s: string) => paintAnsi('38;2;136;152;172', s)
+    const colorMode = (() => { try { return String(themeGetter?.().getColorMode()) } catch { return 'truecolor' } })()
+    const textFg = (s: string) => paintAnsi(effortAnsi(effortLevel, colorMode), s)
+    const lineFg = textFg
     const wrap = lineFg
     const out: string[] = []
 
