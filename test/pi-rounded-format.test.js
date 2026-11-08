@@ -3,7 +3,7 @@
 // 测试进程里没有那个包；纯函数抽出来才能直接断言。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildStatus, roundBorder, shortenModel, shortTokens, textWidth, thinkingColorToken } from '../hooks/abs-rounded-editor/format.ts';
+import { buildStatus, effortAnsi, paintAnsi, roundBorder, shortenModel, shortTokens, textWidth } from '../hooks/abs-rounded-editor/format.ts';
 
 describe('圆角输入框 格式化', () => {
   it('shortenModel：去 provider 前缀与日期后缀', () => {
@@ -128,29 +128,52 @@ describe('圆角输入框 格式化', () => {
   });
 });
 
-// ===== 输入框文字跟着推理强度变色（2026-11-06 用户需求）=====
-// 为何要测：theme 里确实有这七档 token，但若映射拼错（如 'minimal' → 'thinkingminimal'），
-// theme.fg 会静默返回不上色的文本 —— 颜色悄悄没了，没有断言就发现不了。
-describe('thinkingColorToken — 推理强度 → 主题 token', () => {
-  it('★ 七档齐全，且拼法对上主题（thinking + 首字母大写）', () => {
-    assert.equal(thinkingColorToken('minimal'), 'thinkingMinimal');
-    assert.equal(thinkingColorToken('low'), 'thinkingLow');
-    assert.equal(thinkingColorToken('medium'), 'thinkingMedium');
-    assert.equal(thinkingColorToken('high'), 'thinkingHigh');
-    assert.equal(thinkingColorToken('xhigh'), 'thinkingXhigh');
-    assert.equal(thinkingColorToken('max'), 'thinkingMax');
+// ===== 输入框文字跟着推理强度走绿色阶（2026-11-06 提出，2026-11-07 换成绿色阶）=====
+// 为何要测：颜色错了不报错，只是看着不对 —— 没有断言就没人能发现回归。
+describe('effortAnsi — 推理强度 → 主色（用户指定的六档 hex）', () => {
+  // 2026-11-07 用户直接给了 hex，这里逐个钉死：改色就应让测试红，不能默默变掉。
+  const HEX = {
+    max: '#ACB8CD',
+    xhigh: '#95A5C3',
+    high: '#768298',
+    medium: '#697387',
+    low: '#5C6577',
+    minimal: '#505867',
+  };
+  const toAnsi = (hex) => {
+    const n = parseInt(hex.slice(1), 16);
+    return `38;2;${(n >> 16) & 255};${(n >> 8) & 255};${n & 255}`;
+  };
+
+  it('★ 六档色值 = 用户指定的 hex', () => {
+    for (const [level, hex] of Object.entries(HEX)) {
+      assert.equal(effortAnsi(level), toAnsi(hex), `${level} 应为 ${hex}`);
+    }
+  });
+
+  it('★ 256 色终端退到最近的一档', () => {
+    // 256 色板里没有这种灰蓝，退到最近的灰/蓝灰档
+    assert.equal(effortAnsi('max', '256color'), '38;5;250');
+    assert.equal(effortAnsi('xhigh', '256color'), '38;5;248');
+    assert.equal(effortAnsi('high', '256color'), '38;5;244');
+    assert.equal(effortAnsi('medium', '256color'), '38;5;242');
+    assert.equal(effortAnsi('low', '256color'), '38;5;241');
+    assert.equal(effortAnsi('minimal', '256color'), '38;5;240');
   });
 
   it('★ off / 空值 → 空串（不上色，用默认前景色）', () => {
-    // 不能返回 thinkingOff：主题给它的是接近背景的暗灰，染文字会看不清。
-    assert.equal(thinkingColorToken('off'), '');
-    assert.equal(thinkingColorToken(''), '');
-    assert.equal(thinkingColorToken(null), '');
-    assert.equal(thinkingColorToken(undefined), '');
+    for (const v of ['off', '', null, undefined, 'bogus']) {
+      assert.equal(effortAnsi(v), '', `${JSON.stringify(v)} 不该上色`);
+    }
   });
 
-  it('容错：带空白、大小写异常不炸', () => {
-    assert.equal(thinkingColorToken('  high  '), 'thinkingHigh');
-    assert.equal(thinkingColorToken('HIGH'), 'thinkingHIGH');
+  it('容错：带空白、大小写不炸', () => {
+    assert.equal(effortAnsi('  high  '), toAnsi(HEX.high));
+    assert.equal(effortAnsi('HIGH'), toAnsi(HEX.high));
+  });
+
+  it('paintAnsi：包上开/关序列，空串原样返回', () => {
+    assert.equal(paintAnsi(toAnsi(HEX.max), 'x'), `\x1b[${toAnsi(HEX.max)}mx\x1b[39m`);
+    assert.equal(paintAnsi('', 'x'), 'x');
   });
 });

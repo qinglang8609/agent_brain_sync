@@ -83,10 +83,24 @@ function dropCols(s: string, n: number): string {
  *   安装后 `abs.ts` 与 `abs-rounded-editor/` 是两个可独立删除的扩展，抽成共享文件会让
  *   「删掉输入框样式目录」连带把 todo 面板搞崩。
  */
-export function thinkingColorToken(level: string | null | undefined): string {
-  const l = String(level || '').trim()
-  if (!l || l === 'off') return ''
-  return 'thinking' + l[0].toUpperCase() + l.slice(1)
+export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
+  max: { rgb: '172;184;205', ansi256: 250 },
+  xhigh: { rgb: '149;165;195', ansi256: 248 },
+  high: { rgb: '118;130;152', ansi256: 244 },
+  medium: { rgb: '105;115;135', ansi256: 242 },
+  low: { rgb: '92;101;119', ansi256: 241 },
+  minimal: { rgb: '80;88;103', ansi256: 240 },
+}
+
+export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
+  const g = EFFORT_COLOR[String(level || '').trim().toLowerCase()]
+  if (!g) return ''
+  return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
+}
+
+/** 用 effortAnsi 的结果包一段文字；空串原样返回（off 时不着色）。 */
+export function paintAnsi(ansi: string, text: string): string {
+  return ansi ? `\x1b[${ansi}m${text}\x1b[39m` : text
 }
 
 /**

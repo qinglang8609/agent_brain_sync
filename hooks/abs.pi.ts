@@ -936,8 +936,8 @@ function clipToWidth(s: string, width: number): string {
 // 为何用盲文点阵而不是 ⠋⠙⠹ 之外的 ASCII 旋转符：
 //   ⠿ 系符号在等宽字体里都是 1 列宽，且视觉上是个转动的方框，比 | / - \ 均匀。
 // 为何帧宽必须恒定：面板每 250ms 重绘，宽度一变整行就会左右抖。盲文恰好全是 1 列。
-const TODO_ANIM_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-const TODO_ANIM_MS = 100
+const TODO_ANIM_FRAMES = ['◐', '◓', '◑', '◒']
+const TODO_ANIM_MS = 200
 
 /** 动画相位（每 tick +1）。模块级 —— 同 agentEndSeen，闭包 flag 在重复注册时不共享。 */
 let animPhase = 0
@@ -983,10 +983,24 @@ export function todoAnimFrame(phase: number): string {
  *   不抽公共模块是故意的：安装后 `abs.ts` 与 `abs-rounded-editor/` 是两个可独立删除的扩展，
  *   抽成共享文件会让「删掉输入框样式目录」连带把 todo 面板搞崩。
  */
-export function effortToken(level: string | null | undefined): string {
-  const l = String(level || '').trim()
-  if (!l || l === 'off') return ''
-  return 'thinking' + l[0].toUpperCase() + l.slice(1)
+export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
+  max: { rgb: '172;184;205', ansi256: 250 },
+  xhigh: { rgb: '149;165;195', ansi256: 248 },
+  high: { rgb: '118;130;152', ansi256: 244 },
+  medium: { rgb: '105;115;135', ansi256: 242 },
+  low: { rgb: '92;101;119', ansi256: 241 },
+  minimal: { rgb: '80;88;103', ansi256: 240 },
+}
+
+export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
+  const g = EFFORT_COLOR[String(level || '').trim().toLowerCase()]
+  if (!g) return ''
+  return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
+}
+
+/** 用 effortAnsi 的结果包一段文字；空串原样返回（off 时不着色）。 */
+export function paintAnsi(ansi: string, text: string): string {
+  return ansi ? `\x1b[${ansi}m${text}\x1b[39m` : text
 }
 
 export function renderPanelLines(
@@ -1007,11 +1021,9 @@ export function renderPanelLines(
   // ★ off 时整块面板用灰阶（同日用户补提：「当推理关闭的时候 todo 面板文字应该全是灰色」）——
   //   高亮色只在真的开着推理时给，否则「推理关了面板还在发光」让人误以为还在深度思考。
   //   主色用 muted（中灰），描述与子项降一阶到 dim（深灰），两阶灰保留层次，不一整片平。
-  const off = !effortToken(effort)
-  const main = effortToken(effort) || 'muted'
-  // 描述/未勾子项的颜色：开着推理时 muted（比主色暗、又不至于暗到看不清）；
-  // off 时主色已经是 muted，描述得再降一阶用 dim，否则两者同色分不出主次。
-  const flow = off ? 'dim' : 'muted'
+  const mainAnsi = effortAnsi(effort, 'truecolor')
+  const main = mainAnsi ? (s: string) => paintAnsi(mainAnsi, s) : (s: string) => fg('muted', s)
+  const flow = mainAnsi ? 'muted' : 'dim'
   const lines: string[] = []
   // 上描边行已删除（2026-11-04 用户要求「去掉上边框」）。
   // 历史：那行曾用 `thinkingOff` 对齐 pi 输入框描边色（排查三轮才定色）。
@@ -1023,7 +1035,7 @@ export function renderPanelLines(
   const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
   // 标题也顶最左（2026-11-04 用户）。旧代码曾在空看板时多缩 1 格，2026-11-06 空看板
   // 已整块不显示（见 refreshTodoPanel），那个分支没意义了。
-  lines.push(clipToWidth(fg(main, title), width))
+  lines.push(clipToWidth(main(title), width))
 
   const lastIdx = data.rows.length - 1
   data.rows.forEach((t, i) => {
@@ -1035,13 +1047,13 @@ export function renderPanelLines(
     // 进行中的行带一个小动画（其余行不加，避免满屏都在跳）
     // 单字符 spinner 紧跟 [进行中]：靠前放才能一眼看到（放行尾会被长描述挤到前面去看不见）。
     // 2026-11-06 用户要求：「放在 [进行中] 后面」。
-    const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg(main, todoAnimFrame(animPhase)) : ''
+    const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + main(todoAnimFrame(animPhase)) : ''
     // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
-    const box = fg(main, '[ ]')
+    const box = main('[ ]')
     // 状态标签统一跟主色（2026-11-06 用户定：靠符号和文字区分状态，不靠颜色）。
-    const head = `${fg(main, branch)} ${box} ${fg(main, `[${t.state}]`)}${anim} ${fg('text', t.id)}`
-    const desc = t.desc ? ` ${fg('dim', '—')} ${fg(flow, t.desc)}` : ''
+    const head = `${main(branch)} ${box} ${main(`[${t.state}]`)}${anim} ${main(t.id)}`
+    const desc = t.desc ? ' ' + main(`— ${t.desc}`) : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
       // 子项：标准 md 嵌套列表 → 画成树
@@ -1049,18 +1061,18 @@ export function renderPanelLines(
       //   └─ [x] 子项二
       // 树线前缀 = 父任务的 │（非末条）或空格（末条），与父任务分支对齐。
       // 勾过的用 dim 压暗（一眼看出哪些已完成），未勾用正常色。
-      const stem = isLast ? '  ' : fg(main, '│ ')
+      const stem = isLast ? '  ' : main('│ ')
       const n = t.kids.length
       t.kids.forEach((k, ki) => {
         const kb = ki === n - 1 ? '└─' : '├─'
-        const kbox = fg(main, k.done ? '[x]' : '[ ]')
-        const ktext = fg(k.done ? 'dim' : flow, k.text)
-        lines.push(clipToWidth(`${stem} ${fg(main, kb)} ${kbox} ${ktext}`, width))
+        const kbox = main(k.done ? '[x]' : '[ ]')
+        const ktext = main(k.text)
+        lines.push(clipToWidth(`${stem} ${main(kb)} ${kbox} ${ktext}`, width))
       })
     }
   })
 
-  if (data.hidden > 0) lines.push(clipToWidth(fg('dim', `  +${data.hidden} more`), width))
+  if (data.hidden > 0) lines.push(clipToWidth(main(`  +${data.hidden} more`), width))
   return lines
 }
 /** 隐藏面板。**必须主动 requestRender** —— 否则数据清了、屏幕还留着旧画面。

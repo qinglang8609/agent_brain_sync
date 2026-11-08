@@ -18,7 +18,7 @@
  * 注意：自动补全菜单行排在底边之下、且自带内容宽度，不套竖线（否则菜单被框住会错位）。
  */
 import { CustomEditor } from '@earendil-works/pi-coding-agent'
-import { buildStatus, roundBorder, shortenModel, thinkingColorToken } from './format.ts'
+import { buildStatus, effortAnsi, paintAnsi, roundBorder, shortenModel } from './format.ts'
 
 const SIDE = '│'
 
@@ -46,12 +46,10 @@ export class RoundedEditor extends CustomEditor {
     if (lines.length < 2) return lines
 
     const borderColor = (this as any).borderColor?.bind(this)
-    const wrap = (s: string) => (borderColor ? borderColor(s) : s)
-    // 文字色 = 推理强度色；off（或取不到）时为空 → 不着色，用终端默认前景色。
-    const token = thinkingColorToken(effortLevel)
-    const themeNow = themeGetter?.()
-    const effortFg =
-      token && typeof themeNow?.fg === 'function' ? (s: string) => themeNow.fg(token, s) : null
+    // 文字、边框、todo 面板同一个色；off 时不上色。
+    const ansi = effortAnsi(effortLevel, (() => { try { return String(themeGetter?.().getColorMode()) } catch { return 'truecolor' } })())
+    const effortFg = ansi ? (s: string) => paintAnsi(ansi, s) : null
+    const wrap = effortFg ?? ((s: string) => (borderColor ? borderColor(s) : s))
     const out: string[] = []
 
     // 上边框：原本是整行 `─`（含 working 图标与滚动提示），两端换圆角，右端贴状态。
@@ -61,11 +59,8 @@ export class RoundedEditor extends CustomEditor {
     const bottomIdx = lines.length - 1 - autocompleteHeight
 
     for (let i = 1; i < bottomIdx; i++) {
-      const body = lines[i]
-      // 推理强度色染**输入文字**（2026-11-06 用户）。边框不动 —— 边框本来就是 pi 按
-      // 同一档强度上的色（interactive-mode 的 updateEditorBorderColor），两者自然同色。
-      // 整行包裹而不逐字：光标由 \x1b[7m 反转标记，与前景色互不干扰；
-      // 输入框内容是用户手打的纯文本，行内不会有 reset 把后半行冲掉。
+      // 剥掉 pi 原生文字色（近白），再包推理色 —— 否则内层色码赢，字就是白的。
+      const body = lines[i].replace(/\x1b\[(?!7m)[0-9;]*m/g, '')
       out.push(wrap(SIDE) + (effortFg ? effortFg(body) : body) + wrap(SIDE))
     }
     // 下边框（2026-11-07 还原：左下角的 fanchao·昵称已去掉 —— 用户嫌难看，
