@@ -1063,11 +1063,12 @@ export function renderPanelLines(
     const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + paint(C.doing, todoAnimFrame(animPhase)) : ''
     // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
-    const box = hasState ? '' : paint(C.task, '[ ] ')
+    const eff = effortAnsi(effort, 'truecolor') || C.desc
+    const box = hasState ? '' : paint(eff, '[ ] ')
     const stPart = hasState
       ? paint(stateAnsi(t.state), `[${t.state}]`)
-      : paint(C.task, '[待办]')
-    const head = `${paint(C.tree, branch)} ${box}${stPart}${anim} ${paint(C.task, t.id)}`
+      : paint(eff, '[待办]')
+    const head = `${paint(C.tree, branch)} ${box}${stPart}${anim} ${paint(eff, t.id)}`
     const desc = t.desc ? ' ' + paint(C.desc, `— ${t.desc}`) : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
@@ -1080,7 +1081,7 @@ export function renderPanelLines(
       const n = t.kids.length
       t.kids.forEach((k, ki) => {
         const kb = ki === n - 1 ? '└─' : '├─'
-        const kbox = paint(C.task, k.done ? '[x]' : '[ ]')
+        const kbox = paint(eff, k.done ? '[x]' : '[ ]')
         const ktext = k.done ? `\x1b[9m${paint(C.done, k.text)}\x1b[29m` : paint(C.desc, k.text)
         lines.push(clipToWidth(`${stem} ${paint(C.tree, kb)} ${kbox} ${ktext}`, width))
       })

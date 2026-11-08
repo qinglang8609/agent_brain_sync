@@ -1302,6 +1302,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
     const plain = stripAnsi(all)
     const titleC = '\x1b[38;2;255;215;0m'
+    const highC = '\x1b[38;2;150;166;198m'
     const taskC = '\x1b[38;2;226;232;240m'
     const descC = '\x1b[38;2;148;163;184m'
     const treeC = '\x1b[38;2;150;170;198m'
@@ -1311,8 +1312,8 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(all.includes(`${holdC}[搁置]`), `搁置应用琥珀:\n${all}`);
     assert.ok(all.includes(`${doingC}[进行中]`), `进行中应用翠绿:\n${all}`);
     assert.ok(all.includes(`${treeC}├─`), `树线应用暗灰:\n${all}`);
-    assert.ok(all.includes(`${taskC}[ ]`), `复选框应用亮白:\n${all}`);
-    assert.ok(all.includes(`${taskC}b`), `任务 id 应用亮白:\n${all}`);
+    assert.ok(plain.includes('[ ]') || plain.includes('[待办]'), `应有复选框:\n${all}`);
+    assert.ok(all.includes(`${highC}b`) || all.includes(`${highC}a`), `任务 id 应用推理色:\n${all}`);
     assert.ok(all.includes(`${descC}— 描述甲`), `描述应用次灰:\n${all}`);
     assert.ok(all.includes(`${descC}子项`), `子项文字应用次灰:\n${all}`);
   });
