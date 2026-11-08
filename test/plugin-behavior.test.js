@@ -1300,7 +1300,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       hidden: 0,
     };
     const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
-    const high = green(216, 224, 240)
+    const high = green(248, 250, 253)
     assert.ok(all.includes(`${high}Todo (2)`), `标题应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[搁置]`), `搁置状态应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[进行中]`), `进行中状态应用推理强度色:\n${all}`);
@@ -1317,12 +1317,12 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   test('★ 六档色值等于用户指定的 hex', async () => {
     const { effortAnsi } = await loadPanelFns();
     const HEX = {
-      max: [0xF4, 0xF7, 0xFC],
-      xhigh: [0xE8, 0xEE, 0xF8],
-      high: [0xD8, 0xE0, 0xF0],
-      medium: [0xC0, 0xC8, 0xDC],
+      max: [0xE8, 0xEE, 0xF8],
+      xhigh: [0xF0, 0xF4, 0xFC],
+      high: [0xF8, 0xFA, 0xFD],
+      medium: [0xC5, 0xCD, 0xDC],
       low: [0xA8, 0xB2, 0xCC],
-      minimal: [0x90, 0x9E, 0xC0],
+      minimal: [0x8A, 0x98, 0xB8],
     };
     for (const [level, rgb] of Object.entries(HEX)) {
       assert.equal(effortAnsi(level), `38;2;${rgb.join(';')}`, `${level} 色值不符`);
@@ -1350,19 +1350,19 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
 
   test('★ 推理强度各档映射到绿色阶 ANSI', async () => {
     const { effortAnsi } = await loadPanelFns();
-    assert.equal(effortAnsi('minimal'), '38;2;144;158;192');
+    assert.equal(effortAnsi('minimal'), '38;2;138;152;184');
     assert.equal(effortAnsi('low'), '38;2;168;178;204');
-    assert.equal(effortAnsi('medium'), '38;2;192;200;220');
-    assert.equal(effortAnsi('high'), '38;2;216;224;240');
-    assert.equal(effortAnsi('xhigh'), '38;2;232;238;248');
-    assert.equal(effortAnsi('max'), '38;2;244;247;252');
+    assert.equal(effortAnsi('medium'), '38;2;197;205;220');
+    assert.equal(effortAnsi('high'), '38;2;248;250;253');
+    assert.equal(effortAnsi('xhigh'), '38;2;240;244;252');
+    assert.equal(effortAnsi('max'), '38;2;232;238;248');
     assert.equal(effortAnsi('off'), '');
     assert.equal(effortAnsi(''), '');
     assert.equal(effortAnsi(null), '');
     assert.equal(effortAnsi(undefined), '');
     // 256 色终端走 38;5（灰蓝只能退到灰阶档）
     assert.equal(effortAnsi('max', '256color'), '38;5;255');
-    assert.equal(effortAnsi('high', '256color'), '38;5;189');
+    assert.equal(effortAnsi('high', '256color'), '38;5;231');
     assert.equal(effortAnsi('low', '256color'), '38;5;146');
   });
 
