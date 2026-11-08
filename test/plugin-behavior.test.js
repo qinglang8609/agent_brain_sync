@@ -1300,7 +1300,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       hidden: 0,
     };
     const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
-    const high = green(132, 146, 168)
+    const high = green(150, 164, 188)
     assert.ok(all.includes(`${high}Todo (2)`), `标题应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[搁置]`), `搁置状态应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[进行中]`), `进行中状态应用推理强度色:\n${all}`);
@@ -1319,7 +1319,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const HEX = {
       max: [0xAC, 0xB8, 0xCD],
       xhigh: [0x95, 0xA5, 0xC3],
-      high: [0x84, 0x92, 0xA8],
+      high: [0x96, 0xA4, 0xBC],
       medium: [0x69, 0x73, 0x87],
       low: [0x5C, 0x65, 0x77],
       minimal: [0x50, 0x58, 0x67],
@@ -1353,7 +1353,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(effortAnsi('minimal'), '38;2;80;88;103');
     assert.equal(effortAnsi('low'), '38;2;92;101;119');
     assert.equal(effortAnsi('medium'), '38;2;105;115;135');
-    assert.equal(effortAnsi('high'), '38;2;132;146;168');
+    assert.equal(effortAnsi('high'), '38;2;150;164;188');
     assert.equal(effortAnsi('xhigh'), '38;2;149;165;195');
     assert.equal(effortAnsi('max'), '38;2;172;184;205');
     assert.equal(effortAnsi('off'), '');
@@ -1362,7 +1362,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(effortAnsi(undefined), '');
     // 256 色终端走 38;5（灰蓝只能退到灰阶档）
     assert.equal(effortAnsi('max', '256color'), '38;5;250');
-    assert.equal(effortAnsi('high', '256color'), '38;5;103');
+    assert.equal(effortAnsi('high', '256color'), '38;5;110');
     assert.equal(effortAnsi('low', '256color'), '38;5;241');
   });
 

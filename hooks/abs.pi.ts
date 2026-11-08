@@ -986,7 +986,7 @@ export function todoAnimFrame(phase: number): string {
 export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
   max: { rgb: '172;184;205', ansi256: 250 },
   xhigh: { rgb: '149;165;195', ansi256: 248 },
-  high: { rgb: '132;146;168', ansi256: 103 },
+  high: { rgb: '150;164;188', ansi256: 110 },
   medium: { rgb: '105;115;135', ansi256: 242 },
   low: { rgb: '92;101;119', ansi256: 241 },
   minimal: { rgb: '80;88;103', ansi256: 240 },
