@@ -267,6 +267,11 @@ function checkPage(pg, names, linkedNames, inbound) {
       issues.push(`OVER-SIZE: ${pg.rel} (${pg.lines}L/${pg.bytes}B > ${PAGE_MAX_LINES}L/${PAGE_MAX_BYTES / 1024}KB; 拆或外链)`);
     }
   }
+  if (pg.slug.includes('-todo归档')) {
+    // 旧归档页命名（`<日期>-todo归档`，2026-09-15 治理时已并进 `log-<日期>.md`）。
+    // 留一条命中即报的规则：漏一个就会在 todo.md 的 Archived 里留一条死名。
+    issues.push(`SESSIONS-OLD-NAME: ${pg.rel}（旧归档命名，应并进 sessions/log-<日期>.md）`);
+  }
   if (pg.dir === 'concepts' && !hasTail(pg.body)) {
     // 尾巴按 kind 分档（2026-11-05）：原来「必须写验证命令」对所有 concepts 页一律要求，
     // 后果是「当时为什么这样选」这类决策知识根本落不了地 —— 决策没有可跑的验证命令，
@@ -296,6 +301,14 @@ function checkPage(pg, names, linkedNames, inbound) {
 
 // ---------- 跨页图谱检查 ----------
 
+/** 页面 frontmatter 的标签列表。三处判据共用，避免各自写一份解析而漂移。
+ * 注意：**精确匹配标签**，不用 `\b` —— `\barchive\b` 会连 `todo-archive` 一起豁免
+ * （`-` 与 `a` 之间也是词边界），实测漏报 4 天旧命名归档页。 */
+function tagListOf(frontmatter) {
+  const tags = String(frontmatter || '').match(/^tags:\s*(.+)$/m)?.[1] || '';
+  return tags.replace(/^\[|\]$/g, '').split(',').map((t) => t.trim()).filter(Boolean);
+}
+
 /** 跨页检查：sources 堆积/超龄、sessions 命名、superseded 悬挂、draft 超龄。 */
 async function checkGraph(root, pages) {
   const issues = [];
@@ -314,20 +327,24 @@ async function checkGraph(root, pages) {
     }
   }
 
-  // SESSIONS-NAMING: sessions/ 的一天一文件契约
-  // 例外（2026-11-05）：`abs ingest` 落的会话页叫 `session-<日期>-s<id8>.md`，
-  // 它不是「当天工作流水」，而是**一场具体会话的结构化记录** ——
-  // 同一天可以有好几场，硬套「一天一个 log」会把它挤掉。
-  // 判据用 slug 前缀 `session-`：这是 ingest 独占的命名空间，与 log-<日期> 不交叉。
+  // SESSIONS-NAMING: sessions/ 只收 `log-<日期>[-<slug>].md`（2026-11-08 用户定）。
+  // 曾经的例外 `session-<日期>-s<id8>.md`（ingest 一场会话一张）已废：
+  // 同一天散成多份、且与 todo.md 归档行两套链接名 —— 正是「一天一文件」要治的病。
+  // 会话摘要现在并进当天页，写成 `## 会话 <id8>` 段（见 ingest 的 renderDayPage）。
+  // 豁免只给「独立 `archive` 标签」的外部产物全文归档（2026-09-15 定的）：
+  //   它不是当天工作流水，是别人仓库的产物整篇存进来，名字不由 abs 生成。
+  for (const pg of pages) {
+    if (pg.dir !== 'sessions') continue;
+    if (/^log-\d{4}-\d{2}-\d{2}(?:-.+)?$/.test(pg.slug)) continue;
+    if (tagListOf(pg.frontmatter).includes('archive')) continue;
+    issues.push(`SESSIONS-NAMING: ${pg.rel} 不是规范名；sessions/ 只收 \`log-<日期>[-<slug>].md\`（会话摘要并进当天页的 \`## 会话 <id8>\` 段）`);
+  }
   const sessByDate = new Map();
   for (const pg of pages) {
     if (pg.dir !== 'sessions') continue;
-    if (/^session-/.test(pg.slug)) continue;
     const m = pg.slug.match(/^(?:log-)?(\d{4}-\d{2}-\d{2})/);
     if (!m) continue;
-    const tags = String(pg.frontmatter).match(/^tags:\s*(.+)$/m)?.[1] || '';
-    const tagList = tags.replace(/^\[|\]$/g, '').split(',').map((t) => t.trim());
-    if (tagList.includes('archive')) continue;
+    if (tagListOf(pg.frontmatter).includes('archive')) continue;
     if (!sessByDate.has(m[1])) sessByDate.set(m[1], []);
     sessByDate.get(m[1]).push(pg.slug);
   }
@@ -335,19 +352,16 @@ async function checkGraph(root, pages) {
     if (slugs.length > 1) {
       issues.push(`SESSIONS-SPLIT: ${date} 在 sessions/ 有 ${slugs.length} 个文件（${slugs.join('、')}）；` +
         `一天只应有一个 \`log-${date}.md\`：归档写进其「## 📦 任务归档」段，多主题写成多个 ## 子段`);
-    } else if (!slugs[0].startsWith('log-')) {
-      issues.push(`SESSIONS-NAMING: ${date} 的文件 \`${slugs[0]}.md\` 不是规范名；` +
-        `应为 \`log-${date}.md\`（跑 abs todo archive 会并入；旧归档页可删）`);
     }
   }
 
   // SESSIONS-MISPLACED: sessions/ 里放了不属 sessions 的页
   for (const pg of pages) {
     if (pg.dir !== 'sessions') continue;
-    const tags = String(pg.frontmatter).match(/^tags:\s*(.+)$/m)?.[1] || '';
+    const tags = tagListOf(pg.frontmatter).join(', ');
     if (!/session-log|todo-archive|archive|session-digest/.test(tags)) {
       issues.push(`SESSIONS-MISPLACED: ${pg.rel}（tags: ${tags.trim()} 不属 sessions/；` +
-        `当天工作写进 \`log-<日期>.md\` 正文；一场会话的结构化记录用 \`abs ingest\`）`);
+        `当天工作写进 \`log-<日期>.md\` 正文；一场会话的结构化摘要用 \`abs ingest\`）`);
     }
   }
 
@@ -450,6 +464,52 @@ async function readFileOrNull(p) {
   try { return await fs.readFile(p, 'utf8'); } catch { return null; }
 }
 
+/** 取标题行之后、同级或更高级标题之前的行。找不到标题返回空数组。 */
+function blockAfter(text, heading) {
+  const lines = String(text || '').split('\n');
+  const i = lines.findIndex((l) => l.trim() === heading);
+  if (i === -1) return [];
+  const lvl = (lines[i].trim().match(/^#+/) || ['##'])[0].length;
+  let j = i + 1;
+  while (j < lines.length) {
+    const h = lines[j].trim().match(/^(#+)\s/);
+    if (h && h[1].length <= lvl) break;
+    j++;
+  }
+  return lines.slice(i + 1, j);
+}
+
+/** 机器生成的「文件双链」链接名必须**逐字等于磁盘文件名**（2026-11-08 用户定）。
+ *
+ * 为何单开一条规则：index.md 的 `## Sessions` 段与 todo.md 的 `### Archived` 段
+ * 都是机器生成、且指向 sessions/ 下文件的链接行。它们一旦与文件名脱钩就成了指向
+ * 不存在页的死名 —— 而 sessions/ 的页面豁免 DEAD-LINK（历史快照不改），
+ * 所以这类死名长期无人发现：实测 todo.md 里 `[[2026-09-12-todo归档]]` 挂了两个月，
+ * 真页早在 2026-09-15 治理时并成了 `log-2026-09-12`。
+ *
+ * 判据只有一条：链接名（去 .md、去 | 别名）=== sessions/ 下的某个文件名。
+ * 因此大小写、日期格式、前后缀漂移都会被抓到，不靠词表猜「哪个名字像标准」。 */
+export async function checkGeneratedFileLinks(vault) {
+  const issues = [];
+  const sessFiles = new Set();
+  for (const f of await fs.readdir(join(vault, 'sessions')).catch(() => [])) {
+    if (f.endsWith('.md') && !f.startsWith('_')) sessFiles.add(f.replace(/\.md$/, ''));
+  }
+  const check = (where, lines) => {
+    for (const l of lines) {
+      const m = l.match(/^\s*-\s*\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/);
+      if (!m) continue;
+      const link = m[1].trim();
+      if (sessFiles.has(link)) continue;
+      issues.push(`LINK-NAME-STALE: ${where} -> [[${link}]]（sessions/ 里没有同名文件）。` +
+        `生成的链接名必须逐字等于磁盘文件名（不带 .md），改回真页名后重跑 abs lint`);
+    }
+  };
+  check('index.md ## Sessions', blockAfter(await readFileOrNull(join(vault, 'index.md')), '## Sessions'));
+  check('todo.md ### Archived', blockAfter(await readFileOrNull(join(vault, 'todo.md')), '### Archived'));
+  return issues;
+}
+
 // ---------- 入口 ----------
 
 export async function cmdLint({ dir, all = false }) {
@@ -479,6 +539,7 @@ export async function cmdLint({ dir, all = false }) {
   issues.push(...await checkGraph(root, pages));
   issues.push(...await checkFiles(vault, pages, indexLinks));
   issues.push(...await checkRootFiles(vault));
+  issues.push(...await checkGeneratedFileLinks(vault));
 
   const n = issues.length;
   // ★ 同类折叠（2026-10-05）：体检输出必须按问题**类型**折叠计数。

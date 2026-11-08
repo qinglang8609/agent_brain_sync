@@ -12,11 +12,17 @@
 //   判断仍是 agent 的 —— 这里不猜语义，只把会话里**已经存在的**事实整理成页。
 //
 // 双向挂钩（用户 2026-11-05 要求「资料要与 pi 的会话挂钩」）：
-//   页 → 会话：frontmatter 记 session / session-file / project
-//   会话 → 页：页文件名带会话 id 前 8 位（`log-<日期>-s<8位>.md`），
-//             拿会话文件就能反查有没有被总结过（summon 的 md5 账本同理）。
+//   页 → 会话：段内的 `挂钩: session=… session-file=… project=…` 一行
+//   会话 → 页：段标题 `## 会话 <会话 id 前 8 位>`，拿会话文件就能在当天页里反查
+//             有没有被总结过（summon 的 md5 账本同理）。
 //   为什么不把「页路径」回写进 jsonl：pi 的会话文件是宿主的产物，
 //   往里加字段既越界又会让 md5 变化，导致账本把已总结的会话又当成「有更新」。
+//
+// 落点为何是「当天的 log-<日期>.md」而不是「一场一张 session-<日期>-s<id8>.md」
+// （2026-11-08 用户定）：同一天多场会话会散成多个文件，而且 todo.md 的归档行用
+//   `[[log-<日期>]]`、这里用 `[[session-…]]`，同一个东西两套名字。
+//   用户原话：「生成的文件标签要一致」「这些乱名称 不标准的名称……以后绝对不允许出现」。
+//   现约定：sessions/ 只收 `log-<日期>[-<slug>].md`，lint 的 SESSIONS-NAMING 强制。
 
 import { promises as fs } from 'node:fs';
 import { join, basename } from 'node:path';
@@ -26,6 +32,8 @@ import { requireUser, atTag } from '../userconfig.js';
 import { today } from '../todo.js';
 import { registerInIndex } from '../note.js';
 import { clip } from '../text.js';
+import { editFile, SKIP } from '../lock.js';
+import { DIR_LAYER } from './layers.js';
 import { digestSession, sessionsRoot, projectDirName, updateLedger, markSummarized, ledgerPath, md5Of } from './summon.js';
 
 /** 会话页的三种形状。形状由「改了什么东西」机械判定，不让模型猜。 */
@@ -155,39 +163,103 @@ function usableHeadline(u) {
   return true;
 }
 
-/** 会话页的 markdown 正文。值留空位 —— 内容由 agent 读会话后填。 */
-export function renderPage({ shape, digest, ids, who }) {
+/** 会话段的标题：`## 会话 <会话 id 前 8 位>`。
+ *  这就是「会话 → 段」的反查凭据 —— 拿会话文件在当天页里搜这行即可。 */
+export function digestSectionOf(short) {
+  return `## 会话 ${short || 'unknown'}`;
+}
+
+/** 当天页的骨架。会话摘要并进来后，一页就是「这一天的一切」：
+ *  多个 `## 会话 <id8>` 段 + `## 📦 任务归档` 段（后者由 abs todo archive 追写）。 */
+export function renderDayPage({ ids, who, section }) {
+  const day = ids.day || today();
+  return [
+    '---',
+    'tags: [session-log, session-digest, 会话]',
+    `layer: ${DIR_LAYER.sessions}`,
+    'kind: session-digest',
+    `author: ${who}`,
+    `updated: ${day}`,
+    'status: draft',
+    '---',
+    '',
+    `# ${day} 记录`,
+    '',
+    '> 本页 = 该日的一切：会话摘要（一场一段 `## 会话 <id8>`）+ 从 `todo.md` Done 区迁出的任务明细。',
+    '',
+    section.replace(/\s*$/, ''),
+    '',
+  ].join('\n');
+}
+
+/** 已有当天页被并入会话摘要时，补上「这页含会话摘要」的 frontmatter 标记。
+ *
+ * 为何必须补（2026-11-05 实测的检索保护）：空骨架会话段有高词频、正文又短，
+ *   bm25 天然占优 —— 实测 20 张空骨架把真知识页全挤出结果。保护靠两条，
+ *   两条都只认 `kind: session-digest`：db 的 unfilled 列（整页排除出检索）
+ *   与 0.5 亮度折扣。缺 kind 就等于这层保护失效。
+ * 已存在的 tags/status/updated 一律不动 —— 那是那天的记录，机器不替它改。 */
+export function ensureDigestFrontmatter(body) {
+  const t = String(body || '');
+  if (!t.startsWith('---\n')) return t;
+  const end = t.indexOf('\n---', 3);
+  if (end === -1) return t;
+  const fm = t.slice(4, end);
+  const add = [];
+  if (!/^kind:\s/m.test(fm)) add.push('kind: session-digest');
+  if (!/^layer:\s/m.test(fm)) add.push(`layer: ${DIR_LAYER.sessions}`);
+  if (!add.length) return t;
+  return `---\n${fm.replace(/\s*$/, '')}\n${add.join('\n')}${t.slice(end)}`;
+}
+
+/** 把会话段并进当天页。位置：`## 📦 任务归档` 之前（会话在前、归档在后）；
+ *  没有归档段就放到 `## 关联连接` 之前；都没有就追加到末尾。 */
+export function insertDigestSection(body, section) {
+  const t = String(body || '');
+  const lines = t.split('\n');
+  const at = ['## 📦 任务归档', '## 关联连接']
+    .map((h) => lines.findIndex((l) => l.trim() === h))
+    .filter((i) => i !== -1)
+    .sort((a, b) => a - b)[0];
+  const block = section.replace(/\s*$/, '');
+  if (at === undefined) return `${t.replace(/\s*$/, '')}\n\n${block}\n`;
+  const head = lines.slice(0, at).join('\n').replace(/\s*$/, '');
+  const tail = lines.slice(at).join('\n').replace(/\s*$/, '');
+  return `${head}\n\n${block}\n\n${tail}\n`;
+}
+
+/** `--force`：把已有那一段重建回空骨架（段内已填的结论会被覆盖，调用方要先警告）。 */
+export function replaceDigestSection(body, section, short) {
+  const t = String(body || '');
+  const lines = t.split('\n');
+  const i = lines.findIndex((l) => l.trim() === digestSectionOf(short));
+  if (i === -1) return insertDigestSection(t, section);
+  let j = i + 1;
+  while (j < lines.length && !/^#{1,2}\s/.test(lines[j].trim())) j++;
+  return [...lines.slice(0, i), ...section.replace(/\s*$/, '').split('\n'), '', ...lines.slice(j)]
+    .join('\n');
+}
+
+/** 会话段的 markdown。值留空位 —— 内容由 agent 读会话后填。
+ *  段标题层级从 `##` 降为 `###`：外面套了一层 `## 会话 <id8>`，一天多场不会撞标题。 */
+export function renderDigestSection({ shape, digest, ids, who }) {
   const sh = SHAPES[shape];
   const files = [...digest.filesEdited.keys()];
   const head = headlineOf(digest);
   const body = [
-    '---',
-    `title: ${head || '会话 ' + (ids.short || ids.day)}`,
-    'tags: [session-digest, 会话]',
-    'layer: 5',
-    `kind: session-digest`,
-    `author: ${who}`,
-    `updated: ${ids.day || today()}`,
-    'status: draft',
-    // ── 与 pi 会话的挂钩（三行缺一不可）──
-    // session: pi 的会话 id（首行 type:session 的 id 字段），唯一且不随文件名变
-    // session-file: 会话 jsonl 的文件名，能直接定位到文件
-    // project: 会话发生时的 cwd，跨项目时靠它知道上下文属于哪
-    `session: ${ids.id}`,
-    `session-file: ${ids.name}`,
-    `project: ${digest.cwd || ''}`,
-    '---',
-    '',
-    `# 会话：${head || ids.day}`,
+    digestSectionOf(ids.short),
     '',
     `> ${ids.day} · ${sh.label} · 用户发言 ${digest.users.length} 句 · 工具调用 ${digest.toolCalls} 次`,
+    `> 会话：${head || ids.day}`,
+    `> 挂钩: session=${ids.id} · session-file=${ids.name} · project=${digest.cwd || ''}`,
+    `> 沉淀者: ${who}`,
     '',
   ];
   for (const [title, hint] of sh.sections) {
-    body.push(`## ${title}`, `<!-- ${hint} -->`, '');
+    body.push(`### ${title}`, `<!-- ${hint} -->`, '');
   }
   if (files.length) {
-    body.push('## 改过的文件');
+    body.push('### 改过的文件');
     for (const f of files.slice(0, 40)) {
       body.push(`- \`${f}\` ×${digest.filesEdited.get(f)}`);
     }
@@ -195,7 +267,7 @@ export function renderPage({ shape, digest, ids, who }) {
     body.push('');
   }
   body.push(
-    '## 用户原话',
+    '### 用户原话',
     '<!-- 从会话文件提取的原始诉求，按发生顺序。写上面几段时以这里为依据 -->',
   );
   for (const u of digest.users.slice(0, 20)) {
@@ -204,8 +276,8 @@ export function renderPage({ shape, digest, ids, who }) {
   if (digest.users.length > 20) body.push(`- …另有 ${digest.users.length - 20} 句`);
   body.push(
     '',
-    '## 关联连接',
-    `- ${atTag(who)} — 本页沉淀者`,
+    '### 关联连接',
+    `- ${atTag(who)} — 本场沉淀者`,
     '（把本场会话改到的知识页挂在这里，双向可回溯）',
     '',
   );
@@ -295,40 +367,46 @@ export async function cmdIngest({ dir, file, force = false, mark = false, last =
   const sessOut = brainPath(root, 'sessions');
   await fs.mkdir(sessOut, { recursive: true });
 
-  // 文件名带会话 id 前 8 位 —— 这是「会话 → 页」的反查凭据（用户 2026-11-05 要求）。
-  // 不带 id 只按日期命名会和当天的 log-<日期>.md 撞，且无法区分同日多场会话。
-  const slug = `session-${ids.day || today()}-s${ids.short || 'unknown'}`;
+  // 落页位置 = 当天的 `log-<日期>.md`（2026-11-08 用户定「一天一文件」）。
+  // 会话 → 段的凭据是段标题 `## 会话 <id8>`：拿会话文件能在当天页里搜到它。
+  const short = ids.short || 'unknown';
+  const slug = `log-${ids.day || today()}`;
   const dst = join(sessOut, `${slug}.md`);
 
-  try {
-    await fs.access(dst);
-    if (!force) {
-      // 提示写得直白（2026-11-05 实测）：开发时自己就误用 --force 覆盖掉填好的页。
-      // 会丢的是「三段结论 + 关联连接」—— 重建回来的只是空骨架 + 素材，
-      // 那些结论要重读整场会话才能写回来。这不是一个小损失，所以文案要点明。
-      return [
-        `• 已有会话页，不覆盖 → .brain/sessions/${slug}.md`,
-        '  --force 会把它重建回空骨架：三段结论与关联连接全部丢失，只剩素材。',
-        '  只想要素材、保留结论 → 直接读那张页；确定要重填再用 --force。',
-      ].join('\n');
-    }
-  } catch { /* 不存在，正常写入 */ }
+  // 幂等判据从「文件存在吗」改成「这一天页里已有这场会话的段吗」——
+  // 一天一文件后，同一天多场会话挂在同一个文件里，文件粒度不区分场次。
+  // 读-改-写必须走 editFile 锁：abs todo archive 也在写同一个文件，
+  // 裸 readFile+rename 会让两边互相覆盖（archive.js 的同一坑，已修）。
+  let existed = false;
+  await editFile(dst, (cur) => {
+    const has = String(cur || '').split('\n').some((l) => l.trim() === digestSectionOf(short));
+    if (has && !force) { existed = true; return SKIP; }
+    const section = renderDigestSection({ shape, digest, ids, who });
+    let text;
+    if (cur == null) text = renderDayPage({ ids, who, section });
+    else if (has) text = replaceDigestSection(cur, section, short);   // --force：只重建这一段
+    else text = insertDigestSection(ensureDigestFrontmatter(cur), section);
+    return { text };
+  });
+  if (existed) {
+    // 提示写得直白（2026-11-05 实测的收益要保住）：开发时自己就误用 --force
+    // 覆盖掉填好的段。会丢的是「三段结论 + 关联连接」—— 重建回来的只是空骨架 + 素材。
+    return [
+      `• 这一天页已有本场会话段，不覆盖 → .brain/sessions/${slug}.md（## 会话 ${short}）`,
+      '  --force 会把这一段重建回空骨架：三段结论与关联连接全部丢失，只剩素材。',
+      '  只想要素材、保留结论 → 直接读那一段；确定要重填再用 --force。',
+    ].join('\n');
+  }
 
-  const body = renderPage({ shape, digest, ids, who });
   // 骨架段里的 <!-- 提示 --> 占位**故意保留**：它告诉填页的人每段该写什么。
   // 它不会干扰「填没填」的判定 —— load 的 digestFilled 与 lint 的 hasTail
   // 都把占位注释当空内容（2026-11-05 审查：原注释声称「去掉注释」但代码没做，
-  // 注释与实现不符已改正）。
-  // tmp + rename 原子落盘（并发读不会读到半写文件）
-  const tmp = join(sessOut, `.${slug}.md.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
-  await fs.writeFile(tmp, body, 'utf8');
-  await fs.rename(tmp, dst);
-
+  // 注释与实现不符已改正）。写盘由 editFile 锁内完成，并发读不会读到半写文件。
   await registerInIndex(root, 'Sessions', slug, `会话：${headlineOf(digest) || ids.day}`);
 
   // 不写 log.md（2026-11-05，沿用 abs concept 的既有判据）：
-  // 「新建了会话页 X」是**命令的副作用**，不是工作成果 —— 零信息量，
-  // 而「该页存在」已由 registerInIndex 落在 index 的 Sessions 区。
+  // 「并入了一场会话摘要」是**命令的副作用**，不是工作成果 —— 零信息量，
+  // 而「这一天页存在」已由 registerInIndex 落在 index 的 Sessions 区。
   // 更要紧的是：--auto 在每次关会话时跑，一天开 10 次就刷 10 行流水，
   // 靠事后清理治不了（abs concept 当初正是因为「建 10 页 = 10 行噪声」才删掉这次调用的）。
 
@@ -366,11 +444,11 @@ export async function cmdIngest({ dir, file, force = false, mark = false, last =
 
   const sh = SHAPES[shape];
   return [
-    `✓ 会话页 → .brain/sessions/${slug}.md`,
+    `✓ 会话摘要 → .brain/sessions/${slug}.md（${digestSectionOf(short)}）`,
     `  ${ids.day} · ${sh.label}（判据: ${sh.when}）`,
     `  用户 ${digest.users.length} 句 · 工具 ${digest.toolCalls} 次 · 改过 ${digest.filesEdited.size} 个文件`,
     `  挂钩: session=${ids.id} file=${hit}`,
-    '  骨架已给好，三段内容要读会话后填；填完 status 改 active。',
+    '  骨架已给好，三段内容要读会话后填；填完段内写实、别再留 <!-- 提示 -->。',
   ].join('\n') + markNote;
 }
 

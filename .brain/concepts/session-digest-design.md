@@ -2,7 +2,7 @@
 tags: [concept, 会话, ingest, 知识图谱]
 id: session-digest-design
 author: fanchao
-updated: 2026-11-05
+updated: 2026-11-08
 status: active
 kind: decision
 ---
@@ -28,7 +28,11 @@ abs 原来只沉淀「编程经验与教训」—— 所有落盘管道都压成
 
 ## 🛠 做法
 
-`abs ingest <会话文件或 id 前 8 位>` → `.brain/sessions/session-<日期>-s<id8>.md`
+`abs ingest <会话文件或 id 前 8 位>` → `.brain/sessions/log-<日期>.md` 里的 `## 会话 <id8>` 段
+
+落点是当天的 `log-<日期>.md`（2026-11-08 用户定，见 [[naming-contract-and-judge-precision]]）。
+早期是一条会话一个文件（`session-<日期>-s<id8>.md`），实测两个病：同一天散成多份要开多个文件；
+而且 index 用 `session-…` 这种名字、`todo.md` 归档行用 `log-<日期>` —— 同一个东西两套名字。
 
 形状由「改过什么文件」机械判定，**不让模型猜**：
 
@@ -44,9 +48,9 @@ abs 原来只沉淀「编程经验与教训」—— 所有落盘管道都压成
 
 ### 与会话的双向挂钩
 
-页 → 会话：frontmatter 三行 `session`（pi 会话 id）、`session-file`（jsonl 文件名）、
-`project`（会话发生时的 cwd）。
-会话 → 页：文件名带会话 id 前 8 位，拿会话文件就能反查有没有总结过。
+页 → 会话：段内一行 `挂钩: session=<pi 会话 id> · session-file=<jsonl 文件名> · project=<cwd>`
+（早期写在 frontmatter 三行；并进当天页后一个文件有多场，三行只能逐段写）。
+会话 → 段：段标题 `## 会话 <会话 id 前 8 位>`，拿会话文件就能在当天页里反查有没有总结过。
 
 **为什么不把页路径回写进 jsonl**：那是宿主的产物，往里加字段既越界，又会改 md5 ——
 而 `summon` 的账本用 md5 判「会话内容有没有变」，一改就会把已总结的会话重新当成「有更新」。
@@ -63,9 +67,10 @@ abs 原来只沉淀「编程经验与教训」—— 所有落盘管道都压成
 ## 验证
 
 ```bash
-npm test                          # 753 全绿，其中 ingest 13 个 + 降权 1 个 + 尾巴分档 3 个
-node bin/abs.js ingest <id8>      # 落页后看 frontmatter 三行是否齐全
+npm test                          # 全绿（ingest 与 summon 的逐场判据都有专测）
+node bin/abs.js ingest <id8>      # 段内看 `挂钩: session=…` 那行是否齐全
 node bin/abs.js db search <词>    # 会话页亮度应约为同等相关度知识页的一半
+node bin/abs.js lint              # sessions/ 里出现非 `log-<日期>[-<slug>].md` 的名字直接报错
 ```
 
 实测（2026-11-05，真实 1525KB 会话）：落成 61 行页，识别出技术类、51 句用户发言、318 次工具调用、6 个改动文件。

@@ -65,6 +65,40 @@ describe('slugOf — 文件名 slug', () => {
     assert.equal(slugOf('   '), '');
     assert.equal(slugOf('！！！'), '');   // 全标点 → 折叠后为空
   });
+
+  // 2026-11-08 用户实测：按长度窗口切必然切在半句上。
+  // 三条真实生成过的坏名（都在 index 与双链里到处可见）就是这三条回归的源。
+  test('不切半句：名字停在第一个句读处，介词/动词不再当尾巴', () => {
+    assert.equal(
+      slugOf('abs sleep 离线整理方案在 docs/sleep-design.md（仅方案未实现）：夜里补空/压缩会话页/提炼概念'),
+      'abs-sleep-离线整理方案在-docs-sleep-design-md',
+    );
+    assert.equal(
+      slugOf('检索有效不等于记忆被用：主动取靠「触发规则写进 skill 开场」而非「工具更聪明」。实测'),
+      '检索有效不等于记忆被用',
+    );
+    assert.equal(
+      slugOf('发版 1.28.5 时 npm i -g . 会把全局包装成指向仓库的符号链接（依赖从仓库 node_modules 解析），要真实安装'),
+      '发版-1-28-5-时-npm-i-g-会把全局包装成指向仓库的符号链接',
+    );
+  });
+
+  test('英文句末的点算句读，版本号与稀有 token 里的点不算', () => {
+    assert.equal(slugOf('Fix Plugin Load. Then the config must be reloaded.'), 'fix-plugin-load');
+    // `1.28.5` 与孤立的 `-g .`：点后不是空格/点前是空格 → 不当句读，句子照旧
+    assert.ok(slugOf('升到 1.28.9 之后').includes('1-28-9'), '版本号不能被点切断');
+    assert.equal(slugOf('npm i -g .'), 'npm-i-g');
+  });
+
+  test('逗号也是短语边界（比整句短，仍读得通）', () => {
+    assert.equal(slugOf('甲说了什么，乙说了什么'), '甲说了什么');
+  });
+
+  test('整句无句读且超长 → 退到窗口内最后一个空格（罕见路径）', () => {
+    const r = slugOf('word '.repeat(30), 20);
+    assert.ok(r.length <= 20, `应剪到上限内: ${r.length} ${r}`);
+    assert.ok(!r.endsWith('-'), '不该以连字符结尾');
+  });
 });
 
 // 回归（2026-10-19）：clip/slugOf 原先用 s.slice(n) 按 UTF-16 code unit 切，

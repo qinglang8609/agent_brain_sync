@@ -29,17 +29,48 @@ export function clip(text, n) {
   return `${keep.replace(/[\s,，、;；.。]+$/, '')}…`;
 }
 
-/** slug：取前 n 码点 → 非词字符折叠为 '-'。只用于**文件名**，完整标题另存 TITLE 行。
- * 在标点/空格边界收口，不在字中间切断（否则出 `...-硬切-不` 这种残尾）。 */
-export function slugOf(text, n = 24) {
+/** slug 上限（码点）。真需要这个上限的只有「一整句都没句读」的长句 —— 罕见路径。
+ *  为什么不要一个小的固定窗口（如 24）：见 slugOf 的注释。 */
+export const SLUG_MAX = 60;
+
+/** 在这个位置算「一句话的边界」吗。
+ *  强句读（。！？；：）、短语标点（，、）、换行、开括号（括号里的内容是补充，可以不要）、
+ *  以及**后面跟空格/结尾**的英文 . 与 ,（否则 `1.28.5`、`design.md` 里的点会把句子砍成两半）。 */
+function isClauseBoundary(cps, i) {
+  const c = cps[i];
+  if ('。！？；：，、\n（(「'.includes(c)) return true;
+  if (c === '.' || c === ',') {
+    const prev = cps[i - 1];
+    const next = cps[i + 1];
+    // 前面必须是字（否则 `i -g . 会把` 里那个孤立的 `.` 会把句子砍断）
+    return !!prev && /[\w一-鿿]/.test(prev) && (next === undefined || next === ' ');
+  }
+  return false;
+}
+
+/** slug：取**第一句话**（到第一个句读/开括号/换行为止）→ 非词字符折叠为 '-'、小写。
+ * 只用于**文件名**，完整标题另存 TITLE 行。
+ *
+ * 为何改成「按句取」而不是「按长度窗口切」（2026-11-08 用户实测）。窗口必然切在半句上，实测生成过：
+ *   `2026-11-08-abs-sleep-离线整理方案在`  ← 断在介词「在」
+ *   `2026-11-07-发版-1-28-5-时-npm-i-g`    ← 断在半条命令
+ *   `2026-11-03-…-主动取靠-触发规则写进`     ← 断在动词「写进」
+ * 而「末尾是不是半句」没法用结构判据认出来（中文没有词边界，靠虚词表就是猜），
+ * 所以判据反过来：**不切**。句子到边界就停，边界前的字一律完整收进名字。
+ * 实测效果：上面三条分别变成
+ *   `…-abs-sleep-离线整理方案在-docs-sleep-design-md`（“方案在 docs/…”是完整短语）
+ *   `…-发版-1-28-5-时-npm-i-g-会把全局包装成指向仓库的符号链接`
+ *   `2026-11-03-检索有效不等于记忆被用`
+ * 只有整句无边界且超过 SLUG_MAX（60 码点）时才退到窗口内的最后一个空格/开括号。 */
+export function slugOf(text, n = SLUG_MAX) {
   const s = String(text || '').trim();
-  // 同 clip：按码点切，避免把 emoji 切成半个代理对（见 clip 注释）。
   const cps = Array.from(s);
-  let head = cps.slice(0, n).join('');
-  if (cps.length > n) {
-    const cut = Math.max(head.lastIndexOf('，'), head.lastIndexOf('。'), head.lastIndexOf('、'),
-      head.lastIndexOf('：'), head.lastIndexOf(','), head.lastIndexOf('.'), head.lastIndexOf(' '));
-    if (cut > n / 2) head = head.slice(0, cut);
+  const end = cps.findIndex((_, i) => isClauseBoundary(cps, i));
+  let head = (end === -1 ? cps : cps.slice(0, end)).join('');
+  if (Array.from(head).length > n) {
+    const h = Array.from(head).slice(0, n).join('');
+    const cut = Math.max(h.lastIndexOf(' '), h.lastIndexOf('（'), h.lastIndexOf('('));
+    head = cut > 0 ? h.slice(0, cut) : h;
   }
   return head.replace(/[^\w一-鿿]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
 }

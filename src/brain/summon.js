@@ -136,28 +136,36 @@ export async function digestSession(file) {
   return out;
 }
 
-/** 已有快照的日期集合（从 .brain/sessions/*.md 文件名取）。
+/** 已总结状态（从 .brain/sessions/*.md 的正文取）：
+ *   ids  —— 页面里已有 `挂钩: session=<会话 id>` 的会话（已提炼过的那几场）
+ *   days —— 「整天快照」的日期集合（页里没有任何 `## 会话 ` 段）
  *
- * 为何要和 md5 账本并用（2026-11-01）：两条判据回答的是不同问题 ——
- *   · 有快照         → 那天**已经总结过**（人写的，最权威）
- *   · 账本记录 md5   → 那个**会话文件**提过了
+ * 两个判据回答的是不同问题：
+ *   · 该天页存在且是人写的快照 → 那天**已经总结过**（人写的，最权威）
+ *   · 页里有该会话 id 的段      → 那**场**会话已经提过
+ *   · 账本记 md5               → 那个**会话文件**提过了
  * 只按 md5 判会把「已有快照的日子」全列出来当未总结（实测 15 条全是已有快照的），
- * 那是把托底做成噪音。两条都要：有快照就跳过，没有才看账本。 */
-async function daysWithSnapshot(brainSessionsDir) {
+ *   那是把托底做成噪音；而只按日期跳过会把同一天没落的几场永久埋掉。
+ *
+ * 为何改成读正文（2026-11-08）：会话摘要不再是一場一文件（`session-<日期>-s<id8>.md`），
+ *   而是并进当天的 `log-<日期>.md` 里的 `## 会话 <id8>` 段 —— 文件名里不再有会话 id，
+ *   所以「这场提过没有」只能按段里的 `挂钩: session=` 查，不能按文件名猜。
+ *   而「那天已有人写快照」仍按天判：页里没有任何 `## 会话 ` 段就说明那天只有人写的内容。 */
+async function summarizedState(brainSessionsDir) {
   const days = new Set();
+  const ids = new Set();
   let files;
-  try { files = await fs.readdir(brainSessionsDir); } catch { return days; }
+  try { files = await fs.readdir(brainSessionsDir); } catch { return { days, ids }; }
   for (const f of files) {
-    // ★ 只认「整天快照」，不认单场会话页（2026-11-05 实测修正）：
-    //   `log-<日期>.md` 是人写的一天流水 —— 那天确实整理过了，跳过合理。
-    //   但 `session-<日期>-s<id8>.md` 是**一场会话一张**（abs ingest 的产物）。
-    //   按天跳过它，会让「同一天只落了一场」把其余几场永久埋掉：
-    //   实测真实项目有 14 天存在多场会话（最多一天 10 场），落一场就全跳过。
-    if (f.startsWith('session-')) continue;
+    if (!f.endsWith('.md')) continue;
+    const body = await fs.readFile(join(brainSessionsDir, f), 'utf8').catch(() => '');
+    if (!body) continue;
+    for (const m of body.matchAll(/^>\s*挂钩:\s*session=(\S+)/gm)) ids.add(m[1]);
+    if (/^##\s*会话\s/m.test(body)) continue;   // 含 ingest 摘要的页不整日跳过
     const m = f.match(/(\d{4}-\d{2}-\d{2})/);
     if (m) days.add(m[1]);
   }
-  return days;
+  return { days, ids };
 }
 
 /** 读账本。格式 { version, files: { "<相对文件名>": { md5, day, summarizedAt } } } */
@@ -225,8 +233,8 @@ export async function scanProject(projectRoot, { ledger, now = Date.now() } = {}
   }
   const ownBook = !ledger;              // 账本是自己读的（不是调用方给的）
   const book = ledger || await readLedger();
-  // 已有快照的日子整日跳过 —— 人已经总结过，托底不该再吵。
-  const haveSnapshot = await daysWithSnapshot(join(projectRoot, '.brain', 'sessions'));
+  // 已总结状态：整天快照的日期（整日跳过）+ 已提过的会话 id（逐场跳过）。
+  const { days: haveSnapshot, ids: haveDigest } = await summarizedState(join(projectRoot, '.brain', 'sessions'));
   const fresh = [], changed = [], skipped = [], active = [];
   let touched = false;   // 是否补记过 stat（需要回写账本，否则下次又得读全文）
 
@@ -258,6 +266,7 @@ export async function scanProject(projectRoot, { ledger, now = Date.now() } = {}
 
     const d = await digestSession(full);
     if (!d || !d.users.length) { skipped.push({ name, reason: '无真实用户输入' }); continue; }
+    if (d.id && haveDigest.has(d.id)) { skipped.push({ name, reason: '这一场已提炼过' }); continue; }
     if (d.day && haveSnapshot.has(d.day)) { skipped.push({ name, reason: `${d.day} 已有快照` }); continue; }
 
     // 到这里才需要 md5（要么文件变了，要么账本里没有）。

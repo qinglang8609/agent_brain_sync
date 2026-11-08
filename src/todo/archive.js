@@ -288,7 +288,7 @@ export function upsertArchiveSection(body, group) {
       '',
       `# ${group.date} 记录`,
       '',
-      '> 本页 = 该日的会话快照（若有）+ 从 `todo.md` Done 区迁出的任务明细。',
+      '> 本页 = 该日的一切：会话摘要（一场一段 `## 会话 <id8>`）+ 从 `todo.md` Done 区迁出的任务明细。',
       '',
       ARCHIVE_SECTION,
       '',

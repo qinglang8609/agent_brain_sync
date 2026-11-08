@@ -26,8 +26,8 @@ test('projectDirName: 只换斜杠，下划线与点原样保留', () => {
 function sessionLine(ts, role, text) {
   return JSON.stringify({ type: 'message', timestamp: ts, message: { role, content: [{ type: 'text', text }] } });
 }
-function makeSession({ start, userTexts }) {
-  const lines = [JSON.stringify({ type: 'session', version: 3, id: 'x', timestamp: start, cwd: '/p' })];
+function makeSession({ start, userTexts, id = 'x' }) {
+  const lines = [JSON.stringify({ type: 'session', version: 3, id, timestamp: start, cwd: '/p' })];
   for (const t of userTexts) lines.push(sessionLine(start, 'user', t));
   return lines.join('\n') + '\n';
 }
@@ -215,29 +215,33 @@ test('summon:false 时不扫会话（note/capture 内部调用 log 的场景）'
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
-// ---------- 单场会话页不算「整天快照」（2026-11-05 实测）----------
-// 病根：daysWithSnapshot 认任何带日期的文件名。原先只有 `log-<日期>.md`（人写的一天流水），
-// 按天跳过是对的。但 abs ingest 的产物是 `session-<日期>-s<id8>.md` —— **一场一张**。
-// 按天跳过它，会让「同一天只落了一场」把其余几场永久埋掉。
-// 实测真实项目有 14 天存在多场会话（最多一天 10 场）。
-test('单场会话页不算整天快照：同一天其他会话仍要被列出', async () => {
+// ---------- 摘要并进当天页后，跳过判据要逐场而非整天（2026-11-05 实测 / 2026-11-08 改形状）----------
+// 病根：按文件名里的日期整天跳过 —— 但一天可能有很多场会话（实测最多 10 场）。
+// 落了一场的摘要就把整天跳掉，其余几场就永久被埋。
+// 2026-11-08 起摘要并进当天的 `log-<日期>.md`（不再一场一文件），
+// 所以「这场提过没有」按段里的 `挂钩: session=<id>` 查。
+test('当天页只落了其中一场：其余几场仍要被列出', async () => {
   const sb = await sandbox();
   const proj = sb.proj;
   // 同一天三场会话
-  const ids = ['a1', 'a2', 'a3'];
-  for (const [i, id] of ids.entries()) {
-    const name = `2026-11-04T0${i + 1}-00-00-000Z_${id}00000-1111-2222-3333-444455556666.jsonl`;
+  const ids = ['a100000', 'a200000', 'a300000'];
+  for (const [i, short] of ids.entries()) {
+    const id = `${short}-1111-2222-3333-444455556666`;
+    const name = `2026-11-04T0${i + 1}-00-00-000Z_${id}.jsonl`;
     const f = join(sb.piSessions, name);
-    await fs.writeFile(f, makeSession({ start: '2026-11-04T01:00:00.000Z', userTexts: [`会话 ${id} 的内容`] }));
+    await fs.writeFile(f, makeSession({ start: '2026-11-04T01:00:00.000Z', userTexts: [`会话 ${short} 的内容`], id }));
     await makeStale(f);
   }
-  // 只落了一场会话页
-  await fs.writeFile(join(sb.sessions, 'session-2026-11-04-sa100000.md'),
-    '---\nkind: session-digest\n---\n\n## 出了什么问题\n某问题\n', 'utf8');
+  // 当天页里只有 a1 那一场的摘要段
+  await fs.writeFile(join(sb.sessions, 'log-2026-11-04.md'),
+    '---\nkind: session-digest\n---\n\n# 2026-11-04 记录\n\n'
+    + '## 会话 a100000\n\n> 挂钩: session=a100000-1111-2222-3333-444455556666 · session-file=x.jsonl\n\n'
+    + '### 出了什么问题\n某问题\n', 'utf8');
 
   await withEnv({ ABS_PI_SESSIONS: sb.piDir, ABS_SUMMON_LEDGER: join(sb.root, 'l.json') }, async () => {
     const r = await scanProject(proj);
-    assert.equal(r.fresh.length, 3, `三场都该列出（单场页不代表整天），实际 ${r.fresh.length}: ${JSON.stringify(r.fresh.map((x) => x.name))}`);
+    assert.equal(r.fresh.length, 2, `只有 a1 提过，a2/a3 仍该列出，实际 ${r.fresh.length}: ${JSON.stringify(r.fresh.map((x) => x.name))}`);
+    assert.equal(r.skipped.filter((x) => x.reason === '这一场已提炼过').length, 1, 'a1 应按「已提炼过」跳过');
   });
 });
 

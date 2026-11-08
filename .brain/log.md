@@ -1,4 +1,8 @@
 # 🗒 Activity Log
+## [2026-11-08 16:30] [[fanchao]] dev | 堵住旧命名源头：PATH 上的全局 abs 还是 1.28.7 旧码，刚才又生成了一张 session-<日期>-s<id8> 页（被新闸 LINK-NAME-STALE/SESSIONS-NAMING 当场抓到）；已并进 log-2026-11-08 的 ## 会话 01a1ba13 段、清掉 index 残留行，并用 npm pack + npm i -g 把全局副本换成本地新码（不走发版，避免 npm i -g . 的符号链接坑） false
+## [2026-11-08 16:28] [[fanchao]] dev | todo 面板标题从纯金 #FFD700 换成搁置橙 #F59E0B（与输入框状态同色）：纯金在暗底太抢眼，标题只是分区标签；代价是标题与 [搁置] 同色（位置分得开）。843 测试绿，已装到 ~/.pi（副本差异仅 ABS_BIN 占位符与托管标记） false
+## [2026-11-08 16:25] [[fanchao]] dev | 输入框上边框 working 状态与右上角状态文字改橙色 #F59E0B（与 todo 面板「搁置」标签同色）；roundBorder 加 leadFg/labelFg 只染这两段、虚线圆角不变，并排除 pi 的滚动提示 ↑/↓ N more 不误染；843 测试（新增 6 条）；已 abs install 到 ~/.pi 与仓库逐字一致，需重启 pi 生效 false
+## [2026-11-08 16:20] [[fanchao]] dev | 文件双链标签标准统一：① lint 加 LINK-NAME-STALE——index 的 ## Sessions 与 todo.md 的 ### Archived 里，链接名必须逐字等于 sessions/ 下的文件名（抓到挂了两个月的死名 2026-09-12-todo归档，已改 log-2026-09-12）② sessions/ 只收 log-<日期>[-<slug>].md，6 个 session-* 页并进当天页的 ## 会话 <id8> 段，index 6 行合成当天 4 行 ③ ingest 落点改为并进当天页、summon 改成逐场判据 ④ slugOf 不再按长度窗口切，3 个截断名改名并回填双链；837 测试 + lint 全绿 false
 ## [2026-11-08 15:30] [[fanchao]] dev | 1.28.7：视觉定稿现代暗色（标题金/状态四色/树线与输入框线 #96A6C6/输入字白/圆圈动画/有状态去空[]）；框架四件（SKILL 英文路由、load 1603B、格式闸打回、命令折叠）；Sessions 索引行带描述；sleep 方案 docs/sleep-design.md 仅方案。821 绿，npm+本地同源
 ## [2026-11-08 13:40] [[fanchao]] dev | 四件精简落地：①SKILL.md 改英文路由风（仿 vibe-coding-help：意图表+硬规矩+图谱指针，触发词保留中文）②load 2796→1603B，只留未完成todo+用法+近日志3条，Rules/index计数/查询提示/热点页撤出 ③格式闸打回：todo start 无描述、done 无结语、log 空标题、index 日期模板行，lint 加 TODO-NO-DESC ④删纯别名 index/status/summon/db search，log 只写不看（查看=show log）。821 测试绿；全局包与 ~/.pi 已同源
 ## [2026-11-08 13:05] [[fanchao]] note | abs sleep 离线整理方案在 docs/sleep-design.md（仅方案未实现）：夜里补空/压缩会话页/提炼概念/墓碑遗忘，默认 dry-run，保留期 7/30/90/180 待拍板。

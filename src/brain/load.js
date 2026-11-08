@@ -427,7 +427,7 @@ export async function cmdRecall({ dir, terms, limit = 5 } = {}) {
  *   内容要读会话后填。但「落了没填」原来没有任何地方看得见 —— 落盘等于进了黑洞，
  *   正是本仓反复踩的「采集了不消化」。这里只判「填没填」，不判「该不该留」。
  *
- * 判据与 lint 的 hasTail 同源：段内除了占位注释与空行之外还有没有真内容。
+ * 判据是「骨架段里填过没有」，段标题层级不写死 —— 摘要并进当天页后骨架段是 `###`。
  * 只认 ingest 生成的三种骨架段名（见 ingest.js 的 SHAPES）——它们都带
  * `<!-- 提示 -->` 占位；任何一段有了真内容就算填过。
  *
@@ -444,10 +444,12 @@ async function unfilledSessionSection(root, { oneLine = false } = {}) {
   } catch { return null; }
   const unfilled = [];
   for (const f of files) {
-    if (!f.endsWith('.md') || !f.startsWith('session-')) continue;
+    if (!f.endsWith('.md') || f.startsWith('_')) continue;
     const body = await fs.readFile(brainPath(root, 'sessions', f), 'utf8').catch(() => '');
     if (!body) continue;
-    // 只认 ingest 落的页：它有 kind: session-digest。手写页不该被催。
+    // 只认 ingest 落的页：它有 `kind: session-digest`。手写页不该被催。
+    // 不再按文件名前缀筛（2026-11-08）：会话摘要已并进当天的 `log-<日期>.md`，
+    // 文件名里没有会话 id，前缀判据会把它整类漏掉。
     if (!/^kind:\s*session-digest$/m.test(body)) continue;
     if (!digestFilled(body)) unfilled.push(f.replace(/\.md$/, ''));
   }
@@ -456,7 +458,7 @@ async function unfilledSessionSection(root, { oneLine = false } = {}) {
   if (oneLine) return `📝 未填会话页 ${unfilled.length} 张（abs ingest --list 看哪几张；不进检索，不急着全填）`;
   // 按日期倒序（2026-11-05 实测修正）：原来按 readdir 顺序（≈文件名升序），
   // 60 张时列出来的是 18/27/36/45/54 —— 随机五张，既不是最近的也不是最该填的。
-  // 页名形如 session-<日期>-s<id8>，日期就在里面，直接按名字倒排即可。
+  // 页名现在是 `log-<日期>`，日期就在里面，直接按名字倒排即可。
   unfilled.sort((a, b) => b.localeCompare(a));
   const show = unfilled.slice(0, SESSION_UNFILLED_SHOW);
   const rows = [

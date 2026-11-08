@@ -1,13 +1,16 @@
-// ingest：把一场 pi 会话落成会话页。测的是三条必须稳定的事 ——
+// ingest：把一场 pi 会话的摘要并进当天的 log-<日期>.md。测的是三条必须稳定的事 ——
 //   ① 形状判定（改了代码 = 技术类，这是骨架选错就会写出编造内容的根）；
-//   ② 与会话的挂钩（session id + 文件名必须写进 frontmatter，否则页与会话断链）；
-//   ③ 不覆盖已填的页（人工内容优先，本仓硬规则）。
+//   ② 与会话的挂钩（会话 id + 文件名必须写进段内，否则段与会话断链）；
+//   ③ 不覆盖已填的段（人工内容优先，本仓硬规则）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { shapeOf, idsOf, headlineOf, renderPage, cmdIngest, SHAPES } from '../src/brain/ingest.js';
+import {
+  shapeOf, idsOf, headlineOf, cmdIngest, SHAPES,
+  renderDigestSection, renderDayPage, ensureDigestFrontmatter, insertDigestSection, digestSectionOf,
+} from '../src/brain/ingest.js';
 import { projectDirName } from '../src/brain/summon.js';
 
 // ---------- 纯函数：形状判定 ----------
@@ -60,34 +63,71 @@ test('headlineOf: 取第一句有实质内容的用户发言', () => {
 
 // ---------- 渲染 ----------
 
-test('renderPage: 三种形状各给各的骨架段', () => {
+test('renderDigestSection: 三种形状各给各的骨架段（段标题降为 ###）', () => {
   const base = {
     digest: { users: ['说了点什么内容'], filesEdited: new Map(), toolCalls: 0, cwd: '/p' },
     ids: { day: '2026-11-05', id: 'sid-1', short: 'sid1', name: 'f.jsonl' },
     who: 'fanchao',
   };
   for (const [shape, sh] of Object.entries(SHAPES)) {
-    const md = renderPage({ ...base, shape });
+    const md = renderDigestSection({ ...base, shape });
+    // 外面套了一层 `## 会话 <id8>`，骨架段必须降级 ——
+    // 否则同一天两场会话会出现两个 `## 怎么解决的`，谁也分不清属于哪一场。
+    assert.ok(md.startsWith(`## 会话 sid1\n`), `段开头应是容器标题: ${md.slice(0, 40)}`);
     for (const [title] of sh.sections) {
-      assert.ok(md.includes(`## ${title}`), `${shape} 缺段: ${title}`);
+      assert.ok(md.includes(`### ${title}`), `${shape} 缺段: ${title}`);
     }
   }
   // 讨论类不该出现「验证什么命令」—— 那会让 agent 去编一个不存在的验证
-  assert.ok(!renderPage({ ...base, shape: 'talk' }).includes('验证什么命令'));
+  assert.ok(!renderDigestSection({ ...base, shape: 'talk' }).includes('验证什么命令'));
 });
 
-test('renderPage: 会话挂钩三行写进 frontmatter', () => {
-  const md = renderPage({
+test('renderDigestSection: 会话挂钩写进段内（会话 id / 文件名 / cwd）', () => {
+  const md = renderDigestSection({
     shape: 'talk',
     digest: { users: ['讨论一下方案'], filesEdited: new Map(), toolCalls: 0, cwd: '/proj/x' },
     ids: { day: '2026-11-05', id: 'abcd1234-full', short: 'abcd1234', name: 'f.jsonl' },
     who: 'fanchao',
   });
-  assert.match(md, /^session: abcd1234-full$/m);
-  assert.match(md, /^session-file: f\.jsonl$/m);
-  assert.match(md, /^project: \/proj\/x$/m);
+  assert.match(md, /^## 会话 abcd1234$/m);
+  assert.match(md, /^> 挂钩: session=abcd1234-full · session-file=f\.jsonl · project=\/proj\/x$/m);
+});
+
+test('renderDayPage: 当天页带 kind/layer 标记（检索保护的唯一凭据）', () => {
+  const md = renderDayPage({
+    ids: { day: '2026-11-05' },
+    who: 'fanchao',
+    section: '## 会话 abcd1234\n\n### 谈成了什么\n<!-- 结论 -->\n',
+  });
   assert.match(md, /^kind: session-digest$/m);
   assert.match(md, /^layer: 5$/m);
+  assert.match(md, /^# 2026-11-05 记录$/m);
+});
+
+test('insertDigestSection: 会话段放在「📦 任务归档」之前', () => {
+  const day = '# 2026-11-05 记录\n\n## 📦 任务归档\n\n### 2026-11-05\n\n- [x] 某任务\n';
+  const out = insertDigestSection(day, '## 会话 abcd1234\n\n### 谈成了什么\n结论\n');
+  assert.ok(out.indexOf('## 会话 abcd1234') < out.indexOf('## 📦 任务归档'), '会话在前、归档在后');
+  assert.ok(out.includes('- [x] 某任务'), '归档内容一行不改');
+  assert.ok(out.includes('### 谈成了什么'), '段内容原样写入');
+});
+
+test('ensureDigestFrontmatter: 已有当天页补上 kind/layer，其余字段不动', () => {
+  const old = '---\ntags: [session-log, todo-archive, 历史]\nupdated: 2026-11-05\nstatus: reviewed\n---\n\n# 2026-11-05 记录\n';
+  const out = ensureDigestFrontmatter(old);
+  assert.match(out, /^kind: session-digest$/m);
+  assert.match(out, /^layer: 5$/m);
+  assert.ok(out.includes('tags: [session-log, todo-archive, 历史]'), 'tags 不替人改');
+  assert.ok(out.includes('status: reviewed'), 'status 不替人改');
+  // 已经有 kind 的页不重复插入
+  assert.equal((ensureDigestFrontmatter(out).match(/^kind:/gm) || []).length, 1);
+  // 没有 frontmatter 也不炸
+  assert.equal(ensureDigestFrontmatter('# 无头页\n'), '# 无头页\n');
+});
+
+test('digestSectionOf: 段标题带会话 id 前 8 位（会话→段的反查凭据）', () => {
+  assert.equal(digestSectionOf('abcd1234'), '## 会话 abcd1234');
+  assert.equal(digestSectionOf(''), '## 会话 unknown');
 });
 
 // ---------- 落盘 ----------
@@ -128,7 +168,7 @@ async function withEnv(env, fn) {
   }
 }
 
-test('cmdIngest: 落出会话页，文件名带会话 id 前 8 位（会话→页的反查凭据）', async () => {
+test('cmdIngest: 摘要并进当天的 log-<日期>.md，段标题带会话 id 前 8 位', async () => {
   const { proj, pi, piSessions } = await sandbox();
   const id = 'abcd1234-1111-2222-3333-444455556666';
   await fs.writeFile(
@@ -137,15 +177,35 @@ test('cmdIngest: 落出会话页，文件名带会话 id 前 8 位（会话→�
   );
   await withEnv({ ABS_PI_SESSIONS: pi, ABS_USER: 'fanchao' }, async () => {
     const out = await cmdIngest({ dir: proj, file: id });
-    assert.match(out, /✓ 会话页/);
+    assert.match(out, /✓ 会话摘要/);
     const files = await fs.readdir(join(proj, '.brain', 'sessions'));
-    assert.deepEqual(files, ['session-2026-11-05-sabcd1234.md']);
+    assert.deepEqual(files, ['log-2026-11-05.md'], '一天一文件，不再一场一页');
     const body = await fs.readFile(join(proj, '.brain', 'sessions', files[0]), 'utf8');
-    // 页 → 会话：id 与文件名都在（这是用户 2026-11-05 要求的挂钩）
-    assert.match(body, new RegExp(`^session: ${id}$`, 'm'));
-    assert.match(body, /^session-file: .*\.jsonl$/m);
+    // 段 → 会话：id 与文件名都在（这是用户 2026-11-05 要求的挂钩）
+    assert.match(body, new RegExp(`^> 挂钩: session=${id} `, 'm'));
+    assert.match(body, /session-file=.*\.jsonl/);
+    assert.match(body, /^kind: session-digest$/m, '带上检索保护的凭据');
     // 技术类骨架
-    assert.ok(body.includes('## 验证什么命令'));
+    assert.ok(body.includes('### 验证什么命令'));
+  });
+});
+
+test('cmdIngest: 同一天两场落进同一目录一个文件，两段都在', async () => {
+  const { proj, pi, piSessions } = await sandbox();
+  const idA = 'aaaa1111-1111-2222-3333-444455556666';
+  const idB = 'bbbb2222-1111-2222-3333-444455556666';
+  await fs.writeFile(join(piSessions, `2026-11-05T01-00-00-000Z_${idA}.jsonl`),
+    sessionFile({ id: idA, user: '第一场', edited: ['/proj/a.js'] }));
+  await fs.writeFile(join(piSessions, `2026-11-05T02-00-00-000Z_${idB}.jsonl`),
+    sessionFile({ id: idB, user: '第二场', edited: ['/proj/b.js'] }));
+  await withEnv({ ABS_PI_SESSIONS: pi, ABS_USER: 'fanchao' }, async () => {
+    await cmdIngest({ dir: proj, session: idA });
+    await cmdIngest({ dir: proj, session: idB });
+    const files = await fs.readdir(join(proj, '.brain', 'sessions'));
+    assert.deepEqual(files, ['log-2026-11-05.md'], `只能有一个当天页: ${files}`);
+    const body = await fs.readFile(join(proj, '.brain', 'sessions', files[0]), 'utf8');
+    assert.ok(body.includes('## 会话 aaaa1111'), '第一场在');
+    assert.ok(body.includes('## 会话 bbbb2222'), '第二场在（不能被第一场盖掉）');
   });
 });
 
@@ -158,29 +218,56 @@ test('cmdIngest: 只给 id 前 8 位也能定位会话', async () => {
   );
   await withEnv({ ABS_PI_SESSIONS: pi, ABS_USER: 'fanchao' }, async () => {
     const out = await cmdIngest({ dir: proj, file: 'deadbeef' });
-    assert.match(out, /✓ 会话页/);
+    assert.match(out, /✓ 会话摘要/);
     assert.match(out, /讨论类/);
   });
 });
 
-test('cmdIngest: 已有同名页默认不覆盖，--force 才重建', async () => {
+test('cmdIngest: 已有本场段默认不覆盖，--force 才重建', async () => {
   const { proj, pi, piSessions } = await sandbox();
   const id = 'cafe0000-1111-2222-3333-444455556666';
   const f = join(piSessions, `2026-11-05T01-00-00-000Z_${id}.jsonl`);
   await fs.writeFile(f, sessionFile({ id, user: '聊方案' }));
   await withEnv({ ABS_PI_SESSIONS: pi, ABS_USER: 'fanchao' }, async () => {
     await cmdIngest({ dir: proj, file: id });
-    const dst = join(proj, '.brain', 'sessions', 'session-2026-11-05-scafe0000.md');
-    // 模拟人填过内容
-    await fs.writeFile(dst, '---\ntitle: 人工填的\n---\n\n我写的结论\n', 'utf8');
+    const dst = join(proj, '.brain', 'sessions', 'log-2026-11-05.md');
+    // 模拟人填过那一段
+    await fs.writeFile(dst, '---\nkind: session-digest\n---\n\n# 2026-11-05 记录\n\n'
+      + '## 会话 cafe0000\n\n我写的结论\n', 'utf8');
 
     const again = await cmdIngest({ dir: proj, file: id });
     assert.match(again, /不覆盖/);
     assert.match(await fs.readFile(dst, 'utf8'), /我写的结论/);
 
     const forced = await cmdIngest({ dir: proj, file: id, force: true });
-    assert.match(forced, /✓ 会话页/);
-    assert.ok(!(await fs.readFile(dst, 'utf8')).includes('我写的结论'));
+    assert.match(forced, /✓ 会话摘要/);
+    const after = await fs.readFile(dst, 'utf8');
+    assert.ok(!after.includes('我写的结论'), '--force 重建那一段');
+    assert.match(after, /^## 会话 cafe0000$/m, '段标题还在（只是内容回空骨架）');
+  });
+});
+
+test('cmdIngest --force 只重建本场那一段：同一天其他场次不受影响', async () => {
+  const { proj, pi, piSessions } = await sandbox();
+  const idA = 'cafe1111-1111-2222-3333-444455556666';
+  const idB = 'cafe2222-1111-2222-3333-444455556666';
+  await fs.writeFile(join(piSessions, `2026-11-05T01-00-00-000Z_${idA}.jsonl`),
+    sessionFile({ id: idA, user: '第一场', edited: ['/proj/a.js'] }));
+  await fs.writeFile(join(piSessions, `2026-11-05T02-00-00-000Z_${idB}.jsonl`),
+    sessionFile({ id: idB, user: '第二场', edited: ['/proj/b.js'] }));
+  await withEnv({ ABS_PI_SESSIONS: pi, ABS_USER: 'fanchao' }, async () => {
+    await cmdIngest({ dir: proj, session: idA });
+    await cmdIngest({ dir: proj, session: idB });
+    const dst = join(proj, '.brain', 'sessions', 'log-2026-11-05.md');
+    // 两段都写上人工结论，然后只 --force 第一场
+    const cur = await fs.readFile(dst, 'utf8');
+    await fs.writeFile(dst, cur
+      .replace('### 出了什么问题\n<!-- 具体症状 / 报错 / 复现条件 -->', '### 出了什么问题\n第一场的结论')
+      .replace('### 出了什么问题\n<!-- 具体症状 / 报错 / 复现条件 -->', '### 出了什么问题\n第二场的结论'), 'utf8');
+    await cmdIngest({ dir: proj, session: idA, force: true });
+    const after = await fs.readFile(dst, 'utf8');
+    assert.ok(!after.includes('第一场的结论'), '第一场被重建');
+    assert.ok(after.includes('第二场的结论'), '第二场不该被动');
   });
 });
 
@@ -213,10 +300,12 @@ test('cmdIngest --last: 取最近写过的那场会话（按 mtime，不按文�
 
   await withEnv({ ABS_PI_SESSIONS: pi, ABS_USER: 'fanchao' }, async () => {
     const out = await cmdIngest({ dir: proj, last: true });
-    assert.match(out, /✓ 会话页/);
+    assert.match(out, /✓ 会话摘要/);
     const files = await fs.readdir(join(proj, '.brain', 'sessions'));
     // 落的是 mtime 更晚的那场，虽然它的文件名日期更早
-    assert.deepEqual(files, ['session-2026-11-01-s22222222.md']);
+    assert.deepEqual(files, ['log-2026-11-01.md']);
+    const body = await fs.readFile(join(proj, '.brain', 'sessions', files[0]), 'utf8');
+    assert.ok(body.includes('## 会话 22222222'), `该落 mtime 更晚那场: ${body.slice(0, 200)}`);
   });
 });
 
@@ -239,7 +328,7 @@ test('cmdIngest --auto: 改过文件的会话照落（判据是改文件，不�
     sessionFile({ id, user: '改一下登录超时', edited: ['/proj/src/a.js'] }));
   await withEnv({ ABS_PI_SESSIONS: pi, ABS_USER: 'fanchao' }, async () => {
     const out = await cmdIngest({ dir: proj, last: true, auto: true });
-    assert.match(out, /✓ 会话页/);
+    assert.match(out, /✓ 会话摘要/);
     assert.equal((await fs.readdir(join(proj, '.brain', 'sessions'))).length, 1);
   });
 });
@@ -264,65 +353,62 @@ test('cmdIngest: 落页不写 log.md（--auto 每次关会话都跑，写成流�
 
 import { cmdLoad } from '../src/store.js';
 
-/** 写一张会话页。filled=false 时保留骨架占位（= ingest 刚落的原样）。 */
+/** 写一张当天页。filled=false 时保留骨架占位（= ingest 刚落的原样）。 */
 async function writeDigestPage(dir, { slug, filled = false, kind = 'session-digest' }) {
   const p = join(dir, '.brain', 'sessions', `${slug}.md`);
   const body = filled
-    ? '## 出了什么问题\n登录超时 504\n\n## 怎么解决的\n改客户端超时'
-    : '## 出了什么问题\n<!-- 具体症状 -->\n\n## 怎么解决的\n<!-- 根因 -->';
-  await fs.writeFile(p, `---\ntags: [session-digest, 会话]\nlayer: 5\nkind: ${kind}\nstatus: draft\n---\n\n`
-    + `# 会话：测试\n\n${body}\n`, 'utf8');
+    ? '### 出了什么问题\n登录超时 504\n\n### 怎么解决的\n改客户端超时'
+    : '### 出了什么问题\n<!-- 具体症状 -->\n\n### 怎么解决的\n<!-- 根因 -->';
+  await fs.writeFile(p, `---\ntags: [session-log, session-digest, 会话]\nlayer: 5\nkind: ${kind}\nstatus: draft\n---\n\n`
+    + `# 2026-11-05 记录\n\n## 会话 aaaa1111\n\n> 挂钩: session=aaaa1111-full · session-file=f.jsonl\n\n${body}\n`, 'utf8');
   return p;
 }
 
-test('abs load: 未填的会话页被摆到顶部', async () => {
+test('abs load: 未填的当天页被摆到顶部', async () => {
   const { proj } = await sandbox();
-  await writeDigestPage(proj, { slug: 'session-2026-11-05-saaaa1111' });
+  await writeDigestPage(proj, { slug: 'log-2026-11-05' });
   const out = await cmdLoad({ dir: proj });
   // 2026-11-08 load 三件套收口：只回一行计数，不列页名
   assert.match(out, /未填会话页 1 张/);
-  assert.ok(!out.includes('session-2026-11-05-saaaa1111'), `不列页名: ${out}`);
+  assert.ok(!out.includes('log-2026-11-05'), `不列页名: ${out}`);
 });
 
-test('abs load: 已填的会话页不提醒（判据是段内有真内容，不是 status）', async () => {
+test('abs load: 已填的当天页不提醒（判据是段内有真内容，不是 status）', async () => {
   const { proj } = await sandbox();
   // 故意留着 status: draft —— 人可能填完忘了改 status，
   // 用 status 当判据会漏报/反复提示，所以只看骨架段填没填。
-  await writeDigestPage(proj, { slug: 'session-2026-11-05-sbbbb2222', filled: true });
+  await writeDigestPage(proj, { slug: 'log-2026-11-05', filled: true });
   const out = await cmdLoad({ dir: proj });
   assert.ok(!/未填会话页/.test(out), `已填不该提醒: ${out}`);
 });
 
 test('abs load: 手写的 sessions 页不被催（只认 kind: session-digest）', async () => {
   const { proj } = await sandbox();
-  await writeDigestPage(proj, { slug: 'session-2026-11-05-shand0001', kind: 'gotcha' });
+  await writeDigestPage(proj, { slug: 'log-2026-11-05', kind: 'gotcha' });
   const out = await cmdLoad({ dir: proj });
   assert.ok(!/未填会话页/.test(out), `手写页不该被催: ${out}`);
 });
 
 test('abs load: 未填页多时只回一行计数，不列页名', async () => {
   const { proj } = await sandbox();
-  const days = ['2026-11-01', '2026-11-05', '2026-11-09'];
-  const per = { '2026-11-01': 2, '2026-11-05': 2, '2026-11-09': 5 };
-  for (const d of days) {
-    for (let k = 1; k <= per[d]; k++) {
-      await writeDigestPage(proj, { slug: `session-${d}-saaaa000${k}` });
-    }
+  for (let i = 1; i <= 9; i++) {
+    await writeDigestPage(proj, { slug: `log-2026-11-0${i}` });
   }
   const out = await cmdLoad({ dir: proj });
   assert.match(out, /未填会话页 9 张/);
-  // 2026-11-08 收口：不列页名（守读取侧不隨规模增长）；排序逻辑留在 unfilledSessionSection
-  assert.ok(!/session-2026-11-09/.test(out.split('未填会话页')[1] || ''), `不列页名: ${out}`);
+  // 2026-11-08 收口：不列页名（守读取侧不随规模增长）；排序逻辑留在 unfilledSessionSection
+  assert.ok(!/log-2026-11-0[0-9]/.test(out.split('未填会话页')[1] || ''), `不列页名: ${out}`);
 });
 
-test('abs load: 未填页多时只列 5 个页名，其余折叠成条数', async () => {
+test('abs load: 未填页多时也不逐条列（同一行里只给计数）', async () => {
   const { proj } = await sandbox();
   for (let i = 1; i <= 9; i++) {
-    await writeDigestPage(proj, { slug: `session-2026-11-05-scccc000${i}` });
+    await writeDigestPage(proj, { slug: `log-2026-12-0${i}` });
   }
   const out = await cmdLoad({ dir: proj });
+  const sec = out.split('未填会话页')[1] || '';
   assert.match(out, /未填会话页 9 张/);
-  assert.ok(!/scccc000/.test(out.split('未填会话页')[1] || ''), `不列页名: ${out}`);
+  assert.equal(sec.split('\n').filter((l) => /^\s*- /.test(l)).length, 0, `不该逐条列: ${sec}`);
 });
 
 // ---------- 审查修复（2026-11-05）----------
@@ -351,7 +437,7 @@ test('★ 记账后只改 mtime（内容未变）→ 不报「有更新」', asy
   await fs.writeFile(f, sessionFile({ id, user: '改一下登录超时', edited: ['/proj/src/a.js'] }));
   await withEnv({ ABS_PI_SESSIONS: pi, ABS_USER: 'fanchao' }, async () => {
     await cmdIngest({ dir: proj, last: true, auto: true });
-    // 模拟人已经读过、填过：删掉骨架页 → 不满足「当天已有快照」的整日跳过
+    // 删掉当天页：本测要验的是账本（md5）那条路，不是「当天页里已有摘要」那条
     await fs.rm(join(proj, '.brain', 'sessions'), { recursive: true, force: true });
     await fs.mkdir(join(proj, '.brain', 'sessions'), { recursive: true });
     // 内容与大小都没动，只把 mtime 拨到 2 小时前（避开 30 分钟活跃跳过）
@@ -390,8 +476,9 @@ test('headlineOf: 文档体在前、正常句在后 → 取后面的', () => {
 });
 
 // 命名兜底（2026-11-05 实测）。
-// 病根：文件名匹配不上时 idsOf 退成 `sunknown`，同一天两场认不出的会话
-// 会落成同一个 session-<日期>-sunknown.md，后者静默覆盖前者 —— 丢一场会话。
+// 病根：文件名匹配不上时 idsOf 退成哈希（不编造 id），同一天两场认不出的会话
+// 靠 short 区分 —— 否则两场会落成同一个 `## 会话 unknown` 段，
+// 第二场直接撞上「已有不覆盖」，静默丢掉一场会话。
 // 真实 485 个文件目前 100% 匹配，这是给「将来 pi 改命名规则」留的护栏。
 test('idsOf: 文件名认不出时按哈希区分，不撞名', () => {
   const a = idsOf('2026-11-05T01-00-00-000Z_badx1.jsonl');
@@ -410,12 +497,12 @@ test('cmdIngest: 文件名认不出时仍用首行 session.id 挂钩', async () 
     sessionFile({ id: realId, user: '改一下登录超时', edited: ['/proj/src/a.js'] }));
   await withEnv({ ABS_PI_SESSIONS: pi, ABS_USER: 'fanchao' }, async () => {
     const out = await cmdIngest({ dir: proj, last: true });
-    assert.match(out, /✓ 会话页/);
+    assert.match(out, /✓ 会话摘要/);
     const files = await fs.readdir(join(proj, '.brain', 'sessions'));
     assert.equal(files.length, 1);
     const body = await fs.readFile(join(proj, '.brain', 'sessions', files[0]), 'utf8');
     // 关键：挂钩不能断 —— 文件名认不出时也要写进真实 id
-    assert.match(body, new RegExp(`^session: ${realId}$`, 'm'), `必须用首行 id 兜底: ${body.slice(0, 300)}`);
+    assert.match(body, new RegExp(`^> 挂钩: session=${realId} `, 'm'), `必须用首行 id 兜底: ${body.slice(0, 300)}`);
   });
 });
 
@@ -464,12 +551,13 @@ test('★ --session 指定会话，不受 mtime 影响（多会话场景）', as
 
   await withEnv({ ABS_PI_SESSIONS: pi, ABS_USER: 'fanchao' }, async () => {
     const out = await cmdIngest({ dir: proj, session: idA, auto: true });
-    assert.match(out, /✓ 会话页/);
+    assert.match(out, /✓ 会话摘要/);
     const files = await fs.readdir(join(proj, '.brain', 'sessions'));
-    assert.deepEqual(files, ['session-2026-11-05-saaaa1111.md'],
-      `必须落 A 的页而不是 B（--last 会选错），实际: ${files}`);
+    assert.deepEqual(files, ['log-2026-11-05.md'],
+      `只能落这一天页（--last 会选错场次），实际: ${files}`);
     const body = await fs.readFile(join(proj, '.brain', 'sessions', files[0]), 'utf8');
-    assert.match(body, new RegExp(`^session: ${idA}$`, 'm'));
+    assert.ok(body.includes('## 会话 aaaa1111'), `必须落 A 那一场: ${body.slice(0, 300)}`);
+    assert.ok(!body.includes('## 会话 bbbb2222'), '不该把 B 也落进来');
   });
 });
 
@@ -480,7 +568,7 @@ test('--session 支持截断 id（hook 传来的 16 位前缀）', async () => {
     sessionFile({ id, user: '某场会话', edited: ['/proj/a.js'] }));
   await withEnv({ ABS_PI_SESSIONS: pi, ABS_USER: 'fanchao' }, async () => {
     const out = await cmdIngest({ dir: proj, session: 'cccc3333-1111-22', auto: true });
-    assert.match(out, /✓ 会话页/, `16 位前缀要能匹配: ${out}`);
+    assert.match(out, /✓ 会话摘要/, `16 位前缀要能匹配: ${out}`);
   });
 });
 

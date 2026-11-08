@@ -131,7 +131,7 @@ export function layerConflict(body, dirName) {
 export const DIGEST_SECTIONS = ['出了什么问题', '怎么解决的', '验证什么命令',
   '做了什么操作', '结果怎样', '下次注意事项', '谈成了什么', '没结论的地方'];
 
-/** 会话页的三段骨架里有没有任何一段写了真内容。
+/** 会话摘要的骨架段里有没有任何一段写了真内容。
  *
  * 为何要这个判据（2026-11-05 实测）：`ingest --auto` 每次关会话都落一张空骨架，
  *   而空骨架的「用户原话」段有高词频、正文又短 —— bm25 天然占优。
@@ -141,15 +141,21 @@ export const DIGEST_SECTIONS = ['出了什么问题', '怎么解决的', '验证
  *
  * 判据：骨架段内除占位注释与空行外还有没有真内容。
  * 不看 status —— 人可能填完忘了改 active，用 status 会漏判。
- * 只看骨架段，不数「用户原话/改过的文件」—— 那两段是素材，不是填写成果。 */
+ * 只看骨架段，不数「用户原话/改过的文件」—— 那两段是素材，不是填写成果。
+ *
+ * 段标题层级不写死（2026-11-08）：摘要现在并进当天的 `log-<日期>.md`，
+ *   骨架段降为 `###`（`## 会话 <id8>` 是容器）。同一段名叫 `##` 或 `###` 都算，
+ *   段的结束判据改成「遇到同级或更高级的标题」。 */
 export function digestFilled(body) {
   const lines = String(body || '').split('\n');
   for (let i = 0; i < lines.length; i++) {
-    const h = lines[i].match(/^##\s+(.+?)\s*$/);
-    if (!h || !DIGEST_SECTIONS.includes(h[1].trim())) continue;
+    const h = lines[i].match(/^(#{2,4})\s+(.+?)\s*$/);
+    if (!h || !DIGEST_SECTIONS.includes(h[2].trim())) continue;
+    const lvl = h[1].length;
     for (let j = i + 1; j < lines.length; j++) {
       const t = lines[j].trim();
-      if (/^##\s/.test(t)) break;                            // 下一段开始
+      const hh = t.match(/^(#+)\s/);
+      if (hh && hh[1].length <= lvl) break;                  // 同级/更高级标题 = 本段结束
       if (!t) continue;
       if (t.startsWith('<!--') || t === '-->') continue;      // 占位注释不算填
       return true;

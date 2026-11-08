@@ -825,8 +825,9 @@ describe('cmdLog', () => {
     const f = files.find((x) => x.includes('排查摘要'));
     assert.ok(f, `应生成源页: ${files.join(', ')}`);
     // 旧行为: 24 字硬切 → '...-硬切-不.md' (切出孤字 '不')
+    // 新行为（2026-11-08）：整句到句读就停，不按长度窗口切 —— 所以名字停在「问题」后面
     assert.ok(!/-\S\.md$/.test(f), `文件名不应以单字残尾结束: ${f}`);
-    assert.ok(f.endsWith('-先怀疑写入侧被硬切.md'), `应切在标点处: ${f}`);
+    assert.ok(f.endsWith('-排查摘要读起来抽象的问题.md'), `应切在句读处（冒号），不切半句: ${f}`);
     // 完整文本仍保留在页内
     const body = await fs.readFile(join(projectA, '.brain', 'sources', f), 'utf8');
     assert.ok(body.includes('判据是统计落盘文本的行尾。'), '完整标题必须保留在页内');

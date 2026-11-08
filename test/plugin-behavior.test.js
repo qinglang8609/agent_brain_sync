@@ -1288,8 +1288,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   }
   const tagFg = (c, s) => `${tok(TOKEN_CODE[c] ?? 90)}${s}\x1b[0m`
   const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '')
-  const green = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`
-  test('★ 面板可读：标题金色，状态分色带托底，任务字亮白，描述次灰，树线暗灰', async () => {
+  test('★ 面板可读：标题橙（=搁置色），状态分色带托底，任务字亮白，描述次灰，树线暗灰', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const data = {
       total: 2,
@@ -1301,14 +1300,13 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     };
     const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
     const plain = stripAnsi(all)
-    const titleC = '\x1b[38;2;255;215;0m'
+    const titleC = '\x1b[38;2;245;158;11m'
     const highC = '\x1b[38;2;150;166;198m'
-    const taskC = '\x1b[38;2;226;232;240m'
     const descC = '\x1b[38;2;148;163;184m'
     const treeC = '\x1b[38;2;150;170;198m'
     const doingC = '\x1b[38;2;16;185;129m'
     const holdC = '\x1b[38;2;245;158;11m'
-    assert.ok(all.includes(`${titleC}Todo (2)`), `标题应用金色:\n${all}`);
+    assert.ok(all.includes(`${titleC}Todo (2)`), `标题应用搁置橙 #F59E0B:\n${all}`);
     assert.ok(all.includes(`${holdC}[搁置]`), `搁置应用琥珀:\n${all}`);
     assert.ok(all.includes(`${doingC}[进行中]`), `进行中应用翠绿:\n${all}`);
     assert.ok(all.includes(`${treeC}├─`), `树线应用暗灰:\n${all}`);

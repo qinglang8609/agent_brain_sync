@@ -135,6 +135,6 @@ ls .brain/concepts/ | grep -iE "silent|drift|stale"
 - [[read-side-output-must-not-scale]] — 「强制送达通道」的另一面：通道容量必须可控
 - [[abs-install-layout]] — 本次触发评估的坑（半升级），且是「改布局须同 commit」规则的来源
 - [[naming-contract-and-judge-precision]] — 本规律在目录层的应用：命名契约 + 判据精度
-- [[2026-11-03-检索有效不等于记忆被用-主动取靠-触发规则写进]] — 「交付」那环的触发规则：主动取靠写进 skill 开场，而非工具更聪明
+- [[2026-11-03-检索有效不等于记忆被用]] — 「交付」那环的触发规则：主动取靠写进 skill 开场，而非工具更聪明
 - [[teardown-automation]] — 采集环节的机制设计；消化/生效环节缺它那种机械性
 - [[AgentBrainSync]] — 项目实体页

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { hasTail, listPages, PAGE_DIRS } from '../src/lint.js';
+import { hasTail, listPages, checkGeneratedFileLinks, PAGE_DIRS } from '../src/lint.js';
 
 let sandbox;
 
@@ -54,6 +54,68 @@ describe('hasTail — 「做完怎么确认」段的存在性', () => {
     assert.equal(hasTail(''), false);
     assert.equal(hasTail(null), false);
     assert.equal(hasTail('###'), false);
+  });
+});
+
+describe('checkGeneratedFileLinks — 生成的链接名必须逐字等于磁盘文件名', () => {
+  const writeVault = async ({ index, todo, files }) => {
+    await fs.mkdir(join(sandbox, 'sessions'), { recursive: true });
+    for (const f of files) {
+      await fs.writeFile(join(sandbox, 'sessions', `${f}.md`), '---\ntags: [session-log]\n---\n\n# x\n', 'utf8');
+    }
+    if (index !== undefined) await fs.writeFile(join(sandbox, 'index.md'), index, 'utf8');
+    if (todo !== undefined) await fs.writeFile(join(sandbox, 'todo.md'), todo, 'utf8');
+  };
+
+  test('todo.md 归档行的链接名在 sessions/ 里没有同名文件 → 报 LINK-NAME-STALE', async () => {
+    // 实测形态：2026-09-15 治理时旧归档页 `2026-09-12-todo归档` 并进了 log-2026-09-12，
+    // 但 todo.md 里那行链接名没跟着改，挂了两个月没人发现。
+    await writeVault({
+      files: ['log-2026-09-12'],
+      todo: '# 📋 Todo Board\n\n## Done\n\n### Archived\n- [[2026-09-12-todo归档]] 完成任务 13 条\n',
+    });
+    const out = await checkGeneratedFileLinks(sandbox);
+    assert.equal(out.length, 1, JSON.stringify(out));
+    assert.match(out[0], /LINK-NAME-STALE: todo\.md ### Archived -> \[\[2026-09-12-todo归档\]\]/);
+  });
+
+  test('归档行链接名就是文件名 → 不报', async () => {
+    await writeVault({
+      files: ['log-2026-09-12'],
+      todo: '## Done\n\n### Archived\n- [[log-2026-09-12]] 完成任务 13 条\n',
+    });
+    assert.deepEqual(await checkGeneratedFileLinks(sandbox), []);
+  });
+
+  test('index.md ## Sessions 行同样管；指向不存在的名字即报', async () => {
+    await writeVault({
+      files: ['log-2026-11-08'],
+      index: '# 🗂 Graph Index\n\n## Sessions\n- [[session-2026-11-05-s01a1a9c6]] — 会话\n\n## Syntheses\n- [[别处]]\n',
+    });
+    const out = await checkGeneratedFileLinks(sandbox);
+    assert.equal(out.length, 1, JSON.stringify(out));
+    assert.match(out[0], /index\.md ## Sessions -> \[\[session-2026-11-05-s01a1a9c6\]\]/);
+  });
+
+  test('只看自己那一段：## Sessions 之外的行不参与', async () => {
+    await writeVault({
+      files: ['log-2026-11-08'],
+      index: '# 🗂 Graph Index\n\n## Concepts\n- [[session-2026-11-05-s01a1a9c6]] — 不在 Sessions 段\n\n## Sessions\n- [[log-2026-11-08]] — 会话\n',
+    });
+    assert.deepEqual(await checkGeneratedFileLinks(sandbox), []);
+  });
+
+  test('别名写法 [[真名|别名]] 认真名', async () => {
+    await writeVault({
+      files: ['log-2026-11-08'],
+      todo: '## Done\n\n### Archived\n- [[log-2026-11-08|本周]] 完成任务 4 条\n',
+    });
+    assert.deepEqual(await checkGeneratedFileLinks(sandbox), []);
+  });
+
+  test('无 index.md / todo.md / sessions 目录都不炸', async () => {
+    await assert.doesNotReject(() => checkGeneratedFileLinks(sandbox));
+    await assert.doesNotReject(() => checkGeneratedFileLinks(join(sandbox, 'no-such-vault')));
   });
 });
 

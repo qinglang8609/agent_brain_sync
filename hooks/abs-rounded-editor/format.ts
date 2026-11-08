@@ -98,13 +98,37 @@ export function effortAnsi(level: string | null | undefined, colorMode = 'trueco
   return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
 }
 
+/** 「搁置」橙 #F59E0B —— 与 todo 面板的 `搁置` 标签同色（abs.pi.ts 的 `C.hold`）。
+ *  用途（2026-11-08 用户要求）：输入框上边框的 working 状态与右上角状态文字。
+ * ★ 色值在 abs.pi.ts 里也有一份，不抽公共模块是故意的（见 EFFORT_COLOR 的注释）。 */
+export const HOLD_COLOR = { rgb: '245;158;11', ansi256: 214 }
+
+export function holdAnsi(colorMode = 'truecolor'): string {
+  return colorMode === 'truecolor' ? `38;2;${HOLD_COLOR.rgb}` : `38;5;${HOLD_COLOR.ansi256}`
+}
+
+/** 上边框最左那段「working 状态」（如 `⠼ Working`）。
+ *
+ * 为何要单独把它抠出来（2026-11-08 用户要求它和状态文字同色）：那段由 pi 的
+ *   WorkingStatusIndicator 画、夹在 `── ` 与后续虚线之间（见 pi 的 custom-editor
+ *   `renderTopBorder`），而 roundBorder 会先剥掉整行的色再重新上色，
+ *   不能靠「它原本的颜色」认它。判据取形状：开头 `─+ ` 之后、下一个 `─` 之前的那段。
+ *
+ * 排除 `↑ N more` / `↓ N more`（pi 自己的滚动提示）：那不是 working 状态，
+ *   染成橙色就是错色。 */
+export function leadSpanOf(plain: string): string {
+  const m = String(plain).match(/^─+ ([^─]+?) ?─/)
+  if (!m) return ''
+  const text = m[1]
+  return /[↑↓]/.test(text) ? '' : text
+}
+
 /** 用 effortAnsi 的结果包一段文字；空串原样返回（off 时不着色）。 */
 export function paintAnsi(ansi: string, text: string): string {
   return ansi ? `\x1b[${ansi}m${text}\x1b[39m` : text
 }
 
-/**
- * 把一行边框文本换成「左圆角 + 左标签 + 中段 + 右圆角」，**显示宽度**保持原样。
+/** 把一行边框文本换成「左圆角 + 左标签 + 中段 + 右圆角」，**显示宽度**保持原样。
  * 边框行内含 ANSI 时直接 slice 会切坏转义序列，所以先剥色、改字、再整行着色。
  *
  * ★ 宽度一律按 textWidth（CJK = 2 列）算，不按字符数 —— 标签里的中文昵称
@@ -112,6 +136,10 @@ export function paintAnsi(ansi: string, text: string): string {
  *
  * leftLabel 贴在左圆角之后；label 贴最右端。哪个放不下就丢掉哪个
  * （宁可没有，也不让边框溢出折行）。
+ *
+ * opts.leadFg / opts.labelFg（2026-11-08 用户要求）：只给「working 状态那段」
+ *   和「右标签」换个色，其余（圆角、虚线）仍用 fg。不传 opts 时整行一个色，
+ *   与旧行为逐字相同。
  */
 export function roundBorder(
   line: string,
@@ -120,6 +148,7 @@ export function roundBorder(
   right: string,
   label = '',
   leftLabel = '',
+  opts: { leadFg?: (s: string) => string; labelFg?: (s: string) => string } = {},
 ): string {
   const plain = stripAnsi(line)
   if (plain.length === 0) return line
@@ -146,5 +175,38 @@ export function roundBorder(
       mid = ' ' + leftLabel + ' ' + body + mid.slice(mid.length - tailLen)
     }
   }
-  return fg(left + mid + right)
+  return paintSpans(left + mid + right, fg, [
+    // working 段从**开头**找（它就在最左）；右标签从**末尾**找
+    // （万一同一串又出现在左边，不能把左边那个也染成标签色）。
+    [leadSpanOf(plain), opts.leadFg, 'first'],
+    [label, opts.labelFg, 'last'],
+  ])
+}
+
+/** 把 out 里的几个区间换成各自的色，其余整段用 fg。区间按位置排序、重叠则跳过。
+ *  为何不用「拼段」实现：标签与 working 段的字符是从 mid 里苹/插进去的，
+ *  只有拿到最终串才能准确定位（直接拼段会在 dropCols 后错位）。 */
+function paintSpans(
+  out: string,
+  fg: (s: string) => string,
+  spans: [string, ((s: string) => string) | undefined, 'first' | 'last'][],
+): string {
+  const found: [number, number, (s: string) => string][] = []
+  for (const [text, paint, side] of spans) {
+    if (!text || !paint) continue
+    const i = side === 'last' ? out.lastIndexOf(text) : out.indexOf(text)
+    if (i === -1) continue
+    found.push([i, i + text.length, paint])
+  }
+  found.sort((a, b) => a[0] - b[0])
+  let res = ''
+  let pos = 0
+  for (const [s, e, paint] of found) {
+    if (s < pos) continue
+    if (s > pos) res += fg(out.slice(pos, s))   // 空片段不上色，免得留下空色码对
+    res += paint(out.slice(s, e))
+    pos = e
+  }
+  if (pos < out.length) res += fg(out.slice(pos))
+  return res
 }

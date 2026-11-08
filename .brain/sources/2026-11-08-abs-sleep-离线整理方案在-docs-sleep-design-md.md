@@ -1,6 +1,6 @@
 ---
 tags: [source, sleep, 设计, 方案]
-id: 2026-11-08-abs-sleep-离线整理方案在
+id: 2026-11-08-abs-sleep-离线整理方案在-docs-sleep-design-md
 author: fanchao
 updated: 2026-11-08
 status: draft
