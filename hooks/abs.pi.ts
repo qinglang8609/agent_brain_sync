@@ -993,16 +993,33 @@ export function todoAnimFrame(phase: number): string {
  *   抽成共享文件会让「删掉输入框样式目录」连带把 todo 面板搞崩。
  */
 export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
-  max: { rgb: '172;184;205', ansi256: 250 },
-  xhigh: { rgb: '156;171;199', ansi256: 249 },
-  high: { rgb: '141;151;170', ansi256: 247 },
-  medium: { rgb: '116;126;147', ansi256: 244 },
-  low: { rgb: '101;111;131', ansi256: 243 },
-  minimal: { rgb: '88;97;113', ansi256: 241 },
+  max: { rgb: '223;228;236', ansi256: 254 },
+  xhigh: { rgb: '198;206;220', ansi256: 252 },
+  high: { rgb: '172;184;205', ansi256: 146 },
+  medium: { rgb: '147;162;190', ansi256: 110 },
+  low: { rgb: '121;141;174', ansi256: 103 },
+  minimal: { rgb: '110;130;168', ansi256: 67 },
+}
+
+/** 边框用：同色相压暗降饱和 —— 文字要能读，边框要不抢眼（2026-11-08 用户反馈）。 */
+export const EFFORT_BORDER: Record<string, { rgb: string; ansi256: number }> = {
+  max: { rgb: '80;92;114', ansi256: 240 },
+  xhigh: { rgb: '72;83;102', ansi256: 239 },
+  high: { rgb: '63;73;90', ansi256: 238 },
+  medium: { rgb: '57;66;81', ansi256: 237 },
+  low: { rgb: '51;58;72', ansi256: 236 },
+  minimal: { rgb: '44;51;63', ansi256: 235 },
 }
 
 export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
   const g = EFFORT_COLOR[String(level || '').trim().toLowerCase()]
+  if (!g) return ''
+  return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
+}
+
+
+export function effortBorderAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
+  const g = EFFORT_BORDER[String(level || '').trim().toLowerCase()]
   if (!g) return ''
   return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
 }
@@ -1026,17 +1043,13 @@ export function renderPanelLines(
   //   理由与看板段一致：面板是「机制在不在」的常驻指示，进去就看不见 = 不知道机制活着。
   //   下面仍要画框和标题，所以这里只是不再提前 return。
   //
-  // ★ 主色跟推理强度走（2026-11-06 用户需求）：标题、[状态]、树线 ├─└─、复选框 [ ]、
-  //   进行中动画同用一色，与 pi 输入框文字同色系。
-  // ★ 2026-11-07 用户把色子换成自己指定的六档主色：max 最亮 → minimal 最暗（见 effortAnsi）。
-  // ★ 2026-11-07 用户再改：面板里**所有文字都用这一色**（标题、状态、id、描述、子项、+N more），
-  //   不再给描述/子项降成灰 —— 拿“颜色深浅”区分主次的写法作废了，层次只靠符号与缩进。
-  //   别把描述改回 muted：那是用户主动去掉的（原话「所有文字都一致吧」）。
-  // ★ off 时整块面板用灰阶（2026-11-06 用户补提：「当推理关闭的时候 todo 面板文字应该全是灰色」）——
-  //   高亮色只在真的开着推理时给，否则「推理关了面板还在发光」让人误以为还在深度思考。
-  //   既然要求“一致”，off 也用同一个 muted，不再分两阶灰。
+  // ★ 主色跟推理强度走：标题、[状态]、树线、复选框、动画用亮色（可读）。
+  // ★ 2026-11-08 用户反馈「看不清、没层次」：撤回“所有文字同色”，描述/未勾子项回 muted/dim，
+  //   完成/搁置的层级靠 [x] 与符号，不靠把正文也染成主色。
+  // ★ off 时整块灰阶（2026-11-06）：主色 muted，描述 dim，两阶灰保留层次。
   const mainAnsi = effortAnsi(effort, colorMode)
   const main = mainAnsi ? (s: string) => paintAnsi(mainAnsi, s) : (s: string) => fg('muted', s)
+  const flow = mainAnsi ? 'muted' : 'dim'
   const lines: string[] = []
   // 上描边行已删除（2026-11-04 用户要求「去掉上边框」）。
   // 历史：那行曾用 `thinkingOff` 对齐 pi 输入框描边色（排查三轮才定色）。
@@ -1064,23 +1077,22 @@ export function renderPanelLines(
     // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
     const box = main('[ ]')
-    // 状态标签、id、描述全跟主色（2026-11-06 定：靠符号和文字区分状态，不靠颜色；
-    // 2026-11-07 再定：描述也不单独降灰）。
-    const head = `${main(branch)} ${box} ${main(`[${t.state}]`)}${anim} ${main(t.id)}`
-    const desc = t.desc ? ' ' + main(`— ${t.desc}`) : ''
+    // 状态标签跟主色；id 用 text，描述/未勾子项 muted（比主色暗、又看得清）。
+    const head = `${main(branch)} ${box} ${main(`[${t.state}]`)}${anim} ${fg('text', t.id)}`
+    const desc = t.desc ? ` ${fg('dim', '—')} ${fg(flow, t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
       // 子项：标准 md 嵌套列表 → 画成树
       //   ├─ [ ] 子项一
       //   └─ [x] 子项二
       // 树线前缀 = 父任务的 │（非末条）或空格（末条），与父任务分支对齐。
-      // 2026-11-07 用户要求全面板同色：勾过的子项也不再压暗，完成与否靠 [x] 区分。
+      // 层次（2026-11-08 恢复）：勾过的子项 dim 压暗，未勾的用 flow（muted/dim）。
       const stem = isLast ? '  ' : main('│ ')
       const n = t.kids.length
       t.kids.forEach((k, ki) => {
         const kb = ki === n - 1 ? '└─' : '├─'
         const kbox = main(k.done ? '[x]' : '[ ]')
-        const ktext = main(k.text)
+        const ktext = fg(k.done ? 'dim' : flow, k.text)
         lines.push(clipToWidth(`${stem} ${main(kb)} ${kbox} ${ktext}`, width))
       })
     }

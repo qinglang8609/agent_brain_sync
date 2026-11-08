@@ -18,7 +18,7 @@
  * 注意：自动补全菜单行排在底边之下、且自带内容宽度，不套竖线（否则菜单被框住会错位）。
  */
 import { CustomEditor } from '@earendil-works/pi-coding-agent'
-import { buildStatus, effortAnsi, paintAnsi, roundBorder, shortenModel } from './format.ts'
+import { buildStatus, effortAnsi, effortBorderAnsi, paintAnsi, roundBorder, shortenModel } from './format.ts'
 
 const SIDE = '│'
 
@@ -53,11 +53,11 @@ export class RoundedEditor extends CustomEditor {
     try { colorMode = String(themeNow?.getColorMode?.() || 'truecolor') } catch {}
     const ansi = effortAnsi(effortLevel, colorMode)
     const effortFg = ansi ? (s: string) => paintAnsi(ansi, s) : null
-    // ★ 边框也跟着上主色（2026-11-07 用户补提：「输入框也是要改颜色」）。
-    //   前一轮只染了文字，结果输入框空着时框里没字、屏幕上只剩 pi 那圈紫/橙色边框，
-    //   看起来就像完全没改 —— 边框不跟着变，这个功能肉眼就看不见。
-    //   roundBorder 本来就是「剥掉原色 → 整行重新上色」，故把上色函数传进 wrap 即可。
-    const wrap = effortFg ?? ((s: string) => (borderColor ? borderColor(s) : s))
+    // ★ 边框用压暗档（2026-11-08 用户反馈「边框太抢眼」）：同色相暗色，不与文字争。
+    //   文字亮、边框暗，才分得清“框是框、字是字”。
+    const ban = effortBorderAnsi(effortLevel, colorMode)
+    const borderWrap = ban ? (s: string) => paintAnsi(ban, s) : ((s: string) => (borderColor ? borderColor(s) : s))
+    const wrap = borderWrap
     const out: string[] = []
 
     // 上边框：原本是整行 `─`（含 working 图标与滚动提示），两端换圆角，右端贴状态。

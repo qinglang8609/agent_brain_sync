@@ -1289,7 +1289,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   const tagFg = (c, s) => `${tok(TOKEN_CODE[c] ?? 90)}${s}\x1b[0m`
   // 推理强度现在直接拼 24 位色（不再走主题 token）—— 断言也直接比转义序列。
   const green = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`
-  test('★ 面板所有文字同一色：标题/状态/树线/复选框/id/描述/子项都用同一主色', async () => {
+  test('★ 面板层次：标题/状态/树线/复选框/动画主色，id=text，描述/子项 muted', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const data = {
       total: 2,
@@ -1300,20 +1300,17 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       hidden: 0,
     };
     const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
-    const high = green(141, 151, 170)
+    const high = green(172, 184, 205)
     assert.ok(all.includes(`${high}Todo (2)`), `标题应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[搁置]`), `搁置状态应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[进行中]`), `进行中状态应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}├─`), `树线应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[ ]`), `复选框应用推理强度色:\n${all}`);
-    // 2026-11-07 用户：「todo 上所有的文字 标题和详情 所有文字都一致」—— 描述与子项也上绿色
-    assert.ok(all.includes(`${high}b`), `任务 id 应用推理强度色:\n${all}`);
-    assert.ok(all.includes(`${high}— 描述甲`), `描述应用推理强度色:\n${all}`);
-    assert.ok(all.includes(`${high}子项`), `子项文字应用推理强度色:\n${all}`);
-    // 不得再混进主题的灰阶 token（那是旧的“主次分级”写法）
-    assert.ok(!all.includes(tok(TOKEN_CODE.muted)), `不应再出现 muted 灰:\n${all}`);
-    assert.ok(!all.includes(tok(TOKEN_CODE.text)), `不应再出现 text 色:\n${all}`);
-    assert.ok(!all.includes(tok(TOKEN_CODE.dim)), `不应再出现 dim 灰:\n${all}`);
+    // 2026-11-08 用户反馈看不清没层次：撤回同色，描述/子项回 muted，id 回 text
+    assert.ok(all.includes(`${tok(TOKEN_CODE.text)}b`), `任务 id 应为 text:\n${all}`);
+    assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}描述甲`), `描述应 muted:\n${all}`);
+    assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}子项`), `子项应 muted:\n${all}`);
+    assert.ok(!all.includes(`${high}描述甲`), '描述不该被主色盖掉');
   });
 
   // 2026-11-07 用户逐档指定了 6 个 hex（中间换过几版，以最新一版为准）。
@@ -1321,12 +1318,12 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   test('★ 六档色值等于用户指定的 hex', async () => {
     const { effortAnsi } = await loadPanelFns();
     const HEX = {
-      max: [0xAC, 0xB8, 0xCD],
-      xhigh: [0x9C, 0xAB, 0xC7],
-      high: [0x8D, 0x97, 0xAA],
-      medium: [0x74, 0x7E, 0x93],
-      low: [0x65, 0x6F, 0x83],
-      minimal: [0x58, 0x61, 0x71],
+      max: [0xDF, 0xE4, 0xEC],
+      xhigh: [0xC6, 0xCE, 0xDC],
+      high: [0xAC, 0xB8, 0xCD],
+      medium: [0x93, 0xA2, 0xBE],
+      low: [0x79, 0x8D, 0xAE],
+      minimal: [0x6E, 0x82, 0xA8],
     };
     for (const [level, rgb] of Object.entries(HEX)) {
       assert.equal(effortAnsi(level), `38;2;${rgb.join(';')}`, `${level} 色值不符`);
@@ -1346,29 +1343,28 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}Todo (1)`), `effort=${effort} 主色应为 muted:\n${all}`);
       assert.ok(!all.includes(tok(TOKEN_CODE.accent)), `effort=${effort} 不得留 accent 高亮:\n${all}`);
       assert.ok(!all.includes('\x1b[38;2;'), `effort=${effort} 不得上绿色阶:\n${all}`);
-      // 2026-11-07 用户要求全面板同色：off 时描述/子项也是同一个 muted，不再分两阶灰
-      assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}— 描述`), `effort=${effort} 描述应同用 muted:\n${all}`);
-      assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}子项`), `effort=${effort} 子项应同用 muted:\n${all}`);
-      assert.ok(!all.includes(tok(TOKEN_CODE.dim)), `effort=${effort} 不该再出现 dim 灰:\n${all}`);
+      // off：主色 muted，描述/子项再降 dim（两阶灰有层次）
+      assert.ok(all.includes(`${tok(TOKEN_CODE.dim)}描述`), `effort=${effort} 描述应为 dim:\n${all}`);
+      assert.ok(all.includes(`${tok(TOKEN_CODE.dim)}子项`), `effort=${effort} 子项应为 dim:\n${all}`);
     }
   });
 
   test('★ 推理强度各档映射到绿色阶 ANSI', async () => {
     const { effortAnsi } = await loadPanelFns();
-    assert.equal(effortAnsi('minimal'), '38;2;88;97;113');
-    assert.equal(effortAnsi('low'), '38;2;101;111;131');
-    assert.equal(effortAnsi('medium'), '38;2;116;126;147');
-    assert.equal(effortAnsi('high'), '38;2;141;151;170');
-    assert.equal(effortAnsi('xhigh'), '38;2;156;171;199');
-    assert.equal(effortAnsi('max'), '38;2;172;184;205');
+    assert.equal(effortAnsi('minimal'), '38;2;110;130;168');
+    assert.equal(effortAnsi('low'), '38;2;121;141;174');
+    assert.equal(effortAnsi('medium'), '38;2;147;162;190');
+    assert.equal(effortAnsi('high'), '38;2;172;184;205');
+    assert.equal(effortAnsi('xhigh'), '38;2;198;206;220');
+    assert.equal(effortAnsi('max'), '38;2;223;228;236');
     assert.equal(effortAnsi('off'), '');
     assert.equal(effortAnsi(''), '');
     assert.equal(effortAnsi(null), '');
     assert.equal(effortAnsi(undefined), '');
     // 256 色终端走 38;5（灰蓝只能退到灰阶档）
-    assert.equal(effortAnsi('max', '256color'), '38;5;250');
-    assert.equal(effortAnsi('high', '256color'), '38;5;247');
-    assert.equal(effortAnsi('low', '256color'), '38;5;243');
+    assert.equal(effortAnsi('max', '256color'), '38;5;254');
+    assert.equal(effortAnsi('high', '256color'), '38;5;146');
+    assert.equal(effortAnsi('low', '256color'), '38;5;103');
   });
 
   // 昵称（2026-10-03 用户需求）：用户给定的俏皮话池里随机抽，附在作者名后。
