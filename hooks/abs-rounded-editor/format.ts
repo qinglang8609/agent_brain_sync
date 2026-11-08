@@ -101,12 +101,12 @@ export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
 
 /** 边框用：同色相压暗降饱和 —— 文字要能读，边框要不抢眼（2026-11-08 用户反馈）。 */
 export const EFFORT_BORDER: Record<string, { rgb: string; ansi256: number }> = {
-  max: { rgb: '138;148;172', ansi256: 103 },
-  xhigh: { rgb: '152;162;184', ansi256: 103 },
-  high: { rgb: '166;176;196', ansi256: 103 },
-  medium: { rgb: '120;132;160', ansi256: 60 },
-  low: { rgb: '96;108;136', ansi256: 60 },
-  minimal: { rgb: '72;84;108', ansi256: 60 },
+  max: { rgb: '232;238;248', ansi256: 255 },
+  xhigh: { rgb: '240;244;252', ansi256: 255 },
+  high: { rgb: '248;250;253', ansi256: 231 },
+  medium: { rgb: '197;205;220', ansi256: 189 },
+  low: { rgb: '168;178;204', ansi256: 146 },
+  minimal: { rgb: '138;152;184', ansi256: 110 },
 }
 
 export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
