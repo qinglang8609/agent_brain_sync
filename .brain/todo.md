@@ -4,6 +4,9 @@
 
 ## Done
 
+### 2026-11-08
+- [x] index-session-row-desc [[fanchao]] — 归档 index 行带任务首段描述；本仓库 16 条旧机器行已回填；821 测试 + lint 绿 【落地】 (完成 2026-11-08 01a1b50b-9994-71)
+
 ### 2026-11-07
 - [x] release-effort-color [[fanchao]] — 1.28.6 已提交+打标+推送+npm publish；全局包与 ~/.pi 宿主副本已更新到新码（--prefer-online 绕过元数据缓存） 【落地】 (完成 2026-11-07 01a1b50b-9994-71)
 - [x] release-1.28.5 [[fanchao]] — 提交待提交改动、bump 版本、npm publish、本地安装验证 — 820 测试与 check 全绿；3 个 commit（48aeaee feat、964419d docs、fcfd4fd 1.28.5）推 main 并打 tag v1.28.5；npm publish 1.28.5；本地 npm pack 后 npm i -g 真实安装（95 依赖），abs --version=1.28.5，pi 与 omp 宿主扩展重装且与 repo 副本一致。registry 传播延迟，npm view 此刻仍返回 1.28.4 【落地】 (完成 2026-11-07 01a1b538-e9cd-74)
@@ -23,16 +26,8 @@
 - [x] release-publish-local [[fanchao]] — 提交未提交改动、推送、npm 发布、本地全局更新 【落地】 (完成 2026-11-06 01a1b105-5425-71)
 - [x] command-surface-cleanup [[fanchao]] — 命令面 27→14（保留别名）、SKILL 303→~120 行分层、单一入口表；代码结构不动 — help 按意图分六组；index/log/status→show、db search→search、summon→ingest --list（旧名保留别名）；SKILL 303→107 行，长尾移两页；capture/concept 实测非重复保留。801 全绿 【落地】 (完成 2026-11-06 01a1a9c6-6907-71)
 
-### 2026-11-05
-- [x] wrapup-push-release [[fanchao]] — 收尾沉淀 → 推送 git → 发版 1.26.0 → 本地安装验证 — 收尾沉淀+11commit推送（pre-push 796全绿）+npm发布1.26.0（直查registry确认）+本地安装重装hook/skill/MCP+安装版端到端验证全通 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
-- [x] db-search-no-rules-mcp [[fanchao]] — db search 加 --no-rules，并发到 MCP 暴露 abs_search — db search 加 --no-rules（43→22 行）+ MCP 暴露 abs_search（12 工具）；推翻「query/db search 重复」的原判断——实测是详略两档；796 全绿连跑三次 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
-- [x] audit-fixes [[fanchao]] — 修审查发现：ingest md5 空串、capture L5 产出坏页、L7 死代码、两 hook 重复函数 — 修 md5 空串/L5 坏页/L7 死代码；hook 公共模块方案经核实会崩（单文件安装）已撤回；765 全绿 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
-- [x] load-unfilled-session-pages [[fanchao]] — abs load 顶部加「未填会话页」段（只数条数+页名），并真机验证 hook 接线 — load 顶部加未填会话页段（只数条数+页名）；真机验证查出 hook 指向全局包缺 ingest，重装后端到端跑通 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
-- [x] trim-abs-commands [[fanchao]] — 精简：capture --layer 7 改拒、MCP 删 abs_board 与 abs_wrapup — capture --layer 7 改拒指向 note；MCP 删 abs_board/abs_wrapup（13→11，握手验证）；758 全绿 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
-- [x] ingest-auto-trigger [[fanchao]] — 把 ingest 接到 session_shutdown 机械触发（--last --auto），不往对话插话 — ingest 接进 session_shutdown（--last --auto），机械触发不靠 LLM 想起来；758 测试全绿 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
-- [x] optimize-session-summary [[fanchao]] — 调研现有会话总结提炼实现与 7 层思考机制，再做优化 — abs ingest 落地：会话落成结构化页（技术/业务/讨论三种形状，按改过文件机械判），frontmatter 记 session-id 双向回溯；会话页检索亮度乘 0.5；lint NO-TAIL 按 kind 分档。753 测试全绿 【落地】 (完成 2026-11-05 01a1a9c6-6907-71)
-
 ### Archived
+- [[log-2026-11-05]] 完成任务 7 条
 - [[log-2026-11-04]] 完成任务 5 条
 - [[log-2026-11-03]] 完成任务 4 条
 - [[log-2026-11-02]] 完成任务 9 条

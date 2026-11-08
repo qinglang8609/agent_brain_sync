@@ -231,6 +231,11 @@ export function archiveDoneInText(text, { keepDays = 3, from = today(), maxLines
       // 会把子项一起计数（实测：1 任务 + 1 子项 → 报 "完成任务 2 条"）。
       // 归档标记的语义是「完成了多少条任务」，子项不算。
       count: gLines.filter((l) => /^- \[x\]/.test(l)).length,
+      // index 行描述（2026-11-08 用户要求）：归档页在 index 里只有
+      // 「日期（会话快照 + 任务归档）」这种零信息量行，回头找某天的活查不到。
+      // 取每个任务的**第一段**（登记时 `--note` 的那句话）拼成摘要，给
+      // maintain.js 写 index 行用。纯函数放在这，cli/store 测试可直接断言。
+      brief: archiveBrief(gLines),
     });
   }
 
@@ -240,6 +245,22 @@ export function archiveDoneInText(text, { keepDays = 3, from = today(), maxLines
   const entries = archived.map((g) => ({ slug: g.slug, count: g.count }));
   const rebuilt = [...head, ...renderDoneGroups(keepUnits), ...mergeArchiveLines(archiveLines, entries)];
   return { text: rebuilt.join('\n').replace(/\n+$/, '\n'), archived, skipped, count };
+}
+
+/** 从任务行抽第一段描述：`<id> [[who]] — 第一段 — 结语 【kind】 (完成 …)`。
+ *  第一段 = 第一个 `—` 到下一个 `—`/`【`/`(完成` 之间（即登记时的 --note）。
+ *  没有的行（如老格式 `- [x] KEEP (完成 …)`）跳过；一行都没有返回空串。
+ *  给 index 行用 —— 只取每条任务的首段、截 60 字，别把结语也卷进来。 */
+export function archiveBrief(lines) {
+  const parts = [];
+  for (const raw of lines) {
+    if (!/^- \[x\]/.test(raw)) continue;    // 断点/子项行不参与
+    const s = raw.replace(/^\s*-\s*\[x\]\s*/, '');
+    const m = s.match(/—\s*([\s\S]*?)(?=\s*—|\s*【|\s*\(完成|$)/);
+    const t = m ? m[1].trim().replace(/\s+/g, ' ') : '';
+    if (t) parts.push(t);
+  }
+  return parts.join('；');
 }
 
 /** 归档页正文（按日期分组，原文保留）。供同日追写复用。 */

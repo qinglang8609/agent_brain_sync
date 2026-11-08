@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-11-08 12:55] [[fanchao]] dev | 修 Sessions 索引行查不到：归档登记 index 时从任务行抽首段（登记时的 --note，多条用「；」连、截 110 字），无描述行回退原样；本仓库 16 条旧机器模板行按同格式回填（手写描述行不覆盖）。加载视图仍折叠计数（读取侧不随规模增长），明细走 abs show index。821 测试 + lint 绿
 ## [2026-11-07 20:30] [[fanchao]] dev | 发布 1.28.6：推理强度主色换成用户指定的灰蓝六档（xhigh/high 明显提亮，medium/low/minimal 各提约 20%，同色相 H≈219° 只提亮度），常量 EFFORT_GREEN→EFFORT_COLOR，测试删掉「必须绿系」的色相断言只钉色值。820 测试 + check 绿才发；npm publish 后全局安装遇元数据缓存（ETARGET，见 [[npm-publish-flow]] 坑 8），加 --prefer-online 装成；grep EFFORT_COLOR 确认全局包、~/.pi 宿主副本、仓库三处同为 1.28.6
 ## [2026-11-07 17:13] [[fanchao]] note | 发版 1.28.5 时 npm i -g . 会把全局包装成指向仓库的符号链接（依赖从仓库 node_modules 解析），要真实安装得先 npm pack 再 npm i -g ./xxx.tgz
 ## [2026-11-07 16:18] [[fanchao]] note | 染输入框颜色要连边框一起染：空输入框里没字，只染文字等于没改。pi 的边框色来自主题 borderColor，扩展要用 roundBorder 的整行重新上色路径盖掉它。

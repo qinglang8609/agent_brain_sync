@@ -2270,7 +2270,7 @@ describe('Done 归档', () => {
     const todoP = join(projectA, '.brain', 'todo.md');
     await fs.writeFile(todoP, mk([
       '### 2026-09-10', '', '- [x] KEEP  (完成 2026-09-10)', '',
-      '### 2026-09-04', '', '- [x] OLD-A  (完成 2026-09-04)', '  ↳ 断点: 当时的细节', '',
+      '### 2026-09-04', '', '- [x] OLD-A [[fanchao]] — 修归档描述: index 行要能回头查 — 结语部分不该进描述 【落地】 (完成 2026-09-04)', '  ↳ 断点: 当时的细节', '',
     ]), 'utf8');
     const out = await cmdTodoArchive({ dir: projectA, keepDays: 3 });
     assert.ok(out.startsWith('✓'), out);
@@ -2281,6 +2281,27 @@ describe('Done 归档', () => {
     assert.ok(page.includes('OLD-A') && page.includes('当时的细节'), '归档页应保留原文含断点');
     const idx = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
     assert.ok(idx.includes('[[log-2026-09-04]]'), 'index 应登记归档页');
+    // 2026-11-08 用户要求：index 行带任务描述，光写「日期（会话快照 + 任务归档）」查不到
+    assert.ok(
+      idx.includes('[[log-2026-09-04]] — 2026-09-04（会话快照 + 任务归档）：修归档描述: index 行要能回头查'),
+      `index 行应带任务首段描述: ${(idx.match(/.*log-2026-09-04.*/) || [''])[0]}`,
+    );
+    // 结语段（第二段）与结论标记不得卷进描述
+    assert.ok(!idx.includes('结语部分不该进描述'), '描述只取首段，不卷结语');
+    assert.ok(!idx.includes('【落地】'), '描述不含结论标记');
+  });
+
+  test('archiveBrief：多任务用「；」连，断点/老格式行跳过', async () => {
+    const { archiveBrief } = await import('../src/todo.js');
+    const lines = [
+      '- [x] a [[w]] — 第一件事 — 结语甲 【落地】 (完成 2026-09-04 x)',
+      '- [x] b [[w]] — 第二件事 【否决】 (完成 2026-09-04 x)',
+      '  ↳ [ ] 断点不参与',
+      '- [x] OLD (完成 2026-09-04)',
+    ];
+    assert.equal(archiveBrief(lines), '第一件事；第二件事');
+    assert.equal(archiveBrief(['- [x] OLD (完成 x)']), '', '无描述行→空串');
+    assert.equal(archiveBrief([]), '');
   });
 
   // 回归: 归档页是新生成页，若无双链会被 lint 判 ORPHAN（曾如此）。

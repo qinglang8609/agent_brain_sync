@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { brainPath, requireBrain, absLogDir } from '../index.js';
 import { editFile, SKIP } from '../lock.js';
 import { appendWrapup } from '../wrapup.js';
-import { readIfExists } from '../text.js';
+import { clip, readIfExists } from '../text.js';
 import { getUser } from '../userconfig.js';
 import { today, localStamp, archiveDoneInText, upsertArchiveSection, TODO_MAX_LINES } from '../todo.js';
 export async function cmdWrapup({ dir }) {
@@ -100,7 +100,15 @@ export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {})
     const sIdx = index.indexOf('## Sessions');
     if (sIdx === -1) return SKIP;
     const after = index.indexOf('\n## ', sIdx + 1);
-    const add = missing.map((g) => `- [[${g.slug}]] — ${g.date}（会话快照 + 任务归档）`).join('\n');
+    // index 行要能回头查（2026-11-08 用户要求）：光写「日期（会话快照 + 任务归档）」
+    // 查不到那天干了什么。描述 = archiveBrief 的任务首段（截 110 字）；
+    // 老数据/无描述时退回原样 —— 不造假描述。
+    // 行是覆盖式登记（registerInIndex 同族），这里只在**首次登记**写，之后不追改。
+    const add = missing.map((g) => {
+      const b = String(g.brief || '').trim();
+      const desc = b ? `${g.date}（会话快照 + 任务归档）：${clip(b, 110)}` : `${g.date}（会话快照 + 任务归档）`;
+      return `- [[${g.slug}]] — ${desc}`;
+    }).join('\n');
     const next = after === -1
       ? `${index.replace(/\s*$/, '')}\n${add}\n`
       : index.slice(0, after) + `\n${add}` + index.slice(after);
