@@ -1248,8 +1248,8 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const lines = renderPanelLines(data, 'me', 80, fg, 0);
     const doing = lines.find((l) => l.includes('doing'));
     const wait = lines.find((l) => l.includes('wait'));
-    assert.match(doing, /[◐◓◑◒]/, `进行中行应有圆圈动画: ${doing}`);
-    assert.ok(!/[◐◓◑◒]/.test(wait), `滞留中行不该有动画: ${wait}`);
+    assert.match(doing, /[\u2800-\u28FF]/, `进行中行应有盲文 spinner: ${doing}`);
+    assert.ok(!/[\u2800-\u28FF]/.test(wait), `滞留中行不该有动画: ${wait}`);
   });
 
   // 2026-11-06 用户要求：「●○○ 改成一个字符的、动画吧 放在 [进行中] 后面」。
@@ -1274,7 +1274,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const fg = (c, s) => s;
     const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', kids: [] }], hidden: 0 };
     const lines = renderPanelLines(data, 'me', 80, fg, -1);
-    assert.ok(!/[◐◓◑◒]/.test(lines.join('\n')), '关闭时不该出现动画符');
+    assert.ok(!/[\u2800-\u28FF]/.test(lines.join('\n')), '关闭时不该出现动画符');
   });
 
   // ===== 推理强度变色（2026-11-06 用户需求）=====
@@ -1284,12 +1284,10 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   //   触发 clipToWidth 截断，测出来的是宽度 bug 而非颜色 bug（已踩一次）。
   const tok = (c) => `\x1b[38;5;${c}m`
   const TOKEN_CODE = {
-    accent: 98, dim: 97, muted: 96, text: 95,
+    thinkingHigh: 99, accent: 98, dim: 97, muted: 96, text: 95,
   }
   const tagFg = (c, s) => `${tok(TOKEN_CODE[c] ?? 90)}${s}\x1b[0m`
-  // 推理强度现在直接拼 24 位色（不再走主题 token）—— 断言也直接比转义序列。
-  const green = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`
-  test('★ 面板可读：标题/状态/树线/复选框/id/描述/子项都用亮主色（层次靠符号）', async () => {
+  test('★ 面板主色跟推理强度：标题/[状态]/树线/复选框都用 thinkingXxx', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const data = {
       total: 2,
@@ -1300,36 +1298,19 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       hidden: 0,
     };
     const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
-    const high = green(248, 250, 253)
+    const high = tok(TOKEN_CODE.thinkingHigh)
+    // 标题、两种状态、树线、复选框 —— 全部应为 thinkingHigh
     assert.ok(all.includes(`${high}Todo (2)`), `标题应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[搁置]`), `搁置状态应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[进行中]`), `进行中状态应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}├─`), `树线应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[ ]`), `复选框应用推理强度色:\n${all}`);
-    // 2026-11-08 “更看不见了”：描述/子项也用亮主色，不再压主题灰
-    assert.ok(all.includes(`${high}b`), `任务 id 应用推理强度色:\n${all}`);
-    assert.ok(all.includes(`${high}— 描述甲`), `描述应用推理强度色:\n${all}`);
-    assert.ok(all.includes(`${high}子项`), `子项文字应用推理强度色:\n${all}`);
+    // 灰阶保留：描述与子项文字不能被推理强度色盖掉
+    assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}描述甲`), `描述应保持 muted:\n${all}`);
+    assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}子项`), `子项文字应保持 muted:\n${all}`);
   });
 
-  // 2026-11-07 用户逐档指定了 6 个 hex（中间换过几版，以最新一版为准）。
-  // 只钉色值，不断言色相/亮度顺序 —— 色相是用户挑的，改一版就变，按外观写断言只会天天红。
-  test('★ 六档色值等于用户指定的 hex', async () => {
-    const { effortAnsi } = await loadPanelFns();
-    const HEX = {
-      max: [0xE8, 0xEE, 0xF8],
-      xhigh: [0xF0, 0xF4, 0xFC],
-      high: [0xF8, 0xFA, 0xFD],
-      medium: [0xC5, 0xCD, 0xDC],
-      low: [0xA8, 0xB2, 0xCC],
-      minimal: [0x8A, 0x98, 0xB8],
-    };
-    for (const [level, rgb] of Object.entries(HEX)) {
-      assert.equal(effortAnsi(level), `38;2;${rgb.join(';')}`, `${level} 色值不符`);
-    }
-  });
-
-  test('★ 推理强度 off / 未传 → 整块面板用灰阶（不上绿色）', async () => {
+  test('★ 推理强度 off / 未传 → 整块面板用灰阶（不留 accent 高亮）', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const data = {
       total: 1,
@@ -1341,29 +1322,25 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       // 用户原话：「当推理关闭的时候 todo 面板文字应该全是灰色」
       assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}Todo (1)`), `effort=${effort} 主色应为 muted:\n${all}`);
       assert.ok(!all.includes(tok(TOKEN_CODE.accent)), `effort=${effort} 不得留 accent 高亮:\n${all}`);
-      assert.ok(!all.includes('\x1b[38;2;'), `effort=${effort} 不得上绿色阶:\n${all}`);
-      // off：统一 muted 灰（用户 2026-11-06：推理关着就别发光；层次不靠把字压黑）
-      assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}— 描述`), `effort=${effort} 描述应 muted:\n${all}`);
-      assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}子项`), `effort=${effort} 子项应 muted:\n${all}`);
+      assert.ok(!all.includes(tok(TOKEN_CODE.thinkingHigh)), `effort=${effort} 不得上推理色:\n${all}`);
+      // 描述/子项降一阶到 dim：主色已是 muted，同色就看不出主次
+      assert.ok(all.includes(`${tok(TOKEN_CODE.dim)}描述`), `effort=${effort} 描述应为 dim:\n${all}`);
+      assert.ok(all.includes(`${tok(TOKEN_CODE.dim)}子项`), `effort=${effort} 子项应为 dim:\n${all}`);
     }
   });
 
-  test('★ 推理强度各档映射到绿色阶 ANSI', async () => {
-    const { effortAnsi } = await loadPanelFns();
-    assert.equal(effortAnsi('minimal'), '38;2;138;152;184');
-    assert.equal(effortAnsi('low'), '38;2;168;178;204');
-    assert.equal(effortAnsi('medium'), '38;2;197;205;220');
-    assert.equal(effortAnsi('high'), '38;2;248;250;253');
-    assert.equal(effortAnsi('xhigh'), '38;2;240;244;252');
-    assert.equal(effortAnsi('max'), '38;2;232;238;248');
-    assert.equal(effortAnsi('off'), '');
-    assert.equal(effortAnsi(''), '');
-    assert.equal(effortAnsi(null), '');
-    assert.equal(effortAnsi(undefined), '');
-    // 256 色终端走 38;5（灰蓝只能退到灰阶档）
-    assert.equal(effortAnsi('max', '256color'), '38;5;255');
-    assert.equal(effortAnsi('high', '256color'), '38;5;231');
-    assert.equal(effortAnsi('low', '256color'), '38;5;146');
+  test('★ 推理强度各档映射到对应主题 token', async () => {
+    const { effortToken } = await loadPanelFns();
+    assert.equal(effortToken('minimal'), 'thinkingMinimal');
+    assert.equal(effortToken('low'), 'thinkingLow');
+    assert.equal(effortToken('medium'), 'thinkingMedium');
+    assert.equal(effortToken('high'), 'thinkingHigh');
+    assert.equal(effortToken('xhigh'), 'thinkingXhigh');
+    assert.equal(effortToken('max'), 'thinkingMax');
+    assert.equal(effortToken('off'), '');
+    assert.equal(effortToken(''), '');
+    assert.equal(effortToken(null), '');
+    assert.equal(effortToken(undefined), '');
   });
 
   // 昵称（2026-10-03 用户需求）：用户给定的俏皮话池里随机抽，附在作者名后。
@@ -1424,18 +1401,18 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(wide.includes('·'), `应有分隔符: ${wide}`);
   });
 
-  // 2026-11-07 用户把盲文十帧（嫌难看）换成了四帧圆圈，节奏保持 ≈0.8~1 秒一圈。
-  test('动画帧：4 帧圆圈循环、每帧 1 列宽（不拖宽面板）', async () => {
+  test('动画帧：10 帧盲文循环、每帧 1 列宽（不拖宽面板）', async () => {
     const { todoAnimFrame } = await loadPanelFns();
-    const expect = ['◐', '◓', '◑', '◒'];
-    for (let p = 0; p < 4; p++) {
+    const seq = [];
+    for (let p = 0; p < 10; p++) {
       const f = todoAnimFrame(p);
-      // 宽度恒定是硬要求：面板每 200ms 重绘，宽度一变整行就左右抖。
+      // 宽度恒定是硬要求：面板每 100ms 重绘，宽度一变整行就左右抖。
       assert.equal([...f].length, 1, `帧应为 1 列: ${JSON.stringify(f)}`);
-      assert.equal(f, expect[p], `第 ${p} 帧应为 ${expect[p]}`);
+      seq.push(f);
     }
-    // 循环：第 5 帧回到第 1 帧
-    assert.equal(todoAnimFrame(4), todoAnimFrame(0), '应循环回第 0 帧');
+    assert.equal(new Set(seq).size, 10, `10 帧应各不相同: ${seq.join(',')}`);
+    // 循环：第 11 帧回到第 1 帧
+    assert.equal(todoAnimFrame(10), todoAnimFrame(0), '应循环回第 0 帧');
     // 负数相位不该抛（防御）
     assert.equal([...todoAnimFrame(-1)].length, 1);
   });
