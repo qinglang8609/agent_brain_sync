@@ -935,41 +935,9 @@ function clipToWidth(s: string, width: number): string {
 //
 // 为何用盲文点阵而不是 ⠋⠙⠹ 之外的 ASCII 旋转符：
 //   ⠿ 系符号在等宽字体里都是 1 列宽，且视觉上是个转动的方框，比 | / - \ 均匀。
-// 为何帧宽必须恒定：面板每 250ms 重绘，宽度一变整行就会左右抖。盲文恰好全是 1 列。
-const TODO_ANIM_FRAMES = ['◐', '◓', '◑', '◒']
-const TODO_ANIM_MS = 200
-
-/** 动画相位（每 tick +1）。模块级 —— 同 agentEndSeen，闭包 flag 在重复注册时不共享。 */
-let animPhase = 0
-let animTimer: ReturnType<typeof setInterval> | undefined
-
 /** 当前推理强度（off/minimal/low/…/max）。模块级，理由同上：widget factory 每帧重新调，
  *  拿不到 ctx，只能由事件回调先存好。2026-11-06 用户需求：面板主色跟推理强度走。 */
 let effortLevel = ''
-
-/** 启动/保持动画定时器。重复调用不会叠加（已存在则不动）。
- * getTui 是为了每 tick 拿**当前**的 tui 引用 —— widget 可能因刷新被重建，
- * 持旧的引用会调到一个已被丢弃的 renderer。 */
-function startAnimTimer(getTui: () => any): void {
-  if (animTimer) return
-  animTimer = setInterval(() => {
-    animPhase++
-    try { getTui()?.requestRender?.() } catch {}
-  }, TODO_ANIM_MS)
-  // 别阻止进程退出（扩展是宿主进程的一分子，定时器不该吊住事件循环）
-  ;(animTimer as any)?.unref?.()
-}
-
-function stopAnimTimer(): void {
-  if (animTimer) { clearInterval(animTimer); animTimer = undefined }
-}
-
-/** 取当前动画帧（phase 每 tick +1，由定时器驱动）。非进行中的行不传 phase（不显示）。 */
-export function todoAnimFrame(phase: number): string {
-  const n = TODO_ANIM_FRAMES.length
-  const i = ((Math.floor(phase) % n) + n) % n
-  return TODO_ANIM_FRAMES[i]
-}
 
 /**
  * 推理强度 → 主题色 token。空串表示「不上推理色，用调用方给的兼底色」。
@@ -1008,7 +976,6 @@ export function renderPanelLines(
   who: string,
   width: number,
   fg: (color: string, s: string) => string,
-  animPhase = -1,
   nickname = '',
   effort = '',
 ): string[] {
@@ -1059,11 +1026,9 @@ export function renderPanelLines(
     //  全篇没有 └─ 收尾，子项行的 │ 又延伸到视觉底部，看起来像列表被截断。）
     const isLast = i === lastIdx
     const branch = isLast ? '└─' : '├─'
-    // 进行中的行带一个小动画（其余行不加，避免满屏都在跳）
-    // 单字符 spinner 紧跟 [进行中]：靠前放才能一眼看到（放行尾会被长描述挤到前面去看不见）。
-    // 2026-11-06 用户要求：「放在 [进行中] 后面」。
+    // 进行中的行曾带圆圈动画（2026-11-08 用户定：「这个动画没啥用」，整个去掉）。
+    // 去掉后 [进行中] 靠状态色区分，不再额外消耗一次 200ms 重绘。
     const hasState = ['进行中', '讨论中', '搁置', '滞留中'].includes(t.state)
-    const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + paint(C.doing, todoAnimFrame(animPhase)) : ''
     // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
     const eff = effortAnsi(effort, 'truecolor') || C.desc
@@ -1071,7 +1036,7 @@ export function renderPanelLines(
     const stPart = hasState
       ? paint(stateAnsi(t.state), `[${t.state}]`)
       : paint(eff, '[待办]')
-    const head = `${paint(C.tree, branch)} ${box}${stPart}${anim} ${paint(eff, t.id)}`
+    const head = `${paint(C.tree, branch)} ${box}${stPart} ${paint(eff, t.id)}`
     const desc = t.desc ? ' ' + paint(C.desc, `— ${t.desc}`) : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
@@ -1097,13 +1062,13 @@ export function renderPanelLines(
 /** 隐藏面板。**必须主动 requestRender** —— 否则数据清了、屏幕还留着旧画面。
  *
  * 坑(2026-10-05 用户实报): 任务全标完后面板不消失, 按 ESC 或重启才正常。
- * 根因: 唯一的重绘入口是动画定时器里的 requestRender, 而"任务全完成"恰好让
- *   needAnim=false → stopAnimTimer() → 从此没有任何人请求重绘 → 屏幕冻结在旧帧。
- * 即"消失"这个动作本身把它自己的重绘通道关掉了。
- * 故消失路径要自己 requestRender 一次。 */
+ * 根因: 当时唯一的重绘入口是动画定时器里的 requestRender，而"任务全完成"恰好让
+ *   needAnim=false → 停定时器 → 从此没有任何人请求重绘 → 屏幕冻结在旧帧。
+ * 动画已拆（2026-11-08），定时器不再存在，但这个坑改头换面仍然成立：
+ * 重绘只能由事件主动请求，少一处就静默冻结。
+ */
 function hidePanel(ui: any): void {
   try { ui.setWidget(PANEL_KEY, undefined) } catch {}
-  stopAnimTimer()
   try { lastTui?.requestRender?.() } catch {}
 }
 
@@ -1137,7 +1102,6 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
               who,
               width,
               (c: string, s: string) => theme.fg(c, s),
-              animPhase,
               sessionNickname,
               effortLevel,
             ),
@@ -1146,15 +1110,9 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
       },
       { placement: 'aboveEditor' },
     )
-    // 只在真有“进行中”任务时跑定时器 —— 否则白刷 CPU（无动画可播）。
-    const needAnim = data.rows.some((t) => t.state === '进行中')
-    if (needAnim) startAnimTimer(() => tuiRef)
-    else stopAnimTimer()
-    // ★ 无动画时得自己刷一帧。
-    //   若这里不主动刷，从“有任务”变成“无任务”时屏幕会冻结在旧帧
-    //   （标题还写着旧计数）—— 与 2026-10-05 那个静默 bug 同一族。
-    //   仍在 needAnim 时不用管：定时器每帧会刷。
-    if (!needAnim) try { lastTui?.requestRender?.() } catch {}
+    // 动画去掉后（2026-11-08），每次刷新都得自己请求重绘 ——
+    // 没有定时器兜底了，漏这一句屏幕会冻结在旧帧（标题还写着旧计数）。
+    try { lastTui?.requestRender?.() } catch {}
   } catch {
     hidePanel(ui)
   }
@@ -1337,7 +1295,6 @@ export default function absPiHook(pi: ExtensionAPI): void {
   })
 
   pi.on("session_shutdown", (_e: any, ctx: any) => {
-    stopAnimTimer() // 面板没了，动画定时器必须一起停（否则残留定时器白刷已丢弃的 tui）
     snapshotWrapup((ctx && ctx.cwd) || process.cwd())
     snapshotSessionPage((ctx && ctx.cwd) || process.cwd(), sessionIdFor(ctx))
     logHook("session_shutdown").catch(() => {})

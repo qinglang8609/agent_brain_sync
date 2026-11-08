@@ -3,8 +3,9 @@ title: 知识自我进化：能看出知识在往哪走
 tags: [concept, 进化, 图谱, 设计]
 author: fanchao
 updated: 2026-11-02
-status: active
+status: superseded
 layer: 4
+superseded-by: no-graph-db
 ---
 
 # 知识自我进化

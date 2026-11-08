@@ -3,7 +3,7 @@
 // 测试进程里没有那个包；纯函数抽出来才能直接断言。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildStatus, effortAnsi, holdAnsi, leadSpanOf, paintAnsi, roundBorder, shortenModel, shortTokens, textWidth } from '../hooks/abs-rounded-editor/format.ts';
+import { buildStatus, effortAnsi, holdAnsi, paintAnsi, roundBorder, shortenModel, shortTokens, textWidth } from '../hooks/abs-rounded-editor/format.ts';
 
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 
@@ -18,31 +18,16 @@ describe('输入框状态橙 #F59E0B', () => {
     assert.equal(holdAnsi('256color'), '38;5;214');
   });
 
-  it('leadSpanOf：抠出 pi 画在左边框的那段 working 状态', () => {
-    assert.equal(leadSpanOf('── ⠼ Working ' + '─'.repeat(20)), '⠼ Working');
-    assert.equal(leadSpanOf('── ⠋ ' + '─'.repeat(20)), '⠋');   // 只剩光轮子的窄形态
-  });
-
-  it('leadSpanOf：纯虚线行没有 working 段 → 空串', () => {
-    assert.equal(leadSpanOf('─'.repeat(40)), '');
-  });
-
-  it('leadSpanOf：pi 的滚动提示 ↑/↓ N more 不当成 working，不上橙', () => {
-    // 那两个是 pi 自己的滚动提示（super.renderTopBorder 的 createScrollBorder），
-    // 不是工作状态；染成橙就是错色。
-    assert.equal(leadSpanOf('─── ↑ 3 more ' + '─'.repeat(20)), '');
-    assert.equal(leadSpanOf('─── ↓ 2 more ' + '─'.repeat(20)), '');
-  });
-
-  it('roundBorder：working 段与右标签上橙，虚线仍走原色，宽度不变', () => {
+  it('roundBorder：只有右标签上橙，working 段跟框线同色', () => {
     const top = '── ⠼ Working ' + '─'.repeat(30);
     const gray = (s) => `\x1b[90m${s}\x1b[39m`;
     const orange = (s) => `\x1b[${O}m${s}\x1b[39m`;
-    const got = roundBorder(top, gray, '╭', '╮', '5.9%/1.0M DeepSeek-V4.1-Flash', '', { leadFg: orange, labelFg: orange });
-    assert.ok(got.includes(`\x1b[${O}m⠼ Working\x1b[39m`), `working 段应上橙: ${got}`);
+    const got = roundBorder(top, gray, '╭', '╮', '5.9%/1.0M DeepSeek-V4.1-Flash', '', { labelFg: orange });
     assert.ok(got.includes(`\x1b[${O}m5.9%/1.0M DeepSeek-V4.1-Flash\x1b[39m`), `状态文字应上橙: ${got}`);
-    assert.ok(got.includes('\x1b[90m╭'), `圆角仍走原色: ${got}`);
-    assert.ok(!got.includes(`\x1b[${O}m─`), `虚线不该上橙: ${got}`);
+    // 用户 2026-11-08 实测：“working 不要变色，要与输入框线条颜色一致，不要变成搁置黄”。
+    // 所以它必须随整行走 fg，而不是自己一段橙。
+    assert.ok(!got.includes(`\x1b[${O}m⠼ Working`), `working 段不该上橙: ${got}`);
+    assert.ok(got.startsWith('\x1b[90m╭── ⠼ Working'), `working 段应走框线色（同一段灰色）: ${got}`);
     assert.equal([...strip(got)].length, [...top].length + 2, '宽度只多了两个圆角');
   });
 

@@ -2,8 +2,7 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdStatus, cmdLoad, cmdRecall, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede, cmdReview } from '../src/store.js';
-import { cmdDbRebuild, cmdDbSearch, cmdDbStatus, cmdDbEvolve, addProject } from '../src/brain/db-cmd.js';
+import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede, cmdReview } from '../src/store.js';
 import { cmdCapture } from '../src/brain/capture.js';
 import { cmdSummon } from '../src/brain/summon-cmd.js';
 import { cmdIngest } from '../src/brain/ingest.js';
@@ -340,15 +339,13 @@ function parseArgv(args) {
 }
 const usage = `abs — 跨会话记忆（.brain/ 图谱）
 
-怎么用：按你要做的事找。相近命令已折叠，旧别名已删（index/status/summon/db search → show/search/ingest）。
+怎么用：按你要做的事找。相近命令已折叠，旧别名已删（index/status/summon → show/ingest）。
 
 【开工】读状态，接上次的活
   abs load                  必跑。未完成 todo + 用法 + 最近日志
-  abs recall [词…]          卡住时用：按当前处境推相关页（不给词也行）
 
 【找东西】
-  abs search <词>           推荐。亮度排序 + 邻居扩散 + 跨项目
-  abs query <词…> [--all]   要字面精确时用：多词 OR，输出更短
+  abs query <词…> [--all]   多词 OR 搜全图，给页名+摘要（最省 token）
   abs resolve <页名…>       有了页名，反查文件路径
 
 【写知识】（三者落点不同，别混）
@@ -372,7 +369,6 @@ const usage = `abs — 跨会话记忆（.brain/ 图谱）
   abs review                待确认的 draft 页（升 active 或否决）
   abs supersede <页> --by <新页>   标经验已失效（不删文件）
   abs show index|log|status 看完整索引 / 流水 / 概要
-  abs db rebuild|status|evolve     重建库 / 库体检 / 进化体检
   abs init [--repair]       建图谱
 
 【其它】
@@ -485,18 +481,6 @@ const subUsage = {
     '参数:',
     '  --all    连 superseded(已失效)页一起返回',
   ].join('\n'),
-  recall: [
-    'abs recall — 卡住时主动取相关页（不需先想到检索词）',
-    '',
-    '用法:',
-    '  abs recall [词1 词2 …] [--limit N]',
-    '',
-    '不给词时，从当前处境推：活跃 todo 的关键词 + 最近改过的文件名。',
-    '给了词就只用你给的词，不混处境词。',
-    '',
-    '与 load 的区别: load 只在开工跑一次；recall 随时可跑（卡住/换方向时）。',
-    '与 query 的区别: query 枚全图命中；recall 只给按亮度亮的几页。',
-  ].join('\n'),
   config: [
     'abs config — 使用者姓名（写操作的作者标记）',
     '',
@@ -597,35 +581,6 @@ async function main() {
         rejectExtra(opts._, 'abs load');
         console.log(await cmdLoad({ dir: opts.dir }));
         break;
-      // 顶层 search（2026-11-06）：MCP 侧一直叫 abs_search，CLI 却要敲 `db search` —— 名实不符。
-      // 现在 CLI 与 MCP 同名，`db search` 保留为别名（转指向这里并提示一次）。
-      case 'search': {
-        if (opts.help) {
-          console.log('abs search — 按亮度检索知识图谱\n\n'
-            + '用法: abs search <词> [--limit N] [--full] [--no-rules] [--rules]\n\n'
-            + '  亮度排序 + 邻居扩散 + 跨项目（标 [跨项目]）。\n'
-            + '  默认省略 L1 铁律（开工时 abs load 会给）；要看加 --rules。\n'
-            + '  --full 附正文；--limit 最多几页（默认 8）。\n\n'
-            + '与 abs query 的区别：这是详略两档不是重复 ——\n'
-            + '  query 给字面 OR 命中的页名+摘要，最省 token；\n'
-            + '  search 给亮度与扩散，找「我上次怎么解决 X」更准。');
-          break;
-        }
-        if (!opts._.length) throw new Error('✗ 缺检索词\n  用法: abs search <词> [--limit N] [--full] [--no-rules]');
-        // 顶层 search 默认省略铁律（2026-11-06）：它是「查一个主题」的工具，
-        // 18 条铁律占输出近一半、每次都是噪音。要看铁律显式 --rules，或跑 abs load。
-        // db search 那个别名仍保持旧默认（带铁律），不改变老脚本的行为。
-        console.log(await cmdDbSearch({
-          query: opts._.join(' '), limit: Number(opts.limit) || 8,
-          full: !!opts.full, noRules: !opts.rules, cmdName: 'search',
-        }));
-        break;
-      }
-      case 'recall': {
-        const limit = Number(opts.limit) > 0 ? Number(opts.limit) : 5;
-        console.log(await cmdRecall({ dir: opts.dir, terms: opts._, limit }));
-        break;
-      }
       // ── 只读视图：统一到 abs show <视图>，旧名保留为别名并提示 ──
       // （2026-11-06 命令面整理：index/log/status 都是「看某个文件的现状」，
       //  三个顶层命令占三个名额却只有一个心智动作 —— 看。合成 show 一个入口。）
@@ -755,19 +710,6 @@ async function main() {
         const isAdd = sub === 'add';
         if (!isAdd && sub) throw new Error(`✗ 未知子命令 "${sub}"\n  用法: abs rule / abs rule add "一句话"`);
         console.log(await cmdRule({ dir: opts.dir, action: isAdd ? 'add' : 'list', text: rest3.join(' ') }));
-        break;
-      }
-      case 'db': {
-        const sub = opts._[0];
-        if (sub === 'rebuild') { console.log(await cmdDbRebuild({ dir: opts.dir })); break; }
-        if (sub === 'status') { console.log(await cmdDbStatus()); break; }
-        if (sub === 'evolve') { console.log(await cmdDbEvolve({ staleDays: Number(opts.staleDays) || 90 })); break; }
-        if (sub === 'add') {
-          const r = await addProject(opts.dir || process.cwd());
-          console.log(`✓ 已登记项目: ${r}\n  建库: abs db rebuild`);
-          break;
-        }
-        console.log('用法: abs db rebuild | status | evolve | add [--dir <项目根>]');
         break;
       }
       case 'query': {

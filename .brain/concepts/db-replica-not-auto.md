@@ -3,8 +3,9 @@ title: 主从数据库不是「自动同步」——写主库才同步，读从�
 tags: [concept, 数据库, 部署]
 author: fanchao
 updated: 2026-11-02
-status: active
+status: superseded
 layer: 4
+superseded-by: no-graph-db
 ---
 
 # 主从数据库的边界

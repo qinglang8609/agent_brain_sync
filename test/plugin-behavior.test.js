@@ -1172,7 +1172,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       ],
       hidden: 0,
     };
-    const lines = renderPanelLines(data, 'me', 80, fg, -1, '').map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
+    const lines = renderPanelLines(data, 'me', 80, fg).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
     const taskLines = lines.filter((l) => l.includes('进行中') || l.includes('滞留中'));
     assert.equal(taskLines.length, 2);
     for (const l of taskLines) {
@@ -1197,7 +1197,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const fg = (c, s) => s;
     const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', kids: [] }], hidden: 0 };
     for (const w of [40, 80, 120]) {
-      const lines = renderPanelLines(data, 'me', w, fg, 0, '');
+      const lines = renderPanelLines(data, 'me', w, fg);
       assert.ok(lines[0].includes('Todo ('), `首行应是标题: ${JSON.stringify(lines[0])}`);
       assert.ok(!lines.some((l) => /─{5,}/.test(l)), `不得有描边线:\n${lines.join('\n')}`);
     }
@@ -1233,8 +1233,9 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(lead(taskRow), 0, `有任务时任务行不该缩进: ${JSON.stringify(taskRow)}`);
   });
 
-  // 动画（2026-10-03 用户需求）：三个小符依次由空心变实心，只给「进行中」的行。
-  test('动画：只有「进行中」行带三帧符，其余不带', async () => {
+  // 2026-11-08 用户定：「这个动画没啥用」—— 面板里彻底不再有 spinner。
+  // 这条反向钉住：进行中的行也不该再出现任何动画符。
+  test('★ 面板不再有动画符（进行中也不显示）', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const fg = (c, s) => s;
     const data = {
@@ -1245,36 +1246,9 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       ],
       hidden: 0,
     };
-    const lines = renderPanelLines(data, 'me', 80, fg, 0);
-    const doing = lines.find((l) => l.includes('doing'));
-    const wait = lines.find((l) => l.includes('wait'));
-    assert.match(doing, /[◐◓◑◒]/, `进行中行应有圆圈动画: ${doing}`);
-    assert.ok(!/[◐◓◑◒]/.test(wait), `滞留中行不该有动画: ${wait}`);
-  });
-
-  // 2026-11-06 用户要求：「●○○ 改成一个字符的、动画吧 放在 [进行中] 后面」。
-  test('★ 单字符 spinner 紧跟在 [进行中] 之后、任务 id 之前', async () => {
-    const { renderPanelLines, todoAnimFrame } = await loadPanelFns();
-    const fg = (c, s) => s;
-    const data = { total: 1, rows: [{ state: '进行中', id: 'doing', desc: '干活', kids: [] }], hidden: 0 };
-    const line = renderPanelLines(data, 'me', 80, fg, 0)[1];
-    const frame = todoAnimFrame(0);
-    const iState = line.indexOf('进行中');
-    const iAnim = line.indexOf(frame);
-    const iId = line.indexOf('doing');
-    assert.ok(iState >= 0 && iAnim >= 0 && iId >= 0, `三个部件都得在: ${JSON.stringify(line)}`);
-    assert.ok(iState < iAnim, `spinner 应在 [进行中] 之后: ${JSON.stringify(line)}`);
-    assert.ok(iAnim < iId, `spinner 应在任务 id 之前: ${JSON.stringify(line)}`);
-    // 只占 1 列（用户明确要单字符），不能是把三点并排
-    assert.equal([...frame].length, 1, `帧应为单字符: ${JSON.stringify(frame)}`);
-  });
-
-  test('动画：animPhase=-1 时完全不显示（开关作用）', async () => {
-    const { renderPanelLines } = await loadPanelFns();
-    const fg = (c, s) => s;
-    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', kids: [] }], hidden: 0 };
-    const lines = renderPanelLines(data, 'me', 80, fg, -1);
-    assert.ok(!/[◐◓◑◒]/.test(lines.join('\n')), '关闭时不该出现动画符');
+    const lines = renderPanelLines(data, 'me', 80, fg);
+    assert.ok(!/[◐◓◑◒⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(lines.join('\n')),
+      `面板里不该再有任何动画符: ${lines.join(' | ')}`);
   });
 
   // ===== 推理强度变色（2026-11-06 用户需求）=====
@@ -1298,7 +1272,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       ],
       hidden: 0,
     };
-    const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
+    const all = renderPanelLines(data, 'me', 120, tagFg, '', 'high').join('\n');
     const plain = stripAnsi(all)
     const titleC = '\x1b[38;2;245;158;11m'
     const highC = '\x1b[38;2;150;166;198m'
@@ -1341,7 +1315,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       hidden: 0,
     };
     for (const effort of ['off', '', undefined, null]) {
-      const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', effort).join('\n');
+      const all = renderPanelLines(data, 'me', 120, tagFg, '', effort).join('\n');
       assert.ok(all.includes('\x1b[38;2;16;185;129m') || all.includes('进行中'), `effort=${effort} 仍应有进行中:\n${all}`);
       assert.ok(all.includes('\x1b[38;2;226;232;240m') || all.includes('x'), `effort=${effort} 任务字仍应亮白:\n${all}`);
     }
@@ -1416,27 +1390,11 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const fg = (c, s) => s;
     const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', kids: [] }], hidden: 0 };
     const nick = '📞 听到电话铃响就窒息的接听恐惧症';
-    const wide = renderPanelLines(data, 'fanchao', 200, fg, -1, nick)[0];
+    const wide = renderPanelLines(data, 'fanchao', 200, fg, nick)[0];
     assert.ok(wide.includes('Todo (1)'), `应含计数: ${wide}`);
     assert.ok(wide.includes('fanchao'), `标题应含作者名: ${wide}`);
     assert.ok(wide.includes('接听恐惧症'), `标题应含昵称: ${wide}`);
     assert.ok(wide.includes('·'), `应有分隔符: ${wide}`);
-  });
-
-  // 2026-11-07 用户把盲文十帧（嫌难看）换成了四帧圆圈，节奏保持 ≈0.8~1 秒一圈。
-  test('动画帧：4 帧圆圈循环、每帧 1 列宽（不拖宽面板）', async () => {
-    const { todoAnimFrame } = await loadPanelFns();
-    const expect = ['◐', '◓', '◑', '◒'];
-    for (let p = 0; p < 4; p++) {
-      const f = todoAnimFrame(p);
-      // 宽度恒定是硬要求：面板每 200ms 重绘，宽度一变整行就左右抖。
-      assert.equal([...f].length, 1, `帧应为 1 列: ${JSON.stringify(f)}`);
-      assert.equal(f, expect[p], `第 ${p} 帧应为 ${expect[p]}`);
-    }
-    // 循环：第 5 帧回到第 1 帧
-    assert.equal(todoAnimFrame(4), todoAnimFrame(0), '应循环回第 0 帧');
-    // 负数相位不该抛（防御）
-    assert.equal([...todoAnimFrame(-1)].length, 1);
   });
 });
 

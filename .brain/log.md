@@ -1,4 +1,6 @@
 # 🗒 Activity Log
+## [2026-11-08 20:53] [[fanchao]] dev | 删除 SQLite 图库整套（用户定：光写不读没用）：db.js/db-cmd.js/evolve.js 三模块、abs db/search/recall 命令、MCP abs_search、写后 autoIndex、load 的 hotPages/queryHint/cmdRecall 全删；~/.abs/graph.db(10M) 与 projects.json 已删；留下的区分清楚——abs query 是扫 .md 页的字面检索、resolve 是页名反查，都不依赖库；766 测试绿、lint 0、check 0；文档同步（README/SKILL/七层页重写，5 个库专题页 supersede 到 no-graph-db） false
+## [2026-11-08 18:06] [[fanchao]] dev | 输入框 working 状态改回框线色（用户实测：要与输入框线条同色，不要搁置黄）；只有右上角状态文字上橙；删掉 leadFg/leadSpanOf 与 3 条对应测试，840 测试绿；坑复现一次 —— abs install（全局包）装的是包里旧模板，必须 node bin/abs.js install 才装仓库新码 false
 ## [2026-11-08 16:30] [[fanchao]] dev | 堵住旧命名源头：PATH 上的全局 abs 还是 1.28.7 旧码，刚才又生成了一张 session-<日期>-s<id8> 页（被新闸 LINK-NAME-STALE/SESSIONS-NAMING 当场抓到）；已并进 log-2026-11-08 的 ## 会话 01a1ba13 段、清掉 index 残留行，并用 npm pack + npm i -g 把全局副本换成本地新码（不走发版，避免 npm i -g . 的符号链接坑） false
 ## [2026-11-08 16:28] [[fanchao]] dev | todo 面板标题从纯金 #FFD700 换成搁置橙 #F59E0B（与输入框状态同色）：纯金在暗底太抢眼，标题只是分区标签；代价是标题与 [搁置] 同色（位置分得开）。843 测试绿，已装到 ~/.pi（副本差异仅 ABS_BIN 占位符与托管标记） false
 ## [2026-11-08 16:25] [[fanchao]] dev | 输入框上边框 working 状态与右上角状态文字改橙色 #F59E0B（与 todo 面板「搁置」标签同色）；roundBorder 加 leadFg/labelFg 只染这两段、虚线圆角不变，并排除 pi 的滚动提示 ↑/↓ N more 不误染；843 测试（新增 6 条）；已 abs install 到 ~/.pi 与仓库逐字一致，需重启 pi 生效 false

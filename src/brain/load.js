@@ -5,12 +5,9 @@ import { brainPath, requireBrain } from '../index.js';
 import { getUser, placeholderWarn } from '../userconfig.js';
 import { boardText, readTodo, collapseDone } from '../todo.js';
 import { strandedFor } from '../wrapup.js';
-import { keywords, recentFiles, topicStrength, digest } from '../relevant.js';
 import { readIfExists, recentLogLines } from '../text.js';
-import { listPages } from '../lint.js';
 import { SOURCES_MAX } from '../lint.js';
-// 判「会话页骨架填没填」的唯一真源在 layers.js（入库侧 db.js 也用它算 unfilled 列）。
-// 两处必须同一个判据 —— 否则会出现「load 说不算未填、检索却把它排除掉」的矛盾。
+// 判「会话页骨架填没填」的唯一真源在 layers.js。
 import { digestFilled } from './layers.js';
 
 /** 未填会话页在 load 里最多列几个页名（其余折叠成条数）。
@@ -181,246 +178,6 @@ export function extractBlocks(todoText) {
   return out;
 }
 
-/** 从「活跃 todo + 最近改动的文件」推出当前上下文的关键词。
- *
- * 抽成公共函数（2026-11-02）：queryHint（给查询词）与 hotPages（给正文）
- * 都要用，两处各算一遍必然漂移。
- *
- * 已剔掉任务行的结构记号：`- [ ] [状态] <id> [[作者]] —` 里只有「—」后面是真内容。
- * 实测教训（2026-09-17）：不剔的话 `<id>` 与 `[[作者]]` 会进入词表，
- * 而作者名恰好有自己的 entities/<作者>.md 页 → 命中页名 → 提出「查你自己的名字」。
- */
-async function contextKeywords(root, todoText) {
-  const active = String(todoText || '')
-    .split('\n')
-    .filter((l) => /^\s*-\s*\[\s*\]/.test(l))
-    .map((l) => l.replace(/^\s*-\s*\[\s*\]\s*(?:\[[^\]]*\]\s*)?(?:\S+\s*)?/, '').replace(/\[\[[^\]]*\]\]/g, ' '))
-    .join(' ');
-  const files = await recentFiles(root, { n: 5 }).catch(() => []);
-  const src = [active, files.map((f) => f.name).join(' ')].filter(Boolean).join(' ');
-  return { kws: keywords(src), files };
-}
-
-/**
- * 开机带出「当前上下文最相关的几页」—— 只给页名 + 一句话摘要，不贴正文。
- *
- * 与 queryHint 的分工（2026-11-02 用户定）：
- *   queryHint 给「该查什么词」，本函数给「该读哪几页」。两者都只是**送达线索**，
- *   不替代 query / db search，也不贴正文。
- *
- * 为何不贴正文：既有判据是「自动带出正文会让 query 更没人用，且无法按需求变化调整词」。
- *   只给页名 + 摘要把选择权留给人：想看再 abs resolve / 读文件。
- *
- * 输入是环境事实（活跃 todo 的关键词 + 最近改过的文件），不需要人先想到搜索词 ——
- *   这正是不依赖「主动查询」的那条路。
- *
- * 降级：库不存在 / 库坏了 / 任何异常 → 返回空串，不影响 load。
- *
- * @param {string} root 项目根
- * @param {string} todoText
- * @param {number} limit 最多几页
- */
-export async function hotPagesSection(root, todoText, { limit = 3 } = {}) {
-  try {
-    const { kws } = await contextKeywords(root, todoText);
-    if (!kws.length) return '';
-    const { openDb, search, illuminate, dbPath } = await import('./db.js');
-    const { promises: fsp } = await import('node:fs');
-    const exists = await fsp.stat(dbPath()).then(() => true).catch(() => false);
-    if (!exists) return '';   // 库没建 → 静默跳过（不是错误）
-
-    // 项目名要与入库时一致 —— 铁律按项目隔离，读错项目就是串味
-    const project = String(root).split('/').filter(Boolean).pop() || '';
-    const h = openDb(dbPath());
-    try {
-      // 用几个强词合并成一组种子：逐个查再按 id 去重取最高亮度
-      const seeds = new Map();
-      for (const kw of kws.slice(0, 5)) {
-        for (const s of search(h, kw, { limit: 6 })) {
-          const prev = seeds.get(s.id);
-          if (!prev || s.bright > prev.bright) seeds.set(s.id, s);
-        }
-      }
-      if (!seeds.size) return '';
-      const lit = illuminate(h, [...seeds.values()], { limit: limit + 6 })
-        // 只留本项目的页：跨项目的经验可以查，但不该在开机首屏默认塞进来
-        .filter((r) => r.project === project)
-        // 再按**纯亮度**重排 —— illuminate 用的是「层权重 × 亮度」，
-        // 那是为了让知识页压过流水页（搜索场景对）；但开机首屏要看的是
-        // 「跟我现在干的事最贴的」，不是「层级最高的」。
-        // 实测：不重排时 L3 的 0.925 会排在 L4 的 1.000 前面 —— 读起来反直觉。
-        .sort((a, b) => b.bright - a.bright)
-        .slice(0, limit);
-      if (!lit.length) return '';
-
-      const rows = ['--- 当前最相关（按亮度，纯线索不贴正文；要看用 abs resolve <页名>）---'];
-      for (const r of lit) {
-        const one = await fsp.readFile(brainPath(root, r.dir, `${r.slug}.md`), 'utf8').catch(() => '');
-        const about = one ? digest(one, 80) : '';
-        const tag = r.from === 'spread' ? ' ↝' : '';
-        rows.push(`  ${r.bright.toFixed(2)} L${r.layer} [[${r.slug}]]${tag}${about ? ' — ' + about : ''}`);
-      }
-      return rows.join('\n');
-    } finally {
-      h.close();
-    }
-  } catch {
-    return '';   // 任何异常都不该弄坏 load
-  }
-}
-
-/**
- * 开工提示：直接给出该查的几个词，降低发起 query 的成本。
- *
- * 为何不是"替它查"（2026-09-16 用户定）：自动带出正文会让 query 更没人用，
- * 且无法按需求变化调整词。正确做法是把词准备好，查询仍由调用方发。
- *
- * 词从两个环境事实推：活跃 todo 的关键词 + 最近改过的文件名。
- *
- * 挑词用【主题级强度】排序，不取词表前几个（2026-09-17 实测修正）：
- *   原实现 `pick = [...en.slice(0,2), ...zh.slice(0,1)]` 取的是最前面的词，
- *   而 todo 行以 `<任务id> [[作者]]` 开头 → 任务 id 与用户名稳占前两位，
- *   实测输出 `abs query queryhint-noise tester 进行`（强度 0/1/0，全是废词）。
- *   现按 topicStrength（tag/页名命中数）降序取，强度 0 的一律不提示
- *   —— 命中不了任何页的词，建议去查它等于没建议。
- * 失败静默：读页出错就当没有强词，退回不提示（不影响 load）。
- *
- * @param {string} root 项目根
- * @param {string} todoText
- * @param {{name:string,body:string}[]} [pages] 已读好的页（省一次磁盘扫描）
- */
-export async function queryHint(root, todoText, pages) {
-  const { kws, files } = await contextKeywords(root, todoText);
-  if (!kws.length) return '';
-  const all = pages || await listPages(brainPath(root)).catch(() => []);
-  const strength = topicStrength(all.map((p) => ({ name: p.slug, body: p.body })), kws);
-  // 英文词优先（中文 2-gram 单看无意义，只做补充）；每组内按强度降序
-  const byStrength = (a, b) => (strength.get(b) || 0) - (strength.get(a) || 0) || a.localeCompare(b);
-  const en = kws.filter((k) => /^[a-z][a-z0-9_-]+$/.test(k)).sort(byStrength).filter((k) => strength.get(k) > 0);
-  const zh = kws.filter((k) => !/^[a-z][a-z0-9_-]+$/.test(k)).sort(byStrength).filter((k) => strength.get(k) > 0);
-  const pick = [...en.slice(0, 2), ...zh.slice(0, 1)].slice(0, 3);
-  if (!pick.length) return '';
-  const rows = [
-    '--- 开工前建议查一次（图谱里有相关经验，别重踩）---',
-    `  abs query ${pick.join(' ')}`,
-  ];
-  if (files.length) rows.push(`  （据最近改动: ${files.slice(0, 3).map((f) => f.name).join(', ')}）`);
-  return rows.join('\n');
-}
-
-/** 数 sources/ 下的 .md 文件数（只读目录，不解析内容）—— load 顶部提醒用。
- *  坑: root 是【项目根】，图谱在 root/.brain/ 下 —— 必须走 brainPath，
- *  直接用 join(root,'sources') 会 ENOENT 被 catch 吞成 0，成为又一个静默失效。 */
-async function countSources(root) {
-  try {
-    const files = await fs.readdir(brainPath(root, 'sources'));
-    return files.filter((f) => f.endsWith('.md') && !f.startsWith('_')).length;
-  } catch { return 0; }
-}
-
-
-
-/**
- * recall：卡住时主动取「跟当前处境相关的几页」，不需要先想到检索词。
- *
- * 为何要它（2026-11-03 实测）：hotPages 只挂在 load 上，于是只有开工那一刻会送页。
- *   实测一场完整会话从头到尾没调过一次 abs —— 不是检索不准（命中确实准），
- *   而是「要人先想到发起查询」这一步天然被跳过。一个出口只开一次，就等于没开。
- *
- * 与 hotPages 的分工：hotPages 是开机首屏（自动、固定 3 页）；
- *   recall 是随时可调（agent 卡住/换方向时自己跑），且能补词。
- *   两者共用 contextKeywords + 亮度搜索，不各算一套。
- *
- * 词从哪来：
- *   - 传了词 → 用它（这时它就是个带上下文的搜索，仍会补处境词）
- *   - 没传词 → 纯靠处境（活跃 todo 的关键词 + 最近改过的文件）
- * 全部凭空无词 → 说清楚缺什么，不返回空列表充数。
- *
- * @param {{dir?:string, terms?:string[], limit?:number}} opts
- */
-export async function cmdRecall({ dir, terms, limit = 5 } = {}) {
-  const given = (terms || []).flatMap((t) => String(t).trim().split(/\s+/)).filter(Boolean);
-  let root;
-  try {
-    root = await requireBrain(dir || process.cwd());
-  } catch {
-    return '未找到 .brain/ 图谱（无记忆可查）。先在项目根运行: abs init';
-  }
-  const todo = await readTodo(root).catch(() => '');
-  let kws = [];
-  let files = [];
-  try {
-    ({ kws, files } = await contextKeywords(root, todo));
-  } catch {
-    // 拔词失败不该拦住整个 recall
-  }
-  // 手动传的词优先级最高：用户/agent 已经想清楚要什么，就别把处境词混进去稀释
-  const words = given.length ? given : kws.slice(0, 5);
-  if (!words.length) {
-    return 'recall: 无从判断当前处境（todo 空、近期无改动、也没给词）。\n'
-      + '→ 直接给词: abs recall <词1> <词2>；或先 abs todo add 把在干的事登记上。';
-  }
-  try {
-    const { openDb, search, illuminate, dbPath } = await import('./db.js');
-    const { promises: fsp } = await import('node:fs');
-    const exists = await fsp.stat(dbPath()).then(() => true).catch(() => false);
-    if (!exists) return 'recall: 图数据库还没建（亮度检索需要它）。先跑: abs db rebuild';
-
-    const project = String(root).split('/').filter(Boolean).pop() || '';
-    const h = openDb(dbPath());
-    let lit;
-    try {
-      const seeds = new Map();
-      // 整串先查（实测：`db search "并发 锁"` 能出 file-write-locking，
-      // 而逐词分开查的种子表里根本没它 —— 2-gram 索引对整串和单词的切法不同，
-      // 拆开就把最有用的命中拆没了。所以整串优先，再用逐词兜底补漏。
-      const whole = given.length ? words.join(' ') : words.join(' ');
-      for (const s of search(h, whole, { limit: 12 })) seeds.set(s.id, s);
-      for (const w of words) {
-        for (const s of search(h, w, { limit: 6 })) {
-          const prev = seeds.get(s.id);
-          if (!prev || s.bright > prev.bright) seeds.set(s.id, s);
-        }
-      }
-      if (!seeds.size) {
-        return `recall [${words.join(', ')}]: 库里没搜到相关页。\n`
-          + '→ 换个说法: abs recall <别的词>；看图谱全貌: abs query <词>。';
-      }
-      // 流水页降权（2026-11-03 实测）：不加时前 5 位里挤进 2 页 sessions/log-*，
-      // 还被排到第一，把 file-write-locking 这种真经验页顶下去。
-      // 与 query 用同一套判据（lint.js 的 isTerminal），不另造。只降权不剔除。
-      const isFlow = (r) => r.dir === 'sources' || (r.dir === 'sessions' && /^log-/.test(r.slug));
-      lit = illuminate(h, [...seeds.values()], { limit: limit * 8 })
-        .filter((r) => r.project === project)
-        .sort((a, b) => (b.bright - (isFlow(b) ? 1 : 0)) - (a.bright - (isFlow(a) ? 1 : 0)))
-        .slice(0, limit);
-    } finally {
-      h.close();
-    }
-    if (!lit.length) {
-      return `recall [${words.join(', ')}]: 搜到了种子，但本项目的页没有亮起来。\n`
-        + '→ 试试 abs query <词> 看全图命中。';
-    }
-    const rows = [`recall [${words.join(', ')}] → ${lit.length} 页（按亮度；看全文: abs resolve <页名>）`];
-    if (!given.length) {
-      const why = [
-        files.length ? `近期改动 ${files.length} 个文件` : '',
-        todo ? '活跃 todo' : '',
-      ].filter(Boolean).join(' + ');
-      if (why) rows.push(`  处境: ${why}`);
-    }
-    rows.push('');
-    for (const r of lit) {
-      const one = await fsp.readFile(brainPath(root, r.dir, `${r.slug}.md`), 'utf8').catch(() => '');
-      const about = one ? digest(one, 80) : '';
-      rows.push(`  ${r.bright.toFixed(2)} L${r.layer} [[${r.slug}]]${about ? ' — ' + about : ''}`);
-    }
-    return rows.join('\n');
-  } catch (e) {
-    return `recall 失败: ${e instanceof Error ? e.message : String(e)}`;
-  }
-}
-
 /** 会话页 fill 判据：骨架段是否还没人填。
  *
  * 为何要这个判据（2026-11-05）：`abs ingest` / hook 的 --auto 落的是**空骨架**，
@@ -478,6 +235,16 @@ async function unfilledSessionSection(root, { oneLine = false } = {}) {
 }
 
 /** sources 堆积提醒：返回 [标题行, ...内容行] 或 null。失败静默。 */
+/** 数 sources/ 下的 .md 文件数（只读目录，不解析内容）—— load 顶部提醒用。
+ *  坑: root 是【项目根】，图谱在 root/.brain/ 下 —— 必须走 brainPath，
+ *  直接用 join(root,'sources') 会 ENOENT 被 catch 吞成 0，成为又一个静默失效。 */
+async function countSources(root) {
+  try {
+    const files = await fs.readdir(brainPath(root, 'sources'));
+    return files.filter((f) => f.endsWith('.md') && !f.startsWith('_')).length;
+  } catch { return 0; }
+}
+
 async function sourcesCountSection(root, { oneLine = false } = {}) {
   const nsrc = await countSources(root);
   if (nsrc <= SOURCES_MAX) return null;

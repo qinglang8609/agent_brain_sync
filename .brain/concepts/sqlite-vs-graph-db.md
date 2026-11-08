@@ -3,8 +3,9 @@ title: 图查询选 SQLite 而不是 Neo4j 的判据
 tags: [concept, sqlite, 选型, 图数据库]
 author: fanchao
 updated: 2026-11-01
-status: active
+status: superseded
 layer: 3
+superseded-by: no-graph-db
 ---
 
 # 图查询选 SQLite 而不是 Neo4j 的判据

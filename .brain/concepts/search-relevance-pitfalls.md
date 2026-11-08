@@ -3,9 +3,10 @@ title: 中文全文检索的四个实测坑：误命中、归一化、覆盖面�
 tags: [concept, 检索, sqlite, 坑]
 author: fanchao
 updated: 2026-11-02
-status: active
+status: superseded
 layer: 3
 kind: gotcha
+superseded-by: no-graph-db
 ---
 
 # 中文全文检索的四个实测坑

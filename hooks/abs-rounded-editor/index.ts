@@ -52,13 +52,14 @@ export class RoundedEditor extends CustomEditor {
     const textFg = (s: string) => paintAnsi(effortAnsi(effortLevel, colorMode), s)
     const lineFg = textFg
     const wrap = lineFg
-    // working 状态与右上角状态文字用「搁置」橙 #F59E0B（2026-11-08 用户要求）：
-    // 上边框的圆角与虚线仍走正文色，只有这两段橙 —— 一眼区分「还在跑」与上下文占用。
+    // 右上角状态文字用「搁置」橙 #F59E0B（2026-11-08 用户要求）：
+    // 只染那一段 —— 圆角、虚线、以及 pi 画的 working 状态都跟框线同色
+    // （working 曾也上橙，用户实测「要跟输入框线条颜色一致」，已改回）。
     const holdFg = (s: string) => paintAnsi(holdAnsi(colorMode), s)
     const out: string[] = []
 
     // 上边框：原本是整行 `─`（含 working 图标与滚动提示），两端换圆角，右端贴状态。
-    out.push(roundBorder(lines[0], wrap, '╭', '╮', statusLabel, '', { leadFg: holdFg, labelFg: holdFg }))
+    out.push(roundBorder(lines[0], wrap, '╭', '╮', statusLabel, '', { labelFg: holdFg }))
     // 下边框在原结果的倒数第 (1 + 自动补全行数) 位 —— 补全菜单排在它后面。
     const autocompleteHeight = (this as any).renderedAutocompleteHeight ?? 0
     const bottomIdx = lines.length - 1 - autocompleteHeight

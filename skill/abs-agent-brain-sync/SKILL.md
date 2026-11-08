@@ -9,7 +9,7 @@ description: "USE FOR abs / agent-brain-sync cross-session memory and task hando
 
 **Querying it is your decision, not something you wait to be reminded of.** The moment a
 keyword forms or a question appears ("was this bug solved before?", "who decided this?"),
-search — do not wait for an error or for the user to prompt you.
+run `abs query <词>` — do not wait for an error or for the user to prompt you.
 
 ## Startup: one command
 
@@ -31,16 +31,17 @@ unfinished ones get `abs todo note <id> --note "where it stopped"`.
 - index rows without a real description (date-template only) → rejected by lint.
 - Sub-items are one sentence each. Reports go to `abs log` / `sources/`, not the board.
 
-## Find knowledge: three tiers
+## Find knowledge: one entry
 
 | Situation | Command |
 |---|---|
-| Stuck, no keywords | `abs recall [词…]` — infers from current work |
-| Have keywords, want best recall | `abs search <词>` — luminance + neighbor spread, cross-project |
-| Want exact literal, short output | `abs query <词…>` — multi-word OR |
+| Have keywords | `abs query <词…>` — multi-word OR over `.brain/`, page name + summary |
+| Got a page name | `abs resolve <页名>` → read only that page |
 
-`search` and `query` are detailed vs short, not duplicates. MCP: `abs_search` / `abs_query`.
-Got a page name? `abs resolve <页名>` → read only that page. Cite sources as `[[页面名]]`.
+One entry, no tiers: `query` is the only search (2026-11-08 — the SQLite graph库 with
+`abs search` / `abs recall` / `abs db` was deleted; it was write-only in practice:
+881 sessions logged `search` 3 times, `recall` 9 times, while the todo board ran 1897).
+Cite sources as `[[页面名]]`.
 
 ## Write knowledge: three sinks, do not mix
 
@@ -88,7 +89,7 @@ Exception: the user types `abs` alone or `abs` + command → execute; no subcomm
 ## ⛔ Never
 
 1. Hand-build skeletons or hand-register tasks — `abs init` / `abs todo start`.
-2. Read `.brain/` end-to-end — `abs load` for state, search for topics, resolve for one page.
+2. Read `.brain/` end-to-end — `abs load` for state, `abs query` for topics, `abs resolve` for one page.
 3. Delete a knowledge page to mark it obsolete — `abs supersede <页> --by <新页>`.
 4. Write Rules directly — propose `[Rules 提议]`, wait for the user, then `abs rule add`.
 5. Host-native todo for cross-session work — use `abs todo`.

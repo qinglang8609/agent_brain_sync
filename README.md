@@ -119,16 +119,10 @@ abs todo done    TASK-1
 
 abs note "一句话经验" --tags 坑,docker    # 经验暂存 → sources/
 abs log "完成 X"                          # 记一行流水；abs log 无参 = 查看
-abs query <词>                            # 检索图谱（多词 OR）；已被推翻的经验默认隐藏（--all 可看）
+abs query <词>                            # 检索图谱（多词 OR 扫全 .brain/）；已被推翻的经验默认隐藏（--all 可看）
 abs capture [--layer 1-6] [--kind …] "一句话"  # 按七层判层后落到位（L7 用 abs note；--kind: gotcha|decision|tradeoff|howto）
-abs db rebuild                            # 扫所有登记项目 → 建图数据库（~/.abs/graph.db）
-abs search <词> [--full] [--rules]      # 检索：亮度排序+跨项目；--full 附正文，--rules 带铁律
-abs db status                             # 库体检：七层分布 / 悬挂链接 / 已入库项目
-abs db add                                # 把当前项目登记进 ~/.abs/projects.json
-abs db evolve                             # 知识进化体检：被推翻/断链/主题堆积/僵化页
 abs ingest --list                       # 列出还没落页的会话（只读，不写盘）
-abs ingest <会话文件或 id>                 # 把一场 pi 会话落成会话页（session-id 双向回溯）
-                                           #   已填 → 亮度×0.5；未填 → 整页不进检索
+abs ingest <会话文件或 id>                 # 把一场 pi 会话摘要并进当天的 log-<日期>.md（## 会话 <id8> 段）
 abs resolve <页名或id>                    # 反查页面路径（页改名后 id 不变）
 abs supersede <页名> [--by <新页>]        # 标记经验已失效（不删文件，保留历史；query 默认不再返回）
 abs status                                # 当前项目 + 图谱概要

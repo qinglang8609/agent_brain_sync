@@ -99,29 +99,19 @@ export function effortAnsi(level: string | null | undefined, colorMode = 'trueco
 }
 
 /** 「搁置」橙 #F59E0B —— 与 todo 面板的 `搁置` 标签同色（abs.pi.ts 的 `C.hold`）。
- *  用途（2026-11-08 用户要求）：输入框上边框的 working 状态与右上角状态文字。
- * ★ 色值在 abs.pi.ts 里也有一份，不抽公共模块是故意的（见 EFFORT_COLOR 的注释）。 */
+ *  用途（2026-11-08 用户要求）：输入框上边框**右上角的状态文字**。
+ *  ★ 左边的 working 状态（`⠼ Working`）**不用**这个色（用户实测要求）：
+ *    它跟框线同色，橙色只标记「上下文占用」。
+ *  ★ 色值在 abs.pi.ts 里也有一份，不抽公共模块是故意的（见 EFFORT_COLOR 的注释）。 */
 export const HOLD_COLOR = { rgb: '245;158;11', ansi256: 214 }
 
 export function holdAnsi(colorMode = 'truecolor'): string {
   return colorMode === 'truecolor' ? `38;2;${HOLD_COLOR.rgb}` : `38;5;${HOLD_COLOR.ansi256}`
 }
 
-/** 上边框最左那段「working 状态」（如 `⠼ Working`）。
- *
- * 为何要单独把它抠出来（2026-11-08 用户要求它和状态文字同色）：那段由 pi 的
- *   WorkingStatusIndicator 画、夹在 `── ` 与后续虚线之间（见 pi 的 custom-editor
- *   `renderTopBorder`），而 roundBorder 会先剥掉整行的色再重新上色，
- *   不能靠「它原本的颜色」认它。判据取形状：开头 `─+ ` 之后、下一个 `─` 之前的那段。
- *
- * 排除 `↑ N more` / `↓ N more`（pi 自己的滚动提示）：那不是 working 状态，
- *   染成橙色就是错色。 */
-export function leadSpanOf(plain: string): string {
-  const m = String(plain).match(/^─+ ([^─]+?) ?─/)
-  if (!m) return ''
-  const text = m[1]
-  return /[↑↓]/.test(text) ? '' : text
-}
+/** 上边框最左那段（如 `⠼ Working`）由 pi 画、roundBorder 不单独给它上色：
+ *  它随整行用框线色。试过给它上橙，用户实测要求“跟框线同色”，已改回 ——
+ *  别再拆一段出来单独染色。 */
 
 /** 用 effortAnsi 的结果包一段文字；空串原样返回（off 时不着色）。 */
 export function paintAnsi(ansi: string, text: string): string {
@@ -137,9 +127,9 @@ export function paintAnsi(ansi: string, text: string): string {
  * leftLabel 贴在左圆角之后；label 贴最右端。哪个放不下就丢掉哪个
  * （宁可没有，也不让边框溢出折行）。
  *
- * opts.leadFg / opts.labelFg（2026-11-08 用户要求）：只给「working 状态那段」
- *   和「右标签」换个色，其余（圆角、虚线）仍用 fg。不传 opts 时整行一个色，
- *   与旧行为逐字相同。
+ * opts.labelFg（2026-11-08 用户要求）：只给右边那个状态标签换个色，
+ *   其余（圆角、虚线、**以及 pi 画在左边的 working 状态**）仍用 fg。
+ *   working 曾经也上橙，用户实测要它跟框线同色，已改回（见下面的注释）。
  */
 export function roundBorder(
   line: string,
@@ -148,7 +138,7 @@ export function roundBorder(
   right: string,
   label = '',
   leftLabel = '',
-  opts: { leadFg?: (s: string) => string; labelFg?: (s: string) => string } = {},
+  opts: { labelFg?: (s: string) => string } = {},
 ): string {
   const plain = stripAnsi(line)
   if (plain.length === 0) return line
@@ -176,9 +166,7 @@ export function roundBorder(
     }
   }
   return paintSpans(left + mid + right, fg, [
-    // working 段从**开头**找（它就在最左）；右标签从**末尾**找
-    // （万一同一串又出现在左边，不能把左边那个也染成标签色）。
-    [leadSpanOf(plain), opts.leadFg, 'first'],
+    // 右标签从**末尾**找：万一同一串又出现在左边，不能把左边那个也染成标签色。
     [label, opts.labelFg, 'last'],
   ])
 }

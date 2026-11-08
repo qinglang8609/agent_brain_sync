@@ -502,40 +502,6 @@ function clipToWidth(s: string, width: number): string {
 }
 
 // 「进行中」行的迷你动画：三个小符号依次由空心变实心。
-// 帧宽固定 3 列 —— 宽度不变才不会让面板每帧抖动。
-const TODO_ANIM_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-const TODO_ANIM_MS = 100
-
-/** 动画相位（每 tick +1）。模块级 —— 闭包 flag 在重复注册时不共享。 */
-let animPhase = 0
-
-/** 当前推理强度。模块级理由同上：widget factory 拿不到 ctx。
- *  omp 宿主有无这个字段未验证 —— 取不到就是空串，面板退回 accent，行为与以前一致。 */
-let effortLevel = ''
-let animTimer: ReturnType<typeof setInterval> | undefined
-
-/** 启动/保持动画定时器。重复调用不会叠加（已存在则不动）。
- * getTui 是为了每 tick 拿**当前**的 tui 引用 —— widget 可能因刷新被重建。 */
-function startAnimTimer(getTui: () => RenderTui | null): void {
-  if (animTimer) return
-  animTimer = setInterval(() => {
-    animPhase++
-    try { getTui()?.requestRender?.() } catch {}
-  }, TODO_ANIM_MS)
-  animTimer.unref?.()
-}
-
-function stopAnimTimer(): void {
-  if (animTimer) { clearInterval(animTimer); animTimer = undefined }
-}
-
-/** 取当前动画帧。非进行中的行不传 phase（不显示）。 */
-export function todoAnimFrame(phase: number): string {
-  const n = TODO_ANIM_FRAMES.length
-  const i = ((Math.floor(phase) % n) + n) % n
-  return TODO_ANIM_FRAMES[i]
-}
-
 /**
  * 推理强度 → 主题色 token。空串表示「不上推理色，用兼底色」。
  *
@@ -556,7 +522,6 @@ export function renderPanelLines(
   who: string,
   width: number,
   fg: (color: string, s: string) => string,
-  animPhase = -1,
   nickname = '',
   effort = '',
 ): string[] {
@@ -584,12 +549,11 @@ export function renderPanelLines(
     // `└─` 只给最后一条 —— 不管它有没有子项（否则末条带子项时全篇没有收尾）。
     const isLast = i === lastIdx
     const branch = isLast ? '└─' : '├─'
-    // 单字符 spinner 紧跟 [进行中]（2026-11-06 与 pi 版同步）。
-    const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + fg(main, todoAnimFrame(animPhase)) : ''
+    // 进行中曾带 spinner（2026-11-06 与 pi 版同步；2026-11-08 用户定「没啥用」与 pi 版一起去掉）。
     // 复选框 `[ ]`：面板是 todo.md 的只读视图，就该长成 todo 原貌。
     const box = fg(main, '[ ]')
     // 状态标签统一跟主色（2026-11-06 与 pi 版同步：靠符号和文字区分状态，不靠颜色）。
-    const head = `${fg(main, branch)} ${box} ${fg(main, `[${t.state}]`)}${anim} ${fg('text', t.id)}`
+    const head = `${fg(main, branch)} ${box} ${fg(main, `[${t.state}]`)} ${fg('text', t.id)}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg(flow, t.desc)}` : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
@@ -610,12 +574,11 @@ export function renderPanelLines(
 }
 
 /** 隐藏面板。**必须主动 requestRender** —— 否则数据清了、屏幕还留着旧画面。
- *  坑（pi 版 2026-10-05 实报）：唯一的重绘入口是动画定时器，而「任务全完成」恰好
- *  让 needAnim=false → stopAnimTimer() → 从此没人请求重绘 → 屏幕冻结。
- *  即「消失」这个动作把它自己的重绘通道关掉了。 */
+ *  坑（pi 版 2026-10-05 实报）：当时唯一的重绘入口是动画定时器，而「任务全完成」恰好
+ *  让它停掉 → 从此没人请求重绘 → 屏幕冻结。动画已拆（2026-11-08），
+ *  但重绘只能靠事件主动请求这个事实没变，少一处就静默冻结。 */
 function hidePanel(ui: ExtensionUIContext | undefined): void {
   try { ui?.setWidget(PANEL_KEY, undefined) } catch {}
-  stopAnimTimer()
   try { lastTui?.requestRender?.() } catch {}
 }
 
@@ -638,18 +601,14 @@ async function refreshTodoPanel(ui: ExtensionUIContext | undefined, cwd: string)
         lastTui = tui   // 供 hidePanel 在「无动画」时也能请求重绘
         return {
           render: (width: number) =>
-            renderPanelLines(data, who, width, (c: string, s: string) => theme.fg(c, s), animPhase, sessionNickname, effortLevel),
+            renderPanelLines(data, who, width, (c: string, s: string) => theme.fg(c, s), sessionNickname, effortLevel),
           invalidate: () => {},
         }
       },
       { placement: 'aboveEditor' },
     )
-    // 只在真有「进行中」任务时跑定时器 —— 否则白刷 CPU。
-    const needAnim = data.rows.some((t) => t.state === '进行中')
-    if (needAnim) startAnimTimer(() => tuiRef)
-    else stopAnimTimer()
-    // 无动画时得自己刷一帧，否则从「有任务」变成「无任务」时屏幕冻结在旧帧。
-    if (!needAnim) try { lastTui?.requestRender?.() } catch {}
+    // 动画已拆（2026-11-08）：没有定时器兜底了，每次刷新都得自己请求重绘。
+    try { lastTui?.requestRender?.() } catch {}
   } catch {
     hidePanel(ui)
   }
@@ -906,7 +865,6 @@ export default function absOmpExtension(pi: ExtensionAPI): void {
   })
 
   pi.on("session_shutdown", (_e: SessionShutdownEvent, ctx: ExtensionContext) => {
-    stopAnimTimer() // 面板没了，动画定时器必须一起停（否则残留定时器白刷已丢弃的 tui）
     snapshotWrapup(ctx.cwd)
     snapshotSessionPage(ctx.cwd, sessionIdFor(ctx))
     logHook("session_shutdown").catch(() => {})

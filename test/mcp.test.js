@@ -300,43 +300,6 @@ describe('mcp: 请求跟踪日志 (mcp.log)', () => {
   });
 });
 
-// ---------- abs_search（2026-11-05）----------
-// 为何要这个工具：SKILL 里推荐 abs_query 4 次，db search 一次没提 ——
-// 但 db search 明显更强（带亮度排序、能从邻居扩散、能跨项目）。
-// 更强的工具藏在 CLI 里、agent 用不到，这才是真正的问题（不是「两条命令重复」）。
-test('abs_search 已注册，且带 query/limit/include_rules 参数', async () => {
-  await startServer();
-  await initHandshake();
-  const r = await call('tools/list', {});
-  const t = (r.result?.tools || []).find((x) => x.name === 'abs_search');
-  assert.ok(t, 'abs_search 必须暴露给 agent');
-  const props = Object.keys(t.inputSchema.properties);
-  for (const k of ['cwd', 'query', 'limit', 'include_rules']) {
-    assert.ok(props.includes(k), `缺参数 ${k}`);
-  }
-});
-
-test('abs_search 默认不给铁律（省 token），include_rules 才给', async () => {
-  await initBrain(projA);
-  await startServer();
-  await initHandshake();
-  // 先建库（abs_search 走 graph.db，不走 query 的逐文件读）。
-  // ABS_DB 指向沙盒库，避免与并行跑的其它测试文件抢同一个库（database is locked）。
-  const prevDb = process.env.ABS_DB;
-  process.env.ABS_DB = join(sandbox, 'graph.db');
-  try {
-    await tool('abs_note', { text: '并发写入要加锁，否则后写盖掉先写', cwd: projA });
-    const { cmdDbRebuild } = await import('../src/brain/db-cmd.js');
-    await cmdDbRebuild({ dir: projA });
-  } finally {
-    if (prevDb === undefined) delete process.env.ABS_DB; else process.env.ABS_DB = prevDb;
-  }
-
-  const plain = await tool('abs_search', { cwd: projA, query: '并发写' });
-  const text = textOf(plain);
-  assert.ok(!/L1 铁律/.test(text), `默认不该返回铁律（开工时 load 会给）:\n${text.slice(0, 300)}`);
-});
-
 // 删除任务（2026-11-05）：用户报「每次删除任务可烦人了」——
 // 原来 MCP 只暴露 state=搁置（先不做、留在看板上），没有真正的删除。
 test('abs_task action=remove 能删掉任务（含子项）', async () => {

@@ -1,21 +1,23 @@
 ---
-title: 记忆盒子：七层分层 + 图数据库
-tags: [concept, 记忆, sqlite, 图谱]
+title: 七层分层：层规格与判层判据
+tags: [concept, 记忆, 分层, 图谱]
 author: fanchao
-updated: 2026-11-01
+updated: 2026-11-08
 status: active
 ---
 
-# 记忆盒子：七层分层 + 图数据库
+# 七层分层：层规格与判层判据
 
-把 `.brain/` 从「七类目录平铺 + 关键词子串打分」升级成「七层 + 双链图 + 亮度联想」。
-分两处落地：`src/brain/layers.js`（层规格）、`src/brain/db.js`（图数据库）。
+`.brain/` 的知识按「作用」分七层，规格落在 `src/brain/layers.js`。
+**这层规格只服务两件事**：落页时把知识放到该放的位置（`abs capture --layer` / `abs note`），
+以及 lint 按目录校层（`layerConflict`）。它不再驱动任何检索。
+（原「图数据库 + 亮度联想」那半已于 2026-11-08 拆掉，见 [[no-graph-db]]。）
 
 ## 触发场景
 
-- 想知道「我上次怎么解决 X」，希望漏掉关键词也能找到
-- 需要区分「铁律」和「随口一句话」，不能检索时一视同仁
-- 多个项目想共用一份知识，但铁律必须按项目隔离
+- 一条经验该落 sources 还是 concepts：判错会让通用规律混进工具经验里
+- 要区分「铁律」和「随口一句话」：铁律不能被当成普通条目
+- 给目录定默认层、或给某一页显式标层
 
 ## 七层规格
 
@@ -25,12 +27,18 @@ status: active
 | L2 | 规则 | `layer: 2` 的页 | 0.2 |
 | L3 | 工具 | `layer: 3` 的页 | 0.4 |
 | L4 | 认知 | 默认层（concepts/entities/syntheses） | 0.6 |
-| L5 | 会话 | `sessions/` + todo | 0.75 |
+| L5 | 会话 | `sessions/` | 0.75 |
 | L6 | 断点 | 双链词，不立页 | 0.85 |
 | L7 | 混沌 | `sources/` | 0.95 |
 
 **层归属判据**（`resolveLayer`）：frontmatter 的 `layer` 字段优先 → 没有就按目录推 → 都没有落到 L4。
 非法值（如 `layer: 99`）**报错不静默**，同时降级到 L4 继续跑。
+
+## 判层判据（真实要动手时看这条）
+
+**总结必须判层，不能一律塞 sources。** 判据：讲某个具体工具怎么用/有什么坑 → L3；
+讲通用设计规律、不绑具体工具 → L4。只靠 tags 关键词猜会把「资源默认值让 OS 分配」
+这种通用规律误判成工具经验 —— 实测一律塞 L7 会让 44% 的知识按错误权重参与排序。
 
 ## 双链怎么解析
 
@@ -40,65 +48,17 @@ status: active
 2. 代码块与行内代码里的 —— 那是文档示例
 3. `todo.md` / `log.md` 里的 —— 那里是**作者标记**，不是知识链接
 
-## 数据流
-
-```
-各项目 .brain/ 的 markdown（真相，人可直接编辑）
-        ↓  abs db rebuild
-~/.abs/graph.db（SQLite：nodes / edges / anchors / rules）
-        ↓  abs db search <词>
-FTS5 拿种子 → 按层衰减 + 枢纽惩罚扩散 → 按亮度排序输出
-```
-
-**为什么用 node:sqlite 而不是 Neo4j**：实测 2 万节点 / 20 万边，3 跳扩散 0.5ms、
-FTS 全文 0.01ms、库文件 10MB。Neo4j 要多养一个常驻进程，而本场景是「开工时查一次」，
-为 81 页知识养 Java 服务不值。且 Docker 未必在跑（实测本机未启动）。
-
-## 三个必须压制的坑
-
-**一，扩散会全亮。** 实测真实图谱 81 页 291 边：`hook` 一词 1 跳就点亮 100%，
-`锁` 2 跳到 99%。**全亮等于全不亮。** 故硬约束 `HOPS = 1`，且 `MIN_BRIGHT = 0.02`。
-
-**二，枢纽会霸榜。** 入度 26 的根节点会被扩散顶到前三，不是因为它相关，是人人链它。
-用 `1/(1+log(1+入度))` 打折 —— 实测入度 27 的页被压到 0.098。
-
-**三，中文两字词搜不到。** FTS5 的 `trigram` 分词要求查询 ≥3 字符，`静默` 恒返回 0；
-`unicode61` 又把整句当一个 token。**必须自切 2-gram**，存储与查询两侧用同一个 `bigrams()`。
-
-## 另外三个实现约束
-
-**流水页必须排除出检索。** `log`/`index`/`todo` 正文照抄了每句经验的原文，因此能命中任何查询。实测刚 capture 一条「并发写」，`log` 页亮度 3.87 排第一，压过真正的内容页 —— 纯噪音。用 `is_ledger` 标记把它们排除出候选。
-
-**配置文件必须与库同目录。** 曾用 `join(dbPath(), '../../projects.json')` 把 `graph.db` 当目录往上退两级，实际落到 `~/projects.json`（家目录），不在 `~/.abs/`。正确写法是 `dirname(dbPath())`。
-
-**总结必须判层，不能一律塞 sources。** 实测算过，一律塞 L7 会让 44% 的知识按错误权重参与检索。判据：讲某个具体工具怎么用/有什么坑 → L3；讲通用设计规律、不绑具体工具 → L4。只靠 tags 关键词猜会把「资源默认值让 OS 分配」这种通用规律误判成工具经验。
-
-## 🛠 命令
-
-```bash
-abs db add [--dir <项目根>]    # 登记项目到 ~/.abs/projects.json
-abs db rebuild                 # 全量重扫所有登记项目 → 建库
-abs db search <词> [--limit N] # 走库搜索：FTS 种子 + 亮度扩散
-abs db status                  # 库体检：七层分布、悬挂链接、项目列表
-```
-
-`abs query` **原样保留**——它是唯一被 654 个测试验过的检索路径，不拿它当试验田。
-
 ## 验证
 
 ```bash
-node --test test/brain-graph.test.js   # 17 个测试：层规格 + 库行为
-npm test                                # 全量 671 个
+npm test                                   # 层规格相关的用例都在这里（含非法 layer 报错不静默）
+abs capture --layer 3 "一句话"              # 落页后看 frontmatter 的 layer
+abs lint | grep LAYER                      # 目录与层不符时报 LAYER-CONFLICT
 ```
-
-实测数据（2026-11-01，真实 .brain）：
-- 88 节点 / 375 边 / 376 断点词 / 19 条铁律（2 个项目）
-- 搜索「双副本」：`deploy-artifact-copies` 亮度 3.62 居首，扩散页带 `↝` 标记
-- 铁律隔离：`agent_brain_sync` 17 条 / `projX` 2 条，互不串
 
 ## 关联连接
 
-- [[sqlite-vs-graph-db]] — 为什么不用 Neo4j 的取舍
-- [[chinese-fts-two-gram]] — 中文分词那个坑的细节
-- [[session-digest-design]] — 会话页同样要降权：正文长、词频高会压过知识页
-- [[入口出口同一判据]] — 「流水页必须排除」那条实测的延续：扩散出口也得排
+- [[no-graph-db]] — 为什么亮度联想/图数据库那半被拆掉（含实测调用次数）
+- [[session-digest-design]] — 会话摘要落在 L5，一页多段
+- [[learning-loop-collect-distill-deliver]] — 分层是「沉淀」环节的结构
+- [[fanchao]] — 本页沉淀者

@@ -3,8 +3,9 @@ title: 中文全文检索必须自切 2-gram
 tags: [concept, sqlite, fts, 中文]
 author: fanchao
 updated: 2026-11-01
-status: active
+status: superseded
 layer: 3
+superseded-by: no-graph-db
 ---
 
 # 中文全文检索必须自切 2-gram
