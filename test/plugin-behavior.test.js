@@ -1308,8 +1308,8 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const doingC = '\x1b[38;2;16;185;129m'
     const holdC = '\x1b[38;2;245;158;11m'
     assert.ok(all.includes(`${titleC}Todo (2)`), `标题应用金色:\n${all}`);
-    assert.ok(all.includes(`${holdC}\x1b[4m搁置`), `搁置应用琥珀:\n${all}`);
-    assert.ok(all.includes(`${doingC}\x1b[4m进行中`), `进行中应用翠绿:\n${all}`);
+    assert.ok(all.includes(`${holdC}[搁置]`), `搁置应用琥珀:\n${all}`);
+    assert.ok(all.includes(`${doingC}[进行中]`), `进行中应用翠绿:\n${all}`);
     assert.ok(all.includes(`${treeC}├─`), `树线应用暗灰:\n${all}`);
     assert.ok(all.includes(`${taskC}[ ]`), `复选框应用亮白:\n${all}`);
     assert.ok(all.includes(`${taskC}b`), `任务 id 应用亮白:\n${all}`);

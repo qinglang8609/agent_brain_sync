@@ -1065,7 +1065,7 @@ export function renderPanelLines(
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
     const box = hasState ? '' : paint(C.task, '[ ] ')
     const stPart = hasState
-      ? paint(stateAnsi(t.state), `\x1b[4m${t.state}\x1b[24m`)
+      ? paint(stateAnsi(t.state), `[${t.state}]`)
       : paint(C.task, '[待办]')
     const head = `${paint(C.tree, branch)} ${box}${stPart}${anim} ${paint(C.task, t.id)}`
     const desc = t.desc ? ' ' + paint(C.desc, `— ${t.desc}`) : ''
