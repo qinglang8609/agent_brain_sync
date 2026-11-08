@@ -993,22 +993,22 @@ export function todoAnimFrame(phase: number): string {
  *   抽成共享文件会让「删掉输入框样式目录」连带把 todo 面板搞崩。
  */
 export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
-  max: { rgb: '228;234;242', ansi256: 254 },
-  xhigh: { rgb: '208;216;230', ansi256: 252 },
-  high: { rgb: '184;194;212', ansi256: 152 },
-  medium: { rgb: '160;172;196', ansi256: 110 },
-  low: { rgb: '136;150;180', ansi256: 103 },
-  minimal: { rgb: '116;136;172', ansi256: 68 },
+  max: { rgb: '238;242;248', ansi256: 255 },
+  xhigh: { rgb: '221;228;240', ansi256: 254 },
+  high: { rgb: '200;210;228', ansi256: 189 },
+  medium: { rgb: '176;187;208', ansi256: 146 },
+  low: { rgb: '152;164;190', ansi256: 110 },
+  minimal: { rgb: '128;144;176', ansi256: 110 },
 }
 
 /** 边框用：同色相压暗降饱和 —— 文字要能读，边框要不抢眼（2026-11-08 用户反馈）。 */
 export const EFFORT_BORDER: Record<string, { rgb: string; ansi256: number }> = {
-  max: { rgb: '102;115;140', ansi256: 103 },
-  xhigh: { rgb: '90;102;128', ansi256: 60 },
-  high: { rgb: '78;90;114', ansi256: 60 },
-  medium: { rgb: '68;79;100', ansi256: 60 },
-  low: { rgb: '58;69;86', ansi256: 240 },
-  minimal: { rgb: '48;58;72', ansi256: 239 },
+  max: { rgb: '122;134;158', ansi256: 103 },
+  xhigh: { rgb: '108;120;146', ansi256: 60 },
+  high: { rgb: '94;106;134', ansi256: 60 },
+  medium: { rgb: '82;94;120', ansi256: 60 },
+  low: { rgb: '70;82;106', ansi256: 60 },
+  minimal: { rgb: '58;70;92', ansi256: 60 },
 }
 
 export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {

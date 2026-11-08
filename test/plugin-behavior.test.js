@@ -1300,7 +1300,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       hidden: 0,
     };
     const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
-    const high = green(184, 194, 212)
+    const high = green(200, 210, 228)
     assert.ok(all.includes(`${high}Todo (2)`), `标题应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[搁置]`), `搁置状态应用推理强度色:\n${all}`);
     assert.ok(all.includes(`${high}[进行中]`), `进行中状态应用推理强度色:\n${all}`);
@@ -1317,12 +1317,12 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   test('★ 六档色值等于用户指定的 hex', async () => {
     const { effortAnsi } = await loadPanelFns();
     const HEX = {
-      max: [0xE4, 0xEA, 0xF2],
-      xhigh: [0xD0, 0xD8, 0xE6],
-      high: [0xB8, 0xC2, 0xD4],
-      medium: [0xA0, 0xAC, 0xC4],
-      low: [0x88, 0x96, 0xB4],
-      minimal: [0x74, 0x88, 0xAC],
+      max: [0xEE, 0xF2, 0xF8],
+      xhigh: [0xDD, 0xE4, 0xF0],
+      high: [0xC8, 0xD2, 0xE4],
+      medium: [0xB0, 0xBB, 0xD0],
+      low: [0x98, 0xA4, 0xBE],
+      minimal: [0x80, 0x90, 0xB0],
     };
     for (const [level, rgb] of Object.entries(HEX)) {
       assert.equal(effortAnsi(level), `38;2;${rgb.join(';')}`, `${level} 色值不符`);
@@ -1350,20 +1350,20 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
 
   test('★ 推理强度各档映射到绿色阶 ANSI', async () => {
     const { effortAnsi } = await loadPanelFns();
-    assert.equal(effortAnsi('minimal'), '38;2;116;136;172');
-    assert.equal(effortAnsi('low'), '38;2;136;150;180');
-    assert.equal(effortAnsi('medium'), '38;2;160;172;196');
-    assert.equal(effortAnsi('high'), '38;2;184;194;212');
-    assert.equal(effortAnsi('xhigh'), '38;2;208;216;230');
-    assert.equal(effortAnsi('max'), '38;2;228;234;242');
+    assert.equal(effortAnsi('minimal'), '38;2;128;144;176');
+    assert.equal(effortAnsi('low'), '38;2;152;164;190');
+    assert.equal(effortAnsi('medium'), '38;2;176;187;208');
+    assert.equal(effortAnsi('high'), '38;2;200;210;228');
+    assert.equal(effortAnsi('xhigh'), '38;2;221;228;240');
+    assert.equal(effortAnsi('max'), '38;2;238;242;248');
     assert.equal(effortAnsi('off'), '');
     assert.equal(effortAnsi(''), '');
     assert.equal(effortAnsi(null), '');
     assert.equal(effortAnsi(undefined), '');
     // 256 色终端走 38;5（灰蓝只能退到灰阶档）
-    assert.equal(effortAnsi('max', '256color'), '38;5;254');
-    assert.equal(effortAnsi('high', '256color'), '38;5;152');
-    assert.equal(effortAnsi('low', '256color'), '38;5;103');
+    assert.equal(effortAnsi('max', '256color'), '38;5;255');
+    assert.equal(effortAnsi('high', '256color'), '38;5;189');
+    assert.equal(effortAnsi('low', '256color'), '38;5;110');
   });
 
   // 昵称（2026-10-03 用户需求）：用户给定的俏皮话池里随机抽，附在作者名后。
