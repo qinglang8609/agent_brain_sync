@@ -273,6 +273,13 @@ export async function cmdLog({ dir, title, kind = 'dev', summon = true }) {
       `  note=经验/踩坑 / dev=完成的工作 / concept=新建概念页 / ingest=沉淀资料`,
     );
   }
+  // 格式闸（2026-11-08 用户定）：空标题/纯空白的 log 打回。
+  if (!String(title || '').trim()) {
+    throw new Error(
+      `✗ log 必须有一句话结论 —— 空标题打回。\n` +
+      `  用法: abs log "做完什么 + 怎么验证的" --kind dev`,
+    );
+  }
   await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
   const p = brainPath(root, 'log.md');
   const stamp = localStamp();

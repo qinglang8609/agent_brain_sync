@@ -33,6 +33,15 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
   const claim = `(认领 ${today()}${sid ? ' ' + sid : ''})`;
   await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
   if (action === 'start') {
+    // 格式闸（2026-11-08 用户定：不符合直接打回）：只有 id 的看板行查不到、接不上。
+    // 实测：slim-skill-load-cmd 只登记了 id，面板上一行代号，隔天自己都不认识。
+    if (!String(note || '').trim()) {
+      throw new Error(
+        `✗ 任务必须有描述 —— 只有 id 的行查不到、接不上，打回。\n` +
+        `  用法: abs todo start <id> --note "一句话：做什么"\n` +
+        `  格式: 动词开头、一句话、≤40 字；进度用 abs todo note 逐条加，别塞进标题。`,
+      );
+    }
     // 两区制：未完成一律进 Todo，行首带状态标记（默认 进行中）。
     const st = section && TASK_STATES.includes(section) ? section : '进行中';
     // 唯一进行中约束（2026-10-05 照 rpiv-todo）：看板要能回答"现在在做什么"，
@@ -204,6 +213,15 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
     // --as 结语：落地(默认) / 否决 / 仅方案 —— 让 [x] 可被信任（见 todo.js DONE_KINDS）
     if (as && !DONE_KINDS.includes(as)) {
       throw new Error(`✗ --as 只接受: ${DONE_KINDS.join(' | ')}（收到 "${as}"）`);
+    }
+    // 格式闸（2026-11-08 用户定）：done 必须带结语，否则 Done 区只剩一个勾和 id，
+    // 下个会话不知道“做成了什么”。打回，让人把结论写完。
+    if (!String(note || '').trim() && !as) {
+      throw new Error(
+        `✗ done 必须带结语 —— 打回。只有勾没有结论的 Done 不可信。\n` +
+        `  用法: abs todo done <id> --as 落地|否决|仅方案 "一句话结论"\n` +
+        `  例: abs todo done <id> --as 落地 "821 测试全绿，已装到 ~/.pi"`,
+      );
     }
     // 结语 = note（MCP 路径）或位置参数（CLI 路径）。坑(2026-09-16 实测):
     // MCP abs_task schema 无 as，AI 按旧 SKILL.md 传 note 会被静默丢弃、行上默认盖【落地】

@@ -1,4 +1,6 @@
 # 🗒 Activity Log
+## [2026-11-08 13:40] [[fanchao]] dev | 四件精简落地：①SKILL.md 改英文路由风（仿 vibe-coding-help：意图表+硬规矩+图谱指针，触发词保留中文）②load 2796→1603B，只留未完成todo+用法+近日志3条，Rules/index计数/查询提示/热点页撤出 ③格式闸打回：todo start 无描述、done 无结语、log 空标题、index 日期模板行，lint 加 TODO-NO-DESC ④删纯别名 index/status/summon/db search，log 只写不看（查看=show log）。821 测试绿；全局包与 ~/.pi 已同源
+## [2026-11-08 13:05] [[fanchao]] note | abs sleep 离线整理方案在 docs/sleep-design.md（仅方案未实现）：夜里补空/压缩会话页/提炼概念/墓碑遗忘，默认 dry-run，保留期 7/30/90/180 待拍板。
 ## [2026-11-08 12:55] [[fanchao]] dev | 修 Sessions 索引行查不到：归档登记 index 时从任务行抽首段（登记时的 --note，多条用「；」连、截 110 字），无描述行回退原样；本仓库 16 条旧机器模板行按同格式回填（手写描述行不覆盖）。加载视图仍折叠计数（读取侧不随规模增长），明细走 abs show index。821 测试 + lint 绿
 ## [2026-11-07 20:30] [[fanchao]] dev | 发布 1.28.6：推理强度主色换成用户指定的灰蓝六档（xhigh/high 明显提亮，medium/low/minimal 各提约 20%，同色相 H≈219° 只提亮度），常量 EFFORT_GREEN→EFFORT_COLOR，测试删掉「必须绿系」的色相断言只钉色值。820 测试 + check 绿才发；npm publish 后全局安装遇元数据缓存（ETARGET，见 [[npm-publish-flow]] 坑 8），加 --prefer-online 装成；grep EFFORT_COLOR 确认全局包、~/.pi 宿主副本、仓库三处同为 1.28.6
 ## [2026-11-07 17:13] [[fanchao]] note | 发版 1.28.5 时 npm i -g . 会把全局包装成指向仓库的符号链接（依赖从仓库 node_modules 解析），要真实安装得先 npm pack 再 npm i -g ./xxx.tgz

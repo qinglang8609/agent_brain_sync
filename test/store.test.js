@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind, queryHint } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES, extractId } from '../src/todo.js';
 import { assertTodoContent, violationSignatures } from '../src/todo/validate.js';
 import { editFile } from '../src/lock.js';
@@ -108,7 +108,7 @@ describe('findBrainRoot 定位', () => {
   });
 
   test('任务 id 不存在时输出带 NO_MATCH 前缀', async () => {
-    const out = await cmdTask({ dir: projectA, action: 'done', id: '绝对不存在的任务X' });
+    const out = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: '绝对不存在的任务X' });
     assert.match(out, /^\[NO_MATCH\]/, `应带 NO_MATCH 前缀: ${out}`);
   });
 });
@@ -416,7 +416,7 @@ describe('normalizeTodo 老格式迁移', () => {
     // 评审 P2：stripStateMark 从未在任何非默认状态下被跑到。
     await cmdTask({ dir: projectA, action: 'start', id: 'DN-1', note: 'x' });
     await cmdTask({ dir: projectA, action: 'state', id: 'DN-1', note: '讨论中' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'DN-1' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DN-1' });
     const t = await readTodo(projectA);
     const doneSec = t.split('## Done')[1] || '';
     assert.ok(doneSec.includes('DN-1'), `应归位 Done: ${t}`);
@@ -470,7 +470,7 @@ describe('normalizeTodo 老格式迁移', () => {
     const t = await readTodo(projectA);
     assert.ok(t.includes('## Todo'), `应已归一为两区制:\n${t}`);
     assert.ok(t.includes('MIG-1'));
-    const r2 = await cmdTask({ dir: projectA, action: 'done', id: 'MIG-1' });
+    const r2 = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'MIG-1' });
     assert.ok(r2.includes('✓'), r2);
     const t2 = await readTodo(projectA);
     const doneSec = t2.split('## Done')[1] || '';
@@ -501,7 +501,7 @@ describe('cmdTask', () => {
 
   test('done 勾选并归位（保持一行，标完成日期）', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'T-3', note: '做 Y' });
-    const r = await cmdTask({ dir: projectA, action: 'done', id: 'T-3' });
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-3' });
     assert.ok(r.includes('✓'), r);
     const t = await readTodo(projectA);
     const done = t.split('## Done')[1] || '';
@@ -518,9 +518,9 @@ describe('cmdTask', () => {
   test('带未勾断点时拒绝 done；勾掉后随任务进 Done 且不残留原区', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'T-BP', note: '带断点任务' });
     await cmdTask({ dir: projectA, action: 'note', id: 'T-BP', note: '改到 store.js L40' });
-    await assert.rejects(() => cmdTask({ dir: projectA, action: 'done', id: 'T-BP' }), /子任务未完成/);
+    await assert.rejects(() => cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-BP' }), /子任务未完成/);
     await cmdTask({ dir: projectA, action: 'child-done', id: 'T-BP' });
-    const r = await cmdTask({ dir: projectA, action: 'done', id: 'T-BP' });
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-BP' });
     assert.ok(r.includes('✓'), r);
     const t = await readTodo(projectA);
     const doneSec = t.split('## Done')[1] || '';
@@ -530,22 +530,22 @@ describe('cmdTask', () => {
   });
 
   test('done 幂等: 重复 done 不再追加行', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'T-4' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'T-4' });
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'T-4' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-4' });
     const after1 = await readTodo(projectA);
-    await cmdTask({ dir: projectA, action: 'done', id: 'T-4' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-4' });
     const after2 = await readTodo(projectA);
     assert.equal(after1, after2, '二次 done 不应再改文件');
   });
 
   test('done 未找到 id 时给明确提示不抛错', async () => {
-    const r = await cmdTask({ dir: projectA, action: 'done', id: 'NOPE' });
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'NOPE' });
     assert.ok(r.includes('NOPE'));
   });
 
   test('已设姓名但人页缺失: 下次写入自动重建（不报错、不丢沉淀）', async () => {
     const personPath = join(projectA, '.brain', 'entities', 'tester.md');
-    await cmdTask({ dir: projectA, action: 'start', id: 'T-P1' }); // 首次写 → 建页
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'T-P1' }); // 首次写 → 建页
     assert.ok(await fs.readFile(personPath, 'utf8').then(() => true, () => false), '首次写应建人页');
     await fs.rm(personPath); // 模拟被删/未同步
     await cmdTask({ dir: projectA, action: 'start', id: 'T-P2', note: '重建' });
@@ -590,15 +590,15 @@ describe('board/load/status', () => {
     const out = await cmdLoad({ dir: projectA });
     assert.ok(out.includes('NEWEST-MARK'), `应显示最新条目: ${out}`);
     assert.ok(!out.includes('OLDEST-MARK'), `不该显示最旧条目: ${out}`);
-    assert.ok(/最新 5 条/.test(out), `标签应写"最新": ${out}`);
+    assert.ok(/最新 3 条/.test(out), `标签应写"最新": ${out}`);
   });
 
-  test('load 输出 index + todo + log 三段', async () => {
+  test('load 输出 未完成 + 用法 + log 三段（2026-11-08 收口）', async () => {
     const out = await cmdLoad({ dir: projectA });
-    // index.md 现在只以图谱清单计数呈现（Roadmap 已删，Rules 空则不占字节）
-    assert.ok(out.includes('## Concepts'), `应输出 index 清单段: ${out}`);
-    assert.ok(out.includes('Todo'));
-    assert.ok(out.includes('log.md'));
+    assert.ok(out.includes('未完成'), `应输出未完成: ${out}`);
+    assert.ok(out.includes('用法'), `应输出用法: ${out}`);
+    assert.ok(out.includes('log.md'), `应输出日志: ${out}`);
+    assert.ok(!out.includes('## Concepts'), 'index 明细不再进 load');
   });
 
   // 回归(2026-09-17 实测): hint 原取词是 keywords() 保序 + slice(0,2)。
@@ -617,9 +617,10 @@ describe('board/load/status', () => {
     // 描述里再放一个弱词 lock(强度 0——夹具里无 lock 页) 与强词 hook，
     // 用来分别看住「剔 0」与「按强度排序」两步。
     await cmdTask({ dir: projectA, action: 'start', id: 'zzz-noise-task', note: 'zzweaklock 相关的 hook 节流' });
-    const out = await cmdLoad({ dir: projectA });
-    const m = out.match(/abs query ([^\n]+)/);
-    assert.ok(m, `应给出建议查询: ${out}`);
+    const out = await queryHint(projectA, await fs.readFile(join(projectA, '.brain', 'todo.md'), 'utf8'));
+    assert.ok(out, `应给出建议查询: ${out}`);
+    const m = out.match(/abs query (.+)/);
+    assert.ok(m, `应有 abs query 行: ${out}`);
     const words = m[1].trim().split(/\s+/);
     assert.equal(words[0], 'hook', `强词应排第一（而非插入序在前面的弱词）: ${words}`);
     assert.ok(!words.some((w) => w.startsWith('zzz-noise-task')), `不该建议任务 id: ${words}`);
@@ -634,8 +635,8 @@ describe('board/load/status', () => {
       '---\ntags: [concept, hook]\nid: hook-throttle\n---\n\n# hook 节流\n\n正文\n', 'utf8');
     // ABS_USER=tester（见 beforeEach）→ task 行会带 [[tester]]，且它有自己的实体页
     await cmdTask({ dir: projectA, action: 'start', id: 'T-9', note: 'hook 节流' });
-    const out = await cmdLoad({ dir: projectA });
-    const words = out.match(/abs query ([^\n]+)/)[1].trim().split(/\s+/);
+    const out = await queryHint(projectA, await fs.readFile(join(projectA, '.brain', 'todo.md'), 'utf8'));
+    const words = out.replace(/.*abs query */, '').trim().split(/\s+/);
     assert.ok(!words.includes('tester'), `[[作者]] 不该进查询词: ${words}`);
     assert.ok(words.includes('hook'), `真主题词应保留: ${words}`);
   });
@@ -696,15 +697,13 @@ describe('board/load/status', () => {
       const growth = Buffer.byteLength(bigOut) / Buffer.byteLength(smallOut);
       assert.ok(growth < 1.3,
         `concept 从 3 条涨到 60 条，load 输出不得显著膨胀（${Buffer.byteLength(smallOut)}→${Buffer.byteLength(bigOut)}B, ×${growth.toFixed(2)}）`);
-      assert.ok(bigOut.includes('## Concepts（60 页）'), `应给分区计数: ${bigOut.slice(0, 600)}`);
       assert.ok(!bigOut.includes('concept-59'), 'index 明细不应进 load 输出');
-      // Rules 是内容不是清单：必须原样保留（否则 load 就失去意义了）
-      assert.ok(bigOut.includes('> 硬规则一条。'), `Rules 内容不得被折叠掉: ${bigOut.slice(0, 800)}`);
-      // Roadmap 已删（它是 AI 自己写的方向总结，会带偏会话）：模板/load 都不应再出现
-      assert.ok(!bigOut.includes('## Roadmap'), `不应再有 Roadmap 区: ${bigOut.slice(0, 400)}`);
+      // 2026-11-08 用户定：Rules 全文也撤出 load，只给条数；全文走 abs rule / abs show index
+      assert.ok(/Rules \d+ 条/.test(bigOut), `Rules 只给条数: ${bigOut.slice(0, 400)}`);
+      assert.ok(!bigOut.includes('> 硬规则一条。'), 'Rules 全文不进 load');
       // 逃生口：完整 index 仍可拿
       const full = await cmdShow({ view: 'index', dir: projectA });
-      assert.ok(full.includes('concept-59'), 'abs index 应给完整清单');
+      assert.ok(full.includes('concept-59'), 'abs show index 应给完整清单');
     })();
   });
 
@@ -1062,7 +1061,7 @@ describe('cmdTask blocked + note (实时断点)', () => {
   });
 
   test('note 追加多条子项（不覆盖 —— 2026-10-16 用户定「不限，写多少算多少」）', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'TN-2' });
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'TN-2' });
     await cmdTask({ dir: projectA, action: 'note', id: 'TN-2', note: '子项A' });
     await cmdTask({ dir: projectA, action: 'note', id: 'TN-2', note: '子项B' });
     const t = await readTodo(projectA);
@@ -1076,7 +1075,7 @@ describe('cmdTask blocked + note (实时断点)', () => {
   });
 
   test('note 幂等：同文子项不重复追加', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'TN-3' });
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'TN-3' });
     await cmdTask({ dir: projectA, action: 'note', id: 'TN-3', note: '同一条' });
     await cmdTask({ dir: projectA, action: 'note', id: 'TN-3', note: '同一条' });
     const t = await readTodo(projectA);
@@ -1095,7 +1094,7 @@ describe('cmdTask blocked + note (实时断点)', () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'TD-1', note: '做带子项的' });
     await cmdTask({ dir: projectA, action: 'note', id: 'TD-1', note: '还没做完的子项' });
     await assert.rejects(
-      () => cmdTask({ dir: projectA, action: 'done', id: 'TD-1' }),
+      () => cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'TD-1' }),
       /子任务未完成/,
     );
     const t = await readTodo(projectA);
@@ -1110,7 +1109,7 @@ describe('cmdTask blocked + note (实时断点)', () => {
     const f = join(projectA, '.brain', 'todo.md');
     const before = await fs.readFile(f, 'utf8');
     await fs.writeFile(f, before.replace('- [ ] 做完的子项', '- [x] 做完的子项'), 'utf8');
-    const r = await cmdTask({ dir: projectA, action: 'done', id: 'TD-2' });
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'TD-2' });
     assert.match(r, /已完成/, r);
     assert.ok(!r.includes('未勾子项'), `无遗留时不该报遗留: ${r}`);
     const t = await readTodo(projectA);
@@ -1498,7 +1497,7 @@ describe('cmdNote (经验实时暂存)', () => {
 // ---------- 查看命令: todo/index/log (TASK-CLI) ----------
 describe('cmdShow (todo/index/log 查看)', () => {
   test('view=todo 等价 board 输出', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'TS-1' });
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'TS-1' });
     const a = await cmdShow({ dir: projectA, view: 'todo' });
     const b = await cmdBoard({ dir: projectA });
     assert.equal(a, b);
@@ -2011,8 +2010,8 @@ describe('cmdWrapup + load 滞留 (A+B)', () => {
   });
 
   test('B: Done 区已完成的旧任务不进快照', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'W-2' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'W-2' });
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'W-2' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'W-2' });
     await cmdWrapup({ dir: projectA });
     const text = await wrapupLogText();
     // W-2 已完成, 快照里不应有它
@@ -2020,7 +2019,7 @@ describe('cmdWrapup + load 滞留 (A+B)', () => {
   });
 
   test('B: 同内容短间隔内重复 wrapup 幂等不重复写', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'W-3' });
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'W-3' });
     await cmdWrapup({ dir: projectA });
     const first = await wrapupLogText();
     const r2 = await cmdWrapup({ dir: projectA });
@@ -2032,8 +2031,8 @@ describe('cmdWrapup + load 滞留 (A+B)', () => {
     const projC = join(sandbox, 'proj-c');
     await fs.mkdir(projC, { recursive: true });
     await cmdInit({ dir: projC });
-    await cmdTask({ dir: projectA, action: 'start', id: 'WA-1' });
-    await cmdTask({ dir: projC, action: 'start', id: 'WC-1' });
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'WA-1' });
+    await cmdTask({ dir: projC, action: 'start', note: '测试任务', id: 'WC-1' });
     await cmdWrapup({ dir: projectA });
     await cmdWrapup({ dir: projC });
     const text = await wrapupLogText();
@@ -2053,7 +2052,7 @@ describe('cmdWrapup + load 滞留 (A+B)', () => {
     // 把任务 done 了 → 快照里的那个任务不应再被报为滞留。
     // 2026-10-18：子任务（断点X）没勾时不许 done，先勾掉它再完成。
     await cmdTask({ dir: projectA, action: 'child-done', id: 'LA-1' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'LA-1' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LA-1' });
     const load2 = await cmdLoad({ dir: projectA });
     assert.ok(!load2.includes('滞留任务'), `done 后原任务不应再报滞留:\n${load2}`);
   });
@@ -2061,7 +2060,7 @@ describe('cmdWrapup + load 滞留 (A+B)', () => {
   test('A: 无遗留子项时 done 后滞留完全消失', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'LA-2', note: '干净任务' });
     await cmdWrapup({ dir: projectA });
-    await cmdTask({ dir: projectA, action: 'done', id: 'LA-2' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LA-2' });
     const load = await cmdLoad({ dir: projectA });
     assert.ok(!load.includes('上会话滞留'), `无遗留时不应报滞留:\n${load}`);
   });
@@ -2162,7 +2161,7 @@ describe('Done 按日期分组 + 老格式兼容', () => {
 
   test('markDone 归位到对应日期组且新完成项在该组顶部', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'DG-1', note: '分组验证' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'DG-1' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DG-1' });
     const t = await readTodo(projectA);
     const todaySeg = t.split(`## Done`)[1] || '';
     assert.ok(todaySeg.includes(`### ${today()}`), `应有当天分组:\\n${todaySeg}`);
@@ -2176,9 +2175,9 @@ describe('Done 按日期分组 + 老格式兼容', () => {
 
   test('多次 markDone 不同日期仍各自归组', async () => {
     // DG-2 (今天) DG-3 无法造昨天; 这里验证 done 后再 start/done 同 id 幂等不重复
-    await cmdTask({ dir: projectA, action: 'start', id: 'DGX' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'DGX' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'DGX' }); // 二次 done 幂等
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'DGX' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DGX' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DGX' }); // 二次 done 幂等
     const t = await readTodo(projectA);
     const hits = t.split('\n').filter((l) => l.includes('DGX') && l.startsWith('- [x]'));
     assert.equal(hits.length, 1, `二次 done 不重复: ${hits}`);
@@ -2350,7 +2349,7 @@ describe('Done 结语契约', () => {
 
   test('done 默认结语为【落地】', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'K-1', note: 'x' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'K-1' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'K-1' });
     const ls = await doneLines();
     assert.ok(ls[0].includes('【落地】'), ls[0]);
     assert.equal(doneKindOf(ls[0]), '落地');
@@ -2797,7 +2796,7 @@ describe('写入侧格式闸门: index/todo/log 每次写入都校验', () => {
 
   test('todo.md: 无头文件（缺 H1）写回时补回标准 H1', async () => {
     await fs.writeFile(join(projectA, '.brain', 'todo.md'), '## Todo\n\n## Done\n', 'utf8');
-    await cmdTask({ dir: projectA, action: 'start', id: 'x1' });
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'x1' });
     const out = await readP('todo.md');
     assert.ok(out.startsWith('# 📋 Todo Board'), out);
     assert.match(out, /^- \[ \] \[进行中\] x1/m, out);
@@ -3122,7 +3121,7 @@ describe('子任务未完成时拒绝 done', () => {
     await cmdTask({ dir: projectA, action: 'note', id: 'LZ-1', note: '子任务乙' });
     const before = await readTodo(projectA);
     await assert.rejects(
-      () => cmdTask({ dir: projectA, action: 'done', id: 'LZ-1' }),
+      () => cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LZ-1' }),
       /子任务未完成/,
       '有未勾子任务时必须拒绝',
     );
@@ -3134,7 +3133,7 @@ describe('子任务未完成时拒绝 done', () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'LZ-2', note: '主任务' });
     await cmdTask({ dir: projectA, action: 'note', id: 'LZ-2', note: '还没做的事A' });
     await assert.rejects(
-      () => cmdTask({ dir: projectA, action: 'done', id: 'LZ-2' }),
+      () => cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LZ-2' }),
       /还没做的事A/,
       '报错里要能看见具体是哪条',
     );
@@ -3146,7 +3145,7 @@ describe('子任务未完成时拒绝 done', () => {
     await cmdTask({ dir: projectA, action: 'note', id: 'LZ-3', note: '子任务二' });
     await cmdTask({ dir: projectA, action: 'child-done', id: 'LZ-3', n: 1 });
     await cmdTask({ dir: projectA, action: 'child-done', id: 'LZ-3', n: 2 });
-    const r = await cmdTask({ dir: projectA, action: 'done', id: 'LZ-3' });
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LZ-3' });
     assert.match(r, /已完成/, r);
     const t = await readTodo(projectA);
     const doneSec = t.split('## Done')[1];
@@ -3159,7 +3158,7 @@ describe('子任务未完成时拒绝 done', () => {
 
   test('没有子任务时照常 done（不误拦）', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'LZ-4', note: '干净任务' });
-    const r = await cmdTask({ dir: projectA, action: 'done', id: 'LZ-4' });
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LZ-4' });
     assert.match(r, /已完成/, r);
   });
 });

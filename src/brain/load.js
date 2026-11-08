@@ -17,9 +17,18 @@ import { digestFilled } from './layers.js';
  *  为何要限：会话页数量只增不减，全列会让 load 首屏随规模膨胀
  *  —— 违反本仓「读取侧输出不得随规模增长」。5 个够 agent 判断先填哪张。 */
 const SESSION_UNFILLED_SHOW = 5;
+/** 开机屏的使用方法（2026-11-08 用户定 load 三件套之一）。一行一个动作，别写成手册。 */
+const LOAD_USAGE = [
+  '--- 用法 ---',
+  '接经验   abs search <词> / abs recall     记一句   abs note "…"',
+  '立概念   abs concept <id> --title "…"      登记活   abs todo start <id> --note "做什么"',
+  '收尾     abs todo done <id> --as 落地|否决|仅方案 "结论"',
+  '体检     abs lint        看全量     abs show index|log|status',
+  '纪律: 绝不通读 .brain/；检索词一冒出来就查，别等报错。',
+].join('\n');
 import { checkBrainShape } from './shape.js';
-import { rulesSection } from './rules.js';
-import { collapseIndex } from '../page.js';
+import { readRules } from './rules.js';
+
 
 // ---------- board: 看板 ----------
 export async function cmdBoard({ dir, full }) {
@@ -95,19 +104,27 @@ export async function cmdLoad({ dir }) {
       ''
     );
   }
+  // 2026-11-08 用户定：load 只留三样 —— 未完成 todo、使用方法、最近日志。
+  // Rules 全文 / 图谱计数 / Done 折叠明细 / 查询提示 / 热点页 撤出开机屏；
+  // 逃生口还在：abs rule / abs show index / abs todo --full / abs lint。
+  const board = collapseDone(todo);
+  const todoHead = String(board.text || '').split(/\n## Done/)[0].trim();
+  const { items: ruleItems } = readRules(index);
+  const blocks = extractBlocks(todo);
   sections.push(
-    // Rules 单独成段且放在最前（仅次于项目行/滞留）：它是硬规则，不是普通清单。
-    // 坑: 曾在 index 段内与页面清单平铺 —— AI 会当普通清单划过，而它每条都是付过代价的。
-    ...(rulesSection(index) ? [rulesSection(index), ''] : []),
-    collapseIndex(index) || '(index.md 为空)',
+    `📖 Rules ${ruleItems.length} 条（违反会丢数据/静默失效；全文: abs rule）`,
     '',
-    // 两区制：Todo（未完成，行首带状态标记）+ Done。
-    '--- Todo Board (todo.md) ---',
-    collapseDone(todo).text || '(todo.md 为空)',
-    '\n（Done 已按日期折叠计数；明细: abs todo --full）',
+    '--- 未完成 (todo.md) ---',
+    todoHead || '(无未完成任务)',
+    ...(blocks.length
+      ? [`  ⛔ 卡点 ${blocks.length} 条: ${blocks.map((b) => `${b.id}(${b.why})`).join('; ')}`]
+      : []),
+    `  Done ${board.doneCount} 条已折叠（明细: abs todo --full）`,
     '',
-    '--- 最近动作 (log.md, 最新 5 条) ---',
-    recentLogLines(log, 5) || '(log.md 为空)',
+    '--- 最近动作 (log.md, 最新 3 条) ---',
+    recentLogLines(log, 3, 140) || '(log.md 为空)',
+    '',
+    LOAD_USAGE,
   );
   if (stranded.length) {
     const rows = stranded.map((t) => {
@@ -123,54 +140,20 @@ export async function cmdLoad({ dir }) {
       ''
     );
   }
-  // 卡点提取（2026-09-16，定位 = 看板可见性）：
-  // 从 todo 里抽出带 `阻塞:` / `等待:` 的断点行，集中展示。
-  // 为何需要：断点行在任务下方，一屏扫过去看不出"哪些事在等人/等外部"。
-  // 只提取不求全 —— 只有明确写了前缀的才被抽出，没写的不猜。
-  const blocks = extractBlocks(todo);
-  if (blocks.length) {
-    const at = sections.findIndex((s) => String(s).startsWith('--- Rules'));
-    sections.splice(at === -1 ? 1 : at, 0,
-      `⛔ 卡点 ${blocks.length} 条（在等外部条件）`,
-      ...blocks.map((b) => `  - ${b.id}: ${b.why}`),
-      '');
-  }
-  // 相关页提示（2026-09-16）：实测 abs_query 几乎不被调用（MCP 日志 task 234 / note 54 / load 53 vs query 2）。
-  // 根因：load 只列目录 → 模型觉得"我记过了" → 真需要时靠印象。模型不知道自己不知道什么。
-  // 解法（用户定）：不替它查 —— 而是【把该查的词直接给出来】，降低发起查询的成本。
-  //   自动带出正文是错的方向：那会让 query 更没人用，且无法按需求变化调整词。
-  // 失败静默：这只是 additive 提示，出任何错都不应弄坏 load。
+
+  // 未填会话页 / sources 堆积：只给一行计数，不列页名（细节走 abs ingest --list / abs lint）。
+  // 当年列页名是为送达；现在按总量预算收口，一线足够让人决定要不要深查。
   try {
-    const rel = await queryHintSection(root, todo);
-    if (rel) sections.push('', rel);
-  } catch { /* 提示失败不影响 load */ }
-  // 最相关几页（2026-11-02）：queryHint 给「该查什么词」，这里给「该读哪几页」。
-  // 放最后 —— 它是「再深入一层」的东西，前面先给状态与待办。
-  try {
-    const hot = await hotPagesSection(root, todo);
-    if (hot) sections.push('', hot);
-  } catch { /* 同上，失败静默 */ }
-  // 未填会话页提醒（2026-11-05）：ingest/hook 落的是空骨架，内容要人填。
-  // 若不在开工时摆出来，「落了没填」就永远没人知道 —— 等于采集了不消化。
-  // 与 sources 提醒同一个位置、同一种语气：只给线索，判断仍归 agent。
-  try {
-    const sessWarn = await unfilledSessionSection(root);
-    if (sessWarn) {
-      const at = sections.findIndex((s) => String(s).startsWith('--- Rules'));
-      sections.splice(at === -1 ? 1 : at, 0, ...sessWarn);
-    }
+    const sessWarn = await unfilledSessionSection(root, { oneLine: true });
+    if (sessWarn) sections.push('', sessWarn);
   } catch { /* 提醒失败不影响 load */ }
-  // sources 堆积提醒：与「滞留」同构 —— 放在每次开工必经的顶部，而不是等人跑 lint。
-  // 只数目录条目（不读文件），零成本。提炼仍手工：这里只负责送达，不替判断。
   try {
-    const srcWarn = await sourcesCountSection(root);
-    if (srcWarn) {
-      const at = sections.findIndex((s) => String(s).startsWith('--- Rules'));
-      sections.splice(at === -1 ? 1 : at, 0, ...srcWarn);
-    }
+    const srcWarn = await sourcesCountSection(root, { oneLine: true });
+    if (srcWarn) sections.push('', srcWarn);
   } catch { /* 提醒失败不影响 load */ }
   return sections.join('\n');
 }
+
 
 /**
  * 从 todo 正文抽出"卡点"行，供 load 集中展示。
@@ -306,7 +289,7 @@ export async function hotPagesSection(root, todoText, { limit = 3 } = {}) {
  * @param {string} todoText
  * @param {{name:string,body:string}[]} [pages] 已读好的页（省一次磁盘扫描）
  */
-async function queryHint(root, todoText, pages) {
+export async function queryHint(root, todoText, pages) {
   const { kws, files } = await contextKeywords(root, todoText);
   if (!kws.length) return '';
   const all = pages || await listPages(brainPath(root)).catch(() => []);
@@ -335,10 +318,7 @@ async function countSources(root) {
   } catch { return 0; }
 }
 
-/** queryHint 的 load 端封装：返回提示文本（含标题行），无强词则空串。失败静默。 */
-async function queryHintSection(root, todo) {
-  return queryHint(root, todo);
-}
+
 
 /**
  * recall：卡住时主动取「跟当前处境相关的几页」，不需要先想到检索词。
@@ -457,7 +437,7 @@ export async function cmdRecall({ dir, terms, limit = 5 } = {}) {
  *
  * 守「读取侧输出不随规模增长」：只列表头最多 SESSION_UNFILLED_SHOW 个页名，
  * 其余折叠成条数。页名够用 —— agent 要读哪张再 abs resolve 那一张，别在这贴正文。 */
-async function unfilledSessionSection(root) {
+async function unfilledSessionSection(root, { oneLine = false } = {}) {
   let files;
   try {
     files = await fs.readdir(brainPath(root, 'sessions'));
@@ -472,6 +452,8 @@ async function unfilledSessionSection(root) {
     if (!digestFilled(body)) unfilled.push(f.replace(/\.md$/, ''));
   }
   if (!unfilled.length) return null;
+  // 2026-11-08 load 三件套收口：只回一行计数，不列页名（列名那套留给 --list / 以后要用再传 oneLine:false）。
+  if (oneLine) return `📝 未填会话页 ${unfilled.length} 张（abs ingest --list 看哪几张；不进检索，不急着全填）`;
   // 按日期倒序（2026-11-05 实测修正）：原来按 readdir 顺序（≈文件名升序），
   // 60 张时列出来的是 18/27/36/45/54 —— 随机五张，既不是最近的也不是最该填的。
   // 页名形如 session-<日期>-s<id8>，日期就在里面，直接按名字倒排即可。
@@ -494,9 +476,10 @@ async function unfilledSessionSection(root) {
 }
 
 /** sources 堆积提醒：返回 [标题行, ...内容行] 或 null。失败静默。 */
-async function sourcesCountSection(root) {
+async function sourcesCountSection(root, { oneLine = false } = {}) {
   const nsrc = await countSources(root);
   if (nsrc <= SOURCES_MAX) return null;
+  if (oneLine) return `♻ 待消化: sources/ 有 ${nsrc} 条 > ${SOURCES_MAX}（abs lint 看明细）`;
   return [
     `♻ 待消化: sources/ 有 ${nsrc} 条 > ${SOURCES_MAX}（采集了没提炼）`,
     '→ abs lint 看明细；提炼成 concepts/ 后删 source 并清引用',

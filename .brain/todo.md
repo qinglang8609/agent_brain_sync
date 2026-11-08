@@ -5,6 +5,9 @@
 ## Done
 
 ### 2026-11-08
+- [x] slim-skill-load-cmd [[fanchao]] — skill/load/命令 精简 — 四件全落地：英文skill/load 1603B/格式闸/命令折叠；821 绿；全局+pi 已同源 【落地】 (完成 2026-11-08 01a1b50b-9994-71)
+  - [x] 四件事：skill 改英文路由风、load 砍到未完成todo+用法+近日志、清废弃代码、命令去重折叠
+- [x] abs-sleep-design [[fanchao]] — 设计在 docs/sleep-design.md：补空/压缩阶梯/提炼/墓碑，四条不碰的红线，M1-M4 分期，保留期数字等用户拍板 【仅方案】 (完成 2026-11-08 01a1b50b-9994-71)
 - [x] index-session-row-desc [[fanchao]] — 归档 index 行带任务首段描述；本仓库 16 条旧机器行已回填；821 测试 + lint 绿 【落地】 (完成 2026-11-08 01a1b50b-9994-71)
 
 ### 2026-11-07

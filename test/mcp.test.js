@@ -194,7 +194,7 @@ describe('mcp: 工具调用', () => {
 
   test('abs_task done 归位 Done', async () => {
     await tool('abs_task', { action: 'start', id: 'MD', note: 'x', cwd: projA });
-    await tool('abs_task', { action: 'done', id: 'MD', cwd: projA });
+    await tool('abs_task', { action: 'done', note: '做完', id: 'MD', cwd: projA });
     const b = await tool('abs_load', { cwd: projA });
     assert.ok(/Done/.test(textOf(b)), textOf(b));
   });
@@ -236,9 +236,9 @@ describe('mcp: 工具调用', () => {
     assert.ok(/0/.test(textOf(r)), textOf(r));
   });
 
-  test('abs_load 返回 index+todo+log 三段', async () => {
+  test('abs_load 返回 未完成+用法+log 三段', async () => {
     const r = await tool('abs_load', { cwd: projA });
-    assert.ok(textOf(r).includes('Graph Index') && textOf(r).includes('Todo'), textOf(r));
+    assert.ok(textOf(r).includes('未完成') && textOf(r).includes('用法') && textOf(r).includes('log.md'), textOf(r));
   });
 
   test('abs_task 未知 action → isError', async () => {

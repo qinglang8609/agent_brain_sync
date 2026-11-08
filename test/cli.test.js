@@ -92,7 +92,7 @@ describe('cli: todo', () => {
   // 一次不带 --session 的重复 start 就会把 sid 冲掉（静默丢线索）。
   test('★ 重复 start 不带 session 时，原 sid 必须保住', async () => {
     await run(['todo', 'start', 'T1', '--note', '带会话', '--session', '01a11eae']);
-    const again = await run(['todo', 'start', 'T1']);
+    const again = await run(['todo', 'start', 'T1', '--note', '测试任务']);
     assert.equal(again.code, 0, again.stderr);
     const md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
     assert.match(md, /01a11eae/, '原 sid 不能被冲掉');
@@ -100,7 +100,7 @@ describe('cli: todo', () => {
 
   test('★ 另一个会话接手 → sid 换成新的（用户强制进行的路径）', async () => {
     await run(['todo', 'start', 'T1', '--note', '原会话', '--session', '01a11eae']);
-    await run(['todo', 'start', 'T1', '--session', '01a11f2a']);
+    await run(['todo', 'start', 'T1', '--note', '测试任务', '--session', '01a11f2a']);
     const md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
     assert.match(md, /01a11f2a/, '接手后是新 sid');
     assert.ok(!md.includes('01a11eae'), '旧 sid 应被替换');
@@ -110,15 +110,15 @@ describe('cli: todo', () => {
   // 静默换 sid 会让看板上无声无息地易主，接手方不知道这条原来是谁的。
   test('★ 接手时提示原属会话（不拦截，只告知）', async () => {
     await run(['todo', 'start', 'T1', '--note', '原会话', '--session', '01a11eae']);
-    const s = await run(['todo', 'start', 'T1', '--session', '01a11f2a']);
+    const s = await run(['todo', 'start', 'T1', '--note', '测试任务', '--session', '01a11f2a']);
     assert.equal(s.code, 0, '接手不该被拦');
     assert.ok(s.stdout.includes('接手'), `应提示接手: ${s.stdout}`);
     assert.ok(s.stdout.includes('01a11eae'), '应告知原属会话');
   });
 
   test('同一会话重复 start → 不误报接手', async () => {
-    await run(['todo', 'start', 'T1', '--session', '01a11eae']);
-    const s = await run(['todo', 'start', 'T1', '--session', '01a11eae']);
+    await run(['todo', 'start', 'T1', '--note', '测试任务', '--session', '01a11eae']);
+    const s = await run(['todo', 'start', 'T1', '--note', '测试任务', '--session', '01a11eae']);
     assert.ok(!s.stdout.includes('接手'), '自己的任务不该报接手');
   });
 
@@ -146,8 +146,8 @@ describe('cli: todo', () => {
   });
 
   test('★ 同一会话认领+完成 → 只写一个，不重复', async () => {
-    await run(['todo', 'start', 'T2', '--session', '01a11eae']);
-    await run(['todo', 'done', 'T2', '--session', '01a11eae']);
+    await run(['todo', 'start', 'T2', '--note', '测试任务', '--session', '01a11eae']);
+    await run(['todo', 'done', 'T2', '做完', '--session', '01a11eae']);
     const md = await readTodo();
     const line = md.split('\n').find((l) => l.includes('T2'));
     assert.match(line, /\(完成 \d{4}-\d{2}-\d{2} 01a11eae\)/, '完成带 sid');
@@ -155,16 +155,16 @@ describe('cli: todo', () => {
   });
 
   test('★ done 未给 session → 沿用认领者（不凭空编）', async () => {
-    await run(['todo', 'start', 'T3', '--session', '01a11eae']);
-    await run(['todo', 'done', 'T3']);
+    await run(['todo', 'start', 'T3', '--note', '测试任务', '--session', '01a11eae']);
+    await run(['todo', 'done', 'T3', '做完']);
     const md = await readTodo();
     assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11eae\)/);
     assert.ok(!/T3[^\n]*\(认领/.test(md), '不重复留认领段');
   });
 
   test('无认领但 B 完成 → 只写完成者', async () => {
-    await run(['todo', 'start', 'T4']);
-    await run(['todo', 'done', 'T4', '--session', '01a11f2a']);
+    await run(['todo', 'start', 'T4', '--note', '测试任务']);
+    await run(['todo', 'done', 'T4', '做完', '--session', '01a11f2a']);
     const md = await readTodo();
     assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11f2a\)/);
     assert.ok(!/T4[^\n]*\(认领/.test(md), '无认领则不留认领段');
@@ -189,7 +189,7 @@ describe('cli: todo', () => {
   test('start 登记 + done 归位 (默认 --dir = 进程 cwd)', async () => {
     const s = await run(['todo', 'start', 'T1', '--note', '做事']);
     assert.equal(s.code, 0, s.stderr);
-    const d = await run(['todo', 'done', 'T1']);
+    const d = await run(['todo', 'done', 'T1', '做完']);
     assert.equal(d.code, 0, d.stderr);
     const t = await run(['todo', '--full']);
     assert.ok(t.stdout.includes('T1'));
@@ -282,11 +282,14 @@ describe('cli: todo', () => {
 
   // 回归: 只读命令以前静默吞掉多余参数
   test('只读命令遇多余参数报错 (不再静默)', async () => {
-    for (const c of ['status', 'lint', 'load', 'index', 'wrapup']) {
+    for (const c of ['lint', 'load', 'wrapup']) {
       const r = await run([c, 'junk']);
       assert.notEqual(r.code, 0, `abs ${c} junk 应报错`);
       assert.ok(/不认识多余参数/.test(r.stderr), `${c}: ${r.stderr}`);
     }
+    const sj = await run(['show', 'index', 'junk']);
+    assert.notEqual(sj.code, 0);
+    assert.ok(/不认识多余参数/.test(sj.stderr), sj.stderr);
   });
 
   test('state / note 子项实时落盘（两区制：状态用行首标记，不搬区）', async () => {
@@ -448,13 +451,15 @@ describe('cli: 无 .brain/ 图谱', () => {
 
 // ---------- log 双语义 ----------
 describe('cli: log 带参=写 / 无参=看', () => {
-  test('log "标题" 写一行; log 无参查看', async () => {
+  test('log "标题" 写一行; show log 查看（log 无参已改为报用法）', async () => {
     await run(['init', '--dir', proj]);
     const w = await run(['log', '完成一轮收尾']);
     assert.equal(w.code, 0, w.stderr);
-    const r = await run(['log']);
+    const r = await run(['show', 'log']);
     assert.equal(r.code, 0, r.stderr);
     assert.ok(r.stdout.includes('完成一轮收尾'), r.stdout);
+    const bad = await run(['log']);
+    assert.notEqual(bad.code, 0, 'log 无参应报用法');
   });
 
   // 回归（2026-10-05 本机实现实测）：`--kind` 未在 FLAG_SPEC 声明 → 静默被丢掉，
@@ -498,7 +503,7 @@ describe('cli: wrapup (收尾保险快照)', () => {
     const logDir = join(sandbox, 'abs-log2');
     await run(['todo', 'start', 'CW-2', '--note', '做Y'], { env: { ABS_LOG_DIR: logDir } });
     await run(['wrapup'], { env: { ABS_LOG_DIR: logDir } });
-    await run(['todo', 'done', 'CW-2'], { env: { ABS_LOG_DIR: logDir } });
+    await run(['todo', 'done', 'CW-2', '做完'], { env: { ABS_LOG_DIR: logDir } });
     const l = await run(['load'], { env: { ABS_LOG_DIR: logDir } });
     assert.ok(!l.stdout.includes('上会话滞留'), l.stdout);
   });
@@ -878,7 +883,7 @@ describe('cli: 使用者姓名与作者标记', () => {
   test('未设姓名: 只读命令与 hook 命令不受影响', async () => {
     await run(['init', '--dir', proj], { env: envNoUser() });
     // 只读：必须照常工作
-    for (const args of [['load', '--dir', proj], ['status', '--dir', proj], ['lint', '--dir', proj], ['log', '--dir', proj]]) {
+    for (const args of [['load', '--dir', proj], ['show', 'status', '--dir', proj], ['lint', '--dir', proj], ['show', 'log', '--dir', proj]]) {
       const r = await run(args, { env: envNoUser() });
       assert.equal(r.code, 0, `只读命令 ${args[0]} 不应被姓名守卫拦: ${r.stderr}`);
     }
@@ -1052,8 +1057,8 @@ describe('cli: 未设姓名时的主动提醒', () => {
     assert.ok(r.stdout.includes('尚未设置使用者姓名'), `load 应提醒: ${r.stdout.slice(0, 300)}`);
     // 提醒应在最前（开机第一屏）
     const warnIdx = r.stdout.indexOf('尚未设置使用者姓名');
-    const boardIdx = r.stdout.indexOf('Concepts');
-    assert.ok(warnIdx < boardIdx, '提醒应出现在图谱计数之前');
+    const boardIdx = r.stdout.indexOf('未完成');
+    assert.ok(warnIdx < boardIdx, '提醒应出现在看板之前');
   });
 
   test('已设姓名时 init/load 不啰嗦', async () => {

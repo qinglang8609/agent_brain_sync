@@ -193,6 +193,13 @@ async function checkRootFiles(vault) {
           `总结/报告/清单请分流：流水 → abs log，经验 → abs note，长设计 → sources/)`,
         );
       }
+      // 格式闸（2026-11-08 用户定）：Todo 区任务行必须有 ` — 描述`，只有 id 打回。
+      if (todoSectionOf(lines, i) === 'Todo' && /^- \[ \]/.test(l) && !l.includes(' — ')) {
+        issues.push(
+          `TODO-NO-DESC: ${BRAIN_DIR}/${file}:${i + 1} (任务行没有描述；` +
+          `只有 id 查不到、接不上 —— abs todo start <id> --note "一句话" 补上，或 state 搁置/删除)`,
+        );
+      }
       // 断点行（新旧格式同一个解析器 —— 不再自己切前缀）
       const bpLine = parseChild(l);
       if (!bpLine) continue;

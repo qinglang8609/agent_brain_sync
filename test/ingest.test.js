@@ -279,8 +279,9 @@ test('abs load: 未填的会话页被摆到顶部', async () => {
   const { proj } = await sandbox();
   await writeDigestPage(proj, { slug: 'session-2026-11-05-saaaa1111' });
   const out = await cmdLoad({ dir: proj });
+  // 2026-11-08 load 三件套收口：只回一行计数，不列页名
   assert.match(out, /未填会话页 1 张/);
-  assert.match(out, /session-2026-11-05-saaaa1111/);
+  assert.ok(!out.includes('session-2026-11-05-saaaa1111'), `不列页名: ${out}`);
 });
 
 test('abs load: 已填的会话页不提醒（判据是段内有真内容，不是 status）', async () => {
@@ -299,11 +300,8 @@ test('abs load: 手写的 sessions 页不被催（只认 kind: session-digest）
   assert.ok(!/未填会话页/.test(out), `手写页不该被催: ${out}`);
 });
 
-test('abs load: 未填页多时列最近 5 张（按日期倒序，不是文件名随机）', async () => {
+test('abs load: 未填页多时只回一行计数，不列页名', async () => {
   const { proj } = await sandbox();
-  // 日期跨 3 天，且故意让「字母序最小的」不是最新的
-  // 最新那天放 5 张（正好是展示上限），更早的两天各 2 张 ——
-  // 这样「列出的是否全为最新」才是可判的：若排序错，会有旧页混进来。
   const days = ['2026-11-01', '2026-11-05', '2026-11-09'];
   const per = { '2026-11-01': 2, '2026-11-05': 2, '2026-11-09': 5 };
   for (const d of days) {
@@ -313,12 +311,8 @@ test('abs load: 未填页多时列最近 5 张（按日期倒序，不是文件�
   }
   const out = await cmdLoad({ dir: proj });
   assert.match(out, /未填会话页 9 张/);
-  // 列出的 5 个必须都是最新那天（2026-11-09）的
-  const shown = out.match(/^ {2}- (session-[\d-]+-s\w+)$/gm) || [];
-  assert.equal(shown.length, 5);
-  for (const line of shown) {
-    assert.match(line, /2026-11-09/, `应列最近那天的，实际: ${line}`);
-  }
+  // 2026-11-08 收口：不列页名（守读取侧不隨规模增长）；排序逻辑留在 unfilledSessionSection
+  assert.ok(!/session-2026-11-09/.test(out.split('未填会话页')[1] || ''), `不列页名: ${out}`);
 });
 
 test('abs load: 未填页多时只列 5 个页名，其余折叠成条数', async () => {
@@ -328,9 +322,7 @@ test('abs load: 未填页多时只列 5 个页名，其余折叠成条数', asyn
   }
   const out = await cmdLoad({ dir: proj });
   assert.match(out, /未填会话页 9 张/);
-  const shown = (out.match(/^ {2}- session-2026-11-05-scccc000\d$/gm) || []).length;
-  assert.equal(shown, 5, `只该列 5 个页名，实际 ${shown}:\n${out}`);
-  assert.match(out, /另有 4 张/, `其余要折叠成条数: ${out}`);
+  assert.ok(!/scccc000/.test(out.split('未填会话页')[1] || ''), `不列页名: ${out}`);
 });
 
 // ---------- 审查修复（2026-11-05）----------

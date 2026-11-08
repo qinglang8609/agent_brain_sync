@@ -106,7 +106,12 @@ export async function cmdTodoArchive({ dir, keepDays = 3, dryRun = false } = {})
     // 行是覆盖式登记（registerInIndex 同族），这里只在**首次登记**写，之后不追改。
     const add = missing.map((g) => {
       const b = String(g.brief || '').trim();
-      const desc = b ? `${g.date}（会话快照 + 任务归档）：${clip(b, 110)}` : `${g.date}（会话快照 + 任务归档）`;
+      // 无首段时用任务 id 充当描述（是真的，不是编的）—— 光写日期模板会被 INDEX-ENTRY 打回。
+      const ids = (g.lines || []).filter((l) => /^- \[x\]/.test(l))
+        .map((l) => (String(l).match(/\s(\S+)[^\n]*$/) || [])[1])
+        .filter(Boolean).slice(0, 3);
+      const fallback = `完成任务 ${g.count} 条${ids.length ? '：' + ids.join('、') : ''}`;
+      const desc = `${g.date}（会话快照 + 任务归档）：${b ? clip(b, 110) : fallback}`;
       return `- [[${g.slug}]] — ${desc}`;
     }).join('\n');
     const next = after === -1

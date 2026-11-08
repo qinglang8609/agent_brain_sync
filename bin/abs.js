@@ -340,10 +340,10 @@ function parseArgv(args) {
 }
 const usage = `abs — 跨会话记忆（.brain/ 图谱）
 
-怎么用：按你要做的事找，不用记命令名。旧名都还能用，会自动提示新名。
+怎么用：按你要做的事找。相近命令已折叠，旧别名已删（index/status/summon/db search → show/search/ingest）。
 
 【开工】读状态，接上次的活
-  abs load                  必跑。Rules + 图谱计数 + 任务板 + 最近流水
+  abs load                  必跑。未完成 todo + 用法 + 最近日志
   abs recall [词…]          卡住时用：按当前处境推相关页（不给词也行）
 
 【找东西】
@@ -380,9 +380,7 @@ const usage = `abs — 跨会话记忆（.brain/ 图谱）
   abs update                升级并刷新 hook/skill
   abs config set user <名字>  使用者姓名（写操作需先设置）
 
-旧名（仍可用，会提示新名）：
-  index/log/status → show   |  capture → concept  |  db search → search
-  summon → ingest --list    |  db add → init
+视图折叠: show index|log|status   写知识: note / concept / rule
 
 注: wrapup / teardown-check 是 hook 内部命令。
 `;
@@ -390,7 +388,7 @@ const usage = `abs — 跨会话记忆（.brain/ 图谱）
 /** 子命令级用法（abs <cmd> --help 时打印）。 */
 const subUsage = {
   load: [
-    'abs load — 开机读状态（Rules 全量 + 图谱计数 + todo 看板 + 最近 log）',
+    'abs load — 开机读状态（未完成 todo + 用法 + 最近 log）',
     '',
     '用法:',
     '  abs load [--dir <项目根>]',
@@ -643,28 +641,12 @@ async function main() {
         else console.log(`✗ 未知视图 "${v}"。可用: index | log | status`);
         break;
       }
-      case 'index':
-        rejectExtra(opts._, 'abs index');
-        console.log('（abs index 已改名 → abs show index）');
-        console.log(await cmdShow({ dir: opts.dir, view: 'index' }));
-        break;
       case 'log': {
-        // 无参=查看 log.md；带参=追加一行 (用户/AI 主动记; hook 生命周期事件走技术日志 hooks.log, 不经这里)
-        // ★ log 有双职责，不能并进 show：带参时它是**写**操作。
-        //   所以只把「无参查看」这一半指向 show，写的那半保持不变、也不提示改名。
-        if (opts._.length) {
-          console.log(await cmdLog({ dir: opts.dir, title: opts._.join(' '), kind: opts.kind }));
-        } else {
-          console.log('（查看流水已改名 → abs show log；abs log "完成 X" 仍是记成果）');
-          console.log(await cmdShow({ dir: opts.dir, view: 'log' }));
-        }
+        // 只剩写：abs log "结论"。查看流水 = abs show log（2026-11-08 去掉无参查看的别名）。
+        if (!opts._.length) throw new Error('✗ 用法: abs log "一句话结论" [--kind dev|note|concept|ingest]\n  查看流水: abs show log');
+        console.log(await cmdLog({ dir: opts.dir, title: opts._.join(' '), kind: opts.kind }));
         break;
       }
-      case 'status':
-        rejectExtra(opts._, 'abs status');
-        console.log('（abs status 已改名 → abs show status）');
-        console.log(await cmdStatus({ dir: opts.dir }));
-        break;
       // abs todo —— 无子命令=看板；带子命令=任务写操作
       case 'todo': {
         const [sub, id, ...rest2] = opts._;
@@ -719,13 +701,6 @@ async function main() {
         rejectExtra(rest2, usage);
         if (!id) throw new Error(`✗ 缺 <id>\n  用法: ${usage}`);
         console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note: opts.note, as: opts.as, session: opts.session }));
-        break;
-      }
-      case 'summon': {
-        // 别名（2026-11-06）：并进 ingest --list —— 两者是同一件事的两半
-        // （summon 说「哪些没落页」，ingest 负责落）。分两个顶层命令只是多记一个词。
-        console.log('（abs summon 已改名 → abs ingest --list）');
-        console.log(await cmdSummon({ dir: opts.dir, mark: !!opts.mark, full: !!opts.full, status: !!opts.status, limit: Number(opts.limit) || 15 }));
         break;
       }
       case 'ingest': {
@@ -784,15 +759,7 @@ async function main() {
       }
       case 'db': {
         const sub = opts._[0];
-        const rest = opts._.slice(1);
         if (sub === 'rebuild') { console.log(await cmdDbRebuild({ dir: opts.dir })); break; }
-        if (sub === 'search') {
-          // 别名（2026-11-06）：顶层已改叫 abs search。留着是为了不打断现有习惯与脚本，
-          // 但每次提示一次 —— 不提示的话旧名会永远活着，命令面又变宽。
-          console.log('（abs db search 已改名 → abs search）');
-          console.log(await cmdDbSearch({ query: rest.join(' '), limit: Number(opts.limit) || 8, full: !!opts.full, noRules: !!opts['no-rules'] }));
-          break;
-        }
         if (sub === 'status') { console.log(await cmdDbStatus()); break; }
         if (sub === 'evolve') { console.log(await cmdDbEvolve({ staleDays: Number(opts.staleDays) || 90 })); break; }
         if (sub === 'add') {
@@ -800,7 +767,7 @@ async function main() {
           console.log(`✓ 已登记项目: ${r}\n  建库: abs db rebuild`);
           break;
         }
-        console.log('用法: abs db rebuild | search <词> | status | evolve | add [--dir <项目根>]');
+        console.log('用法: abs db rebuild | status | evolve | add [--dir <项目根>]');
         break;
       }
       case 'query': {
