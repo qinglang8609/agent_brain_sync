@@ -91,22 +91,22 @@ function dropCols(s: string, n: number): string {
  *   「删掉输入框样式目录」连带把 todo 面板搞崩。
  */
 export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
-  max: { rgb: '223;228;236', ansi256: 254 },
-  xhigh: { rgb: '198;206;220', ansi256: 252 },
-  high: { rgb: '172;184;205', ansi256: 146 },
-  medium: { rgb: '147;162;190', ansi256: 110 },
-  low: { rgb: '121;141;174', ansi256: 103 },
-  minimal: { rgb: '110;130;168', ansi256: 67 },
+  max: { rgb: '228;234;242', ansi256: 254 },
+  xhigh: { rgb: '208;216;230', ansi256: 252 },
+  high: { rgb: '184;194;212', ansi256: 152 },
+  medium: { rgb: '160;172;196', ansi256: 110 },
+  low: { rgb: '136;150;180', ansi256: 103 },
+  minimal: { rgb: '116;136;172', ansi256: 68 },
 }
 
 /** 边框用：同色相压暗降饱和 —— 文字要能读，边框要不抢眼（2026-11-08 用户反馈）。 */
 export const EFFORT_BORDER: Record<string, { rgb: string; ansi256: number }> = {
-  max: { rgb: '80;92;114', ansi256: 240 },
-  xhigh: { rgb: '72;83;102', ansi256: 239 },
-  high: { rgb: '63;73;90', ansi256: 238 },
-  medium: { rgb: '57;66;81', ansi256: 237 },
-  low: { rgb: '51;58;72', ansi256: 236 },
-  minimal: { rgb: '44;51;63', ansi256: 235 },
+  max: { rgb: '102;115;140', ansi256: 103 },
+  xhigh: { rgb: '90;102;128', ansi256: 60 },
+  high: { rgb: '78;90;114', ansi256: 60 },
+  medium: { rgb: '68;79;100', ansi256: 60 },
+  low: { rgb: '58;69;86', ansi256: 240 },
+  minimal: { rgb: '48;58;72', ansi256: 239 },
 }
 
 export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
