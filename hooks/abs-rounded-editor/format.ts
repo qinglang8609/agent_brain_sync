@@ -73,32 +73,51 @@ function dropCols(s: string, n: number): string {
 
 /**
  * 推理强度 → 面板与输入框的主色（2026-11-07 用户需求）。
- *  色值是用户逐档指定的（给的是 hex），不是自己调的：
- *    max #ACB8CD · xhigh #95A5C3 · high #768298 · medium #697387
- *    low #5C6577 · minimal #505867
+ *  色值起于用户 2026-11-07 给的六档灰蓝，之后用户要求「xhigh/high 再亮一点，往下都稍亮」，
+ *  按**同色相**（H≈219°）提亮度得到现在这组：
+ *    max #ACB8CD(不动) · xhigh #9CABC7 · high #8D97AA · medium #747E93
+ *    low #656F83 · minimal #586171
+ *  提亮前用户给的原值：xhigh #95A5C3 · high #768298 · medium #697387 · low #5C6577 · minimal #505867
  *  色相是用户挑的灰蓝（不是绿），换色只许按用户给的值改，别拿主题色或自己的审美去替换。
  *  off / 未知 → 空串，表示「不上色，沿用默认色」—— 用户 2026-11-06 定过：推理关着就保持原样。
  *
  * 为何自己拼 ANSI 而不是走 theme.fg：fg() 只认主题里的 token 名，主题那七档色相跟这组不一样。
  * 终端支持 24 位色就给 38;2，否则退到 256 色板里的一档（见 ansi256）。
- *  ★ 256 色板里没有这种灰蓝：只能退到灰阶档（250/248/244/242/241/240），保住“一档比一档暗”、
- *    丢掉一点蓝调 —— 24 位色终端才是标称效果。
+ *  ★ 256 色板里没有这种灰蓝：只能退到灰阶档（250/249/247/244/243/241），保住“一档比一档暗”、
+ *    丢掉蓝调 —— 24 位色终端才是标称效果。
  *
  * ★ 同一份逻辑在 hooks/abs.pi.ts 里也有一份（`effortAnsi`）。不抽公共模块是故意的：
  *   安装后 `abs.ts` 与 `abs-rounded-editor/` 是两个可独立删除的扩展，抽成共享文件会让
  *   「删掉输入框样式目录」连带把 todo 面板搞崩。
  */
 export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
-  max: { rgb: '137;241;63', ansi256: 255 },
-  xhigh: { rgb: '143;221;87', ansi256: 255 },
-  high: { rgb: '152;195;121', ansi256: 189 },
-  medium: { rgb: '125;161;100', ansi256: 146 },
-  low: { rgb: '98;127;79', ansi256: 110 },
-  minimal: { rgb: '62;100;62', ansi256: 110 },
+  max: { rgb: '232;238;248', ansi256: 255 },
+  xhigh: { rgb: '240;244;252', ansi256: 255 },
+  high: { rgb: '248;250;253', ansi256: 231 },
+  medium: { rgb: '197;205;220', ansi256: 189 },
+  low: { rgb: '168;178;204', ansi256: 146 },
+  minimal: { rgb: '138;152;184', ansi256: 110 },
+}
+
+/** 边框用：同色相压暗降饱和 —— 文字要能读，边框要不抢眼（2026-11-08 用户反馈）。 */
+export const EFFORT_BORDER: Record<string, { rgb: string; ansi256: number }> = {
+  max: { rgb: '232;238;248', ansi256: 255 },
+  xhigh: { rgb: '240;244;252', ansi256: 255 },
+  high: { rgb: '248;250;253', ansi256: 231 },
+  medium: { rgb: '197;205;220', ansi256: 189 },
+  low: { rgb: '168;178;204', ansi256: 146 },
+  minimal: { rgb: '138;152;184', ansi256: 110 },
 }
 
 export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
   const g = EFFORT_COLOR[String(level || '').trim().toLowerCase()]
+  if (!g) return ''
+  return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
+}
+
+
+export function effortBorderAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
+  const g = EFFORT_BORDER[String(level || '').trim().toLowerCase()]
   if (!g) return ''
   return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
 }

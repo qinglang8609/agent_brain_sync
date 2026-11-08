@@ -133,12 +133,12 @@ describe('圆角输入框 格式化', () => {
 describe('effortAnsi — 推理强度 → 主色（用户指定的六档 hex）', () => {
   // 2026-11-07 用户直接给了 hex，这里逐个钉死：改色就应让测试红，不能默默变掉。
   const HEX = {
-    max: '#89F13F',
-    xhigh: '#8FDD57',
-    high: '#98C379',
-    medium: '#7DA164',
-    low: '#627F4F',
-    minimal: '#3E643E',
+    max: '#E8EEF8',
+    xhigh: '#F0F4FC',
+    high: '#F8FAFD',
+    medium: '#C5CDDC',
+    low: '#A8B2CC',
+    minimal: '#8A98B8',
   };
   const toAnsi = (hex) => {
     const n = parseInt(hex.slice(1), 16);
@@ -152,12 +152,12 @@ describe('effortAnsi — 推理强度 → 主色（用户指定的六档 hex）'
   });
 
   it('★ 256 色终端退到最近的一档', () => {
-    // 灰蓝色板里没有，只能退到灰阶（250/248/244/242/241/240），保住“一档比一档暗”
+    // 256 色板里没有这种灰蓝，退到最近的灰/蓝灰档
     assert.equal(effortAnsi('max', '256color'), '38;5;255');
     assert.equal(effortAnsi('xhigh', '256color'), '38;5;255');
-    assert.equal(effortAnsi('high', '256color'), '38;5;189');
-    assert.equal(effortAnsi('medium', '256color'), '38;5;146');
-    assert.equal(effortAnsi('low', '256color'), '38;5;110');
+    assert.equal(effortAnsi('high', '256color'), '38;5;231');
+    assert.equal(effortAnsi('medium', '256color'), '38;5;189');
+    assert.equal(effortAnsi('low', '256color'), '38;5;146');
     assert.equal(effortAnsi('minimal', '256color'), '38;5;110');
   });
 

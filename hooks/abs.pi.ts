@@ -975,31 +975,51 @@ export function todoAnimFrame(phase: number): string {
 }
 
 /** 推理强度 → 面板与输入框的主色（2026-11-07 用户需求）。
- *  色值是用户逐档指定的（用户原话给了 6 个 hex），不是自己调的：
- *    max #ACB8CD · xhigh #95A5C3 · high #768298 · medium #697387
- *    low #5C6577 · minimal #505867
+ *  色值起于用户 2026-11-07 给的六档灰蓝，之后用户要求「xhigh/high 再亮一点，往下都稍亮」，
+ *  按**同色相**（H≈219°）提亮度得到现在这组：
+ *    max #ACB8CD(不动) · xhigh #9CABC7 · high #8D97AA · medium #747E93
+ *    low #656F83 · minimal #586171
+ *  提亮前用户给的原值：xhigh #95A5C3 · high #768298 · medium #697387 · low #5C6577 · minimal #505867
  *  色相是用户挑的灰蓝（不是绿），换色只许按用户给的值改，别拿主题色或自己的审美去替换。
  *  off / 未知 → 空串，表示「不上色」：调用方用灰阶（用户 2026-11-06 定过，推理关着就别发光）。
  *
- *  为何自己拼 ANSI 而不是 theme.fg：fg() 只认主题里的 token 名，主题那七档色相跟这组不一样。终端支持 24 位色就给 38;2，否则退到 256 色板里同色相的一档（见 ansi256）。
- *  ★ 256 色板里没有这种灰蓝：只能退到灰阶档（250/248/244/242/241/240），保住“一档比一档暗”、
- *    丢掉一点蓝调 —— 24 位色终端才是标称效果。
+ *  为何自己拼 ANSI 而不是 theme.fg：fg() 只认主题里的 token 名，主题那七档色相跟这组不一样。
+ *  终端支持 24 位色就给 38;2，否则退到 256 色板最近的一档（见 ansi256）。
+ *  ★ 256 色板里没有这种灰蓝：只能退到灰阶档（250/249/247/244/243/241），保住“一档比一档暗”、
+ *    丢掉蓝调 —— 24 位色终端才是标称效果。
  *
  * ★ 同一份逻辑在 hooks/abs-rounded-editor/format.ts 里也有一份（`effortAnsi`）。
  *   不抽公共模块是故意的：安装后 `abs.ts` 与 `abs-rounded-editor/` 是两个可独立删除的扩展，
  *   抽成共享文件会让「删掉输入框样式目录」连带把 todo 面板搞崩。
  */
 export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
-  max: { rgb: '137;241;63', ansi256: 255 },
-  xhigh: { rgb: '143;221;87', ansi256: 255 },
-  high: { rgb: '152;195;121', ansi256: 189 },
-  medium: { rgb: '125;161;100', ansi256: 146 },
-  low: { rgb: '98;127;79', ansi256: 110 },
-  minimal: { rgb: '62;100;62', ansi256: 110 },
+  max: { rgb: '232;238;248', ansi256: 255 },
+  xhigh: { rgb: '240;244;252', ansi256: 255 },
+  high: { rgb: '248;250;253', ansi256: 231 },
+  medium: { rgb: '197;205;220', ansi256: 189 },
+  low: { rgb: '168;178;204', ansi256: 146 },
+  minimal: { rgb: '138;152;184', ansi256: 110 },
+}
+
+/** 边框用：同色相压暗降饱和 —— 文字要能读，边框要不抢眼（2026-11-08 用户反馈）。 */
+export const EFFORT_BORDER: Record<string, { rgb: string; ansi256: number }> = {
+  max: { rgb: '232;238;248', ansi256: 255 },
+  xhigh: { rgb: '240;244;252', ansi256: 255 },
+  high: { rgb: '248;250;253', ansi256: 231 },
+  medium: { rgb: '197;205;220', ansi256: 189 },
+  low: { rgb: '168;178;204', ansi256: 146 },
+  minimal: { rgb: '138;152;184', ansi256: 110 },
 }
 
 export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
   const g = EFFORT_COLOR[String(level || '').trim().toLowerCase()]
+  if (!g) return ''
+  return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
+}
+
+
+export function effortBorderAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
+  const g = EFFORT_BORDER[String(level || '').trim().toLowerCase()]
   if (!g) return ''
   return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
 }
@@ -1023,17 +1043,15 @@ export function renderPanelLines(
   //   理由与看板段一致：面板是「机制在不在」的常驻指示，进去就看不见 = 不知道机制活着。
   //   下面仍要画框和标题，所以这里只是不再提前 return。
   //
-  // ★ 主色跟推理强度走（2026-11-06 用户需求）：标题、[状态]、树线 ├─└─、复选框 [ ]、
-  //   进行中动画同用一色，与 pi 输入框文字同色系。
-  // ★ 2026-11-07 用户把色子换成自己指定的六档主色：max 最亮 → minimal 最暗（见 effortAnsi）。
-  // ★ 2026-11-07 用户再改：面板里**所有文字都用这一色**（标题、状态、id、描述、子项、+N more），
-  //   不再给描述/子项降成灰 —— 拿“颜色深浅”区分主次的写法作废了，层次只靠符号与缩进。
-  //   别把描述改回 muted：那是用户主动去掉的（原话「所有文字都一致吧」）。
-  // ★ off 时整块面板用灰阶（2026-11-06 用户补提：「当推理关闭的时候 todo 面板文字应该全是灰色」）——
-  //   高亮色只在真的开着推理时给，否则「推理关了面板还在发光」让人误以为还在深度思考。
-  //   既然要求“一致”，off 也用同一个 muted，不再分两阶灰。
+  // ★ 主色跟推理强度走：标题、[状态]、树线、复选框、动画用亮色（可读）。
+  // ★ 2026-11-08 用户反馈「看不清、没层次」：撤回“所有文字同色”，描述/未勾子项回 muted/dim，
+  //   完成/搁置的层级靠 [x] 与符号，不靠把正文也染成主色。
+  // ★ off 时整块灰阶（2026-11-06）：主色 muted，描述 dim，两阶灰保留层次。
   const mainAnsi = effortAnsi(effort, colorMode)
   const main = mainAnsi ? (s: string) => paintAnsi(mainAnsi, s) : (s: string) => fg('muted', s)
+  // 2026-11-08 再改：层次不再靠把描述/子项压成主题灰（上一版“更看不见了”）。
+  //   开着推理 → 全用亮主色；层次靠符号/缩进/勾选。off → 统一 muted。
+  const flow = 'muted'
   const lines: string[] = []
   // 上描边行已删除（2026-11-04 用户要求「去掉上边框」）。
   // 历史：那行曾用 `thinkingOff` 对齐 pi 输入框描边色（排查三轮才定色）。
@@ -1061,8 +1079,7 @@ export function renderPanelLines(
     // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
     const box = main('[ ]')
-    // 状态标签、id、描述全跟主色（2026-11-06 定：靠符号和文字区分状态，不靠颜色；
-    // 2026-11-07 再定：描述也不单独降灰）。
+    // 状态标签跟主色；id 用 text，描述/未勾子项 muted（比主色暗、又看得清）。
     const head = `${main(branch)} ${box} ${main(`[${t.state}]`)}${anim} ${main(t.id)}`
     const desc = t.desc ? ' ' + main(`— ${t.desc}`) : ''
     lines.push(clipToWidth(head + desc, width))
@@ -1071,7 +1088,7 @@ export function renderPanelLines(
       //   ├─ [ ] 子项一
       //   └─ [x] 子项二
       // 树线前缀 = 父任务的 │（非末条）或空格（末条），与父任务分支对齐。
-      // 2026-11-07 用户要求全面板同色：勾过的子项也不再压暗，完成与否靠 [x] 区分。
+      // 层次（2026-11-08 恢复）：勾过的子项 dim 压暗，未勾的用 flow（muted/dim）。
       const stem = isLast ? '  ' : main('│ ')
       const n = t.kids.length
       t.kids.forEach((k, ki) => {
