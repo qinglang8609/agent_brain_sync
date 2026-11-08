@@ -1023,10 +1023,10 @@ export function renderPanelLines(
   //   主色用 muted（中灰），描述与子项降一阶到 dim（深灰），两阶灰保留层次，不一整片平。
   // 现代暗色方案（2026-11-08 用户给定），不再跟推理强度走
   const C = {
-    title: '38;2;100;116;139',
+    title: '38;2;255;215;0',
     task: '38;2;226;232;240',
     desc: '38;2;148;163;184',
-    tree: '38;2;75;85;99',
+    tree: '38;2;150;170;198',
     doing: '38;2;16;185;129',
     talk: '38;2;59;130;246',
     hold: '38;2;245;158;11',
@@ -1059,12 +1059,15 @@ export function renderPanelLines(
     // 进行中的行带一个小动画（其余行不加，避免满屏都在跳）
     // 单字符 spinner 紧跟 [进行中]：靠前放才能一眼看到（放行尾会被长描述挤到前面去看不见）。
     // 2026-11-06 用户要求：「放在 [进行中] 后面」。
+    const hasState = ['进行中', '讨论中', '搁置', '滞留中'].includes(t.state)
     const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + paint(C.doing, todoAnimFrame(animPhase)) : ''
     // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
-    const box = paint(C.task, '[ ]')
-    // 状态标签统一跟主色（2026-11-06 用户定：靠符号和文字区分状态，不靠颜色）。
-    const head = `${paint(C.tree, branch)} ${box} ${paint(stateAnsi(t.state), `[${t.state}]`)}${anim} ${paint(C.task, t.id)}`
+    const box = hasState ? '' : paint(C.task, '[ ] ')
+    const stPart = hasState
+      ? paint(stateAnsi(t.state), `\x1b[4m${t.state}\x1b[24m`)
+      : paint(C.task, '[待办]')
+    const head = `${paint(C.tree, branch)} ${box}${stPart}${anim} ${paint(C.task, t.id)}`
     const desc = t.desc ? ' ' + paint(C.desc, `— ${t.desc}`) : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {

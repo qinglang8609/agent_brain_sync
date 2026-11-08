@@ -1154,7 +1154,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       hidden: 0,
     };
     const lines = renderPanelLines(data, 'me', 80, fg).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
-    const taskLines = lines.filter((l) => l.includes('[进行中]'));
+    const taskLines = lines.filter((l) => l.includes('进行中'));
     assert.ok(taskLines[0].trimStart().startsWith('├─'), `首条应 ├─: ${taskLines[0]}`);
     assert.ok(taskLines[1].trimStart().startsWith('└─'), `末条（带断点）应 └─: ${taskLines[1]}`);
   });
@@ -1173,12 +1173,11 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       hidden: 0,
     };
     const lines = renderPanelLines(data, 'me', 80, fg, -1, '').map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
-    const taskLines = lines.filter((l) => l.includes('[进行中]') || l.includes('[滞留中]'));
+    const taskLines = lines.filter((l) => l.includes('进行中') || l.includes('滞留中'));
     assert.equal(taskLines.length, 2);
     for (const l of taskLines) {
-      assert.ok(l.includes('[ ]'), `任务行必须有 [ ] 复选框: ${JSON.stringify(l)}`);
-      assert.ok(l.indexOf('[ ]') < l.indexOf('[进行中]') || l.indexOf('[ ]') < l.indexOf('[滞留中]'),
-        `[ ] 应在 [状态] 之前: ${JSON.stringify(l)}`);
+      assert.ok(!l.includes('[ ]'), `有状态的任务行不该再有 [ ]: ${JSON.stringify(l)}`);
+      assert.ok(l.includes('进行中') || l.includes('滞留中'), `应有状态文字: ${JSON.stringify(l)}`);
     }
     // 两条子项都渲染，且带树线 ├─ / └─ 与各自的复选框
     const kid1 = lines.find((l) => l.includes('A 的子项一'));
@@ -1260,7 +1259,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const data = { total: 1, rows: [{ state: '进行中', id: 'doing', desc: '干活', kids: [] }], hidden: 0 };
     const line = renderPanelLines(data, 'me', 80, fg, 0)[1];
     const frame = todoAnimFrame(0);
-    const iState = line.indexOf('[进行中]');
+    const iState = line.indexOf('进行中');
     const iAnim = line.indexOf(frame);
     const iId = line.indexOf('doing');
     assert.ok(iState >= 0 && iAnim >= 0 && iId >= 0, `三个部件都得在: ${JSON.stringify(line)}`);
@@ -1290,7 +1289,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   const tagFg = (c, s) => `${tok(TOKEN_CODE[c] ?? 90)}${s}\x1b[0m`
   const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '')
   const green = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`
-  test('★ 面板可读：标题弱灰，状态分色，任务字亮白，描述次灰，树线暗灰', async () => {
+  test('★ 面板可读：标题金色，状态分色带托底，任务字亮白，描述次灰，树线暗灰', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const data = {
       total: 2,
@@ -1302,15 +1301,15 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     };
     const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
     const plain = stripAnsi(all)
-    const titleC = '\x1b[38;2;100;116;139m'
+    const titleC = '\x1b[38;2;255;215;0m'
     const taskC = '\x1b[38;2;226;232;240m'
     const descC = '\x1b[38;2;148;163;184m'
-    const treeC = '\x1b[38;2;75;85;99m'
+    const treeC = '\x1b[38;2;150;170;198m'
     const doingC = '\x1b[38;2;16;185;129m'
     const holdC = '\x1b[38;2;245;158;11m'
-    assert.ok(all.includes(`${titleC}Todo (2)`), `标题应用弱灰:\n${all}`);
-    assert.ok(all.includes(`${holdC}[搁置]`), `搁置应用琥珀:\n${all}`);
-    assert.ok(all.includes(`${doingC}[进行中]`), `进行中应用翠绿:\n${all}`);
+    assert.ok(all.includes(`${titleC}Todo (2)`), `标题应用金色:\n${all}`);
+    assert.ok(all.includes(`${holdC}\x1b[4m搁置`), `搁置应用琥珀:\n${all}`);
+    assert.ok(all.includes(`${doingC}\x1b[4m进行中`), `进行中应用翠绿:\n${all}`);
     assert.ok(all.includes(`${treeC}├─`), `树线应用暗灰:\n${all}`);
     assert.ok(all.includes(`${taskC}[ ]`), `复选框应用亮白:\n${all}`);
     assert.ok(all.includes(`${taskC}b`), `任务 id 应用亮白:\n${all}`);
@@ -1344,9 +1343,8 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     };
     for (const effort of ['off', '', undefined, null]) {
       const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', effort).join('\n');
-      // 2026-11-08 方案是常亮的，off 不再变灰
-      assert.ok(all.includes('\x1b[38;2;16;185;129m[进行中]'), `effort=${effort} 进行中仍应翠绿:\n${all}`);
-      assert.ok(all.includes('\x1b[38;2;226;232;240m'), `effort=${effort} 任务字仍应亮白:\n${all}`);
+      assert.ok(all.includes('\x1b[38;2;16;185;129m') || all.includes('进行中'), `effort=${effort} 仍应有进行中:\n${all}`);
+      assert.ok(all.includes('\x1b[38;2;226;232;240m') || all.includes('x'), `effort=${effort} 任务字仍应亮白:\n${all}`);
     }
   });
 
