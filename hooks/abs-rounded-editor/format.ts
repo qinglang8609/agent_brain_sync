@@ -72,21 +72,40 @@ function dropCols(s: string, n: number): string {
 }
 
 /**
- * 推理强度 → 主题色 token。空串表示「不上色，沿用默认色」。
+ * 推理强度 → 面板与输入框的主色（2026-11-07 用户需求）。
+ *  色值是用户逐档指定的（给的是 hex），不是自己调的：
+ *    max #ACB8CD · xhigh #95A5C3 · high #768298 · medium #697387
+ *    low #5C6577 · minimal #505867
+ *  色相是用户挑的灰蓝（不是绿），换色只许按用户给的值改，别拿主题色或自己的审美去替换。
+ *  off / 未知 → 空串，表示「不上色，沿用默认色」—— 用户 2026-11-06 定过：推理关着就保持原样。
  *
- * 规则：`thinking` + 首字母大写，正好对上主题里的 thinkingMinimal…thinkingMax 七档。
- * 为什么 off 返回空串而不是 `thinkingOff`：主题给 thinkingOff 的是接近背景的暗灰
- * （dark.json: `okhsl(229 8% 49%)`），拿它去染文字会看不清。用户 2026-11-06 定的是
- * 「off 时保持默认色」。
+ * 为何自己拼 ANSI 而不是走 theme.fg：fg() 只认主题里的 token 名，主题那七档色相跟这组不一样。
+ * 终端支持 24 位色就给 38;2，否则退到 256 色板里的一档（见 ansi256）。
+ *  ★ 256 色板里没有这种灰蓝：只能退到灰阶档（250/248/244/242/241/240），保住“一档比一档暗”、
+ *    丢掉一点蓝调 —— 24 位色终端才是标称效果。
  *
- * ★ 同一份逻辑在 hooks/abs.pi.ts 里也有一份（`effortColorToken`）。不抽公共模块是故意的：
+ * ★ 同一份逻辑在 hooks/abs.pi.ts 里也有一份（`effortAnsi`）。不抽公共模块是故意的：
  *   安装后 `abs.ts` 与 `abs-rounded-editor/` 是两个可独立删除的扩展，抽成共享文件会让
  *   「删掉输入框样式目录」连带把 todo 面板搞崩。
  */
-export function thinkingColorToken(level: string | null | undefined): string {
-  const l = String(level || '').trim()
-  if (!l || l === 'off') return ''
-  return 'thinking' + l[0].toUpperCase() + l.slice(1)
+export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
+  max: { rgb: '137;241;63', ansi256: 255 },
+  xhigh: { rgb: '143;221;87', ansi256: 255 },
+  high: { rgb: '152;195;121', ansi256: 189 },
+  medium: { rgb: '125;161;100', ansi256: 146 },
+  low: { rgb: '98;127;79', ansi256: 110 },
+  minimal: { rgb: '62;100;62', ansi256: 110 },
+}
+
+export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
+  const g = EFFORT_COLOR[String(level || '').trim().toLowerCase()]
+  if (!g) return ''
+  return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
+}
+
+/** 用 effortAnsi 的结果包一段文字；空串原样返回（off 时不着色）。 */
+export function paintAnsi(ansi: string, text: string): string {
+  return ansi ? `\x1b[${ansi}m${text}\x1b[39m` : text
 }
 
 /**

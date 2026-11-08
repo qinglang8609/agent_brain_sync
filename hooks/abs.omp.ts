@@ -542,7 +542,8 @@ export function todoAnimFrame(phase: number): string {
  * 规则：`thinking` + 首字母大写（thinkingMinimal…thinkingMax）。
  * off 返回空串而不是 `thinkingOff`：那个色接近背景，染文字会看不清（2026-11-06 用户定）。
  *
- * ★ 与 pi 版（hooks/abs.pi.ts 的 effortToken）逐字同义，但不共享：两个模板分别装到不同宿主，
+ * ★ 与 pi 版不再字面对应：pi 版 2026-11-07 已改成绿色阶（`effortAnsi`，用户要求），
+ *   omp 这边仍跟主题的 thinkingXxx 七色 —— 用户只提了 pi 面板。两个模板分别装到不同宿主，
  *   独立成文件才能各自删除/升级。
  */
 export function effortToken(level: string | null | undefined): string {
