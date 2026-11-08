@@ -1153,7 +1153,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       ],
       hidden: 0,
     };
-    const lines = renderPanelLines(data, 'me', 80, fg);
+    const lines = renderPanelLines(data, 'me', 80, fg).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
     const taskLines = lines.filter((l) => l.includes('[进行中]'));
     assert.ok(taskLines[0].trimStart().startsWith('├─'), `首条应 ├─: ${taskLines[0]}`);
     assert.ok(taskLines[1].trimStart().startsWith('└─'), `末条（带断点）应 └─: ${taskLines[1]}`);
@@ -1172,7 +1172,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       ],
       hidden: 0,
     };
-    const lines = renderPanelLines(data, 'me', 80, fg, -1, '');
+    const lines = renderPanelLines(data, 'me', 80, fg, -1, '').map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
     const taskLines = lines.filter((l) => l.includes('[进行中]') || l.includes('[滞留中]'));
     assert.equal(taskLines.length, 2);
     for (const l of taskLines) {
@@ -1221,14 +1221,15 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   test('★ 有任务时标题与任务行都顶最左', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const fg = (c, s) => s;
-    const lead = (s) => s.length - s.trimStart().length;
+    const strip = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '');
+    const lead = (s) => strip(s).length - strip(s).trimStart().length;
 
     const withTask = renderPanelLines(
       { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', kids: [{ done: false, text: '子项' }] }], hidden: 0 },
       'me', 80, fg,
     );
-    const title = withTask.find((l) => l.includes('Todo ('));
-    const taskRow = withTask.find((l) => l.includes('x — d'));
+    const title = withTask.find((l) => strip(l).includes('Todo ('));
+    const taskRow = withTask.find((l) => strip(l).includes('x — d'));
     assert.equal(lead(title), 0, `有任务时标题不该缩进: ${JSON.stringify(title)}`);
     assert.equal(lead(taskRow), 0, `有任务时任务行不该缩进: ${JSON.stringify(taskRow)}`);
   });
@@ -1287,9 +1288,9 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     accent: 98, dim: 97, muted: 96, text: 95,
   }
   const tagFg = (c, s) => `${tok(TOKEN_CODE[c] ?? 90)}${s}\x1b[0m`
-  // 推理强度现在直接拼 24 位色（不再走主题 token）—— 断言也直接比转义序列。
+  const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '')
   const green = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`
-  test('★ 面板可读：标题/状态/树线/复选框/id/描述/子项都用亮主色（层次靠符号）', async () => {
+  test('★ 面板可读：标题弱灰，状态分色，任务字亮白，描述次灰，树线暗灰', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const data = {
       total: 2,
@@ -1300,16 +1301,21 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       hidden: 0,
     };
     const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', 'high').join('\n');
-    const high = green(150, 164, 188)
-    assert.ok(all.includes(`${high}Todo (2)`), `标题应用推理强度色:\n${all}`);
-    assert.ok(all.includes(`${high}[搁置]`), `搁置状态应用推理强度色:\n${all}`);
-    assert.ok(all.includes(`${high}[进行中]`), `进行中状态应用推理强度色:\n${all}`);
-    assert.ok(all.includes(`${high}├─`), `树线应用推理强度色:\n${all}`);
-    assert.ok(all.includes(`${high}[ ]`), `复选框应用推理强度色:\n${all}`);
-    // 2026-11-08 “更看不见了”：描述/子项也用亮主色，不再压主题灰
-    assert.ok(all.includes(`${high}b`), `任务 id 应用推理强度色:\n${all}`);
-    assert.ok(all.includes(`${high}— 描述甲`), `描述应用推理强度色:\n${all}`);
-    assert.ok(all.includes(`${high}子项`), `子项文字应用推理强度色:\n${all}`);
+    const plain = stripAnsi(all)
+    const titleC = '\x1b[38;2;100;116;139m'
+    const taskC = '\x1b[38;2;226;232;240m'
+    const descC = '\x1b[38;2;148;163;184m'
+    const treeC = '\x1b[38;2;75;85;99m'
+    const doingC = '\x1b[38;2;16;185;129m'
+    const holdC = '\x1b[38;2;245;158;11m'
+    assert.ok(all.includes(`${titleC}Todo (2)`), `标题应用弱灰:\n${all}`);
+    assert.ok(all.includes(`${holdC}[搁置]`), `搁置应用琥珀:\n${all}`);
+    assert.ok(all.includes(`${doingC}[进行中]`), `进行中应用翠绿:\n${all}`);
+    assert.ok(all.includes(`${treeC}├─`), `树线应用暗灰:\n${all}`);
+    assert.ok(all.includes(`${taskC}[ ]`), `复选框应用亮白:\n${all}`);
+    assert.ok(all.includes(`${taskC}b`), `任务 id 应用亮白:\n${all}`);
+    assert.ok(all.includes(`${descC}— 描述甲`), `描述应用次灰:\n${all}`);
+    assert.ok(all.includes(`${descC}子项`), `子项文字应用次灰:\n${all}`);
   });
 
   // 2026-11-07 用户逐档指定了 6 个 hex（中间换过几版，以最新一版为准）。
@@ -1319,7 +1325,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const HEX = {
       max: [0xAC, 0xB8, 0xCD],
       xhigh: [0x95, 0xA5, 0xC3],
-      high: [0x96, 0xA4, 0xBC],
+      high: [0x76, 0x82, 0x98],
       medium: [0x69, 0x73, 0x87],
       low: [0x5C, 0x65, 0x77],
       minimal: [0x50, 0x58, 0x67],
@@ -1329,7 +1335,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     }
   });
 
-  test('★ 推理强度 off / 未传 → 整块面板用灰阶（不上绿色）', async () => {
+  test('★ 推理强度 off / 未传 → 仍用现代暗色方案（不再变灰）', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const data = {
       total: 1,
@@ -1338,13 +1344,9 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     };
     for (const effort of ['off', '', undefined, null]) {
       const all = renderPanelLines(data, 'me', 120, tagFg, 0, '', effort).join('\n');
-      // 用户原话：「当推理关闭的时候 todo 面板文字应该全是灰色」
-      assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}Todo (1)`), `effort=${effort} 主色应为 muted:\n${all}`);
-      assert.ok(!all.includes(tok(TOKEN_CODE.accent)), `effort=${effort} 不得留 accent 高亮:\n${all}`);
-      assert.ok(!all.includes('\x1b[38;2;'), `effort=${effort} 不得上绿色阶:\n${all}`);
-      // off：统一 muted 灰（用户 2026-11-06：推理关着就别发光；层次不靠把字压黑）
-      assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}— 描述`), `effort=${effort} 描述应 muted:\n${all}`);
-      assert.ok(all.includes(`${tok(TOKEN_CODE.muted)}子项`), `effort=${effort} 子项应 muted:\n${all}`);
+      // 2026-11-08 方案是常亮的，off 不再变灰
+      assert.ok(all.includes('\x1b[38;2;16;185;129m[进行中]'), `effort=${effort} 进行中仍应翠绿:\n${all}`);
+      assert.ok(all.includes('\x1b[38;2;226;232;240m'), `effort=${effort} 任务字仍应亮白:\n${all}`);
     }
   });
 
@@ -1353,7 +1355,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(effortAnsi('minimal'), '38;2;80;88;103');
     assert.equal(effortAnsi('low'), '38;2;92;101;119');
     assert.equal(effortAnsi('medium'), '38;2;105;115;135');
-    assert.equal(effortAnsi('high'), '38;2;150;164;188');
+    assert.equal(effortAnsi('high'), '38;2;118;130;152');
     assert.equal(effortAnsi('xhigh'), '38;2;149;165;195');
     assert.equal(effortAnsi('max'), '38;2;172;184;205');
     assert.equal(effortAnsi('off'), '');
@@ -1362,7 +1364,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(effortAnsi(undefined), '');
     // 256 色终端走 38;5（灰蓝只能退到灰阶档）
     assert.equal(effortAnsi('max', '256color'), '38;5;250');
-    assert.equal(effortAnsi('high', '256color'), '38;5;110');
+    assert.equal(effortAnsi('high', '256color'), '38;5;244');
     assert.equal(effortAnsi('low', '256color'), '38;5;241');
   });
 

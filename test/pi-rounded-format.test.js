@@ -135,7 +135,7 @@ describe('effortAnsi — 推理强度 → 主色（用户指定的六档 hex）'
   const HEX = {
     max: '#ACB8CD',
     xhigh: '#95A5C3',
-    high: '#96A4BC',
+    high: '#768298',
     medium: '#697387',
     low: '#5C6577',
     minimal: '#505867',
@@ -155,7 +155,7 @@ describe('effortAnsi — 推理强度 → 主色（用户指定的六档 hex）'
     // 256 色板里没有这种灰蓝，退到最近的灰/蓝灰档
     assert.equal(effortAnsi('max', '256color'), '38;5;250');
     assert.equal(effortAnsi('xhigh', '256color'), '38;5;248');
-    assert.equal(effortAnsi('high', '256color'), '38;5;110');
+    assert.equal(effortAnsi('high', '256color'), '38;5;244');
     assert.equal(effortAnsi('medium', '256color'), '38;5;242');
     assert.equal(effortAnsi('low', '256color'), '38;5;241');
     assert.equal(effortAnsi('minimal', '256color'), '38;5;240');

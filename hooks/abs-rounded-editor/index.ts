@@ -46,10 +46,11 @@ export class RoundedEditor extends CustomEditor {
     if (lines.length < 2) return lines
 
     const borderColor = (this as any).borderColor?.bind(this)
-    // 文字、边框、todo 面板同一个色；off 时不上色。
-    const ansi = effortAnsi(effortLevel, (() => { try { return String(themeGetter?.().getColorMode()) } catch { return 'truecolor' } })())
-    const effortFg = ansi ? (s: string) => paintAnsi(ansi, s) : null
-    const wrap = effortFg ?? ((s: string) => (borderColor ? borderColor(s) : s))
+    // 现代暗色方案（2026-11-08）：文字 #F8FAFC，边框 #444C56，不再跟推理强度变色。
+    // 光标色 / 输入框背景 / 聚焦外发光是 pi 编辑器内部画的，扩展接管不了，先不动。
+    const textFg = (s: string) => paintAnsi('38;2;248;250;252', s)
+    const lineFg = (s: string) => paintAnsi('38;2;68;76;86', s)
+    const wrap = lineFg
     const out: string[] = []
 
     // 上边框：原本是整行 `─`（含 working 图标与滚动提示），两端换圆角，右端贴状态。
@@ -59,9 +60,9 @@ export class RoundedEditor extends CustomEditor {
     const bottomIdx = lines.length - 1 - autocompleteHeight
 
     for (let i = 1; i < bottomIdx; i++) {
-      // 剥掉 pi 原生文字色（近白），再包推理色 —— 否则内层色码赢，字就是白的。
+      // 剥掉 pi 原生文字色，再包 #F8FAFC —— 否则内层色码赢。
       const body = lines[i].replace(/\x1b\[(?!7m)[0-9;]*m/g, '')
-      out.push(wrap(SIDE) + (effortFg ? effortFg(body) : body) + wrap(SIDE))
+      out.push(wrap(SIDE) + textFg(body) + wrap(SIDE))
     }
     // 下边框（2026-11-07 还原：左下角的 fanchao·昵称已去掉 —— 用户嫌难看，
     // 回 todo 面板标题；roundBorder 的 leftLabel 参数保留备用）。

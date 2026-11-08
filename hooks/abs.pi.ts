@@ -986,7 +986,7 @@ export function todoAnimFrame(phase: number): string {
 export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
   max: { rgb: '172;184;205', ansi256: 250 },
   xhigh: { rgb: '149;165;195', ansi256: 248 },
-  high: { rgb: '150;164;188', ansi256: 110 },
+  high: { rgb: '118;130;152', ansi256: 244 },
   medium: { rgb: '105;115;135', ansi256: 242 },
   low: { rgb: '92;101;119', ansi256: 241 },
   minimal: { rgb: '80;88;103', ansi256: 240 },
@@ -1021,9 +1021,21 @@ export function renderPanelLines(
   // ★ off 时整块面板用灰阶（同日用户补提：「当推理关闭的时候 todo 面板文字应该全是灰色」）——
   //   高亮色只在真的开着推理时给，否则「推理关了面板还在发光」让人误以为还在深度思考。
   //   主色用 muted（中灰），描述与子项降一阶到 dim（深灰），两阶灰保留层次，不一整片平。
-  const mainAnsi = effortAnsi(effort, 'truecolor')
-  const main = mainAnsi ? (s: string) => paintAnsi(mainAnsi, s) : (s: string) => fg('muted', s)
-  const flow = mainAnsi ? 'muted' : 'dim'
+  // 现代暗色方案（2026-11-08 用户给定），不再跟推理强度走
+  const C = {
+    title: '38;2;100;116;139',
+    task: '38;2;226;232;240',
+    desc: '38;2;148;163;184',
+    tree: '38;2;75;85;99',
+    doing: '38;2;16;185;129',
+    talk: '38;2;59;130;246',
+    hold: '38;2;245;158;11',
+    stuck: '38;2;139;92;246',
+    done: '38;2;100;116;139',
+  }
+  const stateAnsi = (st: string): string =>
+    st === '进行中' ? C.doing : st === '讨论中' ? C.talk : st === '搁置' ? C.hold : st === '滞留中' ? C.stuck : C.task
+  const paint = (ansi: string, t: string) => paintAnsi(ansi, t)
   const lines: string[] = []
   // 上描边行已删除（2026-11-04 用户要求「去掉上边框」）。
   // 历史：那行曾用 `thinkingOff` 对齐 pi 输入框描边色（排查三轮才定色）。
@@ -1035,7 +1047,7 @@ export function renderPanelLines(
   const title = whoPart ? `Todo (${data.total}) — ${whoPart}` : `Todo (${data.total})`
   // 标题也顶最左（2026-11-04 用户）。旧代码曾在空看板时多缩 1 格，2026-11-06 空看板
   // 已整块不显示（见 refreshTodoPanel），那个分支没意义了。
-  lines.push(clipToWidth(main(title), width))
+  lines.push(clipToWidth(paint(C.title, title), width))
 
   const lastIdx = data.rows.length - 1
   data.rows.forEach((t, i) => {
@@ -1047,13 +1059,13 @@ export function renderPanelLines(
     // 进行中的行带一个小动画（其余行不加，避免满屏都在跳）
     // 单字符 spinner 紧跟 [进行中]：靠前放才能一眼看到（放行尾会被长描述挤到前面去看不见）。
     // 2026-11-06 用户要求：「放在 [进行中] 后面」。
-    const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + main(todoAnimFrame(animPhase)) : ''
+    const anim = t.state === '进行中' && animPhase >= 0 ? ' ' + paint(C.doing, todoAnimFrame(animPhase)) : ''
     // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
-    const box = main('[ ]')
+    const box = paint(C.task, '[ ]')
     // 状态标签统一跟主色（2026-11-06 用户定：靠符号和文字区分状态，不靠颜色）。
-    const head = `${main(branch)} ${box} ${main(`[${t.state}]`)}${anim} ${main(t.id)}`
-    const desc = t.desc ? ' ' + main(`— ${t.desc}`) : ''
+    const head = `${paint(C.tree, branch)} ${box} ${paint(stateAnsi(t.state), `[${t.state}]`)}${anim} ${paint(C.task, t.id)}`
+    const desc = t.desc ? ' ' + paint(C.desc, `— ${t.desc}`) : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
       // 子项：标准 md 嵌套列表 → 画成树
@@ -1061,18 +1073,18 @@ export function renderPanelLines(
       //   └─ [x] 子项二
       // 树线前缀 = 父任务的 │（非末条）或空格（末条），与父任务分支对齐。
       // 勾过的用 dim 压暗（一眼看出哪些已完成），未勾用正常色。
-      const stem = isLast ? '  ' : main('│ ')
+      const stem = isLast ? '  ' : paint(C.tree, '│ ')
       const n = t.kids.length
       t.kids.forEach((k, ki) => {
         const kb = ki === n - 1 ? '└─' : '├─'
-        const kbox = main(k.done ? '[x]' : '[ ]')
-        const ktext = main(k.text)
-        lines.push(clipToWidth(`${stem} ${main(kb)} ${kbox} ${ktext}`, width))
+        const kbox = paint(C.task, k.done ? '[x]' : '[ ]')
+        const ktext = k.done ? `\x1b[9m${paint(C.done, k.text)}\x1b[29m` : paint(C.desc, k.text)
+        lines.push(clipToWidth(`${stem} ${paint(C.tree, kb)} ${kbox} ${ktext}`, width))
       })
     }
   })
 
-  if (data.hidden > 0) lines.push(clipToWidth(main(`  +${data.hidden} more`), width))
+  if (data.hidden > 0) lines.push(clipToWidth(paint(C.title, `  +${data.hidden} more`), width))
   return lines
 }
 /** 隐藏面板。**必须主动 requestRender** —— 否则数据清了、屏幕还留着旧画面。
