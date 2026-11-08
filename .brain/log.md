@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-11-08 15:30] [[fanchao]] dev | 1.28.7：视觉定稿现代暗色（标题金/状态四色/树线与输入框线 #96A6C6/输入字白/圆圈动画/有状态去空[]）；框架四件（SKILL 英文路由、load 1603B、格式闸打回、命令折叠）；Sessions 索引行带描述；sleep 方案 docs/sleep-design.md 仅方案。821 绿，npm+本地同源
 ## [2026-11-08 13:40] [[fanchao]] dev | 四件精简落地：①SKILL.md 改英文路由风（仿 vibe-coding-help：意图表+硬规矩+图谱指针，触发词保留中文）②load 2796→1603B，只留未完成todo+用法+近日志3条，Rules/index计数/查询提示/热点页撤出 ③格式闸打回：todo start 无描述、done 无结语、log 空标题、index 日期模板行，lint 加 TODO-NO-DESC ④删纯别名 index/status/summon/db search，log 只写不看（查看=show log）。821 测试绿；全局包与 ~/.pi 已同源
 ## [2026-11-08 13:05] [[fanchao]] note | abs sleep 离线整理方案在 docs/sleep-design.md（仅方案未实现）：夜里补空/压缩会话页/提炼概念/墓碑遗忘，默认 dry-run，保留期 7/30/90/180 待拍板。
 ## [2026-11-08 12:55] [[fanchao]] dev | 修 Sessions 索引行查不到：归档登记 index 时从任务行抽首段（登记时的 --note，多条用「；」连、截 110 字），无描述行回退原样；本仓库 16 条旧机器模板行按同格式回填（手写描述行不覆盖）。加载视图仍折叠计数（读取侧不随规模增长），明细走 abs show index。821 测试 + lint 绿
