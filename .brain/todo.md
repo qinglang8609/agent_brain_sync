@@ -1,11 +1,11 @@
 # 📋 Todo Board
 
 ## Todo
-- [ ] [进行中] release-131 [[fanchao]] — 发 1.31.0：把子项四态 + 输入框配色改动提交、发版、重装全局与 pi 宿主 (认领 2026-11-09)
 
 ## Done
 
 ### 2026-11-09
+- [x] release-131 [[fanchao]] — 发 1.31.0：把子项四态 + 输入框配色改动提交、发版、重装全局与 pi 宿主 — 1.31.0 已发：提交+tag+push、npm publish（registry 延迟约 60s）、全局装 1.31.0、宿主四处重装；三处新码逐字节一致，全局 abs 实测子项四态与勾选保标记均通过 【落地】 (完成 2026-11-09)
 - [x] status-label-hold-orange [[fanchao]] — 输入框右下角状态文字改搁置橙 #F59E0B — 右下角状态文字用 holdAnsi（#F59E0B，256 色退 214）经 roundBorder 的 labelFg 只染那一段；色模式在 session_start 取一次；772+ 测试与 check 绿，副本已同步 【落地】 (完成 2026-11-09)
 - [x] panel-task-title-graywhite [[fanchao]] — 任务标题（id+描述）改固定灰白 #E2E8F0 — 任务 id 与描述改固定灰白（原误改的是面板大标题）；档位色只管树线/复选框/子项；772 测试 + check 绿，abs.ts 已同步 【落地】 (完成 2026-11-09)
 - [x] panel-title-graywhite [[fanchao]] — 面板标题改固定灰白，不跟档位色 — 标题固定 #E2E8F0 灰白，不跟档位色也不回橙色；772 测试 + check 绿，abs.ts 已同步 【落地】 (完成 2026-11-09)
