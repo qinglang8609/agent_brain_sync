@@ -113,11 +113,11 @@ tool(
 
 tool(
   'abs_task',
-  '任务实时落盘（幂等键 = id）。start 登记进 Todo / note 补子项（**追加**，标准 md 嵌套列表，`abs todo note`）/ child_done、child_undone 勾/取消勾子项（n=第几条，缺省最后一条）/ memo 任务随手记（多句/追加/不上看板）/ state 改状态 / done 完成归位 Done（done 时 note=结语文字，as=结语类型：落地|否决|仅方案）。必填: cwd, action, id。多会话并行时，start/add 带上 session（值见 system prompt 的 [会话] 段）以标记「这条任务谁在做」。',
+  '任务实时落盘（幂等键 = id）。start 登记进 Todo / note 补子项（**追加**，标准 md 嵌套列表，`abs todo note`）/ child_done、child_undone 勾/取消勾子项（n=第几条，缺省最后一条）/ state 改状态（带 n = 改该任务第 n 条子项，子项也能标四态）/ memo 任务随手记（多句/追加/不上看板）/ done 完成归位 Done（done 时 note=结语文字，as=结语类型：落地|否决|仅方案）。必填: cwd, action, id。多会话并行时，start/add 带上 session（值见 system prompt 的 [会话] 段）以标记「这条任务谁在做」。',
   {
     action: z.enum(['add', 'start', 'done', 'note', 'child_done', 'child_undone', 'memo', 'state', 'remove']),
     id: z.string().describe('任务幂等键，如 TASK-xxx 或子任务名'),
-    n: z.number().int().positive().optional().describe('child_done/child_undone 用：第几条子项（1-based，缺省=最后一条）'),
+    'n': z.number().int().positive().optional().describe('child_done/child_undone/state 用：第几条子项（1-based，缺省=最后一条；state 不传 n = 改任务本身）'),
     cwd: z.string().describe('项目根目录（.brain/ 所在处）'),    note: z.string().optional().describe('add/start=做什么; note=追加一条子项(改到哪/下一步，一句话); memo=随手记（可多句、不定长，追加式；不传=查看已有笔记）; state=进行中|讨论中|滞留中|搁置（搁置=用户改方向/不做了；滞留中=还要做只是卡住）; done=结语文字（remove 不用此字段）'),
     as: z.enum(['落地', '否决', '仅方案']).optional().describe('仅 done：结语类型。默认 落地。做了又撤/评估后不做用 否决，只设计过用 仅方案 —— 别让假【落地】污染看板'),
     // 会话 id：多会话并行时标记「这条任务是谁在做」。

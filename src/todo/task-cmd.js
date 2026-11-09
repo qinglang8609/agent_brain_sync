@@ -4,7 +4,7 @@
 import { brainPath, requireBrain } from '../index.js';
 import { editFile, SKIP } from '../lock.js';
 import { requireUser, atTag } from '../userconfig.js';
-import { stripStateMark, checkTaskBox, stateOfTaskLine, upsertTask, today, setBreakpoint, setBreakpointDone, setMemo, readMemo, setStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, DONE_KINDS, withDoneKind, sessionOf, parseChild, migrateLegacyChild, SEC } from '../todo.js';
+import { stripStateMark, checkTaskBox, stateOfTaskLine, upsertTask, today, setBreakpoint, setBreakpointDone, setMemo, readMemo, setStateMark, setChildStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, DONE_KINDS, withDoneKind, sessionOf, parseChild, migrateLegacyChild, SEC } from '../todo.js';
 import { ensurePersonPage } from '../note.js';
 
 // 纪律: task 过程动作(start/done/note/blocked)只改 todo.md, 不写 log.md。
@@ -131,8 +131,9 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
     return done ? `✓ 任务改名 ${id} → ${newId}` : `[NO_MATCH] 未找到含 "${id}" 的未完成任务行`;
   }
   if (action === 'state') {
-    // 改状态标记（原地，不搬区）：进行中 / 讨论中 / 滞留中
-    if (!note) throw new Error(`✗ 用法: abs todo state <id> --note "${TASK_STATES.join('|')}"`);
+    // 改状态标记（原地，不搬区）：进行中 / 讨论中 / 滞留中 / 搁置。
+    // 带 n = 改某任务的第 n 条子项（2026-11-09 用户要求给子项加状态）；不带给 n = 改任务本身。
+    if (!note) throw new Error(`✗ 用法: abs todo state <id> --note "${TASK_STATES.join('|')}" [--n N]`);
     if (!TASK_STATES.includes(note)) {
       throw new Error(`✗ 状态只接受: ${TASK_STATES.join(' | ')}（收到 "${note}"）`);
     }
@@ -140,11 +141,16 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
     let cc = [];
     await editFile(f, (cur) => {
       if (cur === null) return SKIP;
-      const r = setStateMark(cur, id, note);
+      const r = n ? setChildStateMark(cur, id, n, note) : setStateMark(cur, id, note);
       cc = r.changed;
       return r.changed.length ? { text: r.text } : SKIP;
     });
-    return cc.length ? `✓ ${id} 状态 → [${note}]` : `[NO_MATCH] 未找到含 "${id}" 的未完成任务行，或状态未变`;
+    if (!cc.length) {
+      return n
+        ? `[NO_MATCH] "${id}" 下没有第 ${n} 条子项（或任务不存在），或状态未变`
+        : `[NO_MATCH] 未找到含 "${id}" 的未完成任务行，或状态未变`;
+    }
+    return `✓ ${id} ${n ? `第 ${n} 条子项` : ''}状态 → [${note}]`;
   }
   // 删除任务（2026-11-05 用户要求「每次删除任务可烦人了」）。
   // 与 state=搁置 的区别（别混）：

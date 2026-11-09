@@ -269,6 +269,33 @@ describe('cli: todo', () => {
     assert.ok(t.includes('EQ-B'), 'start 应仍可用');
   });
 
+  // 2026-11-09 用户要求：子项也能标四态。--n 定位第几条子项（与 child-done 同一套坐标）。
+  test('todo state --n 改第 n 条子项；越界/非法 n 各有明确反应', async () => {
+    await run(['todo', 'add', 'CN-1', '--note', '主任务']);
+    await run(['todo', 'note', 'CN-1', '--note', '子项一']);
+    await run(['todo', 'note', 'CN-1', '--note', '子项二']);
+    const ok = await run(['todo', 'state', 'CN-1', '--note', '滞留中', '--n', '1']);
+    assert.equal(ok.code, 0, ok.stderr);
+    let t = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.match(t, /^ {2}- \[ \] \[滞留中\] 子项一$/m, `第 1 条应带标记:\n${t}`);
+    assert.match(t, /^ {2}- \[ \] 子项二$/m, `第 2 条不该被动:\n${t}`);
+
+    // 不带 --n 仍是改任务本身（旧用法不能被拐走）
+    await run(['todo', 'state', 'CN-1', '--note', '讨论中']);
+    t = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.match(t, /- \[ \] \[讨论中\] CN-1/, `不带 --n 应改任务:\n${t}`);
+    assert.match(t, /^ {2}- \[ \] \[滞留中\] 子项一$/m, t);
+
+    const over = await run(['todo', 'state', 'CN-1', '--note', '搁置', '--n', '9']);
+    assert.ok(/NO_MATCH/.test(over.stdout + over.stderr), `越界 n 应报没匹配: ${over.stdout}${over.stderr}`);
+    t = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.doesNotMatch(t, /\[搁置\]/, `越界 n 不该写任何东西:\n${t}`);
+
+    const bad = await run(['todo', 'state', 'CN-1', '--note', '搁置', '--n', '0']);
+    assert.notEqual(bad.code, 0, '--n 0 应非零退出');
+    assert.ok(/正整数/.test(bad.stderr), `应说明 --n 要正整数: ${bad.stderr}`);
+  });
+
   // 2026-10-05: 旧的 task/board 死别名已删（只报错不干活，维护成本白付）。
   // 删后它们走未知命令分支 —— 同样报错+退出码 1，而且直接给帮助，信息更多。
   test('废弃命令 task/board 走未知命令分支（报错 + 退出码非 0 + 给帮助）', async () => {

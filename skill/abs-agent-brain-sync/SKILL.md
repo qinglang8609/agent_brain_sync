@@ -61,7 +61,8 @@ Then run `abs lint` (dead links, over-size, NO-TAIL).
 abs todo start <id> --note "做什么"      # register (note required)
 abs todo note <id> --note "到哪一步"      # append child (one sentence)
 abs todo done <id> --as 落地|否决|仅方案 "结语"
-abs todo state <id> --note 进行中|讨论中|滞留中|搁置
+abs todo state <id> --note 进行中|讨论中|滞留中|搁置   # 任务本身
+abs todo state <id> --note 滞留中 --n 2              # 第 2 条子项（子项也带四态）
 abs todo remove <id>                     # delete incl. children, no undo
 ```
 

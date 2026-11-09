@@ -198,13 +198,43 @@ export async function setBreakpointDone(brainRoot, { id, n, done = true }) {
     if (target === undefined) return SKIP;
     const child = parseChild(lines[target]);
     picked = child;
-    lines[target] = renderChild(child.text, { done });
+    // 保留印过的状态标记（2026-11-09）：只翻复选框，不能把 [滞留中] 这类标记抹掉。
+    lines[target] = renderChild(child.text, { done, indent: ' '.repeat(child.indent), state: child.state });
     return { text: lines.join('\n'), ok: true };
   });
   if (res === SKIP || !picked) {
     return { ok: false, msg: `[NO_MATCH] "${id}" 下没有第 ${n || '(最后)'} 条子项（或任务不存在）` };
   }
-  return { ok: true, msg: `✓ 子项 ${done ? '已勾' : '已取消勾'} → ${id}\n  ${renderChild(picked.text, { done })}` };
+  return { ok: true, msg: `✓ 子项 ${done ? '已勾' : '已取消勾'} → ${id}\n  ${renderChild(picked.text, { done, state: picked.state })}` };
+}
+
+/** 改**子项**的状态标记（2026-11-09 用户要求：子项也要能标四态）。
+ *
+ * 为何不复用 setStateMark：子项没有自己的 id，findTaskLine 只能定位任务行
+ * （idOfTaskLine 取的是行首第一个 token，子项那行取到的是正文首字），
+ * 所以子项只能按「某任务的第 n 条」定位（与 child-done 同一套坐标）。
+ *   任务行：`- [ ] [进行中] TASK-1 …`
+ *   子项行：`  - [ ] [滞留中] 改到哪一步`
+ * n 必填（1-based）：不带 n 的「改状态」= 改任务本身（setStateMark），
+ * 子项路径只由带 n 的调用进来。非正整数或越界 → 当没匹配，不静默改到别的行。 */
+export function setChildStateMark(text, id, n, state) {
+  if (!TASK_STATES.includes(state)) return { text, changed: [] };
+  if (!Number.isInteger(n) || n < 1) return { text, changed: [] };
+  const lines = String(text ?? '').split('\n');
+  const idx = findTaskLine(lines, id);
+  if (idx === -1) return { text, changed: [] };
+  const kids = childRange(lines, idx);
+  const target = kids[n - 1];
+  if (target === undefined) return { text, changed: [] };
+  const child = parseChild(lines[target]);
+  if (!child || child.state === state) return { text, changed: [] };
+  const ord = kids.indexOf(target) + 1;
+  lines[target] = renderChild(child.text, {
+    done: child.done,
+    indent: ' '.repeat(child.indent),
+    state,
+  });
+  return { text: lines.join('\n'), changed: [`${id} 第 ${ord} 条子项状态 → ${state}`] };
 }
 
 // ---------- 任务随手记（memo）----------

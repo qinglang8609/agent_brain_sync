@@ -199,6 +199,23 @@ describe('mcp: 工具调用', () => {
     assert.ok(/Done/.test(textOf(b)), textOf(b));
   });
 
+  // ★ 2026-11-09：子项也能标四态（LLM 走 MCP，不走 CLI）。
+  //   与 session 那条同一类风险：schema 收了 n 但调用处不传 → 静默失效。
+  test('★ abs_task state + n → 改第 n 条子项的状态', async () => {
+    await tool('abs_task', { action: 'start', id: 'MCS', note: '主任务', cwd: projA });
+    await tool('abs_task', { action: 'note', id: 'MCS', note: '子项一', cwd: projA });
+    await tool('abs_task', { action: 'note', id: 'MCS', note: '子项二', cwd: projA });
+    await tool('abs_task', { action: 'state', id: 'MCS', note: '滞留中', n: 2, cwd: projA });
+    const md = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
+    assert.match(md, /^ {2}- \[ \] \[滞留中\] 子项二$/m, `第 2 条子项应带标记:\n${md}`);
+    assert.match(md, /^ {2}- \[ \] 子项一$/m, `第 1 条不该被动:\n${md}`);
+    // 不带 n = 改任务本身
+    await tool('abs_task', { action: 'state', id: 'MCS', note: '搁置', cwd: projA });
+    const md2 = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
+    assert.match(md2, /- \[ \] \[搁置\] MCS/, `不带 n 应改任务:\n${md2}`);
+    assert.match(md2, /^ {2}- \[ \] \[滞留中\] 子项二$/m, md2);
+  });
+
   // 坑(2026-09-16 审计): schema 无 as，done 的 note 被静默丢弃 → 恒盖【落地】。
   // MCP 用户永远标不了否决/仅方案，按 SKILL.md 表格传 note 的全部失真。
   test('abs_task done+note=结语不再被丢弃（落地/否决/仅方案三态）', async () => {

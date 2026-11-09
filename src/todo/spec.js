@@ -199,7 +199,9 @@ export function indexLinkSectionNeeds(section) {
  *   搁置   = 不做了 / 用户改方向了           → 下会话不该捡，除非用户又提
  * 混在一起会让下会话分不清「该不该接着干」。 */
 
-export const TASK_STATES = ['进行中', '讨论中', '滞留中', '搁置'];
+// 四个状态词已挪到 common.js（2026-11-09：子项也能标状态，parseChild/renderChild 要用它）——
+// 这里只做转发，别处的 import 路径不变。
+export { TASK_STATES } from './common.js';
 
 /** 结构重建（B 档）：以标准分区表为准重排整个文件。
  *

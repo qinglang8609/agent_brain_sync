@@ -114,7 +114,8 @@ abs todo note    TASK-1 --note "改到 X 文件 L40"   # 追加一条子项（�
 abs todo child-done   TASK-1 [--n 2]             # 勾子项（n=第几条，缺省最后一条）
 abs todo child-undone TASK-1 [--n 2]             # 取消勾（勾错了退回）
 abs todo memo    TASK-1 "随手记一段（可多句，不上看板）"   # 任务笔记 → sessions/；无参=查看
-abs todo state   TASK-1 --note "进行中|讨论中|滞留中"   # 改行首状态标记
+abs todo state   TASK-1 --note "进行中|讨论中|滞留中|搁置"      # 改行首状态标记
+abs todo state   TASK-1 --note "滞留中" --n 2                 # 改第 2 条子项的状态（子项也能标四态）
 abs todo done    TASK-1
 
 abs note "一句话经验" --tags 坑,docker    # 经验暂存 → sources/

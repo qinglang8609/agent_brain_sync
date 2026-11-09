@@ -7,31 +7,32 @@ import { buildStatus, effortAnsi, holdAnsi, paintAnsi, roundBorder, shortenModel
 
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 
-// ===== working 状态与右上角状态改「搁置」橙 #F59E0B（2026-11-08 用户要求）=====
+// ===== 上边框标签的单独染色开关 labelFg =====
 // 为何要测：颜色错了不报错，只是看着不对 —— 没有断言就没人能发现回归。
-describe('输入框状态橙 #F59E0B', () => {
-  const O = '38;2;245;158;11';
+// 2026-11-09：working 状态已还原成 pi 原版（不嵌边框），当时那个给它上色的
+//   leadFg/leadSpanOf 一并删了 —— 这里只钉还剩的 labelFg 机制（哪一段被单独染色、宽度不变）。
+describe('输入框上边框：labelFg 只染指定那一段', () => {
+  // 用一个和框线色完全不同的颜色当探针，改色值也不影响这些断言。
+  const RED = '38;2;255;0;0';
 
+  // 2026-11-09 用户要求：右下角状态文字（`30.0%/1.0M 模型名`）用擱置橙 #F59E0B。
   it('holdAnsi：真彩用 rgb，256 色模式退到 214', () => {
-    assert.equal(holdAnsi(), O);
-    assert.equal(holdAnsi('truecolor'), O);
+    assert.equal(holdAnsi(), '38;2;245;158;11');
+    assert.equal(holdAnsi('truecolor'), '38;2;245;158;11');
     assert.equal(holdAnsi('256color'), '38;5;214');
   });
 
-  it('roundBorder：只有右标签上橙，working 段跟框线同色', () => {
+  it('roundBorder：只有右标签上 labelFg 色，working 段跟框线同色', () => {
     const top = '── ⠼ Working ' + '─'.repeat(30);
     const gray = (s) => `\x1b[90m${s}\x1b[39m`;
-    const orange = (s) => `\x1b[${O}m${s}\x1b[39m`;
-    const got = roundBorder(top, gray, '╭', '╮', '5.9%/1.0M DeepSeek-V4.1-Flash', '', { labelFg: orange });
-    assert.ok(got.includes(`\x1b[${O}m5.9%/1.0M DeepSeek-V4.1-Flash\x1b[39m`), `状态文字应上橙: ${got}`);
-    // 用户 2026-11-08 实测：“working 不要变色，要与输入框线条颜色一致，不要变成搁置黄”。
-    // 所以它必须随整行走 fg，而不是自己一段橙。
-    assert.ok(!got.includes(`\x1b[${O}m⠼ Working`), `working 段不该上橙: ${got}`);
-    assert.ok(got.startsWith('\x1b[90m╭── ⠼ Working'), `working 段应走框线色（同一段灰色）: ${got}`);
+    const red = (s) => `\x1b[${RED}m${s}\x1b[39m`;
+    const got = roundBorder(top, gray, '╭', '╮', '5.9%/1.0M DeepSeek-V4.1-Flash', '', { labelFg: red });
+    assert.ok(got.includes(`\x1b[${RED}m5.9%/1.0M DeepSeek-V4.1-Flash\x1b[39m`), `标签应上 labelFg 色: ${got}`);
+    assert.ok(got.startsWith('\x1b[90m╭── ⠼ Working'), `working 段应走框线色: ${got}`);
     assert.equal([...strip(got)].length, [...top].length + 2, '宽度只多了两个圆角');
   });
 
-  it('roundBorder：不传 opts 时整行一个色（旧行为逐字不变）', () => {
+  it('roundBorder：不传 opts 时整行一个色（当前调用方的实际行为）', () => {
     const top = '── ⠼ Working ' + '─'.repeat(20);
     let calls = 0;
     const got = roundBorder(top, (s) => { calls += 1; return `\x1b[90m${s}\x1b[39m`; }, '╭', '╮', 'abc');
@@ -163,17 +164,18 @@ describe('圆角输入框 格式化', () => {
   });
 });
 
-// ===== 输入框文字跟着推理强度走绿色阶（2026-11-06 提出，2026-11-07 换成绿色阶）=====
+// ===== 输入框文字跟着推理强度走灰蓝六档（2026-11-06 提出）=====
 // 为何要测：颜色错了不报错，只是看着不对 —— 没有断言就没人能发现回归。
 describe('effortAnsi — 推理强度 → 主色（用户指定的六档 hex）', () => {
   // 2026-11-07 用户直接给了 hex，这里逐个钉死：改色就应让测试红，不能默默变掉。
+  // 2026-11-09 先「暗档提亮」，再试过一版中性灰，最后又还原回这个偏蓝的灰（用户看实效果定的）。
   const HEX = {
     max: '#C5CDDC',
     xhigh: '#A8B6CC',
     high: '#96A6C6',
-    medium: '#7A8AA0',
-    low: '#5E6C84',
-    minimal: '#46526A',
+    medium: '#8B99AC',
+    low: '#7C8AA2',
+    minimal: '#6C7C9D',
   };
   const toAnsi = (hex) => {
     const n = parseInt(hex.slice(1), 16);
@@ -193,7 +195,7 @@ describe('effortAnsi — 推理强度 → 主色（用户指定的六档 hex）'
     assert.equal(effortAnsi('high', '256color'), '38;5;110');
     assert.equal(effortAnsi('medium', '256color'), '38;5;110');
     assert.equal(effortAnsi('low', '256color'), '38;5;103');
-    assert.equal(effortAnsi('minimal', '256color'), '38;5;240');
+    assert.equal(effortAnsi('minimal', '256color'), '38;5;67');
   });
 
   it('★ off / 空值 → 空串（不上色，用默认前景色）', () => {

@@ -3,9 +3,13 @@
  *
  * 需求（2026-11-04 用户）：
  *   ① 输入框左右都有竖线、四角圆角
- *   ② working 不单独占一行，只在上边框显示运行图标（embedWorkingStatus）
- *   ③ 上边框最右侧显示「上下文百分比/上限 模型名」，如 `8.0%/1.0M deepseek-v4.1-flash`
- *   ④ 输入框下方原有 footer 两行全部隐藏
+ *   ② 右下角显示「上下文百分比/上限 模型名」，如 `8.0%/1.0M deepseek-v4.1-flash`
+ *   ③ 输入框下方原有 footer 两行全部隐藏
+ *
+ * 2026-11-09 两项定案（用户来回试过）：
+ *   ① working 状态**嵌在上边框里**（`embedWorkingStatus: true`），不单独占一行；
+ *      颜色跟整行一致 = 框线色（roundBorder 会把整行重新上色，所以那一段不会是另一个色）。
+ *   ② 边框颜色用 pi 给的 `editor.borderColor`（即原版那七档 thinking 色），框内文字不上色。
  *
  * 为什么要覆写 render()：
  *   pi 的 Editor.render() 只画上下两条 `─`，每行是「左 padding + 文本 + 右 padding」，
@@ -18,25 +22,15 @@
  * 注意：自动补全菜单行排在底边之下、且自带内容宽度，不套竖线（否则菜单被框住会错位）。
  */
 import { CustomEditor } from '@earendil-works/pi-coding-agent'
-import { buildStatus, effortAnsi, holdAnsi, paintAnsi, roundBorder, shortenModel } from './format.ts'
+import { buildStatus, holdAnsi, paintAnsi, roundBorder, shortenModel } from './format.ts'
 
 const SIDE = '│'
 
-/** 右上角状态文本，如 `8.0%/1.0M deepseek-v4.1-flash`。render() 拿不到 ctx，故由事件回调维护。 */
+/** 右下角状态文本，如 `8.0%/1.0M deepseek-v4.1-flash`。render() 拿不到 ctx，故由事件回调维护。 */
 let statusLabel = ''
 
-/** 当前推理强度（off/minimal/low/medium/high/xhigh/max）。render() 拿不到 ctx，同样这里存。
- *  用途：输入文字随推理强度变色（2026-11-06 用户需求）。 */
-let effortLevel = ''
-
-/** 取当前主题实例的 getter。
- *
- * ★ 为何不能把主题从构造函数里拿：pi 传给编辑器了的是 `getEditorTheme()`，
- *  那对象只有 `{ borderColor, selectList }`，**没有 `fg`** —— 直接用它上色会静默无效
- *  （不报错，只是没颜色）。真正带 fg 的是 `ctx.ui.theme`（interactive-mode 的 getter）。
- * ★ 为何存 getter 而不是存实例：`/theme` 切主题后 ctx.ui.theme 返回**新实例**，
- *  存旧实例会継续用旧主题的色板。 */
-let themeGetter: (() => any) | null = null
+/** 终端色模式（truecolor / 256color）。只在 session_start 取一次：它是终端能力，不随切主题改。 */
+let colorMode = 'truecolor'
 
 export class RoundedEditor extends CustomEditor {
   render(width: number): string[] {
@@ -45,70 +39,60 @@ export class RoundedEditor extends CustomEditor {
     const lines = super.render(width - 2)
     if (lines.length < 2) return lines
 
-    const borderColor = (this as any).borderColor?.bind(this)
-    // 现代暗色方案（2026-11-08）：文字 #F8FAFC，边框 #444C56，不再跟推理强度变色。
-    // 光标色 / 输入框背景 / 聚焦外发光是 pi 编辑器内部画的，扩展接管不了，先不动。
-    const colorMode = (() => { try { return String(themeGetter?.().getColorMode()) } catch { return 'truecolor' } })()
-    const textFg = (s: string) => paintAnsi(effortAnsi(effortLevel, colorMode), s)
-    const lineFg = textFg
-    const wrap = lineFg
-    // 右上角状态文字用「搁置」橙 #F59E0B（2026-11-08 用户要求）：
-    // 只染那一段 —— 圆角、虚线、以及 pi 画的 working 状态都跟框线同色
-    // （working 曾也上橙，用户实测「要跟输入框线条颜色一致」，已改回）。
-    const holdFg = (s: string) => paintAnsi(holdAnsi(colorMode), s)
+    // 边框颜色直接用 pi 给编辑器设好的那个（2026-11-09 用户要求「完全对齐原版」）：
+    //   pi 的 interactive-mode 在 updateEditorBorderColor() 里把 editor.borderColor 设成
+    //   theme.getThinkingBorderColor(档位)，bash 模式另给一套 —— 直接复用就等于原版那套
+    //   （含 off 的暗灰），而且 /theme、切档、切 bash 模式时 pi 自己会换并请求重绘。
+    //   框内文字不上色（原版也不上）。光标色 / 输入框背景 / 聚焦外发光是 pi 内部画的，接管不了。
+    const border = (this as any).borderColor
+    const wrap = typeof border === 'function' ? border.bind(this) : (s: string) => s
     const out: string[] = []
 
-    // 上边框：原本是整行 `─`（含 working 图标与滚动提示），两端换圆角，右端贴状态。
-    out.push(roundBorder(lines[0], wrap, '╭', '╮', statusLabel, '', { labelFg: holdFg }))
+    // 上边框：原本是整行 `─`（含滚动提示），两端换圆角。
+    out.push(roundBorder(lines[0], wrap, '╭', '╮'))
     // 下边框在原结果的倒数第 (1 + 自动补全行数) 位 —— 补全菜单排在它后面。
     const autocompleteHeight = (this as any).renderedAutocompleteHeight ?? 0
     const bottomIdx = lines.length - 1 - autocompleteHeight
 
     for (let i = 1; i < bottomIdx; i++) {
-      // 剥掉 pi 原生文字色，再包 #F8FAFC —— 否则内层色码赢。
-      const body = lines[i].replace(/\x1b\[(?!7m)[0-9;]*m/g, '')
-      out.push(wrap(SIDE) + textFg(body) + wrap(SIDE))
+      // 内容行原样透传（不上文字色），只在两端各包一根竖线。
+      out.push(wrap(SIDE) + lines[i] + wrap(SIDE))
     }
     // 下边框（2026-11-07 还原：左下角的 fanchao·昵称已去掉 —— 用户嫌难看，
     // 回 todo 面板标题；roundBorder 的 leftLabel 参数保留备用）。
-    out.push(roundBorder(lines[bottomIdx], wrap, '╰', '╯'))
+    // 状态文字（`30.0%/1.0M 模型名`）2026-11-09 从右上角搬到右下角，且用户要求上「擱置」橙
+    // （只染那一段，圆角与虚线仍是框线色）。
+    out.push(roundBorder(lines[bottomIdx], wrap, '╰', '╯', statusLabel, '', {
+      labelFg: (s: string) => paintAnsi(holdAnsi(colorMode), s),
+    }))
     // 自动补全行原样透传（不套竖线）。
     for (let i = bottomIdx + 1; i < lines.length; i++) out.push(lines[i])
     return out
   }
 }
 
-/** 刷新右上角状态文本（每次渲染前由事件与定时器调用）。 */
+/** 刷新右下角状态文本（每次渲染前由事件与定时器调用）。 */
 function refreshStatus(ctx: any): void {
   try {
     statusLabel = buildStatus(ctx?.getContextUsage?.(), ctx?.model?.id ?? '')
   } catch {
     statusLabel = shortenModel(ctx?.model?.id ?? '')
   }
-  refreshEffort(ctx)
-}
-
-/** 读出当前推理强度。`ctx.thinkingLevel` 是 pi 官方给扩展的入口（effective level）。 */
-function refreshEffort(ctx: any): void {
-  try {
-    effortLevel = String(ctx?.thinkingLevel || '')
-  } catch {
-    effortLevel = ''
-  }
 }
 
 export default function piRoundedEditor(pi: any): void {
   pi.on('session_start', (_event: unknown, ctx: any) => {
     if (!ctx?.ui?.setEditorComponent) return
-    // 主题 getter（带 fg 的那个）—— 见 themeGetter 注释。
-    themeGetter = () => ctx.ui?.theme
+    // 终端色模式（256 色档位用）；取不到就当真彩。
+    try { colorMode = String(ctx.ui?.theme?.getColorMode?.() || 'truecolor') } catch { colorMode = 'truecolor' }
     refreshStatus(ctx)
-    // 第四个参数 embedWorkingStatus: true —— working 状态进上边框，不再单独占一行。
+    // 第四个参数 embedWorkingStatus: true —— working 状态进上边框，不单独占一行（2026-11-09 用户定案）。
+    // 颜色不用管：pi 嵌入时用 editor.borderColor，本扩展又把整行重上一次框线色，两边同为档位色。
     ctx.ui.setEditorComponent(
       (tui: any, theme: any, keybindings: any) =>
         new RoundedEditor(tui, theme, keybindings, { embedWorkingStatus: true }),
     )
-    // ④ 隐藏输入框下方的 footer 两行（路径/git/token、MCP/扩展状态），信息并入右上角。
+    // ③ 隐藏输入框下方的 footer 两行（路径/git/token、MCP/扩展状态），信息并入右下角。
     ctx.ui.setFooter?.(() => ({ render: () => [], invalidate() {} }))
   })
 
@@ -120,13 +104,7 @@ export default function piRoundedEditor(pi: any): void {
     ctx?.ui?.requestRender?.()
   })
 
-  // 切推理强度时重刷输入框文字色（2026-11-06 用户需求）。
-  // 为何不能只靠 session_start 那一次：/model 的强度档位、Alt+T 之类的切换不改会话，
-  // 不重建编辑器也就不会重新读 effortLevel —— 文字会停在旧色。
-  pi.on('thinking_level_select', (_event: any, ctx: any) => {
-    refreshEffort(ctx)
-    ctx?.ui?.requestRender?.()
-  })
+  // 切推理强度：本扩展不再需要处理（边框色是 pi 自己在 updateEditorBorderColor() 里换并请求重绘）。
 
   // 上下文占用随每轮对话变化 —— 轮次结束与消息结束时刷新。
   for (const ev of ['turn_end', 'message_end', 'tool_execution_end']) {

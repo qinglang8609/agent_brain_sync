@@ -13,6 +13,7 @@ const execFileAsync = promisify(execFile);
 import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind } from '../src/store.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES, extractId } from '../src/todo.js';
 import { assertTodoContent, violationSignatures } from '../src/todo/validate.js';
+import { parseChild, renderChild } from '../src/todo/common.js';
 import { editFile } from '../src/lock.js';
 import { findBrainRoot, requireBrain, brainPath } from '../src/index.js';
 import { strandedFor } from '../src/wrapup.js';
@@ -319,6 +320,63 @@ describe('todo 层', () => {
     const t = await readTodo(projectA);
     assert.match(t, /- \[ \] \[讨论中\] bp2/, `状态应已改: \n${t}`);
     assert.match(t, /^ {2}- \[ \] 改到 src\/x\.js/m, '子项应挂上（标准 md 缩进列表）');
+  });
+
+  // 2026-11-09 用户要求：子项也要能标四态（原来只有勾/未勾）。
+  test('★ 子项能标四态：state --n 定位第几条，勾/取消勾不丢标记', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo',
+        '- [ ] [进行中] cs-1 [[fanchao]] — 主任务 (认领 2026-11-09)',
+        '  - [ ] 子项一',
+        '  - [ ] 子项二',
+        '', '## Done', ''].join('\n'));
+    const r1 = await cmdTask({ dir: projectA, action: 'state', id: 'cs-1', note: '滞留中', n: 1 });
+    assert.doesNotMatch(String(r1), /NO_MATCH/, `应命中第 1 条子项: ${r1}`);
+    let t = await readTodo(projectA);
+    assert.match(t, /^ {2}- \[ \] \[滞留中\] 子项一$/m, `第 1 条应带标记: \n${t}`);
+    assert.match(t, /^ {2}- \[ \] 子项二$/m, `第 2 条不该被动: \n${t}`);
+
+    // 勾选走的是另一条路径（child-done），不能把标记抹掉 —— 修改前就会抹掉。
+    await cmdTask({ dir: projectA, action: 'child-done', id: 'cs-1', n: 1 });
+    await cmdTask({ dir: projectA, action: 'child-undone', id: 'cs-1', n: 1 });
+    t = await readTodo(projectA);
+    assert.match(t, /^ {2}- \[ \] \[滞留中\] 子项一$/m, `勾/取消勾后标记要留着: \n${t}`);
+
+    // 不带 n 仍是改任务本身（不能因为子项能标状态就把旧用法拐走）
+    await cmdTask({ dir: projectA, action: 'state', id: 'cs-1', note: '讨论中' });
+    t = await readTodo(projectA);
+    assert.match(t, /- \[ \] \[讨论中\] cs-1/, `不带 n 应改任务: \n${t}`);
+    assert.match(t, /^ {2}- \[ \] \[滞留中\] 子项一$/m, t);
+
+    // 越界 n：报没匹配，且绝不静默改到别的行
+    const over = await cmdTask({ dir: projectA, action: 'state', id: 'cs-1', note: '搁置', n: 9 });
+    assert.match(String(over), /NO_MATCH/, `越界 n 应报没匹配: ${over}`);
+    t = await readTodo(projectA);
+    assert.doesNotMatch(t, /\[搁置\]/, `越界 n 不该写任何东西: \n${t}`);
+  });
+
+  test('★ parseChild / renderChild 往返：只认四态，别的方括号留在正文', async () => {
+    assert.deepEqual(parseChild('  - [ ] [滞留中] 改到哪一步'),
+      { done: false, text: '改到哪一步', indent: 2, state: '滞留中' });
+    assert.deepEqual(parseChild('  - [x] 没状态'),
+      { done: true, text: '没状态', indent: 2, state: null });
+    // 未知方括号是正文，不是状态 —— 否则 [WIP] 这类词会被静默吃掉
+    assert.deepEqual(parseChild('  - [ ] [WIP] 正文'),
+      { done: false, text: '[WIP] 正文', indent: 2, state: null });
+    assert.equal(renderChild('改到哪一步', { state: '滞留中' }), '  - [ ] [滞留中] 改到哪一步');
+    assert.equal(renderChild('一句话', { done: true }), '  - [x] 一句话');
+    // 往返：解析再渲染 == 原行（缩进、勾选、标记都不凭空变）
+    for (const l of ['  - [ ] [滞留中] 改到哪一步', '  - [x] 没状态', '  - [ ] [WIP] 正文', '    - [ ] 缩进 4 格的子项']) {
+      const c = parseChild(l);
+      assert.equal(renderChild(c.text, { done: c.done, state: c.state, indent: ' '.repeat(c.indent) }), l, `往返应逐字不变: ${l}`);
+    }
+  });
+
+  test('★ 闸门：子项长度按去掉状态标记的正文算', async () => {
+    const body = '改'.repeat(200);           // 正文顶到上限 200
+    const mk = (text) => `# 📋 Todo Board\n\n## Todo\n- [ ] [进行中] g-1\n  - [ ] [滞留中] ${text}\n`;
+    assert.doesNotThrow(() => assertTodoContent(mk(body)), '标记不该算进长度（200 字正文应放行）');
+    assert.throws(() => assertTodoContent(mk(body + '再')), /子项太长/, '201 字正文应被拒');
   });
 });
 

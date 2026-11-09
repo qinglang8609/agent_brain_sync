@@ -780,13 +780,13 @@ export function pickNickname(rnd: () => number = Math.random): string {
  * 子项行（缩进的 `- [ ]`）归属到它上一条任务，不单独成条。 */
 export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
   total: number
-  rows: { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; sid: string }[]
+  rows: { state: string; id: string; desc: string; kids: { done: boolean; text: string; state: string | null }[]; sid: string }[]
   hidden: number
 } {
   // 两阶段：先无过滤地按序解析（子项归属需要“上一条”是原文里真正的前一条），
   // 再按作者过滤。若边解析边过滤，被滤掉的条目下方的子项会挂到它上面那一条
   // —— 实测：别人任务的子项会显示在我的任务下面（2026-10-03 审查发现）。
-  type Row = { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; authors: string[]; sid: string }
+  type Row = { state: string; id: string; desc: string; kids: { done: boolean; text: string; state: string | null }[]; authors: string[]; sid: string }
   const parsed: Row[] = []
   let inTodo = false
   for (const raw of String(md || '').split('\n')) {
@@ -861,12 +861,20 @@ async function currentUser(): Promise<string> {
  * 为何不 import src：面板是宿主扩展，单独装到 ~/.pi/extensions/，与包内 src/ 不同目录
  * （装完就断了）。故两端各一份 —— 规则简单（两步正则），且两边测试都盖。
  * 标准 md：缩进的 `- [ ] 内容`。 */
-function parseChildLine(l: string): { done: boolean; text: string; indent: number } | null {
+/** 行首状态标记的四个词（任务行与子项共用；与 CLI 侧 common.js 的 TASK_STATES 同值）。
+ *  两个扩展各自独立安装，所以这里再拄一份，不跨包 import。 */
+const STATE_WORDS = ['进行中', '讨论中', '滞留中', '搁置']
+
+function parseChildLine(l: string): { done: boolean; text: string; indent: number; state: string | null } | null {
   // 只认标准 md 缩进子项（2026-10-20 旧箭头写法已废弃）。
   // 旧行由 CLI 侧 migrateLegacyChild 在读写时迁移掉，面板拿到的已是新格式。
   const m = String(l || '').match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/)
   if (!m) return null
-  return { done: m[2] === 'x', text: m[3].trim(), indent: m[1].length }
+  // 子项也能带状态标记（2026-11-09 用户要求，与任务行同形）：只认四个词，
+  // 别的方括号（如 `[WIP]`）是正文的一部分，原样留在 text 里（同 CLI 侧 parseChild）。
+  const s = m[3].match(/^\[([^\]]+)\]\s*(.*)$/)
+  const state = s && STATE_WORDS.includes(s[1]) ? s[1] : null
+  return { done: m[2] === 'x', text: (state ? s![2] : m[3]).trim(), indent: m[1].length, state }
 }
 
 function dispWidth(s: string): number {
@@ -939,73 +947,65 @@ function clipToWidth(s: string, width: number): string {
  *  拿不到 ctx，只能由事件回调先存好。2026-11-06 用户需求：面板主色跟推理强度走。 */
 let effortLevel = ''
 
-/**
- * 推理强度 → 主题色 token。空串表示「不上推理色，用调用方给的兼底色」。
+/** 档位 → pi 主题里那档 thinking 色（与输入框边框同一个来源）。
  *
- * 规则：`thinking` + 首字母大写，正好对上主题里的 thinkingMinimal…thinkingMax 七档。
- * 为什么 off 返回空串而不是 `thinkingOff`：主题给 thinkingOff 的是接近背景的暗灰
- * （dark.json: `okhsl(229 8% 49%)`），拿它去染文字会看不清。用户 2026-11-06 定的是
- * 「off 时保持默认色」。
- *
- * ★ 同一份逻辑在 hooks/abs-rounded-editor/format.ts 里也有一份（`thinkingColorToken`）。
- *   不抽公共模块是故意的：安装后 `abs.ts` 与 `abs-rounded-editor/` 是两个可独立删除的扩展，
- *   抽成共享文件会让「删掉输入框样式目录」连带把 todo 面板搞崩。
- */
-export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
-  max: { rgb: '197;205;220', ansi256: 189 },
-  xhigh: { rgb: '168;182;204', ansi256: 152 },
-  high: { rgb: '150;166;198', ansi256: 110 },
-  medium: { rgb: '122;138;160', ansi256: 110 },
-  low: { rgb: '94;108;132', ansi256: 103 },
-  minimal: { rgb: '70;82;106', ansi256: 240 },
+ * 为何要向主题要（2026-11-09 用户要求「todo 上的颜色也跟着 pi 输入框的颜色」）：
+ *   那七档色写在主题里（dark.json 的 okhsl），自己拄一份就会跟着主题改而跑偏。
+ * 为何要抠一层正则：getFgAnsi() 返回的是整段 `\x1b[38;2;…m`，而面板内部用的是
+ *   「色码串 + paintAnsi 自己包转义」那套，只能取里面的 `38;2;…`。
+ * 空档位或主题不认这个 token → 返回空串，调用处回落到 C.desc。 */
+export function thinkingAnsiOf(theme: any, level: string | null | undefined): string {
+  const lvl = String(level || '').trim().toLowerCase()
+  if (!lvl) return ''
+  const token = `thinking${lvl[0].toUpperCase()}${lvl.slice(1)}`
+  try {
+    const m = String(theme?.getFgAnsi?.(token) || '').match(/\x1b\[([0-9;]+)m/)
+    return m ? m[1] : ''
+  } catch {
+    return ''
+  }
 }
 
-export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
-  const g = EFFORT_COLOR[String(level || '').trim().toLowerCase()]
-  if (!g) return ''
-  return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
-}
-
-/** 用 effortAnsi 的结果包一段文字；空串原样返回（off 时不着色）。 */
+/** 用色码串包一段文字（如 `paint('38;2;16;185;129', 'x')`）；空串原样返回。 */
 export function paintAnsi(ansi: string, text: string): string {
   return ansi ? `\x1b[${ansi}m${text}\x1b[39m` : text
 }
 
 export function renderPanelLines(
-  data: { total: number; rows: { state: string; id: string; desc: string; kids?: { done: boolean; text: string }[] }[]; hidden: number },
+  data: { total: number; rows: { state: string; id: string; desc: string; kids?: { done: boolean; text: string; state?: string | null }[] }[]; hidden: number },
   who: string,
   width: number,
   fg: (color: string, s: string) => string,
   nickname = '',
-  effort = '',
+  effortColor = '',
 ): string[] {
   // ★ 空看板不再直接返回空数组（2026-10-06 用户要求：「即便 todo 没有列表，也要在 pi 上显示」）。
   //   理由与看板段一致：面板是「机制在不在」的常驻指示，进去就看不见 = 不知道机制活着。
   //   下面仍要画框和标题，所以这里只是不再提前 return。
   //
-  // ★ 主色跟推理强度走（2026-11-06 用户需求）：标题、[状态]、树线 ├─└─、复选框 [ ]、
-  //   进行中动画同用一色，与 pi 输入框描边/文字同色系。
-  // ★ off 时整块面板用灰阶（同日用户补提：「当推理关闭的时候 todo 面板文字应该全是灰色」）——
-  //   高亮色只在真的开着推理时给，否则「推理关了面板还在发光」让人误以为还在深度思考。
-  //   主色用 muted（中灰），描述与子项降一阶到 dim（深灰），两阶灰保留层次，不一整片平。
-  // 现代暗色方案（2026-11-08 用户给定），不再跟推理强度走。
-  // 标题色（2026-11-08 用户实测「太亮了」）：从纯金 #FFD700 换成与「搁置」同一个橙 #F59E0B
-  //   —— 纯金在暗底上抢眼，标题只是分区标签，不该比当天要做的事更跳。
-  //   代价：标题与 `[搁置]` 标签同色；两者一个在最左（标题）一个在行中（状态），位置分得开。
+  // ★ 文字色跟推理强度走（2026-11-09 用户要求「面板上的文字颜色要与输入框推理强度一致」）：
+  //   标题、树线、任务 id、描述、子项、`+N more` 全用档位色（effortColor，由调用处从主题取）。
+  //   ★ 四个状态标签（进行中/讨论中/滞留中/搁置）**保留各自语义色**，不跟档位走 ——
+  //     用户选的方案：否则四态只能靠文字看，一眼分不出。别再顺手把它们也统一了。
+  //   描述色 C.desc 降为「取不到档位色时的兼底」（主题没这个 token / 模型不支持推理）。
+  // 历史（勿重走）：2026-11-08 曾定过「现代暗色方案：标题橙、树线蓝灰、描述次灰」，已作废。
   const C = {
+    // 面板大标题回到擱置橙 #F59E0B（2026-11-09 用户试过灰白，看完要回橙；沿用 2026-11-08 的定）。
+    // 任务行的 id/描述**不用**这个色 —— 它们跟档位色跑。
     title: '38;2;245;158;11',
     task: '38;2;226;232;240',
     desc: '38;2;148;163;184',
-    tree: '38;2;150;170;198',
     doing: '38;2;16;185;129',
     talk: '38;2;59;130;246',
     hold: '38;2;245;158;11',
     stuck: '38;2;139;92;246',
-    done: '38;2;100;116;139',
   }
   const stateAnsi = (st: string): string =>
     st === '进行中' ? C.doing : st === '讨论中' ? C.talk : st === '搁置' ? C.hold : st === '滞留中' ? C.stuck : C.task
   const paint = (ansi: string, t: string) => paintAnsi(ansi, t)
+  // 面板文字色 = 调用处从主题取的档位色；取不到（主题没这个 token / 模型不支持推理）回落描述灰。
+  // 提到循环外：标题与 `+N more` 也在用它。
+  const eff = effortColor || C.desc
   const lines: string[] = []
   // 上描边行已删除（2026-11-04 用户要求「去掉上边框」）。
   // 历史：那行曾用 `thinkingOff` 对齐 pi 输入框描边色（排查三轮才定色）。
@@ -1028,35 +1028,38 @@ export function renderPanelLines(
     const branch = isLast ? '└─' : '├─'
     // 进行中的行曾带圆圈动画（2026-11-08 用户定：「这个动画没啥用」，整个去掉）。
     // 去掉后 [进行中] 靠状态色区分，不再额外消耗一次 200ms 重绘。
-    const hasState = ['进行中', '讨论中', '搁置', '滞留中'].includes(t.state)
+    const hasState = STATE_WORDS.includes(t.state)
     // 复选框 `[ ]`（2026-10-16 用户要求）：面板是 todo.md 的只读视图，
     // 就该长成 todo 原貌 —— 摆成与文件里 `- [ ]` 同形，读到就认得出对应哪一行。
-    const eff = effortAnsi(effort, 'truecolor') || C.desc
     const box = hasState ? '' : paint(eff, '[ ] ')
     const stPart = hasState
       ? paint(stateAnsi(t.state), `[${t.state}]`)
       : paint(eff, '[待办]')
-    const head = `${paint(C.tree, branch)} ${box}${stPart} ${paint(eff, t.id)}`
-    const desc = t.desc ? ' ' + paint(C.desc, `— ${t.desc}`) : ''
+    const head = `${paint(eff, branch)} ${box}${stPart} ${paint(eff, t.id)}`
+    const desc = t.desc ? ' ' + paint(eff, `— ${t.desc}`) : ''
     lines.push(clipToWidth(head + desc, width))
     if (t.kids && t.kids.length) {
       // 子项：标准 md 嵌套列表 → 画成树
       //   ├─ [ ] 子项一
       //   └─ [x] 子项二
       // 树线前缀 = 父任务的 │（非末条）或空格（末条），与父任务分支对齐。
-      // 勾过的用 dim 压暗（一眼看出哪些已完成），未勾用正常色。
-      const stem = isLast ? '  ' : paint(C.tree, '│ ')
+      // 勾过的用删除线区分（颜色已统一为档位色），未勾不着修饰。
+      const stem = isLast ? '  ' : paint(eff, '│ ')
       const n = t.kids.length
       t.kids.forEach((k, ki) => {
         const kb = ki === n - 1 ? '└─' : '├─'
-        const kbox = paint(eff, k.done ? '[x]' : '[ ]')
-        const ktext = k.done ? `\x1b[9m${paint(C.done, k.text)}\x1b[29m` : paint(C.desc, k.text)
-        lines.push(clipToWidth(`${stem} ${paint(C.tree, kb)} ${kbox} ${ktext}`, width))
+        // 有状态的子项跟任务同形：不画 `[ ]`，改画状态标签（2026-11-09 用户要求子项也能标四态）。
+        const kbox = k.state
+          ? paint(stateAnsi(k.state), `[${k.state}]`)
+          : paint(eff, k.done ? '[x]' : '[ ]')
+        // 勾过的子项靠删除线区分（颜色已统一为档位色，不再降灰）
+        const ktext = k.done ? `\x1b[9m${paint(eff, k.text)}\x1b[29m` : paint(eff, k.text)
+        lines.push(clipToWidth(`${stem} ${paint(eff, kb)} ${kbox} ${ktext}`, width))
       })
     }
   })
 
-  if (data.hidden > 0) lines.push(clipToWidth(paint(C.title, `  +${data.hidden} more`), width))
+  if (data.hidden > 0) lines.push(clipToWidth(paint(eff, `  +${data.hidden} more`), width))
   return lines
 }
 /** 隐藏面板。**必须主动 requestRender** —— 否则数据清了、屏幕还留着旧画面。
@@ -1103,7 +1106,8 @@ async function refreshTodoPanel(ui: any, cwd: string): Promise<void> {
               width,
               (c: string, s: string) => theme.fg(c, s),
               sessionNickname,
-              effortLevel,
+              // 面板主色跟 pi 输入框一致：从主题现取当前档位的 thinking 色（2026-11-09 用户要求）。
+              thinkingAnsiOf(theme, effortLevel),
             ),
           invalidate: () => {},
         }

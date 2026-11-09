@@ -7,5 +7,5 @@ export { LEGACY_SECTION_RENAMES, TODO_SECTIONS, TODO_SUBSECTIONS, isAllowedTodoS
 export { todoTemplate, rebuildStructure, dropRetiredSections, enforceBrainFormat, normalizeTodo, ensureStateMark, stateOfTaskLine, stripStateMark, checkTaskBox } from './todo/structure.js';
 export { checkFileShape, violationSignatures, assertNoStrayBlank, assertTodoContent } from './todo/validate.js';
 export { doneDateOf, doneKindOf, withDoneKind, collapseDone, archiveDoneInText, renderArchiveBody, upsertArchiveSection, groupDoneSection, insertDoneGrouped, archiveBrief } from './todo/archive.js';
-export { readTodo, ensureTodo, setStateMark, addTask, upsertTask, idOfTaskLine, findTaskLine, setBreakpoint, setBreakpointDone, setMemo, readMemo, boardText } from './todo/tasks.js';
+export { readTodo, ensureTodo, setStateMark, setChildStateMark, addTask, upsertTask, idOfTaskLine, findTaskLine, setBreakpoint, setBreakpointDone, setMemo, readMemo, boardText } from './todo/tasks.js';
 export { migrateLegacyChild, isTaskLine, isChildLine, CHILD_INDENT } from './todo/common.js';

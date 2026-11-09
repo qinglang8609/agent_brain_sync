@@ -127,6 +127,19 @@ export function isChildLine(l) {
  * 存量靠 migrateLegacyChild 一次性迁移（那是全仓唯一还认得 `↳` 的地方）。 */
 export const CHILD_INDENT = '  ';
 
+/** 行首状态标记的四个词（任务行与子项共用；2026-11-09 起子项也能标）。
+ *  放在本文件而不是 spec.js：parseChild / renderChild 要用它判「行首 [xx] 是不是状态」，
+ *  而 common.js 是不 import 任何模块的叶子（spec.js 反向 re-export），放 spec 会成环。 */
+export const TASK_STATES = ['进行中', '讨论中', '滞留中', '搁置'];
+
+/** 把 `[xx] 正文` 拆成 { state, text }：只认 TASK_STATES 里的词，
+ *  别的方括号（如 `[WIP]`）是正文的一部分，原样留在 text 里。 */
+function splitStateMark(rest) {
+  const raw = String(rest ?? '');
+  const m = raw.match(/^\[([^\]]+)\]\s*(.*)$/);
+  return m && TASK_STATES.includes(m[1]) ? { state: m[1], text: m[2] } : { state: null, text: raw };
+}
+
 /** 唯一还认得旧 `↳` 写法的地方 —— 存量迁移。
  *
  * 为何保留这一个函数（2026-10-20 用户定：彻底去掉断点写法，但存量要自动迁移）：
@@ -155,13 +168,15 @@ export function migrateLegacyChild(l) {
 export function parseChild(l) {
   const m = String(l || '').match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/);
   if (!m) return null;
-  return { done: m[2] === 'x', text: m[3].trim(), indent: m[1].length };
+  const { state, text } = splitStateMark(m[3]);
+  return { done: m[2] === 'x', text: text.trim(), indent: m[1].length, state };
 }
 
 /** 生成子项行（标准 md，统一入口 —— 格式只有这一个真源）。
- * indent 默认 2（挂在顶层任务下）；多层嵌套时传更深的值。 */
-export function renderChild(text, { done = false, indent = CHILD_INDENT } = {}) {
-  return `${indent}- ${done ? '[x]' : '[ ]'} ${text}`;
+ * indent 默认 2（挂在顶层任务下）；多层嵌套时传更深的值。
+ * state 传四态之一则写成 `  - [ ] [滞留中] 正文`（与任务行同形）。 */
+export function renderChild(text, { done = false, indent = CHILD_INDENT, state = null } = {}) {
+  return `${indent}- ${done ? '[x]' : '[ ]'} ${state ? `[${state}] ` : ''}${text}`;
 }
 
 /** Todo 分区里「合法行」以外的东西 = 裸文本（总结/报告/清单）。

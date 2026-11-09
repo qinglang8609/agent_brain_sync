@@ -450,7 +450,7 @@ const subUsage = {
     '  abs todo child-done <id> [--n N]   勾子项（缺省最后一条）',
     '  abs todo child-undone <id> [--n N] 取消勾',
     '  abs todo memo <id> "随手记（可多句）"  任务笔记 → sessions/，不上看板；无文字=查看',
-    '  abs todo state <id> --note 进行中|讨论中|滞留中|搁置',
+    '  abs todo state <id> --note 进行中|讨论中|滞留中|搁置 [--n N]   --n = 改第 N 条子项（缺省改任务本身）',
     '  abs todo remove <id>              删除任务（连子项，不可恢复；只是先不做请用 state 搁置）',
     '  abs todo done <id> [--as 落地|否决|仅方案] [结语文字]',
     '  abs todo archive [--keep-days N] [--dry-run]',
@@ -632,7 +632,7 @@ async function main() {
         // memo 同：随手记常是多句带空格，位置参数收全段比 --note 顺手。
         const isDone = action === 'done';
         const isMemo = action === 'memo';
-        const usage = `abs todo ${sub} <id>${isDone ? ' [--as 落地|否决|仅方案] [--note "结语"]' : ' --note "…"'}`;
+        const usage = `abs todo ${sub} <id>${isDone ? ' [--as 落地|否决|仅方案] [--note "结语"]' : action === 'state' ? ' --note "…" [--n N]' : ' --note "…"'}`;
         if (isDone) {
           const note = opts.note || (rest2.length ? rest2.join(' ') : undefined);
           console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note, as: opts.as, session: opts.session }));
@@ -655,7 +655,10 @@ async function main() {
         }
         rejectExtra(rest2, usage);
         if (!id) throw new Error(`✗ 缺 <id>\n  用法: ${usage}`);
-        console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note: opts.note, as: opts.as, session: opts.session }));
+        // --n：子项位置（state 用它改第 n 条子项，与 child-done 同一套坐标）
+        const nKid = opts.n ? Number(opts.n) : undefined;
+        if (opts.n && (!Number.isInteger(nKid) || nKid < 1)) throw new Error(`✗ --n 要是正整数（收到 "${opts.n}"）`);
+        console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note: opts.note, as: opts.as, session: opts.session, n: nKid }));
         break;
       }
       case 'ingest': {

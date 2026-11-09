@@ -1191,6 +1191,39 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(kid1.trimStart().startsWith('│ '), `子项应缩进在父任务下: ${JSON.stringify(kid1)}`);
   });
 
+  // 2026-11-09 用户要求：子项也要能标四态 —— 解析要拆出 state，面板画 [状态] 而不是 [ ]。
+  test('★ 子项带四态标记：解析拆出 state，面板画 [状态]', async () => {
+    const { parseOpenTasks, renderPanelLines } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] [进行中] cs [[fanchao]] — 主任务',
+      '  - [ ] [滞留中] 子项一',
+      '  - [x] 子项二',
+    ].join('\n');
+    const r = parseOpenTasks(md, 20, 'fanchao');
+    assert.equal(r.rows[0].kids[0].state, '滞留中', `应拆出状态: ${JSON.stringify(r.rows[0].kids)}`);
+    assert.equal(r.rows[0].kids[0].text, '子项一', '状态标记不该留在正文里');
+    assert.equal(r.rows[0].kids[1].state, null, '没标的子项 state 应为 null');
+
+    const fg = (c, s) => s;
+    const lines = renderPanelLines({
+      total: 1,
+      rows: [{ state: '进行中', id: 'cs', desc: '主任务', kids: [
+        { done: false, text: '子项一', state: '滞留中' },
+        { done: false, text: '子项二', state: null },
+      ] }],
+      hidden: 0,
+    }, 'me', 120, fg, '', 'high');
+    const all = lines.join('\n');
+    assert.ok(all.includes('[滞留中]'), `带状态子项应画状态标签:\n${all}`);
+    // 滞留中用陈色（与父任务同一套状态色）——颜色错了不报错，只能盯色码
+    assert.ok(all.includes('\x1b[38;2;139;92;246m[滞留中]'), `滞留中应用陈色:\n${JSON.stringify(lines)}`);
+    const kid2 = lines.find((l) => l.includes('子项二'));
+    assert.ok(kid2.includes('[ ]'), `无状态子项仍是 [ ]: ${JSON.stringify(kid2)}`);
+    const kid1 = lines.find((l) => l.includes('子项一'));
+    assert.ok(!kid1.includes('[ ]'), `有状态子项不该再有 [ ]: ${JSON.stringify(kid1)}`);
+  });
+
   // 2026-11-04 用户要求「去掉上边框」：首行直接是标题，不再有 `─` 描边线。
   test('无上边框：首行是标题，且不含描边线', async () => {
     const { renderPanelLines } = await loadPanelFns();
@@ -1262,7 +1295,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   }
   const tagFg = (c, s) => `${tok(TOKEN_CODE[c] ?? 90)}${s}\x1b[0m`
   const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '')
-  test('★ 面板可读：标题橙（=搁置色），状态分色带托底，任务字亮白，描述次灰，树线暗灰', async () => {
+  test('★ 面板配色：大标题搁置橙，任务名与其余文字跟档位色，状态标签各自语义色', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const data = {
       total: 2,
@@ -1272,71 +1305,71 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
       ],
       hidden: 0,
     };
-    const all = renderPanelLines(data, 'me', 120, tagFg, '', 'high').join('\n');
+    const all = renderPanelLines(data, 'me', 120, tagFg, '', '38;2;151;118;229').join('\n');
     const plain = stripAnsi(all)
-    const titleC = '\x1b[38;2;245;158;11m'
-    const highC = '\x1b[38;2;150;166;198m'
-    const descC = '\x1b[38;2;148;163;184m'
-    const treeC = '\x1b[38;2;150;170;198m'
+    // 2026-11-09 用户定：四个状态标签各自语义色；面板大标题擱置橙（试过灰白，又要回橙）；
+    // 其余（任务 id/描述/树线/复选框/子项）跟档位色。
+    const effortC = '\x1b[38;2;151;118;229m'
     const doingC = '\x1b[38;2;16;185;129m'
     const holdC = '\x1b[38;2;245;158;11m'
-    assert.ok(all.includes(`${titleC}Todo (2)`), `标题应用搁置橙 #F59E0B:\n${all}`);
+    const titleC = '\x1b[38;2;245;158;11m'
+    assert.ok(all.includes(`${titleC}Todo (2)`), `大标题应用擱置橙:\n${all}`);
+    assert.ok(!all.includes(`${effortC}Todo (2)`), `大标题不该用档位色:\n${all}`);
+    // 任务名（id + 描述）跟档位色，不是灰白
+    assert.ok(all.includes(`${effortC}a`) || all.includes(`${effortC}b`), `任务 id 应用档位色:\n${all}`);
+    assert.ok(all.includes(`${effortC}— 描述甲`), `任务描述应用档位色:\n${all}`);
+    assert.ok(all.includes(`${effortC}├─`) && all.includes(`${effortC}└─`), `树线应用档位色:\n${all}`);
+    assert.ok(all.includes(`${effortC}├─`), `树线应用档位色:\n${all}`);
+    assert.ok(all.includes(`${effortC}子项`), `子项文字应用档位色:\n${all}`);
+    // 状态标签保留各自的语义色（不跟档位走）
     assert.ok(all.includes(`${holdC}[搁置]`), `搁置应用琥珀:\n${all}`);
     assert.ok(all.includes(`${doingC}[进行中]`), `进行中应用翠绿:\n${all}`);
-    assert.ok(all.includes(`${treeC}├─`), `树线应用暗灰:\n${all}`);
     assert.ok(plain.includes('[ ]') || plain.includes('[待办]'), `应有复选框:\n${all}`);
-    assert.ok(all.includes(`${highC}b`) || all.includes(`${highC}a`), `任务 id 应用推理色:\n${all}`);
-    assert.ok(all.includes(`${descC}— 描述甲`), `描述应用次灰:\n${all}`);
-    assert.ok(all.includes(`${descC}子项`), `子项文字应用次灰:\n${all}`);
   });
 
-  // 2026-11-07 用户逐档指定了 6 个 hex（中间换过几版，以最新一版为准）。
-  // 只钉色值，不断言色相/亮度顺序 —— 色相是用户挑的，改一版就变，按外观写断言只会天天红。
-  test('★ 六档色值等于用户指定的 hex', async () => {
-    const { effortAnsi } = await loadPanelFns();
-    const HEX = {
-      max: [0xC5, 0xCD, 0xDC],
-      xhigh: [0xA8, 0xB6, 0xCC],
-      high: [0x96, 0xA6, 0xC6],
-      medium: [0x7A, 0x8A, 0xA0],
-      low: [0x5E, 0x6C, 0x84],
-      minimal: [0x46, 0x52, 0x6A],
+  // 2026-11-09 用户要求：面板主色跟 pi 输入框一致 —— 也就是主题里那七档 thinking 色。
+  // 所以这里测的是「档位 → 主题 token → 取出色码」这条链，不再自己拄色值。
+  test('★ thinkingAnsiOf：档位映射到主题 thinking token，取不出时返回空串', async () => {
+    const { thinkingAnsiOf } = await loadPanelFns();
+    const seen = [];
+    const fakeTheme = {
+      getFgAnsi(token) {
+        seen.push(token);
+        if (token === 'thinkingBad') throw new Error('Unknown theme color: ' + token);
+        return '\x1b[38;2;9;9;9m';
+      },
     };
-    for (const [level, rgb] of Object.entries(HEX)) {
-      assert.equal(effortAnsi(level), `38;2;${rgb.join(';')}`, `${level} 色值不符`);
+    // 七档 → thinkingOff/thinkingMinimal/…/thinkingMax（首字母大写）
+    const want = { off: 'thinkingOff', minimal: 'thinkingMinimal', low: 'thinkingLow', medium: 'thinkingMedium', high: 'thinkingHigh', xhigh: 'thinkingXhigh', max: 'thinkingMax' };
+    for (const [level, token] of Object.entries(want)) {
+      assert.equal(thinkingAnsiOf(fakeTheme, level), '38;2;9;9;9', `${level} 应取到色码`);
+      assert.equal(seen.at(-1), token, `${level} 应问主题要 ${token}`);
     }
+    assert.equal(thinkingAnsiOf(fakeTheme, 'HIGH'), '38;2;9;9;9', '大小写不该影响');
+    // 取不到就不能编造颜色：调用处会回落到 C.desc
+    assert.equal(thinkingAnsiOf(fakeTheme, ''), '', '空档位应返回空串');
+    assert.equal(thinkingAnsiOf(fakeTheme, undefined), '', '未传应返回空串');
+    assert.equal(thinkingAnsiOf(fakeTheme, 'bad'), '', '主题不认这个 token 时应返回空串');
+    assert.equal(thinkingAnsiOf(null, 'high'), '', '没有主题时应返回空串');
   });
 
-  test('★ 推理强度 off / 未传 → 仍用现代暗色方案（不再变灰）', async () => {
+  test('★ 不传档位色 → 回落描述色（面板不因拼不出色而空白）', async () => {
     const { renderPanelLines } = await loadPanelFns();
     const data = {
       total: 1,
-      rows: [{ state: '进行中', id: 'x', desc: '描述', kids: [{ done: false, text: '子项' }] }],
+      rows: [{ state: '进行中', id: 'x', desc: '描述', kids: [] }],
       hidden: 0,
     };
-    for (const effort of ['off', '', undefined, null]) {
-      const all = renderPanelLines(data, 'me', 120, tagFg, '', effort).join('\n');
-      assert.ok(all.includes('\x1b[38;2;16;185;129m') || all.includes('进行中'), `effort=${effort} 仍应有进行中:\n${all}`);
-      assert.ok(all.includes('\x1b[38;2;226;232;240m') || all.includes('x'), `effort=${effort} 任务字仍应亮白:\n${all}`);
-    }
+    const all = renderPanelLines(data, 'me', 120, tagFg).join('\n');
+    assert.ok(all.includes('\x1b[38;2;148;163;184m└─'), `未传档位色时树线应回落 C.desc:\n${all}`);
+    assert.ok(all.includes('\x1b[38;2;148;163;184mx'), `未传档位色时任务 id 也应回落 C.desc:\n${all}`);
   });
 
-  test('★ 推理强度各档映射到绿色阶 ANSI', async () => {
-    const { effortAnsi } = await loadPanelFns();
-    assert.equal(effortAnsi('minimal'), '38;2;70;82;106');
-    assert.equal(effortAnsi('low'), '38;2;94;108;132');
-    assert.equal(effortAnsi('medium'), '38;2;122;138;160');
-    assert.equal(effortAnsi('high'), '38;2;150;166;198');
-    assert.equal(effortAnsi('xhigh'), '38;2;168;182;204');
-    assert.equal(effortAnsi('max'), '38;2;197;205;220');
-    assert.equal(effortAnsi('off'), '');
-    assert.equal(effortAnsi(''), '');
-    assert.equal(effortAnsi(null), '');
-    assert.equal(effortAnsi(undefined), '');
-    // 256 色终端走 38;5（灰蓝只能退到灰阶档）
-    assert.equal(effortAnsi('max', '256color'), '38;5;189');
-    assert.equal(effortAnsi('high', '256color'), '38;5;110');
-    assert.equal(effortAnsi('low', '256color'), '38;5;103');
+  test('★ 256 色终端也能取到色（主题自己退档，不由本扩展管）', async () => {
+    const { thinkingAnsiOf } = await loadPanelFns();
+    // 主题在 256 色模式下给的是 38;5;N；本函数只负责把参数段里那段抓出来。
+    const t256 = { getFgAnsi: () => '\x1b[38;5;110m' };
+    assert.equal(thinkingAnsiOf(t256, 'high'), '38;5;110');
   });
 
   // 昵称（2026-10-03 用户需求）：用户给定的俏皮话池里随机抽，附在作者名后。
@@ -1456,6 +1489,41 @@ describe('pi 扩展 面板重绘', () => {
     assert.equal(widget, 'hidden', '任务清空后面板应隐藏（2026-11-06 改；推翻 10-06 的旧行为）');
     // 重绘仍然必须发生 —— 否则数据清了、屏幕还留着旧帧（2026-10-05 那个坑）。
     assert.ok(renders > before, `重绘仍必须发生（否则屏幕不刷）: ${before} → ${renders}`);
+  });
+
+  // 2026-11-09 用户要求：面板主色跟 pi 输入框一致。
+  // 这条测的是**接线**：工厂拿到的 theme 要真的被用来取档位色（取不到就回落），
+  // 光测 thinkingAnsiOf 函数本身盖不住「忘了传 / 传错参数」这类静默失效。
+  test('★ 档位色接线实测：主题的 thinking 色落到树线上，取不到就回落', async () => {
+    process.env.ABS_USER = 'tester';
+    const { proj, handlers, ctx } = await setupPanel();
+    await fs.writeFile(join(proj, '.brain', 'todo.md'),
+      '# todo\n\n## Todo\n- [ ] [进行中] t1 [[tester]] — 干点活\n\n## Done\n', 'utf8');
+
+    let factory = null;
+    const ui = {
+      setWidget: (k, v) => { if (typeof v === 'function') factory = v; },
+    };
+    const c = { ...ctx, ui, thinkingLevel: 'high' };
+    // session_start 会把档位存进模块级变量，面板建的时候读它
+    await handlers.session_start[0]({ reason: 'startup' }, c);
+    await handlers.turn_end[0]({}, c);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.ok(typeof factory === 'function', '应该有面板 factory');
+
+    const asked = [];
+    const theme = { getFgAnsi: (t) => { asked.push(t); return '\x1b[38;2;151;118;229m'; } };
+    const lines = factory({ requestRender() {} }, theme).render(120).join('\n');
+    assert.ok(asked.includes('thinkingHigh'), `应向主题要 thinkingHigh，实际问了 ${JSON.stringify(asked)}`);
+    assert.ok(lines.includes('\x1b[38;2;151;118;229m└─'), `树线应用主题那档色:\n${lines}`);
+    assert.ok(lines.includes('\x1b[38;2;151;118;229mt1'), `任务 id 应用主题那档色:\n${lines}`);
+    assert.ok(lines.includes('\x1b[38;2;226;232;240mt1') === false, `任务 id 不是灰白了:\n${lines}`);
+    assert.ok(lines.includes('\x1b[38;2;245;158;11mTodo (1)'), `大标题应是擱置橙:\n${lines}`);
+
+    // 主题取不到该 token（旧主题/自定义主题）→ 回落 C.desc，不能崩也不能空白
+    const badTheme = { getFgAnsi: () => { throw new Error('Unknown theme color: thinkingHigh'); } };
+    const lines2 = factory({ requestRender() {} }, badTheme).render(120).join('\n');
+    assert.ok(lines2.includes('\x1b[38;2;148;163;184m└─'), `取不到时应回落描述色:\n${lines2}`);
   });
 });
 

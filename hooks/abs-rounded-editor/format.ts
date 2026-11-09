@@ -72,24 +72,28 @@ function dropCols(s: string, n: number): string {
 }
 
 /**
- * 推理强度 → 主题色 token。空串表示「不上色，沿用默认色」。
+ * 推理强度 → 主色。六档灰蓝（同一色相族、由亮到暗），查不到或 off 时返回空串 = 不上色，用默认色。
  *
- * 规则：`thinking` + 首字母大写，正好对上主题里的 thinkingMinimal…thinkingMax 七档。
- * 为什么 off 返回空串而不是 `thinkingOff`：主题给 thinkingOff 的是接近背景的暗灰
- * （dark.json: `okhsl(229 8% 49%)`），拿它去染文字会看不清。用户 2026-11-06 定的是
- * 「off 时保持默认色」。
+ * ⚠ 当前**输入框不再用它**（2026-11-09 用户要求「完全对齐 pi 原版」：边框改用 pi 给的
+ *   editor.borderColor，即主题那七档 thinking 色）。保留是因为两条：用户在这上面来回改过
+ *   两轮（改回去只改 render() 一行），且 todo 面板（abs.pi.ts）另有一份同值副本。
  *
- * ★ 同一份逻辑在 hooks/abs.pi.ts 里也有一份（`effortColorToken`）。不抽公共模块是故意的：
+ * 为什么 off 不上色：主题给 thinkingOff 的是接近背景的暗灰（dark.json: `okhsl(229 8% 49%)`），
+ * 拿它去染文字会看不清。用户 2026-11-06 定的是「off 时保持默认色」。
+ * 色值定于 2026-11-09：先「暗档提亮」把 medium/low/minimal 抬到看得清，试过一版中性灰又还原回蓝调。
+ * 对深色背景（#0D1117）对比度 11.84/9.22/7.72/6.53/5.42/4.51。
+ *
+ * ★ 同一份逻辑在 hooks/abs.pi.ts 里也有一份（`effortAnsi`）。不抽公共模块是故意的：
  *   安装后 `abs.ts` 与 `abs-rounded-editor/` 是两个可独立删除的扩展，抽成共享文件会让
- *   「删掉输入框样式目录」连带把 todo 面板搞崩。
+ *   「删掉输入框样式目录」连带把 todo 面板搞崩。改色值时要两边一起改。
  */
 export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
   max: { rgb: '197;205;220', ansi256: 189 },
   xhigh: { rgb: '168;182;204', ansi256: 152 },
   high: { rgb: '150;166;198', ansi256: 110 },
-  medium: { rgb: '122;138;160', ansi256: 110 },
-  low: { rgb: '94;108;132', ansi256: 103 },
-  minimal: { rgb: '70;82;106', ansi256: 240 },
+  medium: { rgb: '139;153;172', ansi256: 110 },
+  low: { rgb: '124;138;162', ansi256: 103 },
+  minimal: { rgb: '108;124;157', ansi256: 67 },
 }
 
 export function effortAnsi(level: string | null | undefined, colorMode = 'truecolor'): string {
@@ -98,20 +102,14 @@ export function effortAnsi(level: string | null | undefined, colorMode = 'trueco
   return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
 }
 
-/** 「搁置」橙 #F59E0B —— 与 todo 面板的 `搁置` 标签同色（abs.pi.ts 的 `C.hold`）。
- *  用途（2026-11-08 用户要求）：输入框上边框**右上角的状态文字**。
- *  ★ 左边的 working 状态（`⠼ Working`）**不用**这个色（用户实测要求）：
- *    它跟框线同色，橙色只标记「上下文占用」。
+/** 「擱置」橙 #F59E0B —— 与 todo 面板的 `[擱置]`、面板大标题同色（abs.pi.ts 的 `C.hold`/`C.title`）。
+ *  用途（2026-11-09 用户要求）：输入框**右下角的状态文字**（如 `30.0%/1.0M DeepSeek-V4.1-Flash`）。
  *  ★ 色值在 abs.pi.ts 里也有一份，不抽公共模块是故意的（见 EFFORT_COLOR 的注释）。 */
 export const HOLD_COLOR = { rgb: '245;158;11', ansi256: 214 }
 
 export function holdAnsi(colorMode = 'truecolor'): string {
   return colorMode === 'truecolor' ? `38;2;${HOLD_COLOR.rgb}` : `38;5;${HOLD_COLOR.ansi256}`
 }
-
-/** 上边框最左那段（如 `⠼ Working`）由 pi 画、roundBorder 不单独给它上色：
- *  它随整行用框线色。试过给它上橙，用户实测要求“跟框线同色”，已改回 ——
- *  别再拆一段出来单独染色。 */
 
 /** 用 effortAnsi 的结果包一段文字；空串原样返回（off 时不着色）。 */
 export function paintAnsi(ansi: string, text: string): string {
@@ -127,9 +125,12 @@ export function paintAnsi(ansi: string, text: string): string {
  * leftLabel 贴在左圆角之后；label 贴最右端。哪个放不下就丢掉哪个
  * （宁可没有，也不让边框溢出折行）。
  *
- * opts.labelFg（2026-11-08 用户要求）：只给右边那个状态标签换个色，
- *   其余（圆角、虚线、**以及 pi 画在左边的 working 状态**）仍用 fg。
- *   working 曾经也上橙，用户实测要它跟框线同色，已改回（见下面的注释）。
+ * opts.labelFg：只给右边那个标签（右下角的状态文字）换个色，其余（圆角、虚线）仍用 fg。
+ *   2026-11-09 用户要求该状态文字用擱置橙，调用处传 holdAnsi；不传 opts 时整行一个色。
+ *
+ * 历史（别再重走）：2026-11-08～09 曾有个 leadFg 开关，用来把 pi 嵌进上边框的
+ *   `⠼ Working` 那段单独染色（橙）。现在 working 已还原成 pi 原版（不嵌边框），
+ *   leadSpanOf/leadFg 一并删了 —— 要再嵌回去就照那时候的写法加。
  */
 export function roundBorder(
   line: string,
@@ -166,12 +167,12 @@ export function roundBorder(
     }
   }
   return paintSpans(left + mid + right, fg, [
-    // 右标签从**末尾**找：万一同一串又出现在左边，不能把左边那个也染成标签色。
+    // 标签从**末尾**找：万一同一串又出现在左边，不能把左边那个也染成标签色。
     [label, opts.labelFg, 'last'],
   ])
 }
 
-/** 把 out 里的几个区间换成各自的色，其余整段用 fg。区间按位置排序、重叠则跳过。
+/** 把 out 里的区间换成各自指定的色，其余整段用 fg。区间按位置排序、重叠则跳过。
  *  为何不用「拼段」实现：标签与 working 段的字符是从 mid 里苹/插进去的，
  *  只有拿到最终串才能准确定位（直接拼段会在 dropCols 后错位）。 */
 function paintSpans(
