@@ -3,7 +3,7 @@
 // 测试进程里没有那个包；纯函数抽出来才能直接断言。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildStatus, effortAnsi, holdAnsi, paintAnsi, roundBorder, shortenModel, shortTokens, textWidth } from '../hooks/abs-rounded-editor/format.ts';
+import { buildStatus, effortAnsi, levelLetter, paintAnsi, roundBorder, shortenModel, shortTokens, textWidth } from '../hooks/abs-rounded-editor/format.ts';
 
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 
@@ -11,16 +11,8 @@ const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 // 为何要测：颜色错了不报错，只是看着不对 —— 没有断言就没人能发现回归。
 // 2026-11-09：working 状态已还原成 pi 原版（不嵌边框），当时那个给它上色的
 //   leadFg/leadSpanOf 一并删了 —— 这里只钉还剩的 labelFg 机制（哪一段被单独染色、宽度不变）。
-describe('输入框上边框：labelFg 只染指定那一段', () => {
-  // 用一个和框线色完全不同的颜色当探针，改色值也不影响这些断言。
+describe('输入框上边框：labelFg 只染指定那一段', () => {  // 用一个和框线色完全不同的颜色当探针，改色值也不影响这些断言。
   const RED = '38;2;255;0;0';
-
-  // 2026-11-09 用户要求：右下角状态文字（`30.0%/1.0M 模型名`）用擱置橙 #F59E0B。
-  it('holdAnsi：真彩用 rgb，256 色模式退到 214', () => {
-    assert.equal(holdAnsi(), '38;2;245;158;11');
-    assert.equal(holdAnsi('truecolor'), '38;2;245;158;11');
-    assert.equal(holdAnsi('256color'), '38;5;214');
-  });
 
   it('roundBorder：只有右标签上 labelFg 色，working 段跟框线同色', () => {
     const top = '── ⠼ Working ' + '─'.repeat(30);
@@ -63,6 +55,22 @@ describe('圆角输入框 格式化', () => {
   it('buildStatus：百分比/上限/模型名拼成一行', () => {
     const usage = { tokens: 83886, contextWindow: 1048576, percent: 8.04 };
     assert.equal(buildStatus(usage, 'deepseek/deepseek-v4.1-flash'), '8.0%/1.0M deepseek-v4.1-flash');
+  });
+
+  // 2026-11-09 用户要求：后面加推理强度，基本用一个大写字母（max 例外，用户指定用 MX）。
+  it('★ buildStatus：末尾加档位字母（无重写法，max=MX）', () => {
+    const usage = { tokens: 83886, contextWindow: 1048576, percent: 34.6 };
+    const want = { off: 'O', minimal: 'N', low: 'L', medium: 'M', high: 'H', xhigh: 'X', max: 'MX' };
+    for (const [level, letter] of Object.entries(want)) {
+      assert.equal(buildStatus(usage, 'deepseek-v4.1-flash', level),
+        `34.6%/1.0M deepseek-v4.1-flash · ${letter}`, `${level} → ${letter}`);
+      assert.equal(levelLetter(level), letter);
+    }
+    // 大小写/空白容错；认不得或空值就不显那一段
+    assert.equal(levelLetter(' HIGH '), 'H');
+    assert.equal(buildStatus(usage, 'm', ''), '34.6%/1.0M m');
+    assert.equal(buildStatus(usage, 'm', 'bogus'), '34.6%/1.0M m');
+    assert.equal(buildStatus(undefined, '', 'high'), 'H', '只有档位时有字可显');
   });
 
   it('buildStatus：缺字段就省掉那一段，不留空占位', () => {

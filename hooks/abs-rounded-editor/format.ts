@@ -20,13 +20,36 @@ export function shortTokens(n: number | null | undefined): string {
   return String(n)
 }
 
-/** 拼右上角状态：`8.0%/1.0M 模型名`。缺哪段就省哪段。 */
-export function buildStatus(usage: any, modelId: string): string {
+/** 推理档位 → 一个大写字母（用户 2026-11-09 要求：右下角只用一个大写字母表示强度）。
+ *
+ * 为何不取首字母：minimal / medium / max 三个都是 M。这套是手选的无重写法：
+ *   off=O、miNimal=N、Low=L、Medium=M、High=H、Xhigh=X、max=MX（用户指定，其余均单字母）。
+ * 改映射只改这里，并把测试里的表一起改。 */
+export const LEVEL_LETTER: Record<string, string> = {
+  off: 'O',
+  minimal: 'N',
+  low: 'L',
+  medium: 'M',
+  high: 'H',
+  xhigh: 'X',
+  max: 'MX',
+}
+
+/** 档位 → 字母；空值或认不得的档位返回空串（那时不显示）。 */
+export function levelLetter(level: string | null | undefined): string {
+  return LEVEL_LETTER[String(level || '').trim().toLowerCase()] || ''
+}
+
+/** 拼右下角状态：`8.0%/1.0M 模型名 · H`。缺哪段就省哪段。
+ * 第三段是推理档位的一个大写字母（见 LEVEL_LETTER）；模型不支持推理时不显。 */
+export function buildStatus(usage: any, modelId: string, level = ''): string {
   const parts: string[] = []
   if (usage && usage.percent != null) parts.push(`${usage.percent.toFixed(1)}%`)
   if (usage && usage.contextWindow) parts.push(`/${shortTokens(usage.contextWindow)}`)
   const model = shortenModel(modelId)
-  return [parts.join(''), model].filter(Boolean).join(' ')
+  const head = [parts.join(''), model].filter(Boolean).join(' ')
+  const letter = levelLetter(level)
+  return letter ? (head ? `${head} · ${letter}` : letter) : head
 }
 
 export function stripAnsi(s: string): string {
@@ -102,15 +125,6 @@ export function effortAnsi(level: string | null | undefined, colorMode = 'trueco
   return colorMode === 'truecolor' ? `38;2;${g.rgb}` : `38;5;${g.ansi256}`
 }
 
-/** 「擱置」橙 #F59E0B —— 与 todo 面板的 `[擱置]`、面板大标题同色（abs.pi.ts 的 `C.hold`/`C.title`）。
- *  用途（2026-11-09 用户要求）：输入框**右下角的状态文字**（如 `30.0%/1.0M DeepSeek-V4.1-Flash`）。
- *  ★ 色值在 abs.pi.ts 里也有一份，不抽公共模块是故意的（见 EFFORT_COLOR 的注释）。 */
-export const HOLD_COLOR = { rgb: '245;158;11', ansi256: 214 }
-
-export function holdAnsi(colorMode = 'truecolor'): string {
-  return colorMode === 'truecolor' ? `38;2;${HOLD_COLOR.rgb}` : `38;5;${HOLD_COLOR.ansi256}`
-}
-
 /** 用 effortAnsi 的结果包一段文字；空串原样返回（off 时不着色）。 */
 export function paintAnsi(ansi: string, text: string): string {
   return ansi ? `\x1b[${ansi}m${text}\x1b[39m` : text
@@ -126,7 +140,7 @@ export function paintAnsi(ansi: string, text: string): string {
  * （宁可没有，也不让边框溢出折行）。
  *
  * opts.labelFg：只给右边那个标签（右下角的状态文字）换个色，其余（圆角、虚线）仍用 fg。
- *   2026-11-09 用户要求该状态文字用擱置橙，调用处传 holdAnsi；不传 opts 时整行一个色。
+ *   当前调用方不传（状态文字跟框线同色，2026-11-09 用户定）；机制留着，要染色时传一个即可。
  *
  * 历史（别再重走）：2026-11-08～09 曾有个 leadFg 开关，用来把 pi 嵌进上边框的
  *   `⠼ Working` 那段单独染色（橙）。现在 working 已还原成 pi 原版（不嵌边框），
