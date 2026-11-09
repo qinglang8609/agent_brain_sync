@@ -5,6 +5,7 @@
 ## Done
 
 ### 2026-11-09
+- [x] release-131-2 [[fanchao]] — 发 1.31.2：参数规矩前置 + 修过时命令 — 1.31.2 已发：tag+push、npm publish（registry 延迟约 2 分 40 秒）、全局装 1.31.2、宿主重装；新会话 system prompt 实测第 9 条在、旧命令已消失 【落地】 (完成 2026-11-09)
 - [x] task-params-upfront [[fanchao]] — 把 abs_task 参数规矩提前写进常驻指引 — 常驻指引加第 9 条：cwd 必填、id 一个词、start/add 需 note、child_done/child_undone/state 带 n、done 给结语+as、子项 note ≤200 字；顺手把已删的 abs recall 改成 abs query（指引与 load 用法行两处）；774 测试 + check 绿，abs.ts 已同步 【落地】 (完成 2026-11-09)
 - [x] release-131-1 [[fanchao]] — 发 1.31.1：输入框文字档位色 + 右下角档位字母 — 1.31.1 已发：提交+tag+push、npm publish（registry 延迟约 60s）、全局装 1.31.1、宿主四处重装；三处新码一致 【落地】 (完成 2026-11-09)
 - [x] inputbox-text-effort-color [[fanchao]] — 输入框文字也上推理档位色 — 正文行先剥 pi 原生文字色再包 wrap（= editor.borderColor 档位色）；772 测试 + check 绿，副本已同步 【落地】 (完成 2026-11-09)
