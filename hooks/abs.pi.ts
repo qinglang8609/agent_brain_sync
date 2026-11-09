@@ -265,7 +265,14 @@ const TODO_GUIDELINES = [
   // ⑧ 有疑惑先查记忆（用户 2026-11-03 定）：主动搜索不是等报错才应激，
   //   而是「心里形成关键词/有疑问的那一刻」自己查。上面七条只讲了登记，
   //   没讲「记下来的东西怎么取」——实测一场会话从头到尾没查过一次记忆。
-  'When a doubt forms about something the project has likely dealt with before (a design choice, a past bug, a convention), run `abs recall <关键词>` (or `abs query <词>` for wider matches) BEFORE acting on the assumption. Do not wait for an error or for the user to remind you — asking the memory is your own decision, made the moment the question arises.',
+  //   ★ 2026-11-09 修：原来写的是 `abs recall`，那个命令 11-08 就删了 ——
+  //     规矩给成不存在的命令，模型只能白撞一次。
+  'When a doubt forms about something the project has likely dealt with before (a design choice, a past bug, a convention), run `abs query <关键词>` BEFORE acting on the assumption. Do not wait for an error or for the user to remind you — asking the memory is your own decision, made the moment the question arises.',
+  // ⑨ 参数规矩要说在**前面**（用户 2026-11-09 提：闸门拦得住，但得先告诉模型规矩）。
+  //   起因：另一个 pi 会话（pi-capsule-tools）连撞两次 —— ① 不传 cwd → 被 schema 拒；
+  //   ② 把整句话当 id → 被「id 不能含空格」拒。两次都是「没提前说」而不是「不会做」。
+  //   放在常驻指引里而不是只靠工具 description：description 模型常不读。
+  'abs task tool parameters — wrong ones are rejected before anything is written, so get them right the first time: `cwd` = the project root that contains `.brain/` and is ALWAYS required; `id` = ONE word, no spaces / tabs / brackets (put the readable name in `note`); `start`/`add` require `note` (what to do, one sentence); `child_done` / `child_undone` / `state` take `n` = which child item (1-based, default = last); `done` takes the conclusion in `note` plus `as` (落地 / 否决 / 仅方案). A child row must keep `note` to ONE short sentence (≤200 字) — longer text goes to `abs log` (progress) or `abs note` (lessons), not the board.',
 ]
 
 /** 当前项目是否有 .brain 图谱 —— 有才加指引（没图谱的项目里这指引是噪音）。
@@ -526,7 +533,7 @@ export function injectSessionGuideline(options: any, sid: string): boolean {
   return true
 }
 
-/** 注入 todo 指引。静态 6 条（行为要求） + 实时看板（对齐用）—— 两者职责不同：
+/** 注入 todo 指引。静态 9 条（行为要求 + 参数规矩） + 实时看板（对齐用）—— 两者职责不同：
  * 静态条说「该怎么做」，看板说「现在是什么」。 */
 export function injectTodoGuidelines(options: any, board?: string | null): boolean {
   if (String(process.env.ABS_TODO_GUIDE || '') === '0') return false
@@ -556,8 +563,8 @@ const LOAD_MARK = '[开工] '
  *   每次开会话都多塞 200 行，而其中大部分（图谱组织/容量纪律/tesardown 流程）
  *   只在真正做 abs 维护时才用得上。
  *
- * 与【常驻 6 条】TODO_GUIDELINES 的区别（两者职责不同，别合并）：
- *   - 6 条常驻：行为要求，每轮都在（看板对齐用）。
+ * 与【常驻 9 条】TODO_GUIDELINES 的区别（两者职责不同，别合并）：
+ *   - 9 条常驻：行为要求与参数规矩，每轮都在（看板对齐用）。
  *   - 这 3 条：**只在开工第一轮出现一次** —— 因为它们是「开工那一刻」的触发器，
  *     每次都说等于噪音（历史教训：静态指引有痕 414 次、行为 0 变化）。
  *

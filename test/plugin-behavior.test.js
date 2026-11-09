@@ -1106,10 +1106,24 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(boards(opts).length, 1);
     assert.ok(boards(opts)[0].includes('t3'));
 
-    // 静态 8 条始终在（不被看板挤掉；2026-10-22 加文档精简一条：6 → 7，
-    // 2026-11-03 加「有疑惑先查」一条：7 → 8）
-    assert.equal(opts.promptGuidelines.length - boards(opts).length, 8,
-      '静态指引条数应恒为 8');
+    // 静态 9 条始终在（不被看板挤掉；2026-10-22 文档精简：6→7；2026-11-03 有疑惑先查：7→8；
+    // 2026-11-09 abs_task 参数规矩：8→9）
+    assert.equal(opts.promptGuidelines.length - boards(opts).length, 9,
+      '静态指引条数应恒为 9');
+  });
+
+  // 2026-11-09 用户要求：闸门拦得住，但规矩得**提前**告诉模型。
+  // 起因：另一个 pi 会话（pi-capsule-tools）连撞两次 —— 没传 cwd；把整句话当 id。
+  test('★ 常驻指引提前写清 abs_task 的参数规矩（cwd / id 一个词 / note / n / as）', async () => {
+    const { injectTodoGuidelines } = await loadPanelFns();
+    const opts = {};
+    injectTodoGuidelines(opts);
+    const all = (opts.promptGuidelines || []).join('\n');
+    for (const frag of ['`cwd`', '.brain/', 'ONE word', 'no spaces', '`note`', '`n`', '`as`']) {
+      assert.ok(all.includes(frag), `指引应含 ${frag}:\n${all}`);
+    }
+    // 已被删除的命令不许再出现在规矩里 —— 模型照做只会白撞一次
+    assert.ok(!all.includes('abs recall'), `不该再提已删的 abs recall:\n${all}`);
   });
 
   test('宽度截断：CJK 按 2 列，永不溢出且尾部有省略号', async () => {

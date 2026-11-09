@@ -17,7 +17,7 @@ const SESSION_UNFILLED_SHOW = 5;
 /** 开机屏的使用方法（2026-11-08 用户定 load 三件套之一）。一行一个动作，别写成手册。 */
 const LOAD_USAGE = [
   '--- 用法 ---',
-  '接经验   abs search <词> / abs recall     记一句   abs note "…"',
+  '查经验   abs query <词>                记一句   abs note "…"',
   '立概念   abs concept <id> --title "…"      登记活   abs todo start <id> --note "做什么"',
   '收尾     abs todo done <id> --as 落地|否决|仅方案 "结论"',
   '体检     abs lint        看全量     abs show index|log|status',
