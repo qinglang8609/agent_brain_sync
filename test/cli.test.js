@@ -403,6 +403,29 @@ describe('cli: todo', () => {
     assert.ok(!short.stdout.includes('长名的笔记'), `不该串到别的任务:\n${short.stdout}`);
   });
 
+  // 回归（2026-11-10 审查实测）：id 只拒了空格 tab，`../..` 与 `/` 能被 setMemo
+  // 拼进文件名写出 .brain/ 外；`[` 撞状态标记语法。现在统一拒。
+  test('id 含路径字符/空白/方括号被拒，不写出 .brain/ 外', async () => {
+    await run(['todo', 'start', 'OK-ID', '--note', '合法 id']);
+    const bads = ['../escaped', 'a/b', 'a\\b', 'bad[id]', '带 空格', 'x\ty'];
+    for (const bad of bads) {
+      const m = await run(['todo', 'memo', bad, '不该写进去']);
+      assert.notEqual(m.code, 0, `memo id "${bad}" 应被拒: ${m.stdout}${m.stderr}`);
+      const a = await run(['todo', 'add', bad, '--note', 'x']);
+      assert.notEqual(a.code, 0, `add id "${bad}" 应被拒: ${a.stdout}${a.stderr}`);
+    }
+    // 图谱内外都不该出现穿越产物
+    const sess = await fs.readdir(join(proj, '.brain', 'sessions')).catch(() => []);
+    assert.ok(!sess.some((f) => f.includes('escaped') || f.includes('a') && f.includes('/')),
+      `sessions 不该有穿越文件: ${sess}`);
+    const rootFiles = await fs.readdir(proj);
+    assert.ok(!rootFiles.includes('escaped') && !rootFiles.includes('escaped4'),
+      `项目根不该有穿越文件: ${rootFiles}`);
+    // 合法 id 仍然能写
+    const ok = await run(['todo', 'memo', 'OK-ID', '正常随手记']);
+    assert.equal(ok.code, 0, ok.stderr);
+  });
+
   // 回归：初版首建走 tmp+rename 绕过了锁，并发首写会互相覆盖（丢条目）。
   // 为什么要直调 setMemo 而不是跑 CLI：CLI 走独立进程，竞态窗口靠运气（实测
   // 注入「绕过锁」的 bug 后此用例仍全绿 —— 那种测试守不住东西）。

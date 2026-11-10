@@ -332,9 +332,10 @@ export async function cmdIngest({ dir, file, force = false, mark = false, last =
     hit = best;
   } else {
     const want = basename(String(file).trim());
+    // 子串匹配必须够长（≥8）：短词会把「日志」「test」这类撞上任意文件名，
+    // 静默选错会话。精确同名仍然放行。
     hit = names.find((n) => n === want)
-      || names.find((n) => want.length >= 8 && n.includes(want))
-      || names.find((n) => n.includes(want));
+      || (want.length >= 8 && names.find((n) => n.includes(want)));
     if (!hit) {
       return `✗ 会话目录里找不到 "${want}"。\n  可用: abs summon（列出待总结的会话）`;
     }

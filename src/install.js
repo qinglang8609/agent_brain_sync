@@ -634,7 +634,10 @@ async function uninstallClaudeCode() {
   if (settings && settings.mcpServers && settings.mcpServers.abs) {
     delete settings.mcpServers.abs; touched = true;
   }
-  if (touched) await atomicWrite(settingsP, JSON.stringify(settings, null, 2));
+  if (touched) {
+    await backup(settingsP);
+    await atomicWrite(settingsP, JSON.stringify(settings, null, 2));
+  }
   if (settings) steps.push(`✓ hooks/MCP 已从 ${settingsP} 移除`);
   // staged hook 脚本目录 —— 只删本 agent 的，绝不整删 ~/.abs/（其它 agent 的 hook / mcp.log 共存）
   await fs.rm(join(homedir(), '.abs', 'hooks', 'claude-code'), { recursive: true, force: true });
@@ -751,6 +754,7 @@ async function uninstallCodex() {
     }
   }
   if (changed) {
+    await backup(p);
     await atomicWrite(p, JSON.stringify(cfg, null, 2));
     steps.push(`✓ hooks 已从 ${p} 移除`);
   }
@@ -761,6 +765,7 @@ async function uninstallCodex() {
     // 留下非法行 ["/…/mcp.js"] 让用户的 TOML 解析失败。
     const { text: after, removed } = removeTomlAbsSection(text);
     if (removed) {
+      await backup(mcpP);
       await atomicWrite(mcpP, after);
       steps.push(`✓ MCP 已从 ${mcpP} 移除`);
     }
@@ -889,6 +894,7 @@ async function uninstallOpenCode() {
   }
   if (cfg && cfg.mcp && cfg.mcp.abs) {
     delete cfg.mcp.abs;
+    await backup(mcpP);
     await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
     steps.push(`✓ MCP 已从 ${mcpP} 移除`);
   }
@@ -949,6 +955,7 @@ async function uninstallPi() {
   }
   if (cfg && cfg.mcpServers && cfg.mcpServers.abs) {
     delete cfg.mcpServers.abs;
+    await backup(mcpP);
     await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
     steps.push(`✓ MCP 已从 ${mcpP} 移除`);
   }
@@ -1001,6 +1008,7 @@ async function uninstallOmp() {
   }
   if (cfg && cfg.mcpServers && cfg.mcpServers.abs) {
     delete cfg.mcpServers.abs;
+    await backup(mcpP);
     await atomicWrite(mcpP, JSON.stringify(cfg, null, 2));
     steps.push(`✓ MCP 已从 ${mcpP} 移除`);
   }

@@ -7,5 +7,9 @@ backup-legacy-*/
 .omo/
 .claude/
 
+# 图谱写入的临时产物（锁 / 原子写 tmp），不进 git
+.brain/.*.lock
+.brain/.*.tmp-*
+
 # npm pack 产物（发布时临时生成）
 *.tgz

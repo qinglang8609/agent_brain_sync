@@ -62,6 +62,32 @@ describe('并发写保护', () => {
     }
   });
 
+  test('原子写：落盘后无 tmp 残留，文件结构完整', async () => {
+    const brain = join(project, '.brain');
+    await cmdTask({ dir: project, action: 'start', id: 'ATOMIC-1', note: 'x' });
+    const files = await fs.readdir(brain);
+    const tmps = files.filter((f) => f.includes('.tmp-'));
+    assert.equal(tmps.length, 0, `不该留 tmp: ${tmps}`);
+    const text = await fs.readFile(join(brain, 'todo.md'), 'utf8');
+    assert.ok(text.includes('ATOMIC-1'), '内容应在');
+    assert.ok(text.includes('## Done'), '应是完整结构不是半截');
+  });
+
+  test('死进程的残锁会被摘掉（不等 60s）', async () => {
+    const brain = join(project, '.brain');
+    const lock = join(brain, '.todo.md.lock');
+    // 造一个已退出进程的 PID → editFile 应立刻摘锁写入，不等 STALE_MS
+    const deadPid = await new Promise((res) => {
+      const c = spawn(process.execPath, ['-e', 'process.exit(0)']);
+      c.on('close', () => res(c.pid));
+    });
+    await fs.writeFile(lock, String(deadPid), 'utf8');
+    await cmdTask({ dir: project, action: 'start', id: 'STEAL-DEAD', note: 'x' });
+    const todo = await fs.readFile(join(brain, 'todo.md'), 'utf8');
+    assert.ok(todo.includes('STEAL-DEAD'), '死 PID 残锁应被摘除后写入');
+    await assert.rejects(() => fs.access(lock), '写完不应留锁');
+  });
+
   test('并发的 cmdNote 不同文本各自成文件且 index 全登记（无互相覆盖）', async () => {
     const { cmdNote } = await import('../src/store.js');
     const texts = Array.from({ length: 10 }, (_, i) => `并发经验记录 ${i} 号-特定内容`);

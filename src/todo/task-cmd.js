@@ -9,15 +9,22 @@ import { ensurePersonPage } from '../note.js';
 
 // 纪律: task 过程动作(start/done/note/blocked)只改 todo.md, 不写 log.md。
 // log.md 是「工作成果沉淀摘要」(用户/AI 主动 abs log "..." 记), 不收工具动作流水。
+/** 任务 id 的合法形状：一个词，不含空白 / 路径分隔符 / 方括号。
+ *  为什么这么严（2026-11-10 审查实测）：
+ *  ① 空白会被 extractId 截断（静默丢信息）；换行还会往 todo.md 里注一行。
+ *  ② `/` `\` 会被 setMemo 拼进文件名写出 .brain/ 外（路径穿越，`../..` 实测逃逸）。
+ *  ③ `[` `]` 撞行首状态标记 `[进行中]` 的语法。
+ *  旧注释写了「不能含方括号」，代码只查了空格 tab —— 这次收口。 */
+function isValidId(s) {
+  return !/[\s\\/\0[\]]/.test(s);
+}
+
 export async function cmdTask({ dir, action, id, section, note, as, session, n }) {
-  // ★ id 校验（2026-10-16 模糊测试找出来的真 bug）：id 不能含空白/方括号。
-  //   不校就是**静默丢信息**：id="带 空格" 写进文件时被 extractId 截成 "带"，
-  //   后面的 "空格" 与描述一起消失，不报错（实测：`abs todo start "带 空格"` 落成 `- [ ] 带`）。
-  //   宁可明确拒掉，也不替人猜哪个词算 id。
+  // ★ id 校验：宁可明确拒掉，也不替人猜哪个词算 id、不把怪 id 写出图谱外。
   const idStr = id === undefined || id === null ? '' : String(id);
-  if (idStr && (idStr.includes(' ') || idStr.includes('\t'))) {
+  if (idStr && !isValidId(idStr)) {
     throw new Error(
-      `✗ 任务 id 不能含空格（收到 "${idStr}"）—— id 是一个词，空白会被当分隔符。\n` +
+      `✗ 任务 id 不能含空格、/、\\、[、]（收到 "${idStr}"）—— id 是一个词，也会被拼进文件名。\n` +
       `  想要带空格的名字：用连字符或下划线；完整名称写进 --note。`,
     );
   }
@@ -113,7 +120,7 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
     // --note 传新 id（沿用既有 CLI 习惯，免得再加一个 flag）。
     if (!note) throw new Error('✗ 用法: abs todo rename <旧id> --note "<新id>"');
     const newId = String(note).replace(/[\u200b\u200c\u200d\ufeff]/g, '').trim();
-    if (!newId || /\s/.test(newId)) throw new Error(`✗ 新 id 不能为空或含空白: "${newId}"`);
+    if (!newId || !isValidId(newId)) throw new Error(`✗ 新 id 不能为空，且不能含空白、/、\\、[、]: "${newId}"`);
     const f = brainPath(root, 'todo.md');
     let done = false;
     await editFile(f, (cur) => {

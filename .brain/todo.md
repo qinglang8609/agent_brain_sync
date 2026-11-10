@@ -1,8 +1,14 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [搁置] pgl-review [[fanchao]] — 调研 pi-goal-list-loop-audit 的实现方式并向用户说明 (认领 2026-11-10 01a1c4c2-a69f-70)
+- [ ] [进行中] release-1313 [[fanchao]] — 提交本次审查修复，npm version patch 发 1.31.3，本地全局安装并重扇出宿主 hook (认领 2026-11-10 01a1c4c6-c75c-70)
 
 ## Done
+
+### 2026-11-10
+- [x] audit-fix [[fanchao]] — 修审查发现的 1-12 项：memo 路径穿越、原子写、id 校验、install 帮助文案、闸门 basename、卸载备份、gitignore、PID 锁、测试等 — 修完 1-10、12：id 校验拒路径字符、lock 原子写+PID 锁、install 帮助对齐代码、闸门 basename、卸载前备份、gitignore 忽略锁/tmp、ingest 子串限长、event.sh 收 64KB。11 (query 跳过 sessions) 与既有「流水页隐藏要告知」契约冲突，已回退。13 (pi/omp 合并) 按审查结论不做。777 测试全绿。 【落地】 (完成 2026-11-10 01a1c4c6-c75c-70)
+- [x] repo-audit [[fanchao]] — 对 agent_brain_sync 本仓库做整体质量审查（bug、安全、负载、测试缺口、可删项）并向用户说明 — 整体审查完成，774 测试全绿。两个必须修：① setMemo 用未滤 `/` `..` 的 id 拼文件名，实测可写出 .brain 外；② lock.js 对 index/todo/log 用非原子 writeFile，崩溃可截断图谱。其余：id 注释说拒方括号但代码没拒、install --help 说 --yes 装全部而代码只装 pi、闸门用 split('/') 在 Windows 失效、卸载不备份。只出报告未改码。 【落地】 (完成 2026-11-10 01a1c4c6-c75c-70)
 
 ### 2026-11-09
 - [x] release-131-2 [[fanchao]] — 发 1.31.2：参数规矩前置 + 修过时命令 — 1.31.2 已发：tag+push、npm publish（registry 延迟约 2 分 40 秒）、全局装 1.31.2、宿主重装；新会话 system prompt 实测第 9 条在、旧命令已消失 【落地】 (完成 2026-11-09)

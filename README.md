@@ -172,7 +172,7 @@ npm i -g @fanchao8609/agent_brain_sync@latest
 abs install    # 重新刷 hook/skill
 ```
 
-> ⚠️ 改完源码（尤其 `skill/*/SKILL.md`、`src/`）后**必须 `abs install --yes` 重扇出**，否则宿主还在跑旧副本 —— 版本号与代码会脱节。发布用 `npm version patch`（自动打 tag），别手改 `package.json` 的 version；发布后 `npm view` 有缓存延迟，必要时 `npm cache clean --force` 再验。
+> ⚠️ 改完源码（尤其 `skill/*/SKILL.md`、`src/`）后**必须重扇出**，否则宿主还在跑旧副本 —— 版本号与代码会脱节。TTY 下跑 `abs install` 选宿主；脚本/CI 里 `abs install --agent pi --yes`（`--yes` 只装默认的 pi，不是全部）。发布用 `npm version patch`（自动打 tag），别手改 `package.json` 的 version；发布后 `npm view` 有缓存延迟，必要时 `npm cache clean --force` 再验。
 
 ---
 

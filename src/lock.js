@@ -32,9 +32,21 @@ const LOCK_WAIT_MAX_MS = 150;  // 指数退避上限
 // 抢锁总预算：排队等锁的进程须依次排完。多进程高并发(CLI/MCP/hook 同刻抢一文件)下,
 // 3s 会让后到进程在排队中途 LockTimeout 崩溃丢写入。设 30s 容纳大批排队者正常排完。
 const LOCK_MAX_WAIT_MS = 30 * 1000;
-// 超过此年龄视为残留锁(持锁进程崩溃没释放)，允许摘除。须 > LOCK_MAX_WAIT_MS，
-// 否则持锁进程在排队预算内会被误当残留摘除导致临界区重叠。
+// 兜底年龄：锁文件里没有有效 PID 时（旧版空锁 / PID 读不出），超过此年龄才当残留摘除。
+// 有 PID 后不再按年龄摘活人的锁 —— mutator 跑慢一点也不能让两个进程同时进临界区。
 const STALE_MS = 60 * 1000;
+
+/** 进程还活着吗。true=活 / false=已死 / null=判不了（没写 PID、权限不够等）。 */
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // ESRCH = 没这个进程；其它（权限等）当活着，宁可等也不误抢
+    return e.code === 'ESRCH' ? false : true;
+  }
+}
 
 async function acquireLock(lockPath) {
   const start = Date.now();
@@ -43,20 +55,35 @@ async function acquireLock(lockPath) {
     let handle = null;
     try {
       handle = await fs.open(lockPath, 'wx'); // 原子创建(O_EXCL)；已存在则抛 EEXIST → 排队等
+      // 写入 PID：后来者据此判断持锁人是否已死（崩溃残留可立刻摘，不等 60s）。
+      // 写 PID 失败不回滚 —— 空锁退回按年龄判残留，锁本身仍然有效。
+      await handle.writeFile(String(process.pid), 'utf8').catch(() => {});
       await handle.close(); // 锁的存在即持有信号；无需保持 fd
       return;
     } catch (e) {
       if (handle) await handle.close().catch(() => {});
       if (e.code !== 'EEXIST') throw e;
-      // 残留锁检测：锁太老(持锁进程崩溃没释放)则摘除重试；正常排队者持锁时间远小于阈值
+      // 残留锁检测：优先看 PID（持锁进程已死 → 立刻摘，不等 60s）；
+      // PID 读不出再退回按年龄（兼容旧版空锁文件）。
+      // ★ 持锁进程还活着就绝不摘 —— 哪怕超过 STALE_MS。
+      //   旧逻辑按 60s 硬摘，mutator 跑慢一点就让两个进程同时进临界区（2026-11-10 审查）。
       try {
-        const st = await fs.stat(lockPath);
-        if (Date.now() - st.mtimeMs > STALE_MS) {
+        const raw = (await fs.readFile(lockPath, 'utf8')).trim();
+        const alive = pidAlive(Number(raw));
+        if (alive === false) {
           await fs.rm(lockPath, { force: true });
-          backoff = LOCK_WAIT_BASE_MS; // 摘除残留后重置退避
+          backoff = LOCK_WAIT_BASE_MS;
           continue;
         }
-      } catch { /* stat 失败(锁刚被释放) → 下一轮重试 */ }
+        if (alive === null) {
+          const st = await fs.stat(lockPath);
+          if (Date.now() - st.mtimeMs > STALE_MS) {
+            await fs.rm(lockPath, { force: true });
+            backoff = LOCK_WAIT_BASE_MS;
+            continue;
+          }
+        }
+      } catch { /* 读锁失败(刚被释放) → 下一轮重试 */ }
       if (Date.now() - start > LOCK_MAX_WAIT_MS) {
         throw new LockTimeout(`写锁排队超时(等 ${Date.now() - start}ms > 预算 ${LOCK_MAX_WAIT_MS}ms): ${lockPath} 仍被占用`);
       }
@@ -98,7 +125,18 @@ export async function editFile(file, mutator) {
       if (gate) write = gate(file, write, current) ?? write;
     }
     if (write && write !== current) {
-      await fs.writeFile(file, write, 'utf8');
+      // 原子落盘：先写同目录临时文件再 rename。
+      // fs.writeFile 是「截断再写」，进程死在中间 = 图谱剩半截/空文件。
+      // rename 在同一文件系统上是原子的 —— 读方要么见旧要么见新，不见半截。
+      // tmp 名带随机段：同毫秒两个进程写同一文件也不会撞名（summon.js 同坑）。
+      const tmp = join(dirname(file), `.${basename(file)}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+      try {
+        await fs.writeFile(tmp, write, 'utf8');
+        await fs.rename(tmp, file);
+      } catch (e) {
+        await fs.rm(tmp, { force: true }).catch(() => {});
+        throw e;
+      }
     }
     return res;
   } finally {

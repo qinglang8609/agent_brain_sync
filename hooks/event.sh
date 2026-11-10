@@ -13,7 +13,11 @@ ABS_BIN="__ABS_BIN__"
 NODE_BIN="__NODE_BIN__"
 EVENT="__EVENT__"
 
-PAYLOAD=$(cat 2>/dev/null | head -c 500)
+# 全文收下（Stop 的 transcript_path / session_id 可能在 500 字节之外，截断会让
+# teardown-check 解析不到字段）。日志行仍另截 120；指纹用这份全文（上限 64KB），
+# 旧版只指纹前 500 字节：两个不同事件开头相同时会被当重复丢掉。
+# 64KB 对 hook 元数据足够，又不至于把 MB 级 prompt 整个摚进 shell 变量。
+PAYLOAD=$(cat 2>/dev/null | head -c 65536)
 
 # ── Stop 收尾注入 (CC/Co​dex 的"主动推") ─────────────────────────────────
 # 守卫同 pi 插件四条件: ①本会话真改过文件 ②本项目有 .brain ③log.md 今日无条目 ④每会话一次。
