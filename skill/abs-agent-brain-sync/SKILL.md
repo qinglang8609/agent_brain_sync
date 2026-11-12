@@ -80,7 +80,19 @@ abs todo remove <id>                     # delete incl. children, no undo
 `todo` / `沉淀` / `load` / `note` in a sentence that is discussion, a question, or
 rule-making → respond only, do not execute.
 
-Exception: the user types `abs` alone or `abs` + command → execute; no subcommand = startup.
+Exception: the user types `abs` alone or `abs` + command → execute. With a command, run it.
+Alone, **judge the session first** — never assume "startup":
+
+| What this session did | What to do |
+|---|---|
+| Changed files, or tasks were finished | **Wrap up first, then report.** Reconcile the board (finished but not `done` → `done`), add one `abs log` for work that no task registered, name any unfilled session pages in one sentence, then give state. |
+| Has an in-progress task and the work is not over | Report state only (`abs load`). Do not wrap up half-done work. |
+| Just started, no file edits yet | `abs load`, report, wait. |
+| The message is a question or a discussion | Respond only — see the first paragraph. |
+
+Wrap-up is the default whenever work actually happened. A bare state report on a finished
+session leaves the log and the board behind — that is how 7 days of logs went missing in
+2026-11 while every session looked healthy on the surface.
 
 ## Document diet (todo / knowledge pages)
 

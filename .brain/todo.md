@@ -1,6 +1,7 @@
 # 📋 Todo Board
 
 ## Todo
+- [ ] [进行中] absbare [[fanchao]] — 查 abs 单字只做 load 汇报、不触发收尾的原因，确定该改成什么行为 (认领 2026-11-13 01a1d04d-6598-76)
 
 ## Done
 
