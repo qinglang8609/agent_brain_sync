@@ -277,6 +277,11 @@ const TODO_GUIDELINES = [
   //   实测归因：不是写入坏了 —— `abs log` 本身正常；是模型把「看板已记」当成「记过了」，
   //   于是整场会话零次执行。看板的完成行会被归档移走，log.md 才是留下来的工作记录。
   'When you mark a task done, also record one line with `abs log "what got done + how it was verified"`. The board is not a substitute: finished rows leave the board at archive time, so the log page is the only lasting record of the work. Do not skip it because "the board already tracks it" — that reasoning produced a project with 28 finished tasks and 0 log lines.',
+  // ⑪ `abs` 单字先判意图（用户 2026-11-13 实报：活干完了输 abs，只拿到一份状态汇报）。
+  //   为什么放常驻指引而不是只写 SKILL：SKILL 是**按需 read** 的（pi 只把 name+description
+  //   放进 system prompt），而“该收尾”的时机恰恰是模型不会去想“要不要读个 skill”的时刻。
+  //   实测（2026-11-13）：session 里 5 次读 SKILL 全是改文件时读的，不是触发加载。
+  'When the user types `abs` alone, decide from the session instead of defaulting to a status report: if work happened (files changed or tasks finished) wrap up first — reconcile the board, make sure the log line exists, name any unfilled session pages — then report state; if a task is still in progress, report state only; if nothing has been done yet, run `abs load` and wait. A finished session answered with a bare status report is how 7 days of logs went missing (2026-11).',
 ]
 
 /** 当前项目是否有 .brain 图谱 —— 有才加指引（没图谱的项目里这指引是噪音）。

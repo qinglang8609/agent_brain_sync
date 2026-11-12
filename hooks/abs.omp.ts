@@ -218,6 +218,8 @@ const TODO_GUIDELINES = [
   'Every line you write into .brain/ (todo rows, log rows, knowledge pages, session snapshots) must pass the nine-bullet doc-slimming rule in the abs skill: only what serves the topic (drop the rest), no unverified summaries, ordered and layered, plain declarative wording (no rhetorical questions, no guessing), no duplication (cite the other doc instead), terse prohibitions, nothing the user did not ask for, plain Chinese.',
   // 完成即落 log（2026-11-12 与 pi 版同源）：看板行会被归档移走，log.md 才是留下来的记录。
   'When you mark a task done, also record one line with `abs log "what got done + how it was verified"`. The board is not a substitute: finished rows leave the board at archive time, so the log page is the only lasting record of the work. Do not skip it because "the board already tracks it" — that reasoning produced a project with 28 finished tasks and 0 log lines.',
+  // `abs` 单字先判意图（2026-11-13 与 pi 版同源）：SKILL 是按需 read 的，这条必须在常驻里。
+  'When the user types `abs` alone, decide from the session instead of defaulting to a status report: if work happened (files changed or tasks finished) wrap up first — reconcile the board, make sure the log line exists, name any unfilled session pages — then report state; if a task is still in progress, report state only; if nothing has been done yet, run `abs load` and wait. A finished session answered with a bare status report is how 7 days of logs went missing (2026-11).',
 ]
 
 /** 从 skill 里挑出的【硬规则】—— 只第一轮送, 与 load 同机会（同 pi 版方案 B）。 */
