@@ -69,6 +69,10 @@ abs todo remove <id>                     # delete incl. children, no undo
 - Register before touching files. A rough id is fine (`rename` later).
 - `done` immediately when a unit of work finishes; do not batch at session end.
 - One `[进行中]` at a time. `搁置` = parked on the board; `remove` = never existed.
+- Every `done` gets one `abs log "what got done + how it was verified"`. The board is
+  not a substitute — finished rows leave it at archive time, so `log.md` is the only
+  lasting record. "The board already tracks it" is exactly the reasoning that leaves a
+  project with 28 finished tasks and 0 log lines.
 - `memo` for extra notes; it does not occupy the board.
 
 ## Triggers are intent, not keywords

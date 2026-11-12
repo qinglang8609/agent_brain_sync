@@ -3467,4 +3467,38 @@ describe('todo remove — 删除任务', () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  // 2026-11-12 事故后加的代码兜底：done 必须自己往 log.md 落一条。
+  // 背景：日志曾经只靠模型记得跑 `abs log`，11-06 SKILL 删了那句要求后
+  // 跨项目日产量从 16 条掉到 3 条。这组用例钉住「不靠模型也写」。
+  test('done 成功后自动在 log.md 落一条（任务 id + 结语）', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'autolog-'));
+    try {
+      await cmdInit({ dir: root });
+      const out = await cmdTask({ dir: root, action: 'start', id: 'AUTO1', note: '测试自动写日志' });
+      assert.match(out, /AUTO1/);
+      const res = await cmdTask({ dir: root, action: 'done', id: 'AUTO1', as: '落地', note: '验证用结语' });
+      assert.match(res, /已完成并归位/, `done 应成功: ${res}`);
+      assert.match(res, /log →/, `done 的输出应告知写了 log: ${res}`);
+      const log = await fs.readFile(join(root, '.brain', 'log.md'), 'utf8');
+      assert.match(log, /^## \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] \[\[tester\]\] dev \| AUTO1：验证用结语/m,
+        `log.md 里应有这一条:\n${log}`);
+      assert.ok(!/\[\[落地\]\]/.test(log), '结语已含【落地】时不该重复追一次');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('done 没命中任务时不留 log 流水', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'autolog2-'));
+    try {
+      await cmdInit({ dir: root });
+      const res = await cmdTask({ dir: root, action: 'done', id: 'NOPE', note: '不存在的任务' });
+      assert.match(res, /NO_MATCH/, `应报未找到: ${res}`);
+      const log = await fs.readFile(join(root, '.brain', 'log.md'), 'utf8');
+      assert.ok(!log.includes('NOPE'), `未命中也写了 log:\n${log}`);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });

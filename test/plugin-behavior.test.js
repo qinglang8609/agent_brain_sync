@@ -1106,10 +1106,10 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.equal(boards(opts).length, 1);
     assert.ok(boards(opts)[0].includes('t3'));
 
-    // 静态 9 条始终在（不被看板挤掉；2026-10-22 文档精简：6→7；2026-11-03 有疑惑先查：7→8；
-    // 2026-11-09 abs_task 参数规矩：8→9）
-    assert.equal(opts.promptGuidelines.length - boards(opts).length, 9,
-      '静态指引条数应恒为 9');
+    // 静态 10 条始终在（不被看板挤掉；2026-10-22 文档精简：6→7；2026-11-03 有疑惑先查：7→8；
+    // 2026-11-09 abs_task 参数规矩：8→9；2026-11-12 完成即落 log：9→10）
+    assert.equal(opts.promptGuidelines.length - boards(opts).length, 10,
+      '静态指引条数应恒为 10');
   });
 
   // 2026-11-09 用户要求：闸门拦得住，但规矩得**提前**告诉模型。

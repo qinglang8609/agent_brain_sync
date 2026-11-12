@@ -216,6 +216,8 @@ const TODO_GUIDELINES = [
   'When completing, pick the honest conclusion via the `as` field: 落地 (built and verified) / 否决 (decided against, or built then reverted) / 仅方案 (designed only). A wrong conclusion makes the next session treat "considered" as "completed".',
   // 文档精简九条（用户 2026-10-22 定，原文见 skill 的「文档精简」一节）：管每一行写进 .brain 的文字。
   'Every line you write into .brain/ (todo rows, log rows, knowledge pages, session snapshots) must pass the nine-bullet doc-slimming rule in the abs skill: only what serves the topic (drop the rest), no unverified summaries, ordered and layered, plain declarative wording (no rhetorical questions, no guessing), no duplication (cite the other doc instead), terse prohibitions, nothing the user did not ask for, plain Chinese.',
+  // 完成即落 log（2026-11-12 与 pi 版同源）：看板行会被归档移走，log.md 才是留下来的记录。
+  'When you mark a task done, also record one line with `abs log "what got done + how it was verified"`. The board is not a substitute: finished rows leave the board at archive time, so the log page is the only lasting record of the work. Do not skip it because "the board already tracks it" — that reasoning produced a project with 28 finished tasks and 0 log lines.',
 ]
 
 /** 从 skill 里挑出的【硬规则】—— 只第一轮送, 与 load 同机会（同 pi 版方案 B）。 */

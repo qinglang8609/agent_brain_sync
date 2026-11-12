@@ -5,10 +5,15 @@ import { brainPath, requireBrain } from '../index.js';
 import { editFile, SKIP } from '../lock.js';
 import { requireUser, atTag } from '../userconfig.js';
 import { stripStateMark, checkTaskBox, stateOfTaskLine, upsertTask, today, setBreakpoint, setBreakpointDone, setMemo, readMemo, setStateMark, setChildStateMark, TASK_STATES, insertDoneGrouped, idOfTaskLine, DONE_KINDS, withDoneKind, sessionOf, parseChild, migrateLegacyChild, SEC } from '../todo.js';
-import { ensurePersonPage } from '../note.js';
+import { ensurePersonPage, cmdLog } from '../note.js';
 
-// 纪律: task 过程动作(start/done/note/blocked)只改 todo.md, 不写 log.md。
-// log.md 是「工作成果沉淀摘要」(用户/AI 主动 abs log "..." 记), 不收工具动作流水。
+// 纪律: task 过程动作(start/note/blocked/state/remove)只改 todo.md, 不写 log.md。
+// ★ 唯一例外: **done 要写**（2026-11-12 用户定）。
+//   旧纪律是「task 动作全不写 log」，结果整件事只剩模型自觉：11-06 SKILL 精简删掉
+//   「收尾循环」后，跨项目日志日产量从 16 条掉到 3 条（实测），而 pi 侧的收尾提醒
+//   2026-09-18 就已停用 —— 系统里没有任何一处还在要求写日志。
+//   done 的参数（任务 id + 结语 + 落地/否决/仅方案）本来就是一条 log 的全部内容，
+//   由代码写而不是由模型记得写：Done 区的行归档后就没了，log.md 是唯一留下来的记录。
 /** 任务 id 的合法形状：一个词，不含空白 / 路径分隔符 / 方括号。
  *  为什么这么严（2026-11-10 审查实测）：
  *  ① 空白会被 extractId 截断（静默丢信息）；换行还会往 todo.md 里注一行。
@@ -246,7 +251,19 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
       throw new Error(`✗ as="${as}" 与 note 里的【${inlineKind}】矛盾 —— 只留一个（改 as，或改 note 里的【】）`);
     }
     const res = await markDone(brainPath(root, 'todo.md'), id, as || inlineKind || '落地', conclusion, sid);
-    return res;
+    // 完成即落一条 log（2026-11-12）：只认成功的那次（NO_MATCH 不写）。
+    // 正文 = 任务 id + 结语，结语里没带【kind】时补上 —— log 是归档后唯一的记录。
+    if (!String(res).startsWith('✓')) return res;
+    const finalKind = as || inlineKind || '落地';
+    const body = `${id}${conclusion ? '：' + conclusion : ''}` +
+      (conclusion && conclusion.includes(`【${finalKind}】`) ? '' : ` 【${finalKind}】`);
+    const logged = await cmdLog({ dir: root, title: body, kind: 'dev', summon: false }).catch(
+      // 写 log 失败**不能**把已经成功的 done 变成报错：todo.md 已落盘，报错会让用户
+      // 以为没完成、再做一遍。但也不能静默吞 —— 静默吞就是这次事故的形态（写了没人知道 / 没写也没人知道）。
+      // 所以降级为一行显式警告，把「哪一半成功了」写清楚。
+      (e) => `⚠ 已归位 Done，但写 log 失败: ${e?.message || e}\n  （todo.md 已更新，log.md 缺这一条）`,
+    );
+    return `${res}\n${logged}`;
   }
   throw new Error(`unknown task action: ${action}`);
 }

@@ -273,6 +273,10 @@ const TODO_GUIDELINES = [
   //   ② 把整句话当 id → 被「id 不能含空格」拒。两次都是「没提前说」而不是「不会做」。
   //   放在常驻指引里而不是只靠工具 description：description 模型常不读。
   'abs task tool parameters — wrong ones are rejected before anything is written, so get them right the first time: `cwd` = the project root that contains `.brain/` and is ALWAYS required; `id` = ONE word, no spaces / tabs / brackets (put the readable name in `note`); `start`/`add` require `note` (what to do, one sentence); `child_done` / `child_undone` / `state` take `n` = which child item (1-based, default = last); `done` takes the conclusion in `note` plus `as` (落地 / 否决 / 仅方案). A child row must keep `note` to ONE short sentence (≤200 字) — longer text goes to `abs log` (progress) or `abs note` (lessons), not the board.',
+  // ⑩ 完成即落 log（用户 2026-11-12 提：新项目干了一整天，日志页只有模板头）。
+  //   实测归因：不是写入坏了 —— `abs log` 本身正常；是模型把「看板已记」当成「记过了」，
+  //   于是整场会话零次执行。看板的完成行会被归档移走，log.md 才是留下来的工作记录。
+  'When you mark a task done, also record one line with `abs log "what got done + how it was verified"`. The board is not a substitute: finished rows leave the board at archive time, so the log page is the only lasting record of the work. Do not skip it because "the board already tracks it" — that reasoning produced a project with 28 finished tasks and 0 log lines.',
 ]
 
 /** 当前项目是否有 .brain 图谱 —— 有才加指引（没图谱的项目里这指引是噪音）。
@@ -563,7 +567,7 @@ const LOAD_MARK = '[开工] '
  *   每次开会话都多塞 200 行，而其中大部分（图谱组织/容量纪律/tesardown 流程）
  *   只在真正做 abs 维护时才用得上。
  *
- * 与【常驻 9 条】TODO_GUIDELINES 的区别（两者职责不同，别合并）：
+ * 与【常驻 10 条】TODO_GUIDELINES 的区别（两者职责不同，别合并）：
  *   - 9 条常驻：行为要求与参数规矩，每轮都在（看板对齐用）。
  *   - 这 3 条：**只在开工第一轮出现一次** —— 因为它们是「开工那一刻」的触发器，
  *     每次都说等于噪音（历史教训：静态指引有痕 414 次、行为 0 变化）。
