@@ -104,4 +104,5 @@ updated: 2026-11-06
 ## 关联连接
 - [[abs-skill-flow]] — 姊妹页：会话落页 / 提炼 / 收尾流程
 - [[memory-box-seven-layers]] — 七层的技术实现与检索衰减
+- [[behavior-rule-must-stay-resident]] — 精简本页面的内容时，哪些能移出常驻、哪些不能
 - [[fanchao]] — 本页沉淀者

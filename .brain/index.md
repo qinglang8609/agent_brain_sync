@@ -101,6 +101,7 @@
 - [[abs-skill-structure]] — abs 结构与写作规范：七层判据 / 知识页格式 / 受理协议
 - [[abs-skill-flow]] — abs 流程：会话落页 / 提炼 / 收尾 / 维护
 - [[no-graph-db]] — 不建图数据库：写侧在跑、读侧没人用，整套拆掉
+- [[behavior-rule-must-stay-resident]] — 行为纪律的触发条件不能离开常驻上下文
 
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
