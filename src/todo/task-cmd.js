@@ -250,10 +250,15 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
     if (inlineKind && as && inlineKind !== as) {
       throw new Error(`✗ as="${as}" 与 note 里的【${inlineKind}】矛盾 —— 只留一个（改 as，或改 note 里的【】）`);
     }
-    const res = await markDone(brainPath(root, 'todo.md'), id, as || inlineKind || '落地', conclusion, sid);
+    const { ok, msg } = await markDone(brainPath(root, 'todo.md'), id, as || inlineKind || '落地', conclusion, sid);
     // 完成即落一条 log（2026-11-12）：只认成功的那次（NO_MATCH 不写）。
     // 正文 = 任务 id + 结语，结语里没带【kind】时补上 —— log 是归档后唯一的记录。
-    if (!String(res).startsWith('✓')) return res;
+    //
+    // ★ ok 是布尔量，不靠嗅探 msg —— 2026-11-13 审查的 P2：原实现用
+    //   `String(res).startsWith('✓')` 判成功，等于把「自动写日志」挂在一句用户可见
+    //   文案上：谁改一下「✓ 已完成并归位」这句话，自动写日志就静默停摆，
+    //   而那正是这次事故的失效类型（要求只存在于一句话里）。
+    if (!ok) return msg;
     const finalKind = as || inlineKind || '落地';
     const body = `${id}${conclusion ? '：' + conclusion : ''}` +
       (conclusion && conclusion.includes(`【${finalKind}】`) ? '' : ` 【${finalKind}】`);
@@ -263,7 +268,7 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
       // 所以降级为一行显式警告，把「哪一半成功了」写清楚。
       (e) => `⚠ 已归位 Done，但写 log 失败: ${e?.message || e}\n  （todo.md 已更新，log.md 缺这一条）`,
     );
-    return `${res}\n${logged}`;
+    return `${msg}\n${logged}`;
   }
   throw new Error(`unknown task action: ${action}`);
 }
@@ -355,7 +360,9 @@ async function markDone(file, id, kind = '落地', conclusion, bySid = '') {
     // 归位 + 按日期分组：insertDoneGrouped 一次重建 Done 区（新日期在前，未标日期归尾）
     return { text: insertDoneGrouped(kept.join('\n'), moved) };
   });
+  // 返回 { ok, msg } 而不是纯文本：成功与否由调用方据此判断，不去猜文案。
+  // msg 仍是人读的那句话（NO_MATCH 前缀有测试、有脚本在匹配，不要改它）。
   return res === SKIP
-    ? `[NO_MATCH] 未找到含 "${id}" 的未完成任务行`
-    : `✓ 已完成并归位 Done: ${id} 【${kind}】`;
+    ? { ok: false, msg: `[NO_MATCH] 未找到含 "${id}" 的未完成任务行` }
+    : { ok: true, msg: `✓ 已完成并归位 Done: ${id} 【${kind}】` };
 }
