@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-11-13 00:57] [[fanchao]] dev | absbare：abs 单字改为先判意图四行表（干完活→先收尾再报状态 / 没干完→只报状态 / 刚开始→load / 提问→只回应）；同时修好 11-06 留下的 4 条 resolve 死链、补回收尾循环 5 步、加死链门禁，1.31.6 已发布 【落地】
 ## [2026-11-13 00:57] [[fanchao]] dev | 发布 1.31.6：修 11-06 精简留下的两处断口 + 给死链加门禁。①SKILL 指针表 5 条里 4 条指向从未存在的 abs-skill-details，改指 abs-skill-flow / abs-skill-structure / naming-contract-and-judge-precision；②「收尾循环」5 步补回 abs-skill-flow（并写明 done 已自动写 log，第 5 步只为没登记任务的活补）；③abs resolve 未找到时退出码改 1（原恒 0，脚本化检查一律误判命中）；④新增 scripts/check-skill-refs.mjs 挂进 npm run check，演练过：插假引用 → 退出 1，恢复 → 0；⑤新增 8 条测试，787 全绿、lint 0；⑥提交 → v1.31.6，push main + tags，publish 第 7 次探测出，宿主重装后 SKILL 与仓库一致
 ## [2026-11-13 00:40] [[fanchao]] dev | 发布 1.31.5：done 的成功判定改回布尔量（审查 P2）。①提交 aa1612f（markDone 返回 {ok,msg}，msg 文案不变）+ npm version patch → 83b217a 打 v1.31.5，pre-push 779 测试过，push main + tags；②npm publish 成功，registry 第 9 次探测（约 2 分钟）出 1.31.5；③全局 abs --version = 1.31.5；④/tmp 空图谱活体验证：done 仍自动落一条 log，证明换掉文案嗅探没打断写入。hooks 未变，宿主不需要重装
 ## [2026-11-13 00:35] [[fanchao]] dev | loggap：根因：11-06 SKILL 精简删掉「收尾循环」+ 09-18 pi 收尾提醒停用，写入只剩模型自觉；已改代码 done 自动写 log，1.31.4 已发布、宿主已重装，779 测试绿 【落地】
