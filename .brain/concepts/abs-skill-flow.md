@@ -3,7 +3,7 @@ title: abs 流程（会话落页 / 提炼 / 收尾 / 维护）
 tags: [concept, abs, 操作手册]
 status: active
 author: fanchao
-updated: 2026-11-06
+updated: 2026-11-13
 ---
 
 # abs 流程
@@ -62,6 +62,21 @@ abs review --reject <页名>
 ```
 
 **判断力在你（agent），工具只做落点**——`capture` 不替你判「这条值不值得留、归哪一层」。提炼成规律后删原 source、清指向它的引用（防死链，见 Teardown 第 5 步）。
+
+## 收尾循环（一轮活干完就走，不等人开口）
+
+1. **读 todo**：`abs load`，看还有哪些没完成。
+2. **对账**：按「进行中」四个落点补记 —— 漏登记的 `done`、做一半的补 `note` 子项、卡住的转 `滞留中`。
+3. **沉淀经验**（值得才沉淀）：坑 / 可复用技巧 → `abs note` 暂存；值得深提炼的走下面的 Teardown。
+4. **判教训够不够格进 Rules**：只有「违反会丢数据 / 静默失效 / 白干活」级才提；够格就输出一行 `[Rules 提议] <一句话>` 问用户，确认后才 `abs rule add "<一句话>"`。
+5. **更新 index / log / todo**：新页同步进 index；`abs log "完成 X：…"`；`abs lint` 确认自洽。
+
+**完成标准**：看板反映真实状态（Done 区没有滞留半成品）、该沉淀已落、够格教训已提议、index / log / todo 与事实一致。
+
+两个当前的代码事实，别多做：
+
+- `abs todo done` 成功时会**自动**往 `log.md` 落一条（1.31.4 起，正文 = 任务 id + 结语）。第 5 步只为**没登记任务**的活补 log，不要重复写。
+- Stop 时 hook 把「未完成 + 子项」快照进 `~/.abs/log/wrapup.log`，下会话 `abs load` 自动顶到顶部 —— 本节不往对话里插提醒。
 
 ## 收尾：Teardown Sync（深提炼）
 

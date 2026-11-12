@@ -92,7 +92,8 @@ Alone, **judge the session first** — never assume "startup":
 
 Wrap-up is the default whenever work actually happened. A bare state report on a finished
 session leaves the log and the board behind — that is how 7 days of logs went missing in
-2026-11 while every session looked healthy on the surface.
+2026-11 while every session looked healthy on the surface. The five steps are in
+`abs resolve abs-skill-flow` (「收尾循环」).
 
 ## Document diet (todo / knowledge pages)
 
@@ -116,10 +117,10 @@ session leaves the log and the board behind — that is how 7 days of logs went 
 
 | Need | Read |
 |---|---|
-| Seven layers, `--kind`, deep wrap-up | `abs resolve abs-skill-details` |
+| Wrap-up loop (5 steps), seven layers, `--kind`, deep wrap-up | `abs resolve abs-skill-flow` |
 | Session page shapes, ingest hooks | `abs resolve session-digest-design` |
-| New-request protocol (plan → register → start) | `abs resolve abs-skill-details` |
-| `.brain/` layout, frontmatter | `abs resolve abs-skill-details` |
-| Lint codes (NO-INBOUND / NO-TAIL / …) | `abs resolve abs-skill-details` |
+| New-request protocol (plan → register → start) | `abs resolve abs-skill-structure` |
+| `.brain/` layout, frontmatter, page format | `abs resolve abs-skill-structure` |
+| Lint codes and how each one is judged | `abs resolve naming-contract-and-judge-precision` |
 
 Only read/write `.brain/` and target code. Broken dual-links = broken handoff.

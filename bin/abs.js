@@ -725,7 +725,12 @@ async function main() {
         break;
       }
       case 'resolve': {
-        console.log(await cmdResolve({ dir: opts.dir, refs: opts._ }));
+        const out = await cmdResolve({ dir: opts.dir, refs: opts._ });
+        console.log(out);
+        // 退出码要能反映「有没有找到」（2026-11-13）：cmdResolve 只返回文本，
+        // 未找到时以前仍退出 0 —— 脚本化检查会把它当成全部命中（与 abs lint 同一个坑，
+        // 实测 pay 过：SKILL 里 4 条死链因此默不作声存在了 7 天）。
+        if (/^✗/m.test(out)) process.exitCode = 1;
         break;
       }
       case 'review': {

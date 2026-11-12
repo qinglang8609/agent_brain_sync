@@ -38,7 +38,7 @@
     "test": "node --test 'test/*.test.js' 'skill/**/*.test.js'",
     "fuzz": "node scripts/fuzz.mjs 800",
     "lint": "eslint .",
-    "check": "node --experimental-vm-modules --no-warnings scripts/check-syntax.mjs && eslint .",
+    "check": "node --experimental-vm-modules --no-warnings scripts/check-syntax.mjs && node scripts/check-skill-refs.mjs && eslint .",
     "prepack": "node -e \"require('fs').chmodSync('bin/abs.js',0o755);require('fs').chmodSync('bin/mcp.js',0o755)\"",
     "pack:check": "npm pack --dry-run"
   },
