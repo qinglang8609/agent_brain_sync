@@ -2,11 +2,43 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdResolve, cmdSupersede, cmdReview, restoreArchivedTasks } from '../src/store.js';
+// ── 命令按需加载（2026-11-16）───────────────────────────────────────────────
+// 以前这里一行 import 从 src/store.js 拉进全部模块（todo/log/note/query/install/hosts…），
+// 于是连 `abs --version` 也付一遍加载成本（实测 ~30ms）。现在只在实际执行某个命令时
+// 才 import 它所在的那个模块 —— `abs load` 不再加载 lint/install/hosts 等。
+const CMD_MODULE = {
+  cmdInit: '../src/brain/init.js',
+  cmdRepair: '../src/brain/init.js',
+  cmdLoad: '../src/brain/load.js',
+  cmdStatus: '../src/brain/load.js',
+  cmdShow: '../src/brain/load.js',
+  cmdWrapup: '../src/brain/maintain.js',
+  cmdTeardownCheck: '../src/brain/maintain.js',
+  cmdCapture: '../src/brain/capture.js',
+  cmdIngest: '../src/brain/ingest.js',
+  cmdSummon: '../src/brain/summon-cmd.js',
+  cmdRule: '../src/brain/rules.js',
+  cmdTask: '../src/todo/task-cmd.js',
+  cmdLog: '../src/note.js',
+  cmdNote: '../src/note.js',
+  cmdConcept: '../src/note.js',
+  cmdQuery: '../src/query.js',
+  cmdLint: '../src/lint.js',
+  cmdResolve: '../src/page.js',
+  cmdSupersede: '../src/page.js',
+  cmdReview: '../src/page.js',
+};
+
+/** 惰性取命令实现：只用得到哪个就加载哪个模块。缺映射直接报错（不静默降级）。 */
+async function cmdOf(name) {
+  const path = CMD_MODULE[name];
+  if (!path) throw new Error(`✗ 内部错误：命令 ${name} 未登记模块映射（见 bin/abs.js 的 CMD_MODULE）`);
+  const mod = await import(path);
+  const fn = mod[name];
+  if (typeof fn !== 'function') throw new Error(`✗ 内部错误：${path} 未导出 ${name}`);
+  return fn;
+}
 import { findBrainRoot } from '../src/index.js';
-import { cmdCapture } from '../src/brain/capture.js';
-import { cmdSummon } from '../src/brain/summon-cmd.js';
-import { cmdIngest } from '../src/brain/ingest.js';
 import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
 import { runInstall, runUninstall } from '../src/install.js';
 import { existsSync, readFileSync } from 'node:fs';
@@ -573,14 +605,14 @@ async function main() {
       case 'init': {
         rejectExtra(opts._, 'abs init [--repair]');
         const msg = opts.repair
-          ? await cmdRepair({ dir: opts.dir })
-          : await cmdInit({ dir: opts.dir });
+          ? await (await cmdOf('cmdRepair'))({ dir: opts.dir })
+          : await (await cmdOf('cmdInit'))({ dir: opts.dir });
         console.log(msg);
         break;
       }
       case 'load':
         rejectExtra(opts._, 'abs load');
-        console.log(await cmdLoad({ dir: opts.dir }));
+        console.log(await (await cmdOf('cmdLoad'))({ dir: opts.dir }));
         break;
       // ── 只读视图：统一到 abs show <视图>，旧名保留为别名并提示 ──
       // （2026-11-06 命令面整理：index/log/status 都是「看某个文件的现状」，
@@ -592,15 +624,15 @@ async function main() {
           break;
         }
         rejectExtra(opts._.slice(1), 'abs show index|log|status');
-        if (v === 'status') console.log(await cmdStatus({ dir: opts.dir }));
-        else if (v === 'index' || v === 'log') console.log(await cmdShow({ dir: opts.dir, view: v }));
+        if (v === 'status') console.log(await (await cmdOf('cmdStatus'))({ dir: opts.dir }));
+        else if (v === 'index' || v === 'log') console.log(await (await cmdOf('cmdShow'))({ dir: opts.dir, view: v }));
         else console.log(`✗ 未知视图 "${v}"。可用: index | log | status`);
         break;
       }
       case 'log': {
         // 只剩写：abs log "结论"。查看流水 = abs show log（2026-11-08 去掉无参查看的别名）。
         if (!opts._.length) throw new Error('✗ 用法: abs log "一句话结论" [--kind dev|note|concept|ingest]\n  查看流水: abs show log');
-        console.log(await cmdLog({ dir: opts.dir, title: opts._.join(' '), kind: opts.kind }));
+        console.log(await (await cmdOf('cmdLog'))({ dir: opts.dir, title: opts._.join(' '), kind: opts.kind }));
         break;
       }
       // abs todo —— 无子命令=看板；带子命令=任务写操作
@@ -608,7 +640,7 @@ async function main() {
         const [sub, id, ...rest2] = opts._;
         if (!sub) {
           rejectExtra([id, ...rest2].filter(Boolean), 'abs todo [--full]');
-          console.log(await cmdShow({ dir: opts.dir, view: 'todo', full: opts.full }));
+          console.log(await (await cmdOf('cmdShow'))({ dir: opts.dir, view: 'todo', full: opts.full }));
           break;
         }
         // 回捞历史归档（非任务子命令，单独处理）
@@ -616,6 +648,7 @@ async function main() {
           rejectExtra(rest2, 'abs todo restore [--dry-run]');
           const root = await findBrainRoot(opts.dir);
           if (!root) throw new Error('✗ 未找到 .brain/ 图谱。先在项目根运行: abs init');
+          const { restoreArchivedTasks } = await import('../src/todo/restore.js');
           const r = await restoreArchivedTasks(root, { dryRun: !!opts.dryRun });
           if (!r.scanned && !r.added) {
             console.log(`（sessions/ 无可回捞的归档任务）`);
@@ -645,13 +678,13 @@ async function main() {
         const usage = `abs todo ${sub} <短标题>${isDone ? '' : action === 'state' ? ' --note "…" [--n N]' : ' --note "…"'}`;
         if (isDone) {
           const note = opts.note || (rest2.length ? rest2.join(' ') : undefined);
-          console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note, as: opts.as, session: opts.session }));
+          console.log(await (await cmdOf('cmdTask'))({ dir: opts.dir, action, id, section: opts.section, note, as: opts.as, session: opts.session }));
           break;
         }
         if (isMemo) {
           // 无文字 = 查看该任务所有随手记
           const note = opts.note || (rest2.length ? rest2.join(' ') : undefined);
-          console.log(await cmdTask({ dir: opts.dir, action, id, note, session: opts.session }));
+          console.log(await (await cmdOf('cmdTask'))({ dir: opts.dir, action, id, note, session: opts.session }));
           break;
         }
         // 勾/取消勾子项：只收 <id>（子项位置 = 「某任务的第 N 条」，没有自己的 id）
@@ -660,7 +693,7 @@ async function main() {
           if (!id) throw new Error(`✗ 缺短标题\n  用法: abs todo ${sub} <id> [--n N]`);
           const n = opts.n ? Number(opts.n) : undefined;
           if (opts.n && (!Number.isInteger(n) || n < 1)) throw new Error(`✗ --n 要是正整数（收到 "${opts.n}"）`);
-          console.log(await cmdTask({ dir: opts.dir, action, id, n }));
+          console.log(await (await cmdOf('cmdTask'))({ dir: opts.dir, action, id, n }));
           break;
         }
         rejectExtra(rest2, usage);
@@ -668,32 +701,32 @@ async function main() {
         // --n：子项位置（state 用它改第 n 条子项，与 child-done 同一套坐标）
         const nKid = opts.n ? Number(opts.n) : undefined;
         if (opts.n && (!Number.isInteger(nKid) || nKid < 1)) throw new Error(`✗ --n 要是正整数（收到 "${opts.n}"）`);
-        console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note: opts.note, as: opts.as, session: opts.session, n: nKid }));
+        console.log(await (await cmdOf('cmdTask'))({ dir: opts.dir, action, id, section: opts.section, note: opts.note, as: opts.as, session: opts.session, n: nKid }));
         break;
       }
       case 'ingest': {
         // --list：只看「还有哪些会话没落页」，不写入（原来的 abs summon）
         if (opts.list) {
-          console.log(await cmdSummon({ dir: opts.dir, mark: false, full: !!opts.full, status: false, limit: Number(opts.limit) || 15 }));
+          console.log(await (await cmdOf('cmdSummon'))({ dir: opts.dir, mark: false, full: !!opts.full, status: false, limit: Number(opts.limit) || 15 }));
           break;
         }
-        console.log(await cmdIngest({
+        console.log(await (await cmdOf('cmdIngest'))({
           dir: opts.dir, file: opts._.join(' '), force: !!opts.force, mark: !!opts.mark,
           last: !!opts.last, auto: !!opts.auto, session: opts.session,
         }));
         break;
       }
       case 'capture': {
-        console.log(await cmdCapture({ dir: opts.dir, text: opts._.join(' '), layer: opts.layer, tags: opts.tags, title: opts.title, kind: opts.kind }));
+        console.log(await (await cmdOf('cmdCapture'))({ dir: opts.dir, text: opts._.join(' '), layer: opts.layer, tags: opts.tags, title: opts.title, kind: opts.kind }));
         break;
       }
       case 'note': {
-        console.log(await cmdNote({ dir: opts.dir, text: opts._.join(' '), tags: opts.tags, when: opts.when, impact: opts.impact, type: opts.type }));
+        console.log(await (await cmdOf('cmdNote'))({ dir: opts.dir, text: opts._.join(' '), tags: opts.tags, when: opts.when, impact: opts.impact, type: opts.type }));
         break;
       }
       case 'concept': {
         // 建概念页骨架（只给结构，不给内容 —— 判断不自动化）。
-        console.log(await cmdConcept({
+        console.log(await (await cmdOf('cmdConcept'))({
           dir: opts.dir,
           slug: opts._.join('-'),
           title: opts.title,
@@ -722,19 +755,19 @@ async function main() {
         const [sub, ...rest3] = opts._;
         const isAdd = sub === 'add';
         if (!isAdd && sub) throw new Error(`✗ 未知子命令 "${sub}"\n  用法: abs rule / abs rule add "一句话"`);
-        console.log(await cmdRule({ dir: opts.dir, action: isAdd ? 'add' : 'list', text: rest3.join(' ') }));
+        console.log(await (await cmdOf('cmdRule'))({ dir: opts.dir, action: isAdd ? 'add' : 'list', text: rest3.join(' ') }));
         break;
       }
       case 'query': {
-        console.log(await cmdQuery({ dir: opts.dir, terms: opts._, includeSuperseded: opts.all }));
+        console.log(await (await cmdOf('cmdQuery'))({ dir: opts.dir, terms: opts._, includeSuperseded: opts.all }));
         break;
       }
       case 'supersede': {
-        console.log(await cmdSupersede({ dir: opts.dir, refs: opts._, by: opts.by }));
+        console.log(await (await cmdOf('cmdSupersede'))({ dir: opts.dir, refs: opts._, by: opts.by }));
         break;
       }
       case 'resolve': {
-        const out = await cmdResolve({ dir: opts.dir, refs: opts._ });
+        const out = await (await cmdOf('cmdResolve'))({ dir: opts.dir, refs: opts._ });
         console.log(out);
         // 退出码要能反映「有没有找到」（2026-11-13）：cmdResolve 只返回文本，
         // 未找到时以前仍退出 0 —— 脚本化检查会把它当成全部命中（与 abs lint 同一个坑，
@@ -748,23 +781,23 @@ async function main() {
         const refs = action === 'accept' ? (opts.accept || '').split(',').map(s => s.trim()).filter(Boolean)
           : action === 'reject' ? (opts.reject || '').split(',').map(s => s.trim()).filter(Boolean)
           : opts._;
-        console.log(await cmdReview({ dir: opts.dir, refs, action }));
+        console.log(await (await cmdOf('cmdReview'))({ dir: opts.dir, refs, action }));
         break;
       }
       case 'lint': {
         rejectExtra(opts._, 'abs lint');
-        console.log(await cmdLint({ dir: opts.dir, all: opts.all }));
+        console.log(await (await cmdOf('cmdLint'))({ dir: opts.dir, all: opts.all }));
         break;
       }
       // 内部命令（hook 专用，不出现在 help）：Stop 时机械快照未完成任务
       case 'wrapup': {
         rejectExtra(opts._, 'abs wrapup（内部命令, 供 hook 调用）');
-        console.log(await cmdWrapup({ dir: opts.dir }));
+        console.log(await (await cmdOf('cmdWrapup'))({ dir: opts.dir }));
         break;
       }
       // Stop hook 用: 判定是否注入收尾指令。stdout 给 shell (`push:<json>` / `{}`), 无额外输出。
       case 'teardown-check': {
-        process.stdout.write((await cmdTeardownCheck({ dir: opts.dir, payload: opts.payload })) + '\n');
+        process.stdout.write((await (await cmdOf('cmdTeardownCheck'))({ dir: opts.dir, payload: opts.payload })) + '\n');
         break;
       }
       case 'update':  await cmdUpdate({ yes: opts.yes }); break;

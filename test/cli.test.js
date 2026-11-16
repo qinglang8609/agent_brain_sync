@@ -69,6 +69,29 @@ describe('cli: init', () => {
 });
 
 // ---------- task ----------
+describe('cli: 按命令惰性加载', () => {
+  // 2026-11-16：入口改成按命令动态 import（省掉每次启动加载无关模块 ~10ms）。
+  // 映射表是手写的，所以必须有测试保证「表里每个名字都能真的加载到函数」——
+  // 否则某个命令会在用户敲下去那一刻才炸「未导出」。
+  test('CMD_MODULE 里每个命令都能加载到函数', async () => {
+    const src = await fs.readFile(join(REPO, 'bin', 'abs.js'), 'utf8');
+    const block = src.slice(src.indexOf('const CMD_MODULE'), src.indexOf('/** 惰性取命令实现'));
+    const pairs = [...block.matchAll(/(\w+):\s*'([^']+)'/g)].map((m) => [m[1], m[2]]);
+    assert.ok(pairs.length >= 18, `映射表应覆盖全部命令: ${pairs.length}`);
+    for (const [name, path] of pairs) {
+      const mod = await import(new URL(path, 'file://' + join(REPO, 'bin/')).href);
+      assert.equal(typeof mod[name], 'function', `${path} 应导出 ${name}`);
+    }
+  });
+
+  test('入口不静态 import store.js / lint.js（否则按需加载白做）', async () => {
+    const src = await fs.readFile(join(REPO, 'bin', 'abs.js'), 'utf8');
+    const head = src.split('\n').filter((l) => /^import /.test(l)).join('\n');
+    assert.ok(!/store\.js/.test(head), `入口不该静态 import store.js:\n${head}`);
+    assert.ok(!/lint\.js/.test(head), `入口不该静态 import lint.js:\n${head}`);
+  });
+});
+
 describe('cli: todo', () => {
   beforeEach(() => run(['init', '--dir', proj]));
 
