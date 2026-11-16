@@ -172,24 +172,27 @@ describe('mcp: 工具调用', () => {
   // ★ 为何必须测：LLM 平时就是用 MCP 工具认领任务的（不会去敲 CLI）。
   //   若 schema 不收 session，prompt 里摆的 sid 就白摆了 —— 功能对 LLM 基本失效。
   //   （本项目已有同类教训：schema 漏字段 → 传了也被静默丢掉，见下面 as 那条。）
-  test('★ abs_task start 带 session → 写进认领段', async () => {
+  // 新格式（2026-11-16）：会话是行尾的方括号标签，不再是 `(认领 日期 sid)`。
+  test('★ abs_task start 带 session → 行尾写会话标签', async () => {
     await tool('abs_task', { action: 'start', id: 'MS', note: '多会话', cwd: projA, session: '01a11eae' });
     const md = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
-    assert.match(md, /\(认领 \d{4}-\d{2}-\d{2} 01a11eae\)/, md);
+    assert.match(md, /\[01a11eae\]\s*$/m, md);
   });
 
-  test('★ 不传 session 时保持旧格式（向后兼容）', async () => {
+  test('★ 不传 session → 不带会话标签', async () => {
     await tool('abs_task', { action: 'start', id: 'MN', note: '无会话', cwd: projA });
     const md = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
-    assert.match(md, /MN[^\n]*\(认领 \d{4}-\d{2}-\d{2}\)\s*$/m, md);
+    const line = md.split('\n').find((l) => l.includes('[MN]'));
+    assert.ok(line && !/\[[0-9a-f]{8}-/.test(line), `不该凭空编会话: ${line}`);
   });
 
-  test('★ MCP 路径：A 认领 B 完成 → 两个 sid 都留', async () => {
+  test('★ MCP 路径：done 保留登记时的会话标签（谁收尾看 log）', async () => {
     await tool('abs_task', { action: 'start', id: 'MT', note: 'A 的任务', cwd: projA, session: '01a11eae' });
     await tool('abs_task', { action: 'done', id: 'MT', note: 'B 收尾', as: '落地', cwd: projA, session: '01a11f2a' });
     const md = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
-    assert.match(md, /\(认领 \d{4}-\d{2}-\d{2} 01a11eae\)/, `认领者: ${md}`);
-    assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11f2a\)/, `完成者: ${md}`);
+    const line = md.split('\n').find((l) => l.includes('[MT]'));
+    assert.match(line, /\[01a11eae\]/, `登记者标签: ${md}`);
+    assert.ok(!/01a11f2a/.test(line), `行上只留一个会话标签: ${line}`);
   });
 
   test('abs_task done 归位 Done', async () => {
@@ -207,40 +210,27 @@ describe('mcp: 工具调用', () => {
     await tool('abs_task', { action: 'note', id: 'MCS', note: '子项二', cwd: projA });
     await tool('abs_task', { action: 'state', id: 'MCS', note: '滞留中', n: 2, cwd: projA });
     const md = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
-    assert.match(md, /^ {2}- \[-\] 子项二$/m, `第 2 条子项应带标记（[-]）:\n${md}`);
-    assert.match(md, /^ {2}- \[ \] 子项一$/m, `第 1 条不该被动:\n${md}`);
+    assert.match(md, /^ {2}- \[-\] .*子项二/m, `第 2 条子项应带标记（[-]）:\n${md}`);
+    assert.match(md, /^ {2}- \[ \] .*子项一/m, `第 1 条不该被动:\n${md}`);
     // 不带 n = 改任务本身
     await tool('abs_task', { action: 'state', id: 'MCS', note: '搁置', cwd: projA });
     const md2 = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
-    assert.match(md2, /- \[~\] MCS/, `不带 n 应改任务（[~] = 搁置）:\n${md2}`);
-    assert.match(md2, /^ {2}- \[-\] 子项二$/m, md2);
+    assert.ok(/^- \[~\]/m.test(md2) && md2.includes('[MCS]'), `不带 n 应改任务（[~] = 搁置）:\n${md2}`);
+    assert.match(md2, /^ {2}- \[-\] .*子项二/m, md2);
   });
 
-  // 坑(2026-09-16 审计): schema 无 as，done 的 note 被静默丢弃 → 恒盖【落地】。
-  // MCP 用户永远标不了否决/仅方案，按 SKILL.md 表格传 note 的全部失真。
-  test('abs_task done+note=结语不再被丢弃（落地/否决/仅方案三态）', async () => {
+  // 2026-11-16：结语（【落地/否决/仅方案】）与 as 已取消 —— 传了不落盘、也不报错。
+  test('abs_task done 的 note/as 不再落盘（结语已取消）', async () => {
     const read = async () => await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
     await tool('abs_task', { action: 'start', id: 'MA', note: 'x', cwd: projA });
-    await tool('abs_task', { action: 'done', id: 'MA', note: '验证: 全绿', cwd: projA });
-    let t = await read();
-    assert.match(t, /MA.*验证: 全绿\s*【落地】/s, `note 应作为结语落盘: ${t}`);
-    await tool('abs_task', { action: 'start', id: 'MB', note: 'x', cwd: projA });
-    await tool('abs_task', { action: 'done', id: 'MB', as: '否决', cwd: projA });
-    t = await read();
-    assert.match(t, /MB.*【否决】/s, `as=否决 应生效: ${t}`);
-    await tool('abs_task', { action: 'start', id: 'MC', note: 'x', cwd: projA });
-    await tool('abs_task', { action: 'done', id: 'MC', note: '只画图【仅方案】', cwd: projA });
-    t = await read();
-    assert.match(t, /MC.*【仅方案】/s, `note 自带【kind】应被识别: ${t}`);
+    const r1 = await tool('abs_task', { action: 'done', id: 'MA', note: '验证: 全绿', cwd: projA });
+    assert.ok(!r1.result?.isError, JSON.stringify(r1));
+    const t = await read();
+    const line = t.split('\n').find((l) => l.includes('[MA]'));
+    assert.ok(line.startsWith('- [x]'), line);
+    assert.ok(!/验证: 全绿|【/.test(line), `结语不该落盘: ${line}`);
   });
 
-  test('abs_task done: as 与 note 里【kind】矛盾 → isError 不猜', async () => {
-    await tool('abs_task', { action: 'start', id: 'ME', note: 'x', cwd: projA });
-    const r = await tool('abs_task', { action: 'done', id: 'ME', note: '做了又撤【否决】', as: '落地', cwd: projA });
-    assert.ok(r.result?.isError, JSON.stringify(r));
-    const t = await fs.readFile(join(projA, '.brain', 'todo.md'), 'utf8');
-    assert.ok(!/ME.*\[x\]/.test(t), `矛盾输入不得落盘: ${t}`);
-  });
 
   test('abs_note 落 sources; abs_query 可检索', async () => {
     await tool('abs_note', { text: 'MCP 专属经验 xyzq9', cwd: projA });

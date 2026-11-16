@@ -87,6 +87,8 @@ export async function cmdTeardownCheck({ dir, payload }) {
           if (!pushedBefore) {
             await fs.mkdir(dirname(regMark), { recursive: true });
             await fs.writeFile(regMark, stamp, 'utf8').catch(() => {});
+            // 同一次会话只推一条：把「今日无 log」那条的标记也一并落掉
+            await fs.writeFile(join(absLogDir(), `teardown-${sidReg}.mark`), stamp, 'utf8').catch(() => {});
             const who = await getUser().catch(() => null);
             const why = [
               ...(who ? [] : ['0) 本机尚未设置使用者姓名 —— 先跑 abs config set user <你的名字>，否则 todo/log/note 都会被拦下；']),

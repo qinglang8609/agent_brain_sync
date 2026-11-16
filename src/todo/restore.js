@@ -68,10 +68,17 @@ export async function restoreArchivedTasks(root, { dryRun = false } = {}) {
    * 会变成孤儿子项，写闸门会拒掉整次回捞。所以：
    *   ① 父任务不在看板 → 整组追加到末尾；
    *   ② 父任务已在看板 → 缺的子项插到 base 里那条父任务（及其现有子项）之后。 */
+  // 归档页里是**旧格式**行，todo.md 里已是新格式 —— 直接比原文字永远对不上，
+  // 于是每次 restore 都会重复插入（2026-11-16 实测）。统一先过一遍归一，再比签名。
+  const canon = (line) => {
+    const one = normalizeTodo('# 📋 Todo Board\n' + line).split('\n').find((x) => /^- \[|^ {2}- \[/.test(x));
+    return one || line;
+  };
   const mergeInto = (base, have, recoveredLines) => {
     const out = base.replace(/\n+$/, '').split('\n');
     const groups = [];
-    for (const l of recoveredLines) {
+    for (const raw of recoveredLines) {
+      const l = canon(raw);
       const sig = sigOfLine(l);
       if (have.has(sig)) continue;              // 已经在了（幂等）
       have.add(sig);                            // 同一批里重复的行也只收一次

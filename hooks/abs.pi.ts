@@ -850,27 +850,40 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
     // 未完成任务行：状态写在复选框里（[ ] 进行中 / [-] 滞留中 / [+] 讨论中 / [~] 搁置）。
     // [x] 是已完成，不上未完成面板；旧写法的 `[状态] ` 文本前缀仍读（迁移期兼容）。
     // 新格式：`- [记号] [id 标题] [YYYY-MM-DD HH:MM] [[作者]] [会话id]`
-    // 新格式：`- [记号] [时间] [id 标题] [[作者]] [标签…]`
-    const m = line.match(/^\s*-\s*\[([ x\-+~])\]\s*(?:\[(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]\s*)?\[([^\]]+)\]\s*(?:\[\[([^[\]]+)\]\]|@[\w\u4e00-\u9fff.-]+)?\s*((?:\[[^[\]]*\]\s*)*)$/)
-    if (!m || m[1] === 'x') { kidsAllowed = false; continue }
+    // 新格式：`- [记号] [YYYY-MM-DD HH:MM] [id 短标题] [[作者]] 详情 [会话id]`
+    const mRaw = line.match(/^\s*-\s*\[([ x\-+~])\]\s*(?:\[(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]\s*)?\[([^\]]+)\]\s*(?:\[\[([^[\]]+)\]\]|@[\w\u4e00-\u9fff.-]+)?\s*([\s\S]*)$/)
+    // `[进行中]` 这类旧状态前缀不是标题 → 走老格式兜底
+    const m = mRaw && !['进行中', '讨论中', '滞留中', '搁置'].includes((mRaw[3] || '').trim()) ? mRaw : null
+    // 老格式兜底（存量文件还没归一，面板也要能看）：`[状态] id [[作者]] — 描述 (认领 日期 sid)`
+    if (!m) {
+      const lg = line.match(/^\s*-\s*\[([ x\-+~])\]\s*(?:\[(进行中|讨论中|滞留中|搁置)\]\s*)?(\S+)\s*(.*)$/)
+      if (!lg) { kidsAllowed = false; continue }
+      const markL = lg[1] === 'x' ? 'x' : (lg[1] !== ' ' ? lg[1] : ({ 进行中: ' ', 讨论中: '+', 滞留中: '-', 搁置: '~' }[lg[2] || '进行中'] || ' '))
+      kidsAllowed = markL !== 'x'
+      const bodyL = (lg[4] || '').replace(/\s*\((?:认领|完成)[^)]*\)/g, '').replace(/\s*【[^】]*】\s*$/, '')
+      const authorsL = [...bodyL.matchAll(/\[\[([^\]]+)\]\]/g)].map((x) => x[1])
+      const sidL = (String(line).match(/\((?:认领|完成)\s*\d{4}-\d{2}-\d{2}\s+([\w-]+)\)/) || [])[1] || ''
+      const descL = bodyL.replace(/\[\[[^\]]+\]\]/g, '').replace(/^\s*—\s*/, '').trim()
+      if (markL !== 'x') {
+        parsed.push({ state: MARK_STATE[markL] || '进行中', mark: markL, id: lg[3], desc: descL, kids: [], authors: authorsL, sid: sidL })
+      }
+      continue
+    }
+    if (m[1] === 'x') { kidsAllowed = false; continue }
     const mark = m[1]
     kidsAllowed = true
-    const state = MARK_STATE[mark] || '进行中'
-    // `[id 标题]`：第一个空白前是 id（命令用它定位），后面是标题。
     const head = (m[3] || '').trim()
     const sp = head.indexOf(' ')
     const id = sp === -1 ? head : head.slice(0, sp)
     const body = sp === -1 ? '' : head.slice(sp + 1).trim()
     const author = (m[4] || '').trim()
     const authors = author ? [author] : []
-    // 剥掉作者标记（面板上碍眼且无信息量），再取 `—` 后正文
-    // 会话 id：新格式在行尾单独一个方括号里（`[01a1c4c6-…]`），
-    // 多会话并行时靠它区分「这条是我的还是别人的」。
-    // 尾部方括号都是标签；会话 id 是其中「像 id 的那个」
-    const tags = [...(m[5] || '').matchAll(/\[([^[\]]*)\]/g)].map((x) => x[1].trim()).filter(Boolean)
-    const sid = tags.find((t) => /^[0-9a-z]{6,}(?:-[0-9a-z]+)+$/i.test(t)) || ''
-    const desc = body   // 新格式的标题就是描述，无需再清洗
-    parsed.push({ state, mark, id, desc, kids: [], authors, sid })
+    // 详情里若有行尾方括号且像会话 id，就当 sid；否则整体都是详情
+    const rest = (m[5] || '').trim()
+    const tail = rest.match(/\[([^[\]]*)\]\s*$/)
+    const sid = tail && /^[0-9a-z]{6,}(?:-[0-9a-z]+)+$/i.test(tail[1].trim()) ? tail[1].trim() : ''
+    const desc = sid ? rest.slice(0, tail.index).trim() : rest
+    parsed.push({ state: MARK_STATE[mark] || '进行中', mark, id, desc: body || desc, kids: [], authors, sid })
   }
   const mine = who
     ? parsed.filter((r) => r.authors.length === 0 || r.authors.includes(who))

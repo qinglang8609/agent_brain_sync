@@ -85,13 +85,13 @@ describe('restoreArchivedTasks', () => {
     assert.equal(r.added, 1, JSON.stringify(r));
 
     const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.ok(todo.includes('- [x] OLD-A'), `任务应回到看板:\n${todo}`);
+    assert.ok(/\[OLD-A/.test(todo), `任务应回到看板:\n${todo}`);
     // 任务与它的两条子项按原顺序回来，子项仍挂在它下面
     const rows = todo.split('\n');
     const at = rows.findIndex((l) => l.includes('OLD-A'));
     assert.ok(rows[at + 1].includes('子项一') && rows[at + 2].includes('子项二'), `子项应跟在任务下:\n${todo}`);
     // 已有的未完成任务不受影响
-    assert.ok(todo.includes('- [ ] 还在做'), todo);
+    assert.ok(/\[还在做\]/.test(todo), todo);
     // 日志页原样（只读不删）
     assert.equal(await fs.readFile(pagePath, 'utf8'), body);
   });
@@ -146,6 +146,6 @@ describe('restoreArchivedTasks', () => {
     const r = await restoreArchivedTasks(proj);
     assert.equal(r.added, 1, JSON.stringify(r));
     const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.ok(todo.includes('- [x] OLD-B'), todo);
+    assert.ok(/\[OLD-B/.test(todo), todo);
   });
 });

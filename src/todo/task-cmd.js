@@ -189,8 +189,9 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
     });
     if (!cc.length) {
       // 区分「任务不存在」和「状态本来就是它」—— 后者不是错误，报 NO_MATCH 会误导。
+      // 带 n（改子项）时不走这条：子项越界/不存在仍要报 NO_MATCH。
       const cur = await fs.readFile(f, 'utf8').catch(() => '');
-      const hit = findTaskLine(cur.split('\n'), id) !== -1;
+      const hit = !n && findTaskLine(cur.split('\n'), id) !== -1;
       if (hit) return `= ${id} 状态本来就是 [${note}]（无变化）`;
       return n
         ? `[NO_MATCH] "${id}" 下没有第 ${n} 条子项（或任务不存在）`

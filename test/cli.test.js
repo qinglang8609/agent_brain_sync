@@ -76,16 +76,17 @@ describe('cli: todo', () => {
   // 需求：多会话并行时，todo 行要能看出「这条是哪个会话在做的」。
   // 设计：sid 塞进**已有**的 `(认领 日期)` 字段（不另开字段），
   //   于是「整行搬运」（归档）与「通配正则」（5/6 处解析）全自动兼容。
-  test('★ --session 写进认领段；不传则保持旧格式', async () => {
+  test('★ --session 写进行尾会话标签；不传则不带', async () => {
     const a = await run(['todo', 'start', 'T1', '--note', '带会话', '--session', '01a11eae']);
     assert.equal(a.code, 0, a.stderr);
     let md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.match(md, /\(认领 \d{4}-\d{2}-\d{2} 01a11eae\)/, '带 sid 的认领段');
+    assert.match(md, /\[01a11eae\]\s*$/m, '带 sid 的会话标签');
 
     const b = await run(['todo', 'start', 'T2', '--note', '无会话']);
     assert.equal(b.code, 0, b.stderr);
     md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.match(md, /T2[^\n]*\(认领 \d{4}-\d{2}-\d{2}\)\s*$/m, '不传 sid → 旧格式，不带多余尾巴');
+    const line2 = md.split('\n').find((l) => l.includes('[T2]'));
+    assert.ok(line2 && !/\[[0-9a-f]{8}-/.test(line2), '不传 sid → 不带会话标签');
   });
 
   // 为何必须测：upsertTask 原位重建任务行时若不搬旧认领段，
@@ -124,12 +125,12 @@ describe('cli: todo', () => {
 
   // done 会把 `(认领 …)` 换成 `(完成 …)` —— 若不特意保留 sid，
   // 任务一完成线索就断了（而「已完成的任务是谁做的」恰恰最常被回查）。
-  test('★ done 后 sid 跟着进 (完成 …)，不丢', async () => {
+  test('★ done 后会话标签保留，不丢', async () => {
     await run(['todo', 'start', 'T1', '--note', '带会话', '--session', '01a11eae']);
-    const d = await run(['todo', 'done', 'T1', '--as', '落地', '做完']);
+    const d = await run(['todo', 'done', 'T1']);
     assert.equal(d.code, 0, d.stderr);
     const md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11eae\)/, 'done 后 sid 仍在');
+    assert.match(md, /\[01a11eae\]/, 'done 后 sid 仍在（行尾标签）');
   });
 
   // ===== 认领与完成可能是不同会话（2026-10-09 用户提问后加）=====
@@ -137,37 +138,23 @@ describe('cli: todo', () => {
   // 只留完成者 → A 的线索断；只留认领者 → (完成 日期) 配着别人，语义拧。→ 两个都留。
   const readTodo = () => fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
 
-  test('★ A 认领 B 完成 → 两个 sid 都留', async () => {
+  // 新格式（2026-11-16）：会话只有一个标签位；done 保留登记时的会话，谁收尾看 log。
+  test('★ done 保留登记时的会话标签（谁收尾看 log）', async () => {
     await run(['todo', 'start', 'T1', '--note', 'A 的任务', '--session', '01a11eae']);
-    await run(['todo', 'done', 'T1', '--as', '落地', 'B 收尾', '--session', '01a11f2a']);
+    await run(['todo', 'done', 'T1', '--session', '01a11f2a']);
     const md = await readTodo();
-    assert.match(md, /\(认领 \d{4}-\d{2}-\d{2} 01a11eae\)/, '认领者要留');
-    assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11f2a\)/, '完成者要留');
+    const line = md.split('\n').find((l) => l.includes('[T1]'));
+    assert.match(line, /\[01a11eae\]/, `登记者标签要留: ${line}`);
+    assert.ok(!/01a11f2a/.test(line), `行上只留一个会话标签: ${line}`);
+    const log = await fs.readFile(join(proj, '.brain', 'log.md'), 'utf8');
+    assert.match(log, /T1/, '收尾记在 log 里');
   });
 
-  test('★ 同一会话认领+完成 → 只写一个，不重复', async () => {
-    await run(['todo', 'start', 'T2', '--note', '测试任务', '--session', '01a11eae']);
-    await run(['todo', 'done', 'T2', '做完', '--session', '01a11eae']);
-    const md = await readTodo();
-    const line = md.split('\n').find((l) => l.includes('T2'));
-    assert.match(line, /\(完成 \d{4}-\d{2}-\d{2} 01a11eae\)/, '完成带 sid');
-    assert.ok(!/\(认领/.test(line), `同一个不该留认领段: ${line}`);
-  });
-
-  test('★ done 未给 session → 沿用认领者（不凭空编）', async () => {
-    await run(['todo', 'start', 'T3', '--note', '测试任务', '--session', '01a11eae']);
-    await run(['todo', 'done', 'T3', '做完']);
-    const md = await readTodo();
-    assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11eae\)/);
-    assert.ok(!/T3[^\n]*\(认领/.test(md), '不重复留认领段');
-  });
-
-  test('无认领但 B 完成 → 只写完成者', async () => {
+  test('★ 不传 session → 行上没有会话标签', async () => {
     await run(['todo', 'start', 'T4', '--note', '测试任务']);
-    await run(['todo', 'done', 'T4', '做完', '--session', '01a11f2a']);
     const md = await readTodo();
-    assert.match(md, /\(完成 \d{4}-\d{2}-\d{2} 01a11f2a\)/);
-    assert.ok(!/T4[^\n]*\(认领/.test(md), '无认领则不留认领段');
+    const line = md.split('\n').find((l) => l.includes('[T4]'));
+    assert.ok(!/\[[0-9a-f]{8}-/.test(line), `不该凭空编会话: ${line}`);
   });
 
   // 需求：任务行要能查到是哪个会话做的 —— sid 记在 `(认领 …)` / `(完成 …)` 里。
@@ -264,14 +251,14 @@ describe('cli: todo', () => {
     const ok = await run(['todo', 'state', 'CN-1', '--note', '滞留中', '--n', '1']);
     assert.equal(ok.code, 0, ok.stderr);
     let t = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.match(t, /^ {2}- \[-\] 子项一$/m, `第 1 条应带标记（[-]）:\n${t}`);
-    assert.match(t, /^ {2}- \[ \] 子项二$/m, `第 2 条不该被动:\n${t}`);
+    assert.match(t, /^ {2}- \[-\] .*子项一/m, `第 1 条应带标记（[-]）:\n${t}`);
+    assert.match(t, /^ {2}- \[ \] .*子项二/m, `第 2 条不该被动:\n${t}`);
 
     // 不带 --n 仍是改任务本身（旧用法不能被拐走）
     await run(['todo', 'state', 'CN-1', '--note', '讨论中']);
     t = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.match(t, /- \[\+\] CN-1/, `不带 --n 应改任务（[+]）:\n${t}`);
-    assert.match(t, /^ {2}- \[-\] 子项一$/m, t);
+    assert.match(t, /^- \[\+\].*\[CN-1\]/m, `不带 --n 应改任务（[+]）:\n${t}`);
+    assert.match(t, /^ {2}- \[-\] .*子项一/m, t);
 
     const over = await run(['todo', 'state', 'CN-1', '--note', '搁置', '--n', '9']);
     assert.ok(/NO_MATCH/.test(over.stdout + over.stderr), `越界 n 应报没匹配: ${over.stdout}${over.stderr}`);
@@ -314,10 +301,10 @@ describe('cli: todo', () => {
     const st = await run(['todo', 'state', 'TB', '--note', '滞留中']);
     assert.equal(st.code, 0, st.stderr);
     const t = await run(['todo']);
-    assert.ok(t.stdout.includes('[-] TB'), `应改复选框记号（[-]）: ${t.stdout}`);
+    assert.match(t.stdout, /\[-\].*TB/, `应改复选框记号（[-]）: ${t.stdout}`);
     // 标准 md 嵌套：子项以 2 空格缩进挂在该任务下
     const raw = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.ok(/\n {2}- \[ \] 改到 L40/.test(raw), `子项应缩进在任务下:\n${raw}`);
+    assert.ok(/\n {2}- \[ \] .*改到 L40/.test(raw), `子项应缩进在任务下:\n${raw}`);
     // 不搬区：仍是 ## Todo 下的行
     assert.ok(!/## Blocked/.test(t.stdout), '不该再有 Blocked 区');
   });
@@ -394,7 +381,9 @@ describe('cli: todo', () => {
   // 拼进文件名写出 .brain/ 外；`[` 撞状态标记语法。现在统一拒。
   test('id 含路径字符/空白/方括号被拒，不写出 .brain/ 外', async () => {
     await run(['todo', 'start', 'OK-ID', '--note', '合法 id']);
-    const bads = ['../escaped', 'a/b', 'a\\b', 'bad[id]', '带 空格', 'x\ty'];
+    const bads = ['../escaped', 'a/b', 'a\\b', 'bad[id]'];
+    const okSpaces = await run(['todo', 'add', '带 空格', '--note', 'x']);
+    assert.equal(okSpaces.code, 0, `带空格的短标题应允许: ${okSpaces.stderr}`);
     for (const bad of bads) {
       const m = await run(['todo', 'memo', bad, '不该写进去']);
       assert.notEqual(m.code, 0, `memo id "${bad}" 应被拒: ${m.stdout}${m.stderr}`);
@@ -501,7 +490,7 @@ describe('cli: log 带参=写 / 无参=看', () => {
 
   // 回归（2026-10-05 本机实现实测）：`--kind` 未在 FLAG_SPEC 声明 → 静默被丢掉，
   // 所有 log 全写成默认的 dev，而 cmdLog 的枚举校验看不见它。
-  test('log --kind 真的生效（不是被静默丢掉）', async () => {
+  test('log 行没有 kind，正文完整落盘', async () => {
     await run(['init', '--dir', proj]);
     for (const k of ['note', 'concept', 'ingest', 'dev']) {
       const w = await run(['log', `测试${k}`, '--kind', k, '--dir', proj]);
@@ -509,24 +498,21 @@ describe('cli: log 带参=写 / 无参=看', () => {
     }
     const log = await fs.readFile(join(proj, '.brain', 'log.md'), 'utf8');
     for (const k of ['note', 'concept', 'ingest', 'dev']) {
-      assert.ok(log.includes(`]] ${k} | 测试${k}`), `kind=${k} 应写进 log:\n${log}`);
+      assert.match(log, new RegExp(`^## \\[[\\d-]+ [\\d:]+\\] \\[[^\\]]*测试${k}`, 'm'), `应在 log 里: ${log}`);
     }
+    assert.ok(!/\|\s*测试/.test(log), '不再写 `kind | 正文` 的老形状');
   });
 
-  test('log --kind 非枚举值时非零退出', async () => {
+
+  test('log --kind 传任意值都不报错（枚举已取消）', async () => {
     await run(['init', '--dir', proj]);
     const w = await run(['log', '乱写', '--kind', '乱写', '--dir', proj]);
-    assert.equal(w.code, 1, `应非零退出: ${JSON.stringify(w)}`);
-    assert.ok(/kind 只能是/.test(w.stderr), w.stderr);
+    assert.equal(w.code, 0, JSON.stringify(w));
   });
-});
 
-// ---------- 未知命令 ----------
-describe('cli: wrapup (收尾保险快照)', () => {
-  beforeEach(async () => {
-    await run(['init', '--dir', proj]);
-  });
+
   test('wrapup 快照未完成任务; load 展示滞留', async () => {
+    await run(['init']);
     const logDir = join(sandbox, 'abs-log');
     await run(['todo', 'start', 'CW-1', '--note', '做X'], { env: { ABS_LOG_DIR: logDir } });
     const w = await run(['wrapup'], { env: { ABS_LOG_DIR: logDir } });
@@ -537,6 +523,7 @@ describe('cli: wrapup (收尾保险快照)', () => {
     assert.ok(l.stdout.includes('做X'), l.stdout);
   });
   test('任务 done 后 load 不再报滞留 (自清理)', async () => {
+    await run(['init']);
     const logDir = join(sandbox, 'abs-log2');
     await run(['todo', 'start', 'CW-2', '--note', '做Y'], { env: { ABS_LOG_DIR: logDir } });
     await run(['wrapup'], { env: { ABS_LOG_DIR: logDir } });
@@ -684,27 +671,19 @@ describe('cli: note --tags 值解析', () => {
 describe('cli: argv 解析', () => {
   // 坑(2026-09-16 实测): `abs todo --help` 写了 [结语文字]，但 done 分支只读 --note，
   // 位置参数被 rejectExtra 当多余参数拒 —— 文档与实现不一致(测试装的临时包才发现)。
-  test('todo done 收位置参数结语（与 --note 等价，MCP 同语义）', async () => {
+  test('todo done 多余文字不落盘（结语已取消）', async () => {
     await run(['init', '--dir', proj]);
-    for (const id of ['CD-1', 'CD-2', 'CD-3']) {
-      await run(['todo', 'add', id, '--note', 'x', '--dir', proj]);
-    }
-    const r1 = await run(['todo', 'done', 'CD-1', '验证: 全绿', '--dir', proj]);
-    assert.equal(r1.code, 0, r1.stderr);
-    const r2 = await run(['todo', 'done', 'CD-2', '--note', '撤了【否决】', '--dir', proj]);
-    const r3 = await run(['todo', 'done', 'CD-3', '--as', '仅方案', '--dir', proj]);
-    assert.equal(r2.code, 0, r2.stderr);
-    assert.equal(r3.code, 0, r3.stderr);
-    const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.match(todo, /CD-1.*— 验证: 全绿 【落地】/, todo);
-    assert.match(todo, /CD-2.*— 撤了 【否决】/, 'note 自带【kind】应生效');
-    assert.match(todo, /CD-3.*【仅方案】/, todo);
-    // 非 done 子命令仍严格拒多余参数（add 不说清楚就是静默漏写）
-    const bad = await run(['todo', 'add', 'CD-9', '--note', 'x', '多余词', '--dir', proj]);
-    assert.notEqual(bad.code, 0, 'add 的多余参数应被拒');
-    assert.ok(bad.stderr.includes('不认识多余参数'), bad.stderr);
+    await run(['todo', 'add', 'CD-1', '--note', 'x', '--dir', proj]);
+    const r = await run(['todo', 'done', 'CD-1', '验证: 全绿', '--as', '否决', '--dir', proj]);
+    assert.equal(r.code, 0, r.stderr);
+    const md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    const line = md.split('\n').find((l) => l.includes('[CD-1]'));
+    assert.ok(line.startsWith('- [x]'), line);
+    assert.ok(!/【|验证: 全绿/.test(line), `结语不该落盘: ${line}`);
+    assert.match(r.stdout, /不再记录结语/, `应提示结语已取消: ${r.stdout}`);
   });
-  // 从外部可观测的代理: install --no-mcp 与 --no-skill 不得被当成未知参数而报错
+
+
   test('--no-mcp / --no-skill 被识别为合法 flag（不报未知参数）', async () => {
     for (const flag of ['--no-mcp', '--no-skill']) {
       const r = await run(['install', flag, '--help']);
@@ -986,8 +965,8 @@ describe('cli: 使用者姓名与作者标记', () => {
     const r = await run(['todo', 'add', 'T1', '--note', '做点事', '--dir', proj], { env });
     assert.equal(r.code, 0, r.stderr);
     const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.ok(/- \[ \] T1 \[\[fanchao\]\] — 做点事 \(认领 \d{4}-\d{2}-\d{2}\)/.test(todo),
-      `todo 行应为 '[记号] ID [[name]] — 说明 (认领 date)': ${todo}`);
+    assert.ok(/^- \[ \] \[[^\]]*\] \[T1\] \[\[fanchao\]\] 做点事/m.test(todo),
+      `todo 行应为 '[记号] [时间] [短标题] [[作者]] 详情': ${todo}`);
     // 人页随之建立并登记 index（否则 [[fanchao]] 是死链）
     const person = await fs.readFile(join(proj, '.brain', 'entities', 'fanchao.md'), 'utf8');
     assert.ok(person.includes('# fanchao'), `人页应有 H1: ${person}`);
@@ -1002,7 +981,7 @@ describe('cli: 使用者姓名与作者标记', () => {
     const r = await run(['log', '完成作者标记', '--dir', proj], { env });
     assert.equal(r.code, 0, r.stderr);
     const log = await fs.readFile(join(proj, '.brain', 'log.md'), 'utf8');
-    assert.ok(/^## \[[\d-]+ [\d:]+\] \[\[alice\]\] dev \| 完成作者标记/m.test(log),
+    assert.ok(/^## \[[\d-]+ [\d:]+\] \[完成作者标记\] \[\[alice\]\]/m.test(log),
       `log 行格式应为 '[时间] [[name]] kind | 内容': ${log}`);
   });
 
@@ -1153,20 +1132,22 @@ describe('cli: 未设姓名时的主动提醒', () => {
 
   // 根因回归(2026-09-16 审计#2, pi 侧 2026-09-13 先修): 旧判据「今日有任何条目」
   // 把 `abs note`(kind=note) 沉淀当成「今日已收尾」→ CC/Co​dex 整天不再注入。
-  test('teardown-check: 今日只有 note 条目不算已收尾 → 仍注入', async () => {
+  // 2026-11-16：log 行不再有 kind —— 判据退化为「今天有没有条目」。
+  // 原来「只有 note 也不算收尾」的细分没有了，这条改成钉住新判据。
+  test('teardown-check: 今天已有条目 → 视为已收尾，不再注入', async () => {
     const p = join(sandbox, 'p-noteonly');
     const env = { ABS_CONFIG_DIR: join(sandbox, 'no-cfg'), ABS_USER: 'tester', ABS_LOG_DIR: join(sandbox, 'no-log') };
     await run(['init', '--dir', p], { env });
     const d = new Date(), pad = (n) => String(n).padStart(2, '0');
     const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     await fs.writeFile(join(p, '.brain', 'log.md'),
-      `# Activity Log\n## [${today} 10:00] [[x]] note | 沉淀了一条经验\n`, 'utf8');
+      `# Activity Log\n## [${today} 10:00] [沉淀了一条经验] [[x]]\n`, 'utf8');
     const trans = join(sandbox, 'no.jsonl');
     await fs.writeFile(trans,
       JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write' }] } }) + '\n', 'utf8');
     const payload = JSON.stringify({ session_id: 'ses_NO', cwd: p, transcript_path: trans });
     const r = await run(['teardown-check', '--payload', payload], { env });
-    assert.match(r.stdout, /^push:/, `note 条目不算收尾, 应注入(旧判据会放行): ${r.stdout.slice(0, 120)}`);
+    assert.equal(r.stdout.trim(), '{}', `今天已有条目 → 不该再催: ${r.stdout.slice(0, 120)}`);
   });
 
   test('teardown-check: 今日已有 dev 条目 → 放行(判据对齐后仍有效)', async () => {
