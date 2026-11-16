@@ -2,7 +2,9 @@
 // 从 store.js 拆出（2026-11-01）：init 与 load 共用同一份形状表，
 // 单独立文件避免二者互相 import。
 import { promises as fs } from 'node:fs';
-import { brainPath } from '../index.js';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { brainPath, absLogDir } from '../index.js';
 import { editFile, SKIP } from '../lock.js';
 import { enforceBrainFormat } from '../todo.js';
 import { clip } from '../text.js';
@@ -66,6 +68,20 @@ export const legacyRenames = () => LEGACY_MARKS;
  * 不抛错（load 不能因核对失败而挂）。返回 { fixed:[描述], warn:[描述] }。
  */
 export async function checkBrainShape(root) {
+  // 结构核对 = 三份根文件各跑一次写入闸门（实测 11ms）。load 是开机第一屏，每次都要，
+  // 但**内容没变时结果必然相同** —— 按 (mtime,size) 缓存一次结果，变了就重算。
+  // 缓存放 ~/.abs/log/cache/，按 root 哈希分文件；失效判据只有一条：三份文件的时间戳/大小。
+  const files0 = Object.keys(BRAIN_SHAPE).map((f) => brainPath(root, f));
+  let cachePath = '';
+  let sig = '';
+  try {
+    const st = await Promise.all(files0.map((p) => fs.stat(p).then((x) => `${x.mtimeMs}:${x.size}`).catch(() => '-')));
+    sig = st.join('|');
+    const key = createHash('sha1').update(root).digest('hex').slice(0, 12);
+    cachePath = join(absLogDir(), 'cache', `shape-${key}.json`);
+    const cached = JSON.parse(await fs.readFile(cachePath, 'utf8'));
+    if (cached && cached.sig === sig) return { fixed: [], warn: cached.warn || [] };
+  } catch { /* 无缓存/读不到 → 正常计算 */ }
   const fixed = [];
   const warn = [];
   for (const [file, spec] of Object.entries(BRAIN_SHAPE)) {
@@ -100,6 +116,13 @@ export async function checkBrainShape(root) {
     });
     if (changed.length) fixed.push(`${file}: ${changed.join('; ')}`);
     if (!knownH1) warn.push(`${file}: 标题非标准（读到 "${clip(l1, 24) || '(空)'}"）`);
+  }
+  // 写缓存（失败无所谓：下次重算）
+  if (cachePath && sig) {
+    try {
+      await fs.mkdir(join(absLogDir(), 'cache'), { recursive: true });
+      await fs.writeFile(cachePath, JSON.stringify({ sig, warn }), 'utf8');
+    } catch { /* 忽略 */ }
   }
   return { fixed, warn };
 }

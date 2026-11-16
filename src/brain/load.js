@@ -6,7 +6,7 @@ import { getUser, placeholderWarn } from '../userconfig.js';
 import { boardText, readTodo, collapseDone, openLines } from '../todo.js';
 import { strandedFor } from '../wrapup.js';
 import { readIfExists, recentLogLines } from '../text.js';
-import { SOURCES_MAX } from '../lint.js';
+import { SOURCES_MAX } from '../limits.js';
 // 判「会话页骨架填没填」的唯一真源在 layers.js。
 import { digestFilled } from './layers.js';
 

@@ -10,7 +10,8 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind } from '../src/store.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks } from '../src/store.js';
+import { foldSameKind } from '../src/lint.js';
 import { readTodo, todoTemplate, today, addTask, normalizeTodo, openLines, countDone, collapseDone, upsertTask, findTaskLine, LEGACY_SECTION_RENAMES, extractId } from '../src/todo.js';
 import { assertTodoContent, violationSignatures } from '../src/todo/validate.js';
 import { parseChild, renderChild } from '../src/todo/common.js';

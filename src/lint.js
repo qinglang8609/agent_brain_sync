@@ -1,5 +1,6 @@
 // src/lint.js — 图谱体检（lint 检查逻辑）。
 // 从 store.js 提取：cmdLint 过大（268 行），拆为 checkPage / checkGraph / checkFiles 三个子函数。
+import { SOURCES_MAX } from './limits.js';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
@@ -86,7 +87,7 @@ const SOURCE_STALE_DAYS = 7;
 const DRAFT_STALE_DAYS = 14;
 
 // sources/ 目录文件数上限，超出提示提炼归档。与 cmdLoad 共用（load 做提醒，lint 做报错）。
-export const SOURCES_MAX = 10;
+export { SOURCES_MAX } from './limits.js';
 
 // Rules 区条目上限（cmdLint 专用，cmdRule 有自己的 RULES_MAX）。
 const LINT_RULES_MAX = 30;

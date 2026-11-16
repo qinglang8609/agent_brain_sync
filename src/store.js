@@ -43,5 +43,15 @@ export {
 } from './page.js';
 
 export { cmdLog, cmdNote, cmdConcept, ensurePersonPage, registerInIndex } from './note.js';
-export { cmdLint, listPages, hasTail, PAGE_DIRS, foldSameKind } from './lint.js';
+// lint 体积大（8 个检查器），只在真正体检时才加载 —— 放在顶层 import 会让
+// 每个 `abs load/todo` 都白付一次模块解析（2026-11-16 实测约 10ms）。
+export async function cmdLint(opts) {
+  const m = await import('./lint.js');
+  return m.cmdLint(opts);
+}
+// 这三个也给测试/内部用，但同样别拖住 CLI 启动：改成惰性的具名转发。
+export async function listPages(vault) { return (await import('./lint.js')).listPages(vault); }
+export async function hasTail(body) { return (await import('./lint.js')).hasTail(body); }
+export async function foldSameKind(issues) { return (await import('./lint.js')).foldSameKind(issues); }
+export async function pageDirs() { return (await import('./lint.js')).PAGE_DIRS; }
 export { cmdQuery } from './query.js';
