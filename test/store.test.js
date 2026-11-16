@@ -2265,54 +2265,9 @@ describe('todo 单列表 + 复选框状态', () => {
 });
 
 // ---------- Done 结语契约 ----------
-// 为什么需要: `[x]` 原同时表示「真落地」「评估后不做」「仅设计过」。实测翻车:
-// 把"跑通后又被撤销"的 daemon 条当成已落地 → 基于假记录得出错误结论。
-// 记录可被信任比记录多寡重要一个量级，故用测试钉死写入侧与 lint。
-describe('Done 结语契约', () => {
-  async function doneLines() {
-    const t = await readTodo(projectA);
-    return t.split('\n').filter((l) => /^\s*- \[x\]/.test(l));
-  }
+// Done 结语契约（【落地/否决/仅方案】）与完成日期已在 2026-11-16 取消：
+// 新格式只认 `[记号] [时间] [短标题] [[作者]] 详情 [会话id]`，这两组判据连同测试一起删了。
 
-  test('lint: Done 区的缩进子项不算独立条目（不报 DONE-NO-KIND/DATE）', async () => {
-    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
-    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
-      ['# 📋 Todo Board', '', '## Todo', '', '## Done', '', '### 2026-10-16', '',
-       '- [x] P-1 — 父任务 【落地】 (完成 2026-10-16)',
-       '  - [x] 一条没有结语也没有日期的子项', ''].join('\n'), 'utf8');
-    const out = await cmdLint({ dir: projectA });
-    assert.ok(!out.includes('DONE-NO-KIND'), `子项不该被算成缺结语的条目:\n${out}`);
-    assert.ok(!out.includes('DONE-NO-DATE'), `子项不该被算成缺日期的条目:\n${out}`);
-  });
-
-  test('lint: Done 条目全带结语时不报', async () => {
-    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
-    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
-      ['# 📋 Todo Board', '## Backlog', '', '## Today / In Progress', '', '## Blocked',
-       '## Done', '', '### 2026-09-11', '',
-       ...['落地', '否决', '仅方案'].map((k, i) => `- [x] OK-${i} — n 【${k}】 (完成 2026-09-11)`), ''].join('\n'), 'utf8');
-    const out = await cmdLint({ dir: projectA });
-    assert.ok(!out.includes('DONE-NO-KIND'), out);
-  });
-
-  // 回归(日期契约): 结语是人抄的、日期是工具盖的 —— 人替工具代笔时只抄语义部分。
-  // 后果不只是排版：无日期行归 `### Undated` 尾组，而归档靠日期判天数
-  // → 这些行**永远无法被 abs todo archive 迁出**（todo.js:300 保守跳过），
-  // 即一条漏日期 = 一条永久钉住 Done 区、拖大 abs load 输出的行。
-  test('lint: Done 条目日期齐全时不报 DONE-NO-DATE', async () => {
-    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
-    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
-      ['# 📋 Todo Board', '## Backlog', '', '## Today / In Progress', '', '## Blocked',
-       '## Done', '', '### 2026-09-11', '',
-       '- [x] D1 【落地】 (完成 2026-09-11)', ''].join('\n'), 'utf8');
-    const out = await cmdLint({ dir: projectA });
-    assert.ok(!out.includes('DONE-NO-DATE'), `日期齐全不应报: ${out}`);
-  });
-});
-
-// ---------- page id: 改名不改引用 ----------
-// 设计要点（为什么不上 uuid/哈希）：id 默认 = 建页时的 slug，人可读可手写，
-// 且旧页无 id 时回退 slug → 存量页零迁移。哈希随内容变，uuid 不可读且要全量迁移。
 describe('page id (abs resolve)', () => {
   test('idOfPage: 有 id 行读 id，无 id 行回退 slug', () => {
     assert.equal(idOfPage('---\nid: my-id\ntags: [x]\n---\n# H', 'file-slug'), 'my-id');
