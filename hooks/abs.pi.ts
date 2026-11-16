@@ -562,6 +562,32 @@ export function injectTodoGuidelines(options: any, board?: string | null): boole
   return true
 }
 
+/** 登记提醒段前缀（2026-11-16 用户定：首轮 abs load，其余轮只提醒登记，不再每轮摆看板）。 */
+const REG_MARK = '[登记] '
+
+/** 看板上有没有「本会话认领」的任务（行尾方括号里是本会话 sid）。
+ *  有 → 说明已经在册，后续轮次不再打扰；没有 → 每轮给一行提醒（不强制）。 */
+export function boardHasMyTask(md: string, sid: string): boolean {
+  if (!sid) return true // 判不出来就当有，别误报
+  const re = new RegExp(`\\[${sid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\s*$`)
+  return md.split('\n').some((l) => /^- \[[ x\-+~]\]/.test(l) && re.test(l.trim()))
+}
+
+/** 注入/清除登记提醒。board 为空或无 sid 时清掉（不撒谎）。 */
+export function injectRegReminder(options: any, need: boolean, sid: string): boolean {
+  const list: string[] = options.promptGuidelines || (options.promptGuidelines = [])
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].startsWith(REG_MARK)) list.splice(i, 1)
+  }
+  if (!need) return false
+  list.push(
+    `${REG_MARK}本会话还没登记任务。真要动手就登记一条 —— ` +
+      `abs todo add "<短标题>" --note "详情"${sid ? ` --session ${sid}` : ''}；` +
+      `只是问答/查文件则忽略这句。`,
+  )
+  return true
+}
+
 /** 开局 load 段在 guidelines 里的前缀（与看板段区分，两者都挤 promptGuidelines）。 */
 const LOAD_MARK = '[开工] '
 
@@ -1253,7 +1279,14 @@ export default function absPiHook(pi: ExtensionAPI): void {
           }
         }
         const sidNow = sessionIdFor(ctx)
-        const ok = injectTodoGuidelines(event?.systemPromptOptions, await readBoardForGuide(cwd, sidNow))
+        // 首轮（同 cwd+会话）：摆看板；其余轮：不再每轮摆看板，只给「登记提醒」
+        // （2026-11-16 用户定：第一次输入 abs load，其它时候提醒任务登记）。
+        const firstTurn = !loadInjected.has(loadKeyOf(cwd, sidNow))
+        const boardMd = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8').catch(() => '')
+        const boardGuide = firstTurn ? boardGuideline(boardMd, await currentUser(), [...filesSeen], sidNow) : null
+        const ok = injectTodoGuidelines(event?.systemPromptOptions, boardGuide)
+        const needReg = !firstTurn && filesSeen.size > 0 && !boardHasMyTask(boardMd, sidNow)
+        injectRegReminder(event?.systemPromptOptions, needReg, sidNow)
         // 本会话 id 也摆进去 —— todo 行尾的 `(认领 日期 <sid>)` 要 LLM 自己填。
         injectSessionGuideline(event?.systemPromptOptions, sidNow)
         logHook(`before_agent_start session_guide=${sidNow ? 'on' : 'off'} sid=${sidNow || '-'}`).catch(() => {})

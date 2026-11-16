@@ -230,6 +230,15 @@ export const OPENING_RULES = [
 ]
 
 /** 段前缀 —— 用于每轮替换上一轮的旧段（内容会变, 不能用 includes 去重）。 */
+const REG_MARK = '[登记] '
+
+/** 看板上有没有「本会话认领」的任务（行尾方括号里是本会话 sid）。有 → 后续轮不打扰。 */
+export function boardHasMyTask(md: string, sid: string): boolean {
+  if (!sid) return true
+  const tail = `[${sid}]`
+  return md.split('\n').some((l) => /^- \[[ x\-+~]\]/.test(l) && l.trim().endsWith(tail))
+}
+
 const BOARD_MARK = '[看板] '
 const LOAD_MARK = '[开工] '
 const OPENING_MARK = '[开工规则] '
@@ -301,10 +310,10 @@ export function sessionGuideline(sid: string): string | null {
  */
 export function buildSystemPrompt(
   base: string[],
-  parts: { board?: string | null; load?: string | null; rules?: string | null; sid?: string },
+  parts: { board?: string | null; load?: string | null; rules?: string | null; sid?: string; reg?: string | null },
 ): string[] {
   const guideOn = String(process.env.ABS_TODO_GUIDE || '') !== '0'
-  const marks = [BOARD_MARK, LOAD_MARK, OPENING_MARK, SESSION_MARK]
+  const marks = [BOARD_MARK, LOAD_MARK, OPENING_MARK, SESSION_MARK, REG_MARK]
   // 基线逐行保留；只丢掉「以我们前缀开头」的行（上一轮我们自己加的）。
   const kept = base.filter((line) => !marks.some((m) => line.startsWith(m)))
   if (!guideOn) return kept
@@ -316,6 +325,7 @@ export function buildSystemPrompt(
   }
   if (parts.rules) added.push(OPENING_MARK + parts.rules)
   if (parts.board) added.push(BOARD_MARK + parts.board)
+  if (parts.reg) added.push(parts.reg)
   if (parts.load) added.push(LOAD_MARK + parts.load)
   // 基线为空也不能返回空数组（那会清掉宿主 prompt）——理论上不会发生, 但返回 [] 是灾难性的,
   // 故空基线时原样返回 undefined 由调用方跳过（见 handler）。这里只保证「不会丢基线」。
@@ -833,7 +843,12 @@ export default function absOmpExtension(pi: ExtensionAPI): void {
         }
       }
       const sidNow = sessionIdFor(ctx)
-      const board = await readBoardForGuide(cwd, sidNow)
+      // 2026-11-16 用户定：首轮 abs load + 看板；其余轮只给「登记提醒」，不再每轮摆看板。
+      const firstTurn = !loadInjected.has(cwd)
+      const boardMd = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8').catch(() => '')
+      const board = firstTurn
+        ? await readBoardForGuide(cwd, sidNow)
+        : null
       // 开局每个目录垫一次 load 全文 + 首轮硬规则（同目录只一次；之后靠看板段反复对齐）。
       // 注意这里**不置 loadInjected** —— 注入点只在 agent loop 前，对话还没发出去；
       // 此刻置位会让被中断的那轮白烧掉标记。
@@ -851,7 +866,12 @@ export default function absOmpExtension(pi: ExtensionAPI): void {
           loadInjected.add(cwd) // 失败也不重试：不每轮白查一次盘
         }
       }
-      const built = buildSystemPrompt(base, { board, load: loadText, rules, sid: sidNow })
+      // 其余轮：不摆看板，只在「本会话还没登记任务」时给一行提醒（不强制）。
+      const needReg = !firstTurn && filesSeen.size > 0 && !boardHasMyTask(boardMd, sidNow)
+      const reg = needReg
+        ? `[登记] 本会话还没登记任务。真要动手就登记一条 —— abs todo add "<短标题>" --note "详情"${sidNow ? ` --session ${sidNow}` : ''}；只是问答/查文件则忽略这句。`
+        : null
+      const built = buildSystemPrompt(base, { board, load: loadText, rules, sid: sidNow, reg })
       _lastBuilt = built
       logHook(`before_agent_start todo_guide=${board ? 'on' : 'off'} load_guide=${loadState} session_guide=${sidNow ? 'on' : 'off'} base=${base.length} out=${built.length} seen=[${[...loadInjected].join(',')}] pending=[${loadPending}] cwd=${cwd}`).catch(() => {})
       // 只在真的改了 prompt 时才返回替换（否则让宿主走原路径，减少无谓覆盖）。

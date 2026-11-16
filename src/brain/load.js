@@ -125,6 +125,17 @@ export async function cmdLoad({ dir }) {
     '',
     LOAD_USAGE,
   );
+  // 登记提醒（2026-11-16 用户定：load 要提醒得够）——
+  // 看板上没有本会话认领的任务时，摆一行；只是问答的场景忽略即可。
+  {
+    const sid = String(process.env.ABS_SESSION_ID || '').replace(/[^\w-]/g, '');
+    if (sid) {
+      const mine = String(todo || '').split('\n').some((l) => /^- \[[ x\-+~]\]/.test(l) && l.trim().endsWith(`[${sid}]`));
+      if (!mine) {
+        sections.push('', '--- 登记提醒 ---', `看板上没有本会话的任务（会话 ${sid.slice(0, 8)}…）。真要动手就登记：abs todo add "<短标题>" --note "详情"`, '');
+      }
+    }
+  }
   if (stranded.length) {
     const rows = stranded.map((t) => {
       const bp = t.bp.length ? `\n    ${t.bp.map((b) => (b.startsWith('[') ? `- ${b}` : `- [ ] ${b}`)).join('\n    ')}` : '';
