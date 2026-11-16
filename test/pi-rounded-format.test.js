@@ -3,6 +3,7 @@
 // 测试进程里没有那个包；纯函数抽出来才能直接断言。
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { buildStatus, effortAnsi, levelLetter, paintAnsi, roundBorder, shortenModel, shortTokens, textWidth } from '../hooks/abs-rounded-editor/format.ts';
 
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
@@ -220,5 +221,18 @@ describe('effortAnsi — 推理强度 → 主色（用户指定的六档 hex）'
   it('paintAnsi：包上开/关序列，空串原样返回', () => {
     assert.equal(paintAnsi(toAnsi(HEX.max), 'x'), `\x1b[${toAnsi(HEX.max)}mx\x1b[39m`);
     assert.equal(paintAnsi('', 'x'), 'x');
+  });
+});
+
+// ===== 压缩后 token 数字要立刻更新 =====
+// 为何要测：压缩会直接改上下文占用，但它不是「一轮对话结束」，旧版只监听
+//   turn_end/message_end/tool_execution_end → 压缩后右下角数字停在旧值（2026-11-16 用户报）。
+//   断言的是「扩展确实订阅了压缩事件」，这是唯一能自动守住的部分（真实刷新要跑 TUI）。
+describe('圆角输入框：压缩后刷新上下文占用', () => {
+  it('订阅 session_compact / session_compact_failed', async () => {
+    const src = await readFile(new URL('../hooks/abs-rounded-editor/index.ts', import.meta.url), 'utf8');
+    const evLine = src.split('\n').find((l) => l.includes("'turn_end', 'message_end', 'tool_execution_end'")) || '';
+    assert.ok(evLine.includes('session_compact'), `刷新事件里应含 session_compact：${evLine.trim()}`);
+    assert.ok(evLine.includes('session_compact_failed'), `压缩失败也要刷新：${evLine.trim()}`);
   });
 });

@@ -116,7 +116,11 @@ export default function piRoundedEditor(pi: any): void {
   })
 
   // 上下文占用随每轮对话变化 —— 轮次结束与消息结束时刷新。
-  for (const ev of ['turn_end', 'message_end', 'tool_execution_end']) {
+  // ★ 压缩（/compact、阈值、溢出恢复）会**直接改掉**上下文占用，而它既不是一轮对话结束、
+  //   也不一定紧跟 message_end，于是旧版只在上面三个事件刷新 → 压缩后右下角 token 数字一直停在
+  //   压缩前的旧值，要等到下一轮结束才对（2026-11-16 用户报的就是这个）。
+  //   补上 session_compact / session_compact_failed：压缩成功或失败都重取一次占用。
+  for (const ev of ['turn_end', 'message_end', 'tool_execution_end', 'session_compact', 'session_compact_failed']) {
     pi.on(ev, (_event: any, ctx: any) => {
       refreshStatus(ctx)
       ctx?.ui?.requestRender?.()
