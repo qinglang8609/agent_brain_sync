@@ -865,6 +865,20 @@ describe('cli: argv 解析', () => {
     assert.ok(!r.stdout.includes('没有本会话认领的任务'), `不该再提醒登记: ${r.stdout}`);
   });
 
+  // 不写死工具名：宿主改名字（Write → edit_file）后判据不能失效；只读工具不能误报
+  test('工具名变了也能认出写操作；只读工具不误报', async () => {
+    await run(['init', '--dir', proj]);
+    const logDir = join(sandbox, 'reg-log4');
+    const w = join(sandbox, 't5.jsonl');
+    const r = join(sandbox, 't6.jsonl');
+    await fs.writeFile(w, JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'edit_file', input: { file_path: 'a.js' } }] } }) + '\n', 'utf8');
+    await fs.writeFile(r, JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'a.js' } }] } }) + '\n', 'utf8');
+    const wOut = await run(['teardown-check', '--payload', JSON.stringify({ session_id: 'ses_W', cwd: proj, transcript_path: w })], { env: { ABS_LOG_DIR: logDir } });
+    assert.ok(wOut.stdout.includes('没有本会话认领的任务'), `写工具应提醒: ${wOut.stdout}`);
+    const rOut = await run(['teardown-check', '--payload', JSON.stringify({ session_id: 'ses_R', cwd: proj, transcript_path: r })], { env: { ABS_LOG_DIR: logDir } });
+    assert.ok(!rOut.stdout.includes('没有本会话认领的任务'), `只读工具不该提醒: ${rOut.stdout}`);
+  });
+
   test('同一会话只提醒一次（独立节流）', async () => {
     await run(['init', '--dir', proj]);
     const logDir = join(sandbox, 'reg-log3');

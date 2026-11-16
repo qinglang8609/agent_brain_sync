@@ -8,6 +8,21 @@ import { appendWrapup } from '../wrapup.js';
 import { readIfExists } from '../text.js';
 import { getUser } from '../userconfig.js';
 import { localStamp, taskSidOf, parseTaskLine } from '../todo.js';
+/** 这段 transcript 里有没有「写文件」的工具调用。
+ *
+ * 不写死工具名清单：宿主一改名字判据就静默失效（本仓踩过 model_changed → model_select）。
+ * 这里只认「工具名里出现写/编辑/补丁类词根」，覆盖 Write/Edit/MultiEdit/NotebookEdit/
+ * apply_patch/str_replace 等常见命名；另有兜底：工具入参里出现 file_path/path/content 也算。
+ * 需要额外名字时用 `ABS_WRITE_TOOLS="Foo,Bar"` 追加，不用改代码。 */
+function looksLikeWrite(txt) {
+  const extra = String(process.env.ABS_WRITE_TOOLS || '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (extra.some((n) => txt.includes(`"${n}"`))) return true;
+  if (/"(?:[\w.]*_)?(?:write|edit|patch|notebook)|(?:write|edit|patch|replace)_?file/i.test(txt)) return true;
+  // 不再按「入参里有 path」兜底：Read/Grep/Glob 也带 path，会把只读会话误判成写
+  // （2026-11-16 实测）。宁可漏报（少提醒一次），不要误报（每次都打扰）。
+  return false;
+}
+
 export async function cmdWrapup({ dir }) {
   const root = await requireBrain(dir || process.cwd());
   return appendWrapup(root);
@@ -30,7 +45,7 @@ export async function cmdTeardownCheck({ dir, payload }) {
     let wroteFiles = false;   // 只有**确认**写过文件才提醒登记（取不到 transcript 就沉默）
     if (transcript) {
       const txt = await readIfExists(transcript);
-      wroteFiles = /"(Write|Edit|MultiEdit|NotebookEdit)"/.test(txt);
+      wroteFiles = looksLikeWrite(txt);
       if (!wroteFiles) return '{}'; // 纯只读会话不打扰
     }
 

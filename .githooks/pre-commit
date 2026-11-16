@@ -51,7 +51,9 @@ echo "✓ pre-commit 通过"
 # ---------------------------------------------------------------------------
 if [ -z "$ABS_NO_TODO" ]; then
   STAGED=$(git diff --cached --name-only)
-  CODE_CHANGED=$(echo "$STAGED" | grep -cE '^(src/|bin/|hooks/)' || true)
+  # 不写死代码目录：只要暂存区里有 `.brain/` 之外的文件，就算「改了代码」
+  # （以前写死 src/bin/hooks，新增目录就漏判——2026-11-16 收口）。
+  CODE_CHANGED=$(echo "$STAGED" | grep -v '^\.brain/' | grep -c . || true)
   TODO_CHANGED=$(echo "$STAGED" | grep -c '^\.brain/todo\.md' || true)
   if [ "$CODE_CHANGED" -gt 0 ] && [ "$TODO_CHANGED" -eq 0 ]; then
     echo ""
