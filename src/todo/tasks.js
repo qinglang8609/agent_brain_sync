@@ -4,7 +4,8 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { brainPath } from '../index.js';
 import { editFile, SKIP } from '../lock.js';
-import { today, localStamp, parseChild, renderChild, STATE_MARK } from './common.js';
+import { today, localStamp, parseChild, renderChild, STATE_MARK, REPORT_MARKERS, sentenceCount } from './common.js';
+import { BREAKPOINT_MAX } from './spec.js';
 import { parseTaskLine, renderTaskLine, taskIdOf, taskTimeOf, shortTitle } from './line.js';
 import { todoTemplate, normalizeTodo, stateOfTaskLine, ensureStateMark } from './structure.js';
 import { TASK_STATES } from './spec.js';
@@ -101,6 +102,7 @@ export async function upsertTask(brainRoot, { title, detail = '', state = null, 
       time: old.time || taskTimeOf(lines[idx]),
       title: shortTitle(title || old.title || old.id),
       author: old.author,
+      authorAt: old.authorAt,
       detail: detail || old.detail,
       sid: sid || old.sid,
     });
@@ -119,13 +121,18 @@ export function idOfTaskLine(line) {
 /** 定位任务行：按**标题**（新格式）/ id（旧格式）匹配；精确优先，其次唯一前缀。
  *  返回 -1 = 没找到或有歧义（调用方按 NO_MATCH 处理，不猜）。 */
 export function findTaskLine(lines, key) {
-  const want = String(key ?? '').replace(/\u200b/g, '').trim();
+  const clean = (x) => String(x ?? '').replace(/[\u200b\u200c\u200d\ufeff]/g, '').trim();
+  const want = clean(key);
   if (!want) return -1;
   const open = (l) => { const t = parseTaskLine(l); return t && t.indent === 0 && t.mark !== 'x'; };
+  // 精确命中三选一：整标题相等 / 标题的首个词相等（`T1 修面板` 用 T1 就能定位）/ 旧格式 id 相等
   const exact = lines.findIndex((l) => {
     if (!open(l)) return false;
     const t = parseTaskLine(l);
-    return (t.title && t.title === want) || (t.id && t.id === want);
+    if (!t) return false;
+    const title = clean(t.title);
+    const head = title.split(' ')[0];
+    return (title && title === want) || head === want || clean(t.id) === want;
   });
   if (exact !== -1) return exact;
   // 其次：前缀唯一；再退一步：标题里包含它且唯一（按标题定位后，这点很重要）
@@ -134,11 +141,16 @@ export function findTaskLine(lines, key) {
     lines.forEach((l, i) => { if (open(l) && test(parseTaskLine(l))) hits.push(i); });
     return hits;
   };
-  const byPrefix = collect((t) => (t.title && t.title.startsWith(want)) || (t.id && t.id.startsWith(want)));
+  // 前缀匹配要求「词边界」：`TASK-1` 不能命中 `TASK-10 …`（空格或标题结束才算）
+  const wordPrefix = (text) => {
+    text = clean(text);
+    if (!text || !text.startsWith(want)) return false;
+    const next = text.charAt(want.length);
+    return next === '' || next === ' ';
+  };
+  const byPrefix = collect((t) => wordPrefix(t.title) || wordPrefix(t.id));
   if (byPrefix.length === 1) return byPrefix[0];
-  if (byPrefix.length > 1) return -1;
-  const byContains = collect((t) => (t.title && t.title.includes(want)) || (t.id && t.id.includes(want)));
-  return byContains.length === 1 ? byContains[0] : -1;
+  return -1;   // 前缀命中多条 = 歧义，交给调用方报候选；不做子串匹配（TASK-1 不该命中 TASK-10）
 }
 
 /** 子项行解析：从 `idx+1` 起扫连续的缩进行（子项），返回它们的下标。
@@ -161,6 +173,22 @@ function childRange(lines, idx) {
  * `abs todo note <id> "…"` **追加**一条（不再覆盖）—— 用户原话「不限，写多少算多少」。
  * 仍保留幂等：与最后一条完全同文就不重复追加（防手滑重复调）。 */
 export async function setBreakpoint(brainRoot, { id, text }) {
+  // 子项内容闸门（2026-10-05 定，2026-11-16 收紧到入口）：子项是一句话，
+  // 报告/清单/超长一律打回 —— 新格式虽然能拆成「标题 + 详情」，但一条子项写 300 字
+  // 仍然是把 todo 当笔记本（历史教训：真库被塞进 10 行实施报告而闸门报 0 问题）。
+  const raw = String(text ?? '').trim();
+  if (raw.length > BREAKPOINT_MAX) {
+    throw new Error(
+      `✗ 子项太长（${raw.length} 字 > ${BREAKPOINT_MAX}）—— 子项只写「改到哪个文件哪一步」。\n` +
+      `  写不下的内容请分流：实施报告/验证数据 → abs log；经验与坑 → abs note；长设计 → sources/ 页。`,
+    );
+  }
+  if (REPORT_MARKERS.some((re) => re.test(raw)) || sentenceCount(raw) > 2) {
+    throw new Error(
+      `✗ 子项里像是塞了报告/清单 —— 子项是一句话（最多两句）。\n` +
+      `  todo 只能加 todo：要做的拆成任务，做完的写 abs log，经验写 abs note。`,
+    );
+  }
   const p = await ensureTodo(brainRoot);
   let added = false;
   let kidLineText = '';
@@ -218,7 +246,7 @@ export async function setBreakpointDone(brainRoot, { id, n, done = true }) {
       lines[target] = renderTaskLine({
         indent: ' '.repeat(c0.indent),
         mark: done ? 'x' : (STATE_MARK[child.state] ?? ' '),
-        time: c0.time, title: c0.title, author: c0.author, detail: c0.detail, sid: c0.sid,
+        time: c0.time, title: c0.title || c0.detail, author: c0.author, detail: c0.title ? c0.detail : '', sid: c0.sid,
       });
     }
     return { text: lines.join('\n'), ok: true };
@@ -255,7 +283,7 @@ export function setChildStateMark(text, id, n, state) {
     lines[target] = renderTaskLine({
       indent: ' '.repeat(c0.indent),
       mark: STATE_MARK[state] ?? ' ',
-      time: c0.time, title: c0.title, author: c0.author, detail: c0.detail, sid: c0.sid,
+      time: c0.time, title: c0.title || c0.detail, author: c0.author, detail: c0.title ? c0.detail : '', sid: c0.sid,
     });
   }
   return { text: lines.join('\n'), changed: [`${id} 第 ${ord} 条子项状态 → ${state}`] };

@@ -2,7 +2,7 @@
 
 import { H1_TO_FILE, RETIRED_SECTIONS } from './spec.js';
 import { sortTodoLines } from './done.js';
-import { parseTaskLine } from './line.js';
+import { parseTaskLine, renderTaskLine, shortTitle, taskTimeOf } from './line.js';
 import { checkFileShape, violationSignatures, assertNoStrayBlank, assertTodoContent, orphanChildIssues } from './validate.js';
 import { trimBlank, sigOfLine, isPlaceholder, migrateLegacyChild, markOf, stateOfMark, STATE_MARK, TASK_STATES } from './common.js';
 
@@ -366,13 +366,39 @@ export function normalizeTodo(text) {
     if (LEGACY_ARCHIVE_LINK_RE.test(t)) continue;        // 旧归档链接行
     if (!t) continue;                                    // 空行（闸门本来也不许）
     if (isPlaceholder(l)) continue;                      // 占位任务行
-    // ★ 2026-11-16 起：normalizeTodo **不改写任务行格式**（行格式由迁移脚本一次性落地，
-    //   代码只负责迁移「旧分区标题 / 旧 ↳ 子项 / 旧归档链接行」这些结构性残留）。
-    //   唯一例外：`## Blocked` 下的未完成任务落成 `[-]` 滞留中。
+    // 老格式行 → 新格式（2026-11-16 用户定：「让他自动改格式」）：
+    //   `[状态] id [[作者]] — 描述 — 结语 【落地】 (认领 日期 sid)`
+    //     → `[时间] [短标题] [[作者]] 详情 [会话id]`
+    // 短标题取第一句（≤24 字），**剩下的全部进详情**；时间取认领/完成日期；
+    // 已在新格式的行（parseTaskLine 不返回 legacy）原样不动 —— 幂等。
     const p0 = parseTaskLine(l);
     if (!p0) { kept.push(l); continue; }
     const mark0 = legacyBlocked && p0.mark === ' ' ? '-' : p0.mark;
-    kept.push(legacyBlocked && mark0 !== p0.mark ? l.replace(/^(\s*-\s*)\[ \]/, `$1[${mark0}]`) : l);
+    if (!p0.legacy) {
+      kept.push(legacyBlocked && mark0 !== p0.mark ? l.replace(/^(\s*-\s*)\[ \]/, `$1[${mark0}]`) : l);
+      continue;
+    }
+    // 旧格式的「描述 — 结语」先按破折号切开：第一段当标题来源，其余全是详情
+    const descParts = String(p0.detail || '').split(' — ');
+    const head0 = descParts[0].trim();
+    const st0 = shortTitle(head0);
+    const rest0 = [
+      head0.length > st0.length ? head0.slice(st0.length).replace(/^[，,、。；;：:—\-\s]+/, '').trim() : '',
+      ...descParts.slice(1).map((x) => x.trim()),
+    ].filter(Boolean).join(' — ');
+    if (p0.indent > 0) {
+      kept.push(renderTaskLine({ indent: ' '.repeat(p0.indent), mark: mark0, title: st0 || head0, detail: rest0 }));
+      continue;
+    }
+    kept.push(renderTaskLine({
+      mark: mark0,
+      time: p0.time || taskTimeOf(l),
+      title: [p0.id, st0 || head0].filter(Boolean).join(' '),
+      author: p0.author,
+      authorAt: p0.authorAt,
+      detail: rest0,
+      sid: p0.sid,
+    }));
   }
   const body = sortTodoLines(kept);
   return ['# 📋 Todo Board', '', ...body].join('\n').replace(/\n+$/, '') + '\n';

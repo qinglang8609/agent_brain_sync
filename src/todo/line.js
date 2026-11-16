@@ -90,6 +90,7 @@ export function parseTaskLine(line) {
   // 作者：`[[姓名]]` 或 `@姓名`
   const au = rest.match(/^(?:\[\[([^[\]]+)\]\]|@([\w\u4e00-\u9fff.-]+))\s*/);
   const author = au ? (au[1] || au[2]) : '';
+  const authorAt = !!(au && au[2] && !au[1]);   // 历史行的裸 `@name` 形态，原样保留
   if (au) rest = rest.slice(au[0].length);
 
   // 末尾：会话 id 是行尾最后一个方括号（详情里可以有别的方括号，所以从右取）
@@ -102,7 +103,7 @@ export function parseTaskLine(line) {
     // 不是新格式 → 旧格式兜底（迁移期仍要能列出/定位）
     return parseLegacyTask(mark, indent, m[3], line);
   }
-  return { indent, mark, title, time, author, detail: rest.trim(), sid, tags: [], newFormat: true };
+  return { indent, mark, title, time, author, authorAt, detail: rest.trim(), sid, tags: [], newFormat: true };
 }
 
 /** 旧行的日期：`(认领 日期 [sid])` 优先，否则 `(完成 日期 [sid])`。纯正则，不走 parseTaskLine。 */
@@ -118,6 +119,9 @@ function legacyTimeOf(line) {
 
 /** 旧格式兜底：`[状态] id [[作者]] — 描述 — 结语 【落地】 (认领 日期 sid)`。 */
 function parseLegacyTask(mark, indent, raw, fullLine) {
+  // 旧写法的文本状态前缀就是状态本身：`[滞留中] A — …` → 记号 `[-]`
+  const sm = String(raw || '').match(/^\[(进行中|讨论中|滞留中|搁置)\]/);
+  const stateMark = sm ? ({ 进行中: ' ', 讨论中: '+', 滞留中: '-', 搁置: '~' }[sm[1]]) : null;
   const rest = String(raw || '')
     .replace(/^\[(进行中|讨论中|滞留中|搁置)\]\s*/, '')
     .replace(/【(落地|否决|仅方案)】/g, '')
@@ -128,18 +132,18 @@ function parseLegacyTask(mark, indent, raw, fullLine) {
   const hasAuthor = !!(t && (t[2] || t[3]));
   const id = t && (/^[\w.-]{1,24}$/.test(first) || hasAuthor) ? first : '';
   const desc = (t && id ? t[4] : rest).trim().replace(/^[—:：-]\s*/, '').trim();
-  return { indent, mark, id, title: '', time: legacyTimeOf(fullLine || raw), author: t ? (t[2] || t[3] || '') : '', detail: desc, sid: taskSidOf(raw), tags: [], legacy: true };
+  return { indent, mark: stateMark ?? mark, id, title: '', time: legacyTimeOf(fullLine || raw), author: t ? (t[2] || t[3] || '') : '', authorAt: !!(t && t[3] && !t[2]), detail: desc, sid: taskSidOf(raw), tags: [], legacy: true };
 }
 
 /** 生成任务行：`- [记号] [时间] [短标题] [[作者]] 详情 [会话id]`。 */
-export function renderTaskLine({ indent = '', mark = ' ', title = '', time = '', author = '', detail = '', sid = '' } = {}) {
+export function renderTaskLine({ indent = '', mark = ' ', title = '', time = '', author = '', detail = '', sid = '', authorAt = false } = {}) {
   // 详情结尾若是方括号段，会被解析成会话 id → 写盘前换成中文括号（保内容、不破坏结构）
   const det = String(detail || '').replace(/\[([^\[\]]*)\]\s*$/, '〔$1〕').trim();
   const pad = typeof indent === 'number' ? ' '.repeat(indent) : String(indent || '');
   const parts = [`${pad}- [${mark}]`];
   if (time) parts.push(`[${time}]`);
   parts.push(`[${String(title).trim()}]`);
-  if (author) parts.push(`[[${author}]]`);
+  if (author) parts.push(authorAt ? `@${author}` : `[[${author}]]`);
   if (det) parts.push(det);
   if (sid) parts.push(`[${sid}]`);
   return parts.join(' ');

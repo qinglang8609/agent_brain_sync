@@ -178,7 +178,8 @@ export function parseChild(l) {
   // 新格式子项：`  - [记号] [时间] [短标题] [[作者]] 详情 [会话id]`
   // 交给 parseTaskLine 解析（此处不能直接 import，line.js 依赖本文件 → 用动态特征判断）
   const rest = m[3].trim();
-  const newFmt = rest.match(/^(?:\[(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]\s*)?\[([^\]]+)\]/);
+  const newFmtRaw = rest.match(/^(?:\[(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]\s*)?\[([^\]]+)\]/);
+  const newFmt = newFmtRaw && !['进行中', '讨论中', '滞留中', '搁置'].includes(newFmtRaw[2].trim()) ? newFmtRaw : null;
   if (newFmt) {
     const body = rest.replace(/^(?:\[[^\]]*\]\s*)?\[[^\]]+\]\s*/, '')
       .replace(/^\[\[[^\]]+\]\]\s*/, '')

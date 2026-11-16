@@ -178,8 +178,9 @@ export function extractBlocks(todoText) {
   let curId = null;
   for (const line of String(todoText || '').split('\n')) {
     // 任务行（未完成）：`- [记号] [id 标题] [时间] [[作者]] [会话]`（记号 [ ] [-] [+] [~] 都算未完成）
-    const t = line.match(/^\s*-\s*\[[ \-+~]\]\s*(?:\[\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?\]\s*)?\[([^\s\]]+)/);
-    if (t) { curId = t[1]; continue; }
+    // 跳过可选的时间段与**旧状态前缀**（`[进行中]` 这类不是 id）
+    const t = line.match(/^\s*-\s*\[[ \-+~]\]\s*(?:\[\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?\]\s*)?(?:\[(?:进行中|讨论中|滞留中|搁置)\]\s*)?(?:\[([^\s\]]+)\]|([^\s[]+))/);
+    if (t) { curId = t[1] || t[2]; continue; }
     // 完成行：不再跟踪
     if (/^\s*-\s*\[x\]/.test(line)) { curId = null; continue; }
     if (!curId) continue;

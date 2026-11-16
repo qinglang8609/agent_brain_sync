@@ -87,7 +87,9 @@ export async function cmdTeardownCheck({ dir, payload }) {
           if (!pushedBefore) {
             await fs.mkdir(dirname(regMark), { recursive: true });
             await fs.writeFile(regMark, stamp, 'utf8').catch(() => {});
+            const who = await getUser().catch(() => null);
             const why = [
+              ...(who ? [] : ['0) 本机尚未设置使用者姓名 —— 先跑 abs config set user <你的名字>，否则 todo/log/note 都会被拦下；']),
               '[abs] 本会话改过文件，但看板上没有本会话认领的任务。',
               '这条只是提醒，不是命令：值得留档就登记，无关紧要就忽略。',
               '登记：abs todo add "<短标题>" --note "详情" --session ' + sidReg,

@@ -5,7 +5,7 @@ import { promises as fs } from 'node:fs';
 import { brainPath, requireBrain } from '../index.js';
 import { editFile, SKIP } from '../lock.js';
 import { requireUser } from '../userconfig.js';
-import { localStamp, sortTodoLines, shortTitle, upsertTask, findTaskLine, setBreakpoint, setBreakpointDone, setMemo, readMemo, setStateMark, setChildStateMark, TASK_STATES, idOfTaskLine, parseTaskLine, renderTaskLine, taskSidOf, STATE_MARK, parseChild } from '../todo.js';
+import { localStamp, sortTodoLines, shortTitle, upsertTask, findTaskLine, setBreakpoint, setBreakpointDone, setMemo, readMemo, setStateMark, setChildStateMark, TASK_STATES, parseTaskLine, renderTaskLine, taskSidOf, STATE_MARK, parseChild } from '../todo.js';
 import { ensurePersonPage, cmdLog } from '../note.js';
 import { readTodo } from './tasks.js';
 
@@ -47,10 +47,10 @@ async function candidatesHint(root, key) {
 export async function cmdTask({ dir, action, id, section, note, as, session, n }) {
   // ★ id 校验：宁可明确拒掉，也不替人猜哪个词算 id、不把怪 id 写出图谱外。
   const idStr = id === undefined || id === null ? '' : String(id);
-  // 短标题可以含空格（它就是一句话），只挡换行/控制字符
-  if (idStr && /[\n\r\0]/.test(idStr)) {
+  // 短标题可以含空格（它就是一句话），但会当 memo 文件名用 —— 路径分隔符与 `..` 必须拒
+  if (idStr && (/[\n\r\0]/.test(idStr) || /[\\/]/.test(idStr) || idStr.includes('..') || /[\[\]]/.test(idStr))) {
     throw new Error(
-      `✗ 短标题不能含换行（收到 "${idStr}"）。`,
+      `✗ 短标题不能含换行、斜杠、方括号或 ..（收到 "${idStr}"）—— 方括号会破坏行结构，斜杠会被当路径。`,
     );
   }
   const root = await requireBrain(dir || process.cwd());
@@ -117,12 +117,10 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
       let prevSid = '';
       await editFile(brainPath(root, 'todo.md'), (cur) => {
         if (cur === null) return SKIP;
-        for (const l of cur.split('\n')) {
-          if (idOfTaskLine(l) === String(id).replace(/[\u200b\u200c\u200d\ufeff]/g, '')) {
-            prevSid = taskSidOf(l);
-            break;
-          }
-        }
+        // 按标题定位（新格式没有 id 字段）；取该行的会话标签
+        const ls = cur.split('\n');
+        const at = findTaskLine(ls, String(id));
+        if (at !== -1) prevSid = taskSidOf(ls[at]);
         return SKIP;
       });
       if (prevSid && prevSid !== sid) {
@@ -167,7 +165,7 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
       const at = findTaskLine(lines, want);
       if (at !== -1) {
         const p0 = parseTaskLine(lines[at]);
-        lines[at] = renderTaskLine({ indent: ' '.repeat(p0.indent), mark: p0.mark, time: p0.time, title: newId, author: p0.author, detail: p0.detail, sid: p0.sid });
+        lines[at] = renderTaskLine({ indent: ' '.repeat(p0.indent), mark: p0.mark, time: p0.time, title: newId, author: p0.author, authorAt: p0.authorAt, detail: p0.detail, sid: p0.sid });
         done = true;
       }
       return done ? { text: lines.join('\n') } : SKIP;
@@ -313,7 +311,7 @@ async function markDone(file, id) {
     }
     const p = parseTaskLine(lines[at]);
     // 只翻记号：时间、作者、会话 id 全部原样保留（没有「完成时间」这个字段了）。
-    lines[at] = renderTaskLine({ indent: ' '.repeat(p.indent), mark: 'x', title: p.title, time: p.time, author: p.author, detail: p.detail, sid: p.sid });
+    lines[at] = renderTaskLine({ indent: ' '.repeat(p.indent), mark: 'x', title: p.title, time: p.time, author: p.author, authorAt: p.authorAt, detail: p.detail, sid: p.sid });
     return { text: sortTodoLines(lines.filter((l) => l.trim())).join('\n') + '\n' };
   });
   // 返回 { ok, msg } 而不是纯文本：成功与否由调用方据此判断，不去猜文案。
