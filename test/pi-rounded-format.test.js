@@ -76,7 +76,8 @@ describe('圆角输入框 格式化', () => {
 
   it('buildStatus：缺字段就省掉那一段，不留空占位', () => {
     assert.equal(buildStatus(undefined, 'gpt-5'), 'gpt-5');
-    assert.equal(buildStatus({ percent: null, contextWindow: 1048576 }, 'gpt-5'), '/1.0M gpt-5');
+    // 2026-11-16 用户改口：有 contextWindow 就必须写出占用，未知按 0% 显示（原来是整段省掉）。
+    assert.equal(buildStatus({ percent: null, contextWindow: 1048576 }, 'gpt-5'), '0%/1.0M gpt-5');
     assert.equal(buildStatus({ percent: 12.3, contextWindow: 0 }, ''), '12.3%');
     assert.equal(buildStatus(undefined, ''), '');
   });
@@ -234,5 +235,19 @@ describe('圆角输入框：压缩后刷新上下文占用', () => {
     const evLine = src.split('\n').find((l) => l.includes("'turn_end', 'message_end', 'tool_execution_end'")) || '';
     assert.ok(evLine.includes('session_compact'), `刷新事件里应含 session_compact：${evLine.trim()}`);
     assert.ok(evLine.includes('session_compact_failed'), `压缩失败也要刷新：${evLine.trim()}`);
+  });
+});
+
+// ===== 占用为 0 或未知时写 0%，不许留空 =====
+// 2026-11-16 用户报：压缩后右下角成「── /1.0M DeepSeek-v4.1-flash · MX」，占用段整个消失。
+// 原因：pi 压缩后暂无新 assistant 用量时返回 { tokens:null, contextWindow, percent:null }。
+describe('buildStatus — 0 占用也要写出来', () => {
+  it('percent 为 null（压缩后暂缺用量）→ 0%/1.0M …', () => {
+    const got = strip(buildStatus({ tokens: null, contextWindow: 1_000_000, percent: null }, 'deepseek-v4.1-flash', 'max'));
+    assert.ok(/^0%\/1\.0M /.test(got), `应写 0%: ${got}`);
+  });
+  it('percent 为 0 → 0% 而不是 0.0%', () => {
+    const got = strip(buildStatus({ tokens: 0, contextWindow: 1_000_000, percent: 0 }, 'x'));
+    assert.ok(/^0%\/1\.0M/.test(got), `应是 0%: ${got}`);
   });
 });

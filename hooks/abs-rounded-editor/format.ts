@@ -44,7 +44,14 @@ export function levelLetter(level: string | null | undefined): string {
  * 第三段是推理档位的一个大写字母（见 LEVEL_LETTER）；模型不支持推理时不显。 */
 export function buildStatus(usage: any, modelId: string, level = ''): string {
   const parts: string[] = []
-  if (usage && usage.percent != null) parts.push(`${usage.percent.toFixed(1)}%`)
+  // 占用为 0 / 未知都写 `0%`，**不能留空**（2026-11-16 用户：压缩后右下角成了「── /1.0M 模型名」，
+  // 看不到占用）。pi 的 getContextUsage() 在「压缩后还没有新的 assistant 用量」时返回
+  // { tokens: null, contextWindow, percent: null } —— 这时按 0 显示。
+  if (usage && usage.percent != null) {
+    parts.push(usage.percent === 0 ? '0%' : `${usage.percent.toFixed(1)}%`)
+  } else if (usage && usage.contextWindow) {
+    parts.push('0%')
+  }
   if (usage && usage.contextWindow) parts.push(`/${shortTokens(usage.contextWindow)}`)
   const model = shortenModel(modelId)
   const head = [parts.join(''), model].filter(Boolean).join(' ')
