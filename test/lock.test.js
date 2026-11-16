@@ -70,7 +70,7 @@ describe('并发写保护', () => {
     assert.equal(tmps.length, 0, `不该留 tmp: ${tmps}`);
     const text = await fs.readFile(join(brain, 'todo.md'), 'utf8');
     assert.ok(text.includes('ATOMIC-1'), '内容应在');
-    assert.ok(text.includes('## Done'), '应是完整结构不是半截');
+    assert.ok(text.startsWith('# 📋 Todo Board'), '应是完整结构不是半截');
   });
 
   test('死进程的残锁会被摘掉（不等 60s）', async () => {

@@ -18,7 +18,7 @@ abs load
 ```
 
 Returns: unfinished todos + usage + last 3 log lines. If the top shows `⏳ 上会话滞留`,
-reconcile first — finished items get `abs todo done <id> --as 落地|否决|仅方案 "结语"`,
+reconcile first — finished items get `abs todo done <id>`,
 unfinished ones get `abs todo note <id> --note "where it stopped"`.
 
 **Never `cat .brain/` end-to-end.** Search by topic; `abs resolve <page>` then read that one page.
@@ -60,18 +60,22 @@ Then run `abs lint` (dead links, over-size, NO-TAIL).
 ```bash
 abs todo start <id> --note "做什么"      # register (note required)
 abs todo note <id> --note "到哪一步"      # append child (one sentence)
-abs todo done <id> --as 落地|否决|仅方案 "结语"
-abs todo state <id> --note 进行中|讨论中|滞留中|搁置   # 任务本身
+abs todo done <id>                    # flip the marker only
+abs todo state <id> --note 滞留中|讨论中|搁置|进行中   # 任务本身
 abs todo state <id> --note 滞留中 --n 2              # 第 2 条子项（子项也带四态）
 abs todo remove <id>                     # delete incl. children, no undo
+abs todo restore [--dry-run]             # one-off: pull tasks archived into sessions/ back onto the board
 ```
 
 - Register before touching files. A rough id is fine (`rename` later).
 - `done` immediately when a unit of work finishes; do not batch at session end.
 - One `[进行中]` at a time. `搁置` = parked on the board; `remove` = never existed.
+- Board layout (since 2026-11-16): one flat list sorted newest-first, no `## Todo`/`## Done`
+  sections. State lives in the checkbox: `[-]` 滞留中, `[+]` 讨论中, `[~]` 搁置,
+  `[ ]` 进行中, `[x]` done. Children use the same markers. Finished rows stay on the board; nothing is archived away.
 - Every `done` gets one `abs log "what got done + how it was verified"`. The board is
-  not a substitute — finished rows leave it at archive time, so `log.md` is the only
-  lasting record. "The board already tracks it" is exactly the reasoning that leaves a
+  not a substitute — it folds finished rows into a count and is easy to lose track of,
+  so `log.md` is the only lasting record. "The board already tracks it" is exactly the reasoning that leaves a
   project with 28 finished tasks and 0 log lines.
 - `memo` for extra notes; it does not occupy the board.
 

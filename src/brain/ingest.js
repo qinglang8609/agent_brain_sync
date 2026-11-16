@@ -30,7 +30,6 @@ import { createHash } from 'node:crypto';
 import { requireBrain, brainPath } from '../index.js';
 import { requireUser, atTag } from '../userconfig.js';
 import { today } from '../todo.js';
-import { registerInIndex } from '../note.js';
 import { clip } from '../text.js';
 import { editFile, SKIP } from '../lock.js';
 import { DIR_LAYER } from './layers.js';
@@ -185,7 +184,7 @@ export function renderDayPage({ ids, who, section }) {
     '',
     `# ${day} 记录`,
     '',
-    '> 本页 = 该日的一切：会话摘要（一场一段 `## 会话 <id8>`）+ 从 `todo.md` Done 区迁出的任务明细。',
+    '> 本页 = 该日的会话摘要（一场一段 `## 会话 <id8>`）。任务明细只在 `todo.md`，不再迁到这里。',
     '',
     section.replace(/\s*$/, ''),
     '',
@@ -403,11 +402,11 @@ export async function cmdIngest({ dir, file, force = false, mark = false, last =
   // 它不会干扰「填没填」的判定 —— load 的 digestFilled 与 lint 的 hasTail
   // 都把占位注释当空内容（2026-11-05 审查：原注释声称「去掉注释」但代码没做，
   // 注释与实现不符已改正）。写盘由 editFile 锁内完成，并发读不会读到半写文件。
-  await registerInIndex(root, 'Sessions', slug, `会话：${headlineOf(digest) || ids.day}`);
+  // 不往 index 登记（2026-11-16 用户定）：index 的 `## Sessions` 段已废。
+  // 会话页清单只是把目录当第二张表，多一处要同步维护。找某天的页用 abs summon / abs ingest --list。
 
   // 不写 log.md（2026-11-05，沿用 abs concept 的既有判据）：
-  // 「并入了一场会话摘要」是**命令的副作用**，不是工作成果 —— 零信息量，
-  // 而「这一天页存在」已由 registerInIndex 落在 index 的 Sessions 区。
+  // 「并入了一场会话摘要」是**命令的副作用**，不是工作成果 —— 零信息量。
   // 更要紧的是：--auto 在每次关会话时跑，一天开 10 次就刷 10 行流水，
   // 靠事后清理治不了（abs concept 当初正是因为「建 10 页 = 10 行噪声」才删掉这次调用的）。
 

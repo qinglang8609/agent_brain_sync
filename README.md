@@ -114,7 +114,7 @@ abs todo note    TASK-1 --note "改到 X 文件 L40"   # 追加一条子项（�
 abs todo child-done   TASK-1 [--n 2]             # 勾子项（n=第几条，缺省最后一条）
 abs todo child-undone TASK-1 [--n 2]             # 取消勾（勾错了退回）
 abs todo memo    TASK-1 "随手记一段（可多句，不上看板）"   # 任务笔记 → sessions/；无参=查看
-abs todo state   TASK-1 --note "进行中|讨论中|滞留中|搁置"      # 改行首状态标记
+abs todo state   TASK-1 --note "滞留中|讨论中|搁置|进行中"      # 改状态（记号写在复选框里）
 abs todo state   TASK-1 --note "滞留中" --n 2                 # 改第 2 条子项的状态（子项也能标四态）
 abs todo done    TASK-1
 
@@ -132,13 +132,18 @@ abs rule                                  # 列出 index.md 的 ## Rules 硬规�
 abs rule add "一句话"                     # 追加一条硬规则（违反会丢数据/静默失效级的）
 abs config show                           # 查看使用者姓名（标记作者用）
 abs config set user <名字>                # 设置作者名 → ~/.abs/config.json
-abs todo archive                          # 归档 Done 区旧日期组（默认留近 3 天）
+abs todo restore [--dry-run]              # 把历史归档进 sessions/ 的任务全量拿回看板（一次性）
 abs update                                # 升级到最新版并刷新四宿主 hook/skill
 ```
 
 > `abs todo start` 与 `abs todo add` 等价（都登记任务）。
-> **子项就是标准 Markdown 嵌套列表**：任务下缩进 2 空格的 `- [ ] …`，可多条、可各自勾选；
-> 面板按缩进画树线，归档时原样保留缩进。
+> **看板结构（2026-11-16 起）**：`todo.md` 只有 H1 + 一条列表，不分 `## Todo`/`## Done`，
+> 全部按时间倒序（未完成用认领日期、已完成用完成日期），最新的在最上面。
+> 状态写在复选框里：`[-]` 滞留中 / `[+]` 讨论中 / `[~]` 搁置 / `[ ]` 进行中 / `[x]` 已完成。
+> 已完成的行全部留在看板上，不再归档压缩；旧分区、旧日期分组、旧 `- [[log-日期]] 完成任务 N 条`
+> 会在 `abs load` 或任意写操作时自动归一。
+> **子项就是标准 Markdown 嵌套列表**：任务下缩进 2 空格的同形行，可多条、可各自勾选；
+> 面板按缩进画树线。
 > 旧版的 `↳ 断点:` 写法已在 1.20.0 移除；存量会在 `abs load` 或任意写操作时
 > 自动迁移成标准子项（内容一条不丢），不需要手工改。
 > 任务 id 不能含空格（用连字符），含空格会被明确拒掉。
@@ -206,7 +211,7 @@ agent_brain_sync/
 ├── src/index.js    图谱定位（只认当前目录的 .brain/）+ 全局技术日志目录
 ├── src/lock.js     并发写保护（原子锁 + 排队 + SKIP）
 ├── src/todo.js     todo 对外入口（re-export，实现见 src/todo/）
-├── src/todo/       todo.md 分区读写 + 格式闸门（common/spec/structure/validate/archive/tasks）
+├── src/todo/       看板读写 + 格式闸门（common/spec/structure/validate/done/restore/tasks）
 ├── src/store.js    CLI 命令实现
 ├── src/lint.js     图谱体检（死链/孤岛/超尺寸/堆积；同类问题折叠计数）
 ├── src/query.js    检索知识页（多词 OR）

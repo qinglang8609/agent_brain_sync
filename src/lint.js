@@ -4,8 +4,8 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
 import { readRules, idOfPage, statusOfPage, supersededByOf, clip, RULE_BODY_MAX } from './store.js';
-import { doneKindOf, doneDateOf, checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo.js';
-import { isAllowedTodoLine, todoSectionOf, parseChild, migrateLegacyChild } from './todo/common.js';
+import { checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo.js';
+import { isAllowedTodoLine, parseChild, migrateLegacyChild } from './todo/common.js';
 
 // ---------- 图谱遍历 ----------
 
@@ -156,8 +156,12 @@ async function checkRootFiles(vault) {
       continue; // 文件尚未建 = 无内容，不算问题
     }
     const lines = body.split('\n');
-    if (lines.length > maxLines) {
-      issues.push(`ROOT-OVER-SIZE: ${BRAIN_DIR}/${file} (${lines.length}L > ${maxLines}L; ${hint})`);
+    // todo.md 的体积约束只看 Todo 区：Done 区不再压缩（2026-11-16），注定越来越长，
+    // 拿总行数卡它等于每天报一条无解的违规。
+    // 已完成的行不计数：2026-11-16 起全量留在 todo.md（不归档），拿总行数卡它无解。
+    const counted = file === 'todo.md' ? lines.filter((l) => !/^- \[x\]/.test(l)) : lines;
+    if (counted.length > maxLines) {
+      issues.push(`ROOT-OVER-SIZE: ${BRAIN_DIR}/${file} (${counted.length}L > ${maxLines}L; ${hint})`);
     }
     // 标签白名单 + 条目形状（2026-10-05）：index/log/todo 的标签写死、
     // 每类内容的行格式固定。与写入闸门同源（checkFileShape）—— lint 抓存量。
@@ -186,15 +190,20 @@ async function checkRootFiles(vault) {
         }
         continue;
       }
-      // 裸文本行（与闸门 isAllowedTodoLine 同源，2026-10-11）：Todo 区只能有任务行/断点/空行/标题。
-      if (todoSectionOf(lines, i) === 'Todo' && !isAllowedTodoLine(l)) {
+      // 裸文本行（与闸门 isAllowedTodoLine 同源，2026-10-11）：todo.md 只能有任务行/子项/标题。
+      // 2026-11-16：todo.md 不再分区（`## Todo` 没了），所以判据从「在 Todo 区」改成「全文件」——
+      // 保留按区判会因 todoSectionOf 恒返回 null 而**永不触发**（审查时发现的静默失效）。
+      if (!isAllowedTodoLine(l)) {
         issues.push(
-          `TODO-STRAY-PROSE: ${BRAIN_DIR}/${file}:${i + 1} (Todo 区里的裸文本，不是任务行也不是子项；` +
+          `TODO-STRAY-PROSE: ${BRAIN_DIR}/${file}:${i + 1} (todo.md 里的裸文本，不是任务行也不是子项；` +
           `总结/报告/清单请分流：流水 → abs log，经验 → abs note，长设计 → sources/)`,
         );
       }
-      // 格式闸（2026-11-08 用户定）：Todo 区任务行必须有 ` — 描述`，只有 id 打回。
-      if (todoSectionOf(lines, i) === 'Todo' && /^- \[ \]/.test(l) && !l.includes(' — ')) {
+      // 格式闸（2026-11-08 用户定）：任务行不能只有 id，要有描述。
+      // 判据用「剥掉 id/作者/认领段后还剩多少字」，而不是「有没有 ` — `」——
+      // 后者会把老行 `- [-] sites.php 剔除域名日志留档：比对…`（用冒号代替破折号）
+      // 误报成没描述（2026-11-16 审查实测：faxuehui/zj_shop 各一条）。
+      if (/^- \[[ \-+~]\]/.test(l) && taskBodyOf(l).length < 4) {
         issues.push(
           `TODO-NO-DESC: ${BRAIN_DIR}/${file}:${i + 1} (任务行没有描述；` +
           `只有 id 查不到、接不上 —— abs todo start <id> --note "一句话" 补上，或 state 搁置/删除)`,
@@ -256,7 +265,11 @@ function checkPage(pg, names, linkedNames, inbound) {
   if (!isTerminal && !pg.links.length && !linkedNames.has(pg.slug)) {
     issues.push(`ORPHAN-PAGE: ${pg.rel} (no links out, no links in)`);
   }
-  if (['concepts', 'entities', 'syntheses'].includes(pg.dir) && !(inbound.get(pg.slug) || 0)) {
+  // 人页（frontmatter tags 含 person）豁免 NO-INBOUND：它们是 `[[作者]]` 标记的落点，
+  // 链入来自 todo.md / log.md 的作者标记（根文件不算页级链入），任何清理都会让它们
+  // 显示成孤岛。2026-11-16 实测：删掉 sessions/ 后 Docker 的 entities/fnos.md 立刻变孤岛。
+  const isPersonPage = /\[?\bperson\b\]?/.test(pg.frontmatter || '');
+  if (['concepts', 'entities', 'syntheses'].includes(pg.dir) && !isPersonPage && !(inbound.get(pg.slug) || 0)) {
     issues.push(`NO-INBOUND: ${pg.rel} (无人链接到本页；在相关页的 ## 关联连接 挂一条 [[${pg.slug}]]）`);
   }
   if (/^#{2,6}[^\n]*知识冲突/m.test(pg.body) && /status: draft/.test(pg.frontmatter)) {
@@ -293,7 +306,10 @@ function checkPage(pg, names, linkedNames, inbound) {
   // 而 index 的契约是「可扫描的图谱导航」。与 sources/ 同理豁免（都是「暂存待处理」）。
   // 判据用 tag 而非文件名：文件名规则将来可能调，tag 是语义标记。
   const isTaskMemo = pg.dir === 'sessions' && /task-memo/.test(pg.frontmatter);
-  if (pg.dir !== 'sources' && !isTaskMemo && !pg.indexed) {
+  // 2026-11-16：sessions/ 的页也不再要求登记 index —— index 的 `## Sessions` 段已废
+  // （会话页清单不再维护），再要求「每个 log-日期 都要在 index 里有行」就自相矛盾。
+  const isSessionPage = pg.dir === 'sessions';
+  if (pg.dir !== 'sources' && !isTaskMemo && !isSessionPage && !pg.indexed) {
     issues.push(`INDEX-MISSING: ${pg.rel} not listed as [[${pg.slug}]] in index.md`);
   }
   return issues;
@@ -411,37 +427,12 @@ async function checkFiles(vault, pages, indexLinks) {
     if (!names.has(ln)) issues.push(`INDEX-DEAD-LINK: index.md -> [[${ln}]] (该页不存在, 删页后忘清 index?)`);
   }
 
-  // Done 区堆积
-  const todoTxt = await fs.readFile(join(vault, 'todo.md'), 'utf8').catch(() => '');
-  const di = todoTxt.split('\n').findIndex((l) => l.startsWith('## Done'));
-  if (di !== -1) {
-    const doneLines = todoTxt.split('\n').slice(di + 1).filter((l) => l.trim()).length;
-    const DONE_MAX = 60;
-    if (doneLines > DONE_MAX) {
-      issues.push(`DONE-PILED-UP: Done 区 ${doneLines} 行 > ${DONE_MAX}; 跑 \`abs todo archive\` 迁出旧日期组`);
-    }
-    // ★ 只数**顶格**任务行（缩进 0）—— 子项也是 `- [x]`，带 \s* 会把子项一起算进来，
-    //   于是「父任务有结语有日期、子项没有」也被报成缺结语（实测 DONE-NO-KIND 误报
-    //   一条子项 `- [x] 不急，等下次碰这块再拆`）。与 archive.js 数任务时的判据保持一致。
-    const isTopDone = (l) => /^- \[x\]/.test(l);
-    const doneBody = todoTxt.split('\n').slice(di + 1);
-    const noKind = doneBody.filter((l) => isTopDone(l) && !doneKindOf(l));
-    if (noKind.length) {
-      const sample = (noKind[0].match(/- \[x\] (\S+)/) || [, '?'])[1];
-      issues.push(
-        `DONE-NO-KIND: Done 区 ${noKind.length} 条缺结语（如 ${sample}）。` +
-        `逐条补 \`--as 落地|否决|仅方案\`（新条目：abs todo done <id> --as …）`,
-      );
-    }
-    const noDate = doneBody.filter((l) => isTopDone(l) && !doneDateOf(l));
-    if (noDate.length) {
-      const sample = (noDate[0].match(/- \[x\] (\S+)/) || [, '?'])[1];
-      issues.push(
-        `DONE-NO-DATE: Done 区 ${noDate.length} 条缺 \`(完成 YYYY-MM-DD)\`（如 ${sample}）。` +
-        `手写的 [x] 不会自动盖日期 —— 补上后重跑；新条目一律走 \`abs todo done <id>\`。`,
-      );
-    }
-  }
+  // 已完成条目（`[x]`）的结语/日期契约：2026-11-16 起 todo.md 只有一条列表，
+  // 所以扫全文，不再从 `## Done` 往下切。
+  // ★ 只数**顶格**行（缩进 0）—— 子项也是 `[x]`，带 \s* 会把子项一起算进来，
+  //   于是「父任务有结语有日期、子项没有」也被报成缺结语（实测 DONE-NO-KIND 误报）。
+  // 2026-11-16：新格式不再有结语（【落地/否决/仅方案】）与完成时间，
+  // 所以 DONE-NO-KIND / DONE-NO-DATE 两条规则整体删除（它们检查的字段已不存在）。
 
   // Rules 区检查
   {
@@ -458,6 +449,23 @@ async function checkFiles(vault, pages, indexLinks) {
     }
   }
   return issues;
+}
+
+/** 任务行的标题文字（新格式取 `[id 标题]` 里 id 之后的部分；旧格式兜底）。
+ *  给 TODO-NO-DESC 用：标题为空（只有 id）才报「没描述」。 */
+export function taskBodyOf(line) {
+  // 新格式：`[时间] [短标题] [[作者]] 详情 …` —— 短标题本身就是描述，不要再按空格切 id
+  const m = String(line).match(/^\s*-\s*\[[ x\-+~]\]\s*(?:\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*)?\[([^\]]+)\]/);
+  if (m) return m[1].trim();
+  // 旧格式兜底：剥掉 id / 作者 / 日期段
+  return String(line)
+    .replace(/^-\s*\[[ x\-+~]\]\s*/, '')
+    .replace(/^(?:\[[^\]]*\]\s*)?[^\s[[(]+\s*/, '')
+    .replace(/^(?:\[\[[^\]]+\]\]|@[\w\u4e00-\u9fff.-]+)\s*/, '')
+    .replace(/\s*\((?:认领|完成)[^)]*\)\s*/g, ' ')
+    .replace(/【[^】]*】/g, ' ')
+    .replace(/^\s*[—:：-]\s*/, '')
+    .trim();
 }
 
 async function readFileOrNull(p) {
@@ -481,8 +489,8 @@ function blockAfter(text, heading) {
 
 /** 机器生成的「文件双链」链接名必须**逐字等于磁盘文件名**（2026-11-08 用户定）。
  *
- * 为何单开一条规则：index.md 的 `## Sessions` 段与 todo.md 的 `### Archived` 段
- * 都是机器生成、且指向 sessions/ 下文件的链接行。它们一旦与文件名脱钩就成了指向
+ * 为何单开一条规则：todo.md 的 `### Archived` 段是机器生成、且指向 sessions/ 下文件的链接行
+ * （2026-11-16 起不再新增，存量那批原地留着）。它们一旦与文件名脱钩就成了指向
  * 不存在页的死名 —— 而 sessions/ 的页面豁免 DEAD-LINK（历史快照不改），
  * 所以这类死名长期无人发现：实测 todo.md 里 `[[2026-09-12-todo归档]]` 挂了两个月，
  * 真页早在 2026-09-15 治理时并成了 `log-2026-09-12`。
@@ -505,7 +513,6 @@ export async function checkGeneratedFileLinks(vault) {
         `生成的链接名必须逐字等于磁盘文件名（不带 .md），改回真页名后重跑 abs lint`);
     }
   };
-  check('index.md ## Sessions', blockAfter(await readFileOrNull(join(vault, 'index.md')), '## Sessions'));
   check('todo.md ### Archived', blockAfter(await readFileOrNull(join(vault, 'todo.md')), '### Archived'));
   return issues;
 }
@@ -546,7 +553,7 @@ export async function cmdLint({ dir, all = false }) {
   //   为什么：给根文件加形状校验后，abs 自带的 log.md 有 102 条历史行缺 `[[作者]]`，
   //   102 条 LOG-ENTRY 淹没了其它 12 条真问题（DRAFT-STALE/DEAD-LINK/NO-INBOUND）——
   //   lint 的价值是「让人看见该修的」，被噪声淹没就退化成不可读。
-  //   同族约束：既有 Rule `读取侧输出不得随规模增长`、Done 区已按日期折叠计数。
+  //   同族约束：既有 Rule `读取侧输出不得随规模增长`、todo 的已完成行折叠成计数。
   //   形态：同类 > THRESHOLD 时只报「N 条同类 + 前 SAMPLE 条样例」。
   //   注：全量明细仍可用 `abs lint --all` 拿到（不静默丢信息）。
   const folded = all ? issues : foldSameKind(issues);

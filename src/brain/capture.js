@@ -192,8 +192,10 @@ export async function cmdCapture({ dir, text, layer, tags, title, kind }) {
   await fs.rename(tmp, dst);
 
   const slug = file.replace(/\.md$/, '');
-  const section = dirName === 'concepts' ? 'Concepts' : dirName === 'sessions' ? 'Sessions' : 'Sources';
-  await registerInIndex(root, section, slug, head);
+  // 会话层的页不往 index 登记（2026-11-16 用户定：index 的 `## Sessions` 段已废）。
+  if (dirName !== 'sessions') {
+    await registerInIndex(root, dirName === 'concepts' ? 'Concepts' : 'Sources', slug, head);
+  }
   await cmdLog({ dir: root, title: clean, kind: 'note', summon: false });
 
   // 每次总结都顺手查一遍会话历史，避免漏下没总结的会话（2026-11-02 用户要求）。

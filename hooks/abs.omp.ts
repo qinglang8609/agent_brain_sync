@@ -251,15 +251,16 @@ export function boardGuideline(md: string, who: string, touched: string[] = [], 
   // 看板里有没有**任何**未完成条目（不分作者）。用来区分两种「过滤后为空」：
   //   没有 → 真的空看板（摆「空」这个事实 + 它是异常信号）
   //   有但都是别人的 → 不是我的看板（该静默, 别误导我去登记）
-  const anyOpen = /^\s*- \[ \]/m.test(md)
+  // 「有没有未完成条目」= 记号不是 `x`（[ ] [-] [+] [~] 都算未完成）
+  const anyOpen = /^\s*- \[[ \-+~]\]/m.test(md)
   if (!total && anyOpen) return null
   const lines = rows.map((r) => {
     let tag = ''
     if (r.sid) tag = r.sid === mySid ? '[本会话] ' : `[会话 ${r.sid}] `
-    const head = `  ${tag}${r.state ? `[${r.state}] ` : ''}${r.id}${r.desc ? ` — ${r.desc}` : ''}`
+    const head = `  ${tag}[${r.mark}] [${r.state}] ${r.id}${r.desc ? ` — ${r.desc}` : ''}`
     // 子项带上（与面板同形），丢了等于对齐了也接不上
     if (!r.kids || !r.kids.length) return head
-    return [head, ...r.kids.map((k) => `    - ${k.done ? '[x]' : '[ ]'} ${k.text}`)].join('\n')
+    return [head, ...r.kids.map((k) => `    - [${k.mark}]${k.state && k.state !== '进行中' ? ` [${k.state}]` : ''} ${k.text}`)].join('\n')
   })
   const more = total > rows.length ? `  …另 ${total - rows.length} 条` : ''
   const touchLines = touched.length
@@ -378,55 +379,61 @@ export function pickNickname(rnd: () => number = Math.random): string {
   return stripNicknameEmoji(USER_NICKNAMES[Math.max(0, i)])
 }
 
-/** 解析 todo.md 的 ## Todo 区 —— 只收未完成行（- [ ]），Done 区不计。
+/** 解析 todo.md —— 只收未完成行（记号不是 `x`）。
  *
  * who 不为空时只收「我的任务」：行内有 [[who]] 的，或**完全没标作者**的
  * （老任务/手写的没标，漏掉比多显示更糟）。标了别人的则不收。 */
 export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
   total: number
-  rows: { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; sid: string }[]
+  rows: { state: string; mark: string; id: string; desc: string; kids: { done: boolean; text: string; state: string | null; mark: string }[]; sid: string }[]
   hidden: number
 } {
   // 两阶段：先无过滤地按序解析（子项归属需要「上一条」是原文里真正的前一条），
   // 再按作者过滤。若边解析边过滤，被滤掉的条目下方的子项会挂到它上面那一条。
-  type Row = { state: string; id: string; desc: string; kids: { done: boolean; text: string }[]; authors: string[]; sid: string }
+  type Row = { state: string; mark: string; id: string; desc: string; kids: { done: boolean; text: string; state: string | null; mark: string }[]; authors: string[]; sid: string }
   const parsed: Row[] = []
-  let inTodo = false
+  // 已完成（[x]）或非任务行下面的缩进子项，不能挂到上一条**未完成**任务上 ——
+  // 2026-11-16 真机实测：test-abs-board 后面跟着一串已完成任务的子项，面板把它们
+  // 全画成了它的子项。判据只看「上一条可上板的任务」是否真的是当前父行。
+  let kidsAllowed = false
   for (const raw of String(md || '').split('\n')) {
     const line = raw.trimEnd()
-    if (/^##\s+Todo\s*$/.test(line)) { inTodo = true; continue }
-    if (/^##\s+/.test(line)) { inTodo = false; continue }
-    if (!inTodo) continue
+    // 2026-11-16 起 todo.md 没有分区（只剩 H1 + 一条列表），标题行一律不参与。
+    if (/^#{1,6}\s/.test(line)) { kidsAllowed = false; continue }
     // 子项行（标准 md：缩进的 `- [ ]`）→ 挂到上一条任务
     const kid = parseChildLine(line)
     if (kid && kid.indent > 0) {
       const last = parsed[parsed.length - 1]
-      if (last) last.kids.push(kid)
+      if (last && kidsAllowed) last.kids.push(kid)
       continue
     }
-    // `- [ ] [状态] <id> …`；状态标记可能缺省。
-    // 只认 `- [ ]`（2026-10-20 旧 `↳ [ ]` 写法已废弃）。
-    // 子项任务必须显示 —— 它就是一等待任务（写得进去、看得见、能 done）。
-    const m = line.match(/^\s*-\s*\[ \]\s*(?:\[([^\]]+)\]\s*)?(\S+)\s*(.*)$/)
-    if (!m) continue
-    const state = m[1] || '进行中'
-    const id = m[2]
-    const body = m[3] || ''
-    const authors = [...body.matchAll(/\[\[([^\]]+)\]\]/g)].map((x) => x[1])
+    // 未完成任务行：状态写在复选框里（[ ] 进行中 / [-] 滞留中 / [+] 讨论中 / [~] 搁置）。
+    // [x] 是已完成，不上未完成面板；旧写法的 `[状态] ` 文本前缀仍读（迁移期兼容）。
+    // 新格式：`- [记号] [id 标题] [YYYY-MM-DD HH:MM] [[作者]] [会话id]`
+    // 新格式：`- [记号] [时间] [id 标题] [[作者]] [标签…]`
+    const m = line.match(/^\s*-\s*\[([ x\-+~])\]\s*(?:\[(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]\s*)?\[([^\]]+)\]\s*(?:\[\[([^[\]]+)\]\]|@[\w\u4e00-\u9fff.-]+)?\s*((?:\[[^[\]]*\]\s*)*)$/)
+    if (!m || m[1] === 'x') { kidsAllowed = false; continue }
+    const mark = m[1]
+    kidsAllowed = true
+    const state = MARK_STATE[mark] || '进行中'
+    // `[id 标题]`：第一个空白前是 id（命令用它定位），后面是标题。
+    const head = (m[3] || '').trim()
+    const sp = head.indexOf(' ')
+    const id = sp === -1 ? head : head.slice(0, sp)
+    const body = sp === -1 ? '' : head.slice(sp + 1).trim()
+    const author = (m[4] || '').trim()
+    const authors = author ? [author] : []
     // 会话 id 要单独抽出来（多会话并行时靠它区分自己的/别人的）。
-    // 正则必须**先锚住日期再取后面的 token** —— 用宽松的 `[^)]*?\s(\S+)` 会把日期本身当成 sid。
-    const sid = (body.match(/\(认领\s*\d{4}-\d{2}-\d{2}\s+([\w-]+)\)/) || [])[1] || ''
-    const desc = body
-      .replace(/\[\[[^\]]+\]\]/g, '')
-      .replace(/^\s*—\s*/, '')
-      .replace(/\s*\(认领[^)]*\)\s*$/, '')
-      .trim()
-    parsed.push({ state, id, desc, kids: [], authors, sid })
+    // 尾部方括号都是标签；会话 id 是其中「像 id 的那个」
+    const tags = [...(m[5] || '').matchAll(/\[([^[\]]*)\]/g)].map((x) => x[1].trim()).filter(Boolean)
+    const sid = tags.find((t) => /^[0-9a-z]{6,}(?:-[0-9a-z]+)+$/i.test(t)) || ''
+    const desc = body   // 新格式的标题就是描述，无需再清洗
+    parsed.push({ state, mark, id, desc, kids: [], authors, sid })
   }
   const mine = who
     ? parsed.filter((r) => r.authors.length === 0 || r.authors.includes(who))
     : parsed
-  const rows = mine.map(({ state, id, desc, kids, sid }) => ({ state, id, desc, kids, sid }))
+  const rows = mine.map(({ state, mark, id, desc, kids, sid }) => ({ state, mark, id, desc, kids, sid }))
   return { total: rows.length, rows: rows.slice(0, max), hidden: Math.max(0, rows.length - max) }
 }
 
@@ -449,12 +456,17 @@ async function currentUser(): Promise<string> {
  *  依赖宿主内部 alias 太脆 —— pi 版实测在测试环境会 ERR_MODULE_NOT_FOUND。
  *  宽度规则：CJK/全角记 2 列，其余记 1 列。 */
 /** 解析子项行（与 src/todo/common.js 的 parseChild 同规则，双份实现 —— 见 pi 版说明）。 */
-function parseChildLine(l: string): { done: boolean; text: string; indent: number } | null {
+/** 复选框记号 → 状态名（2026-11-16：状态就写在记号里，`x` 是已完成不在表内）。 */
+const MARK_STATE: Record<string, string> = { '-': '滞留中', '+': '讨论中', '~': '搁置', ' ': '进行中' }
+
+function parseChildLine(l: string): { done: boolean; text: string; indent: number; state: string | null; mark: string } | null {
   // 只认标准 md 缩进子项（2026-10-20 旧箭头写法已废弃）。
-  // 旧行由 CLI 侧 migrateLegacyChild 在读写时迁移掉，面板拿到的已是新格式。
-  const m = String(l || '').match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/)
+  // 子项与任务同形：状态写在复选框里（[ ] / [-] / [+] / [~] / [x]）。
+  // 默认的进行中不单独出标签（面板上 `[ ]` 已经说明了），只有非默认态才给 state。
+  const m = String(l || '').match(/^(\s+)-\s*\[([ x\-+~])\]\s*(.*)$/)
   if (!m) return null
-  return { done: m[2] === 'x', text: m[3].trim(), indent: m[1].length }
+  const state = m[2] === ' ' || m[2] === 'x' ? null : MARK_STATE[m[2]] ?? null
+  return { done: m[2] === 'x', mark: m[2], text: m[3].trim(), indent: m[1].length, state }
 }
 
 function dispWidth(s: string): number {
@@ -522,7 +534,7 @@ export function effortToken(level: string | null | undefined): string {
 }
 
 export function renderPanelLines(
-  data: { total: number; rows: { state: string; id: string; desc: string; kids?: { done: boolean; text: string }[] }[]; hidden: number },
+  data: { total: number; rows: { state: string; mark?: string; id: string; desc: string; kids?: { done: boolean; text: string; state?: string | null; mark?: string }[] }[]; hidden: number },
   who: string,
   width: number,
   fg: (color: string, s: string) => string,
@@ -555,7 +567,8 @@ export function renderPanelLines(
     const branch = isLast ? '└─' : '├─'
     // 进行中曾带 spinner（2026-11-06 与 pi 版同步；2026-11-08 用户定「没啥用」与 pi 版一起去掉）。
     // 复选框 `[ ]`：面板是 todo.md 的只读视图，就该长成 todo 原貌。
-    const box = fg(main, '[ ]')
+    // 2026-11-16 用户定：行首画文件里那个记号（[ ] / [-] / [+] / [~]），后面跟状态名。
+    const box = fg(main, `[${t.mark ?? STATE_MARK[t.state] ?? ' '}]`)
     // 状态标签统一跟主色（2026-11-06 与 pi 版同步：靠符号和文字区分状态，不靠颜色）。
     const head = `${fg(main, branch)} ${box} ${fg(main, `[${t.state}]`)} ${fg('text', t.id)}`
     const desc = t.desc ? ` ${fg('dim', '—')} ${fg(flow, t.desc)}` : ''
@@ -566,7 +579,9 @@ export function renderPanelLines(
       const n = t.kids.length
       t.kids.forEach((k, ki) => {
         const kb = ki === n - 1 ? '└─' : '├─'
-        const kbox = fg(main, k.done ? '[x]' : '[ ]')
+        // 子项与任务同形：画文件里的记号；非默认状态（滞留/讨论/搁置）再补一个状态名
+        const kbox = fg(main, `[${k.mark ?? (k.done ? 'x' : STATE_MARK[k.state ?? ''] ?? ' ')}]`) +
+          (k.state && k.state !== '进行中' ? ' ' + fg(main, `[${k.state}]`) : '')
         const ktext = fg(k.done ? 'dim' : flow, k.text)
         lines.push(clipToWidth(`${stem} ${fg(main, kb)} ${kbox} ${ktext}`, width))
       })

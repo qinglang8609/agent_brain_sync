@@ -3,7 +3,7 @@
 import { promises as fs } from 'node:fs';
 import { brainPath, requireBrain } from '../index.js';
 import { getUser, placeholderWarn } from '../userconfig.js';
-import { boardText, readTodo, collapseDone } from '../todo.js';
+import { boardText, readTodo, collapseDone, openLines } from '../todo.js';
 import { strandedFor } from '../wrapup.js';
 import { readIfExists, recentLogLines } from '../text.js';
 import { SOURCES_MAX } from '../lint.js';
@@ -105,7 +105,9 @@ export async function cmdLoad({ dir }) {
   // Rules 全文 / 图谱计数 / Done 折叠明细 / 查询提示 / 热点页 撤出开机屏；
   // 逃生口还在：abs rule / abs show index / abs todo --full / abs lint。
   const board = collapseDone(todo);
-  const todoHead = String(board.text || '').split(/\n## Done/)[0].trim();
+  // 未完成段 = 记号不是 `[x]` 的单元（父任务带着它的子项）。
+  // 2026-11-16 起 todo.md 只有一条列表，不再有 `## Todo` 段可切。
+  const todoHead = [String(todo || '').split('\n')[0], '', ...openLines(todo)].filter(Boolean).join('\n').trim();
   const { items: ruleItems } = readRules(index);
   const blocks = extractBlocks(todo);
   sections.push(
@@ -116,7 +118,7 @@ export async function cmdLoad({ dir }) {
     ...(blocks.length
       ? [`  ⛔ 卡点 ${blocks.length} 条: ${blocks.map((b) => `${b.id}(${b.why})`).join('; ')}`]
       : []),
-    `  Done ${board.doneCount} 条已折叠（明细: abs todo --full）`,
+    `  Done ${board.doneCount} 条（明细: abs todo --full）`,
     '',
     '--- 最近动作 (log.md, 最新 3 条) ---',
     recentLogLines(log, 3, 140) || '(log.md 为空)',
@@ -164,8 +166,8 @@ export function extractBlocks(todoText) {
   const out = [];
   let curId = null;
   for (const line of String(todoText || '').split('\n')) {
-    // 任务行（未完成）：`- [ ] [状态] ID [[who]] — 描述`
-    const t = line.match(/^\s*-\s*\[\s*\]\s*(?:\[[^\]]*\]\s*)?(\S+)/);
+    // 任务行（未完成）：`- [记号] [id 标题] [时间] [[作者]] [会话]`（记号 [ ] [-] [+] [~] 都算未完成）
+    const t = line.match(/^\s*-\s*\[[ \-+~]\]\s*(?:\[\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?\]\s*)?\[([^\s\]]+)/);
     if (t) { curId = t[1]; continue; }
     // 完成行：不再跟踪
     if (/^\s*-\s*\[x\]/.test(line)) { curId = null; continue; }

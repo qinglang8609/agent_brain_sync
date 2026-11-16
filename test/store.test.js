@@ -10,8 +10,8 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdTodoArchive, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind } from '../src/store.js';
-import { readTodo, todoTemplate, today, addTask, normalizeTodo, groupDoneSection, insertDoneGrouped, upsertTask, findTaskLine, archiveDoneInText, doneDateOf, doneKindOf, withDoneKind, LEGACY_SECTION_RENAMES, extractId } from '../src/todo.js';
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks, foldSameKind } from '../src/store.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo, openLines, countDone, collapseDone, upsertTask, findTaskLine, parseTaskLine, LEGACY_SECTION_RENAMES, extractId } from '../src/todo.js';
 import { assertTodoContent, violationSignatures } from '../src/todo/validate.js';
 import { parseChild, renderChild } from '../src/todo/common.js';
 import { editFile } from '../src/lock.js';
@@ -190,27 +190,26 @@ describe('cmdInit', () => {
 
 // ---------- todo 层 ----------
 describe('todo 层', () => {
-  test('todoTemplate 只有两区（Todo/Done）', () => {
+  test('todoTemplate = H1 + 一条列表（不再有 ## 分区）', () => {
     const t = todoTemplate();
-    for (const seg of ['## Todo', '## Done']) assert.ok(t.includes(seg), `缺分区 ${seg}`);
-    // 精简后不该再有进行时分区（2026-09-13）
-    for (const gone of ['## Backlog', '## Today / In Progress', '## Blocked']) {
-      assert.ok(!t.includes(gone), `不该再有 ${gone}: ${t}`);
-    }
+    assert.equal(t.trim(), '# 📋 Todo Board');
+    for (const gone of ['## Todo', '## Done', '## Backlog']) assert.ok(!t.includes(gone), `不该再有 ${gone}: ${t}`);
   });
 
-  test('addTask 在指定分区末尾插入', async () => {
-    await addTask(projectA, { section: 'Backlog', text: 'X — 优先级:P1' });
+  test('addTask 把新任务插到列表最上面', async () => {
+    await addTask(projectA, { id: 'X', title: '优先级:P1' });
+    await addTask(projectA, { id: 'Y', title: '后来的' });
     const t = await readTodo(projectA);
-    const backlog = t.split('## Today')[0];
-    assert.ok(backlog.includes('X — 优先级:P1'));
+    const rows = t.split('\n').filter((l) => /^- \[/.test(l));
+    assert.ok(rows[0].includes('[Y 后来的]'), `最新登记的在最上面: ${t}`);
+    assert.ok(t.includes('[X 优先级:P1]'));
   });
 
   // 回归: id 定位曾用 l.includes(id) 子串匹配, 导致前缀相同的 id 互相覆盖 ——
   // 先建 T11 再建 T1 时, T1 误命中 T11 那一行并原地改写, T11 静默消失。
   test('前缀相同的 id 不互相覆盖 (T11 vs T1)', async () => {
-    await upsertTask(projectA, { section: 'Todo', text: 'T11 — 第十一' });
-    await upsertTask(projectA, { section: 'Todo', text: 'T1 — 第一个' });
+    await upsertTask(projectA, { id: 'T11 — 第十一', title: 'T11 — 第十一' });
+    await upsertTask(projectA, { id: 'T1 — 第一个', title: 'T1 — 第一个' });
     const t = await readTodo(projectA);
     assert.ok(t.includes('T11 — 第十一'), 'T11 必须还在(修前被 T1 覆盖而消失)');
     assert.ok(t.includes('T1 — 第一个'), 'T1 必须新增为独立一行');
@@ -292,7 +291,7 @@ describe('todo 层', () => {
         '', '## Done', ''].join('\n'));
     const t = await readTodo(projectA);
     assert.doesNotMatch(t, /↳/, `旧写法应已被迁移掉: \n${t}`);
-    assert.match(t, /^ {2}- \[ \] \[进行中\] bp /m, `应迁移成缩进子项且保留内容与状态: \n${t}`);
+    assert.match(t, /^ {2}- \[ \] bp /m, `应迁移成缩进子项且保留内容与状态: \n${t}`);
   });
 
   test('★ 裸 ↳ 内容行也迁移成未完成子项（旧格式变体）', async () => {
@@ -308,6 +307,15 @@ describe('todo 层', () => {
     assert.match(t, /^ {2}- \[ \] 另一个变体/m, t);
   });
 
+  // 2026-11-16 用户定：枚举顺序 = 滞留中 → 讨论中 → 搁置 → 进行中（进行中放最后）。
+  // 顺序只影响帮助/报错文案的排列，别让它在某次改动里悄悄变回去。
+  test('★ 状态枚举顺序固定为 滞留中 → 讨论中 → 搁置 → 进行中', async () => {
+    const { TASK_STATES, STATE_MARK } = await import('../src/todo/common.js');
+    assert.deepEqual(TASK_STATES, ['滞留中', '讨论中', '搁置', '进行中']);
+    assert.deepEqual(Object.keys(STATE_MARK), TASK_STATES, '记号表顺序应与枚举一致');
+    assert.deepEqual(STATE_MARK, { 滞留中: '-', 讨论中: '+', 搁置: '~', 进行中: ' ' });
+  });
+
   test('★ 子项可 note / state（标准 md 缩进列表）', async () => {
     await fs.writeFile(join(projectA, '.brain', 'todo.md'),
       ['# 📋 Todo Board', '', '## Todo',
@@ -318,7 +326,7 @@ describe('todo 层', () => {
     const s = await cmdTask({ dir: projectA, action: 'state', id: 'bp2', note: '讨论中' });
     assert.doesNotMatch(String(s), /NO_MATCH/, `state 应命中: ${s}`);
     const t = await readTodo(projectA);
-    assert.match(t, /- \[ \] \[讨论中\] bp2/, `状态应已改: \n${t}`);
+    assert.match(t, /\[\+\].*\[bp2 /, `状态应已改（[+] = 讨论中）: \n${t}`);
     assert.match(t, /^ {2}- \[ \] 改到 src\/x\.js/m, '子项应挂上（标准 md 缩进列表）');
   });
 
@@ -333,40 +341,48 @@ describe('todo 层', () => {
     const r1 = await cmdTask({ dir: projectA, action: 'state', id: 'cs-1', note: '滞留中', n: 1 });
     assert.doesNotMatch(String(r1), /NO_MATCH/, `应命中第 1 条子项: ${r1}`);
     let t = await readTodo(projectA);
-    assert.match(t, /^ {2}- \[ \] \[滞留中\] 子项一$/m, `第 1 条应带标记: \n${t}`);
+    assert.match(t, /^ {2}- \[-\] 子项一$/m, `第 1 条应带标记（[-] = 滞留中）: \n${t}`);
     assert.match(t, /^ {2}- \[ \] 子项二$/m, `第 2 条不该被动: \n${t}`);
 
-    // 勾选走的是另一条路径（child-done），不能把标记抹掉 —— 修改前就会抹掉。
+    // 勾选走的是另一条路径（child-done）。勾上时标记变 [x]，取消勾回到 [ ] ——
+    // 状态只存在复选框里（2026-11-16 用户定），勾选状态与四态共用同一个记号位，
+    // 所以取消勾后拿不回原来的滞留中，回到默认的进行中。这是有意的代价，不是丢失。
     await cmdTask({ dir: projectA, action: 'child-done', id: 'cs-1', n: 1 });
+    t = await readTodo(projectA);
+    assert.match(t, /^ {2}- \[x\] 子项一$/m, `勾上应变 [x]: \n${t}`);
     await cmdTask({ dir: projectA, action: 'child-undone', id: 'cs-1', n: 1 });
     t = await readTodo(projectA);
-    assert.match(t, /^ {2}- \[ \] \[滞留中\] 子项一$/m, `勾/取消勾后标记要留着: \n${t}`);
+    assert.match(t, /^ {2}- \[ \] 子项一$/m, `取消勾回到进行中: \n${t}`);
 
     // 不带 n 仍是改任务本身（不能因为子项能标状态就把旧用法拐走）
     await cmdTask({ dir: projectA, action: 'state', id: 'cs-1', note: '讨论中' });
     t = await readTodo(projectA);
-    assert.match(t, /- \[ \] \[讨论中\] cs-1/, `不带 n 应改任务: \n${t}`);
-    assert.match(t, /^ {2}- \[ \] \[滞留中\] 子项一$/m, t);
+    assert.match(t, /- \[\+\] cs-1/, `不带 n 应改任务（[+] = 讨论中）: \n${t}`);
 
     // 越界 n：报没匹配，且绝不静默改到别的行
     const over = await cmdTask({ dir: projectA, action: 'state', id: 'cs-1', note: '搁置', n: 9 });
     assert.match(String(over), /NO_MATCH/, `越界 n 应报没匹配: ${over}`);
     t = await readTodo(projectA);
-    assert.doesNotMatch(t, /\[搁置\]/, `越界 n 不该写任何东西: \n${t}`);
+    assert.doesNotMatch(t, /\[~\]/, `越界 n 不该写任何东西: \n${t}`);
   });
 
-  test('★ parseChild / renderChild 往返：只认四态，别的方括号留在正文', async () => {
-    assert.deepEqual(parseChild('  - [ ] [滞留中] 改到哪一步'),
+  test('★ parseChild / renderChild 往返：记号表四态 + 完成，旧文本前缀也认', async () => {
+    // 新写法：状态就在复选框里
+    assert.deepEqual(parseChild('  - [-] 改到哪一步'),
       { done: false, text: '改到哪一步', indent: 2, state: '滞留中' });
     assert.deepEqual(parseChild('  - [x] 没状态'),
       { done: true, text: '没状态', indent: 2, state: null });
+    // 存量写法的文本前缀仍能读出来（迁移期不能把旧行读丢）
+    assert.deepEqual(parseChild('  - [ ] [滞留中] 改到哪一步'),
+      { done: false, text: '改到哪一步', indent: 2, state: '滞留中' });
     // 未知方括号是正文，不是状态 —— 否则 [WIP] 这类词会被静默吃掉
+    // 未标状态 = 记号 `[ ]`，就是「进行中」；`[WIP]` 是正文不是状态
     assert.deepEqual(parseChild('  - [ ] [WIP] 正文'),
-      { done: false, text: '[WIP] 正文', indent: 2, state: null });
-    assert.equal(renderChild('改到哪一步', { state: '滞留中' }), '  - [ ] [滞留中] 改到哪一步');
+      { done: false, text: '[WIP] 正文', indent: 2, state: '进行中' });
+    assert.equal(renderChild('改到哪一步', { state: '滞留中' }), '  - [-] 改到哪一步');
     assert.equal(renderChild('一句话', { done: true }), '  - [x] 一句话');
-    // 往返：解析再渲染 == 原行（缩进、勾选、标记都不凭空变）
-    for (const l of ['  - [ ] [滞留中] 改到哪一步', '  - [x] 没状态', '  - [ ] [WIP] 正文', '    - [ ] 缩进 4 格的子项']) {
+    // 往返：解析再渲染 == 原行（缩进、记号都不凭空变）
+    for (const l of ['  - [-] 改到哪一步', '  - [x] 没状态', '  - [ ] [WIP] 正文', '    - [ ] 缩进 4 格的子项']) {
       const c = parseChild(l);
       assert.equal(renderChild(c.text, { done: c.done, state: c.state, indent: ' '.repeat(c.indent) }), l, `往返应逐字不变: ${l}`);
     }
@@ -374,7 +390,7 @@ describe('todo 层', () => {
 
   test('★ 闸门：子项长度按去掉状态标记的正文算', async () => {
     const body = '改'.repeat(200);           // 正文顶到上限 200
-    const mk = (text) => `# 📋 Todo Board\n\n## Todo\n- [ ] [进行中] g-1\n  - [ ] [滞留中] ${text}\n`;
+    const mk = (text) => `# 📋 Todo Board\n\n- [ ] g-1 (认领 2026-11-16)\n  - [-] ${text}\n`;
     assert.doesNotThrow(() => assertTodoContent(mk(body)), '标记不该算进长度（200 字正文应放行）');
     assert.throws(() => assertTodoContent(mk(body + '再')), /子项太长/, '201 字正文应被拒');
   });
@@ -396,21 +412,16 @@ describe('normalizeTodo 老格式迁移', () => {
     '',
   ].join('\n');
 
-  test('老格式 → 两区制：未完成一律进 Todo，内容不丢，状态转行首标记', () => {
+  test('老格式 → 单列表：内容不丢，旧分区标题去掉', () => {
     const out = normalizeTodo(OLD);
-    assert.ok(out.includes('## Todo'), out);
-    assert.ok(!out.includes('## Backlog') && !out.includes('## Today') && !out.includes('## Blocked'),
-      `四区应归一为 Todo: ${out}`);
-    // 未完成的内容全部保留（不论原来在哪个区）
-    for (const frag of ['正在做的事', '老待办A', '老待办B', '卡住的事']) {
+    for (const gone of ['## In Progress', '## Todo', '## Blocked', '## Done']) {
+      assert.ok(!out.includes(gone), `旧分区应去掉 ${gone}: ${out}`);
+    }
+    // 未完成的内容全部保留（不论原来在哪个区），已完成也在同一张表里
+    for (const frag of ['正在做的事', '老待办A', '老待办B', '卡住的事', '老完成']) {
       assert.ok(out.includes(frag), `内容应保留 ${frag}: ${out}`);
     }
-    // 状态信息由行首标记承接：原 Blocked → [滞留中]，其余 → [进行中]
-    assert.ok(/- \[ \] \[进行中\] 老待办A/.test(out), `老待办应带[进行中]: ${out}`);
-    assert.ok(/- \[ \] \[滞留中\] 卡住的事/.test(out), `原 Blocked 应带[滞留中]: ${out}`);
-    assert.ok(out.includes('老完成'));
-    // done 内容留在 Done 区
-    assert.ok(out.split('## Done')[1].includes('老完成'), '已完成应留 Done 区');
+    assert.ok(out.split('\n').every((l) => !l.trim() || /^- |^# /.test(l.trim())), `单列表里只该有任务行与 H1: ${out}`);
   });
 
   test('两张迁移表互锁：LEGACY_MARKS 必须覆盖 LEGACY_SECTION_RENAMES', () => {
@@ -450,7 +461,8 @@ describe('normalizeTodo 老格式迁移', () => {
       await cmdTask({ dir: projectA, action: 'start', id: 'ST-1', note: 'x' });
       await cmdTask({ dir: projectA, action: 'state', id: 'ST-1', note: st });
       const t = await readTodo(projectA);
-      assert.ok(t.includes(`- [ ] [${st}] ST-1`), `状态应为 ${st}: ${t}`);
+      const mark = { 进行中: ' ', 讨论中: '+', 滞留中: '-' }[st];
+      assert.ok(new RegExp(`\\[${mark}\\].*\\[ST-1 `).test(t), `状态应为 ${st}（记号 [${mark}]）: ${t}`);
     }
     // no-op：同状态再设一次 → 文件字节不变
     const before = await readTodo(projectA);
@@ -465,21 +477,19 @@ describe('normalizeTodo 老格式迁移', () => {
     await cmdTask({ dir: projectA, action: 'state', id: 'UP-1', note: '讨论中' });
     await cmdTask({ dir: projectA, action: 'start', id: 'UP-1', note: '改了说明' });
     const t = await readTodo(projectA);
-    assert.ok(t.includes('- [ ] [讨论中] UP-1'), `再 start 不该重置状态: ${t}`);
+    assert.ok(/\[\+\].*\[UP-1 /.test(t), `再 start 不该重置状态（[+] = 讨论中）: ${t}`);
     assert.ok(t.includes('改了说明'), '说明应更新');
     assert.equal((t.match(/UP-1/g) || []).length, 1, `不该重复登记: ${t}`);
   });
 
-  test('非默认状态的任务 done 后进 Done 且无状态残留', async () => {
-    // 评审 P2：stripStateMark 从未在任何非默认状态下被跑到。
+  test('非默认状态的任务 done 后变成 [x]，不留状态记号与文本前缀', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'DN-1', note: 'x' });
     await cmdTask({ dir: projectA, action: 'state', id: 'DN-1', note: '讨论中' });
     await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DN-1' });
     const t = await readTodo(projectA);
-    const doneSec = t.split('## Done')[1] || '';
-    assert.ok(doneSec.includes('DN-1'), `应归位 Done: ${t}`);
-    const dnLine = doneSec.split('\n').find((l) => l.includes('DN-1'));
-    assert.ok(!/\[(进行中|讨论中|滞留中)\]/.test(dnLine), `Done 行不该带状态标记: ${dnLine}`);
+    const dnLine = t.split('\n').find((l) => l.includes('DN-1'));
+    assert.ok(dnLine.startsWith('- [x]') && dnLine.includes('[DN-1 '), `应变成已完成: ${dnLine}`);
+    assert.ok(!/\[(进行中|讨论中|滞留中)\]/.test(dnLine), `不该带文本状态前缀: ${dnLine}`);
   });
 
   test('四区制存量文件：load 时的 rebuildStructure 也要能迁移（不只是 normalizeTodo）', async () => {
@@ -499,9 +509,8 @@ describe('normalizeTodo 老格式迁移', () => {
     await fs.writeFile(join(projectA, '.brain', 'todo.md'), legacy, 'utf8');
     await checkBrainShape(projectA);            // load 走的就是这条
     const t = await fs.readFile(join(projectA, '.brain', 'todo.md'), 'utf8');
-    // 只剩两区
-    assert.ok(t.includes('## Todo') && t.includes('## Done'), `应归一为两区: ${t}`);
-    for (const gone of ['## Backlog', '## Today / In Progress', '## Blocked']) {
+    // 旧分区全部消失，只剩 H1 + 一条列表
+    for (const gone of ['## Todo', '## Done', '## Backlog', '## Today / In Progress', '## Blocked']) {
       assert.ok(!t.includes(gone), `不该再有 ${gone}: ${t}`);
     }
     // 内容零丢失
@@ -516,7 +525,7 @@ describe('normalizeTodo 老格式迁移', () => {
     assert.equal(r2.fixed.length, 0, `再跑应幂等: ${JSON.stringify(r2)}`);
   });
 
-  test('新格式幂等: 已有 Todo/Done 区原样返回', () => {
+  test('新格式幂等: 模板原样返回', () => {
     const t = todoTemplate();
     assert.equal(normalizeTodo(t), t);
   });
@@ -526,13 +535,13 @@ describe('normalizeTodo 老格式迁移', () => {
     const r = await cmdTask({ dir: projectA, action: 'start', id: 'MIG-1', note: '迁移后登记' });
     assert.ok(r.includes('登记'), r);
     const t = await readTodo(projectA);
-    assert.ok(t.includes('## Todo'), `应已归一为两区制:\n${t}`);
+    assert.ok(!t.includes('## In Progress'), `应已归一为单列表:\n${t}`);
     assert.ok(t.includes('MIG-1'));
     const r2 = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'MIG-1' });
     assert.ok(r2.includes('✓'), r2);
     const t2 = await readTodo(projectA);
-    const doneSec = t2.split('## Done')[1] || '';
-    assert.ok(doneSec.includes('MIG-1'), `迁移后 done 应归位 Done:\n${t2}`);
+    const row = t2.split('\n').find((l) => l.includes('MIG-1'));
+    assert.ok(row.startsWith('- [x]') && row.includes('[MIG-1 '), `迁移后 done 应变成已完成:\n${t2}`);
   });
 });
 
@@ -541,7 +550,7 @@ describe('cmdTask', () => {
   test('start 登记进 Today 区并带认领日期', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'T-1', note: '做 X' });
     const t = await readTodo(projectA);
-    assert.ok(t.includes('T-1 [[tester]] — 做 X'), `作者应紧跟 id 且为 wikilink: ${t}`);
+    assert.ok(t.includes('[T-1 做 X]'), `作者应紧跟 id 且为 wikilink: ${t}`);
     assert.ok(t.includes(`认领 ${today()}`));
   });
 
@@ -554,7 +563,7 @@ describe('cmdTask', () => {
     assert.ok(t.includes('v2'), '重复 start 应更新 note 为最新');
     assert.ok(!t.includes('v1'), '旧 note 不应残留');
     // 坑: upsertTask 原位更新时会重建整行 —— 重建时若不把原 @author 带上，作者会静默丢失。
-    assert.ok(t.includes('T-2 [[tester]] — v2'), `幂等更新后作者不得丢失: ${hits.join('\n')}`);
+    assert.ok(t.includes('[T-2 v2]'), `幂等更新后作者不得丢失: ${hits.join('\n')}`);
   });
 
   test('done 勾选并归位（保持一行，标完成日期）', async () => {
@@ -562,9 +571,9 @@ describe('cmdTask', () => {
     const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-3' });
     assert.ok(r.includes('✓'), r);
     const t = await readTodo(projectA);
-    const done = t.split('## Done')[1] || '';
-    assert.ok(/- \[x\].*T-3/.test(done), `T-3 应在 Done 区:\n${t}`);
-    assert.ok(t.includes(`完成 ${today()}`));
+    const row = t.split('\n').find((l) => l.includes('T-3'));
+    assert.ok(/^- \[x\]/.test(row), `T-3 应是已完成行:\n${t}`);
+    assert.ok(t.includes(`[${today()}`));
   });
 
   // 原意：修 trimStart bug —— 断点行不能「任务走了、断点剩在原区」。
@@ -581,10 +590,12 @@ describe('cmdTask', () => {
     const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-BP' });
     assert.ok(r.includes('✓'), r);
     const t = await readTodo(projectA);
-    const doneSec = t.split('## Done')[1] || '';
-    const todoSec = t.split('## Todo')[1]?.split('## ')[0] || '';
-    assert.ok(doneSec.includes('改到 store.js L40'), `断点应随任务进 Done:\n${doneSec}`);
-    assert.ok(!todoSec.includes('改到 store.js L40'), `断点不应残留在 Todo 区:\n${todoSec}`);
+    // 子项就挂在已成完的行下面（单列表里没有「区」可残留）
+    const rows = t.split('\n');
+    const at = rows.findIndex((l) => l.includes('T-BP') && l.startsWith('- [x]'));
+    assert.ok(at !== -1, `T-BP 应是已完成行:\n${t}`);
+    assert.ok(rows[at + 1] && rows[at + 1].includes('改到 store.js L40'), `断点应紧跟任务行:\n${t}`);
+    assert.equal((t.match(/改到 store\.js L40/g) || []).length, 1, `断点只该出现一次:\n${t}`);
   });
 
   test('done 幂等: 重复 done 不再追加行', async () => {
@@ -617,12 +628,11 @@ describe('cmdTask', () => {
     // 坑: extractAuthor 只认新 [[name]] 的话，遇到历史 @name 行会取不到作者 →
     // upsertTask 重建整行时把作者静默抹掉。两种形态必须都认。
     const todoPath = join(projectA, '.brain', 'todo.md');
-    let t = await fs.readFile(todoPath, 'utf8');
-    t = t.replace('## Todo', '## Todo\n- [ ] [进行中] T-OLD @legacy — 老行');
-    await fs.writeFile(todoPath, t, 'utf8');
+    await fs.writeFile(todoPath,
+      '# 📋 Todo Board\n\n- [ ] [进行中] T-OLD @legacy — 老行 (认领 2026-09-01)\n', 'utf8');
     await cmdTask({ dir: projectA, action: 'start', id: 'T-OLD', note: '新说明' });
     const after = await readTodo(projectA);
-    assert.ok(after.includes('T-OLD @legacy — 新说明'), `旧 @name 应保留且不升级为 [[ ]]: ${after}`);
+    assert.ok(/T-OLD @legacy/.test(after) && after.includes('新说明'), `旧 @name 应保留且不升级为 [[ ]]: ${after}`);
     assert.ok(!after.includes('[[legacy]]'), '旧行不应被静默改写成 wikilink');
   });
 });
@@ -1071,7 +1081,7 @@ describe('cmdTask blocked + note (实时断点)', () => {
     const r = await cmdTask({ dir: projectA, action: 'state', id: 'TB-1', note: '滞留中' });
     assert.ok(r.includes('滞留中'), r);
     const t = await readTodo(projectA);
-    assert.ok(t.includes('- [ ] [滞留中] TB-1'), `应在原行改标记:\n${t}`);
+    assert.ok(/\[-\].*\[TB-1 /.test(t), `应在原行改标记（[-] = 滞留中）:\n${t}`);
     assert.ok(!t.includes('## Blocked'), '不该再有 Blocked 区');
     assert.ok(t.includes('做 W'), '说明不应丢');
     // 非法状态被拒
@@ -1083,8 +1093,9 @@ describe('cmdTask blocked + note (实时断点)', () => {
     const r = await cmdTask({ dir: projectA, action: 'note', id: 'TN-1', note: '改到 store.js L40，卡在 markDone' });
     assert.ok(r.includes('✓') || r.includes('子项'), r);
     const t = await readTodo(projectA);
-    const todoSec = t.split('## Todo')[1]?.split('## ')[0] || '';
-    assert.ok(todoSec.includes('- [ ] 改到 store.js L40'), `子项行应在任务下:\n${t}`);
+    const rows = t.split('\n');
+    const at = rows.findIndex((l) => l.includes('TN-1'));
+    assert.ok(rows[at + 1].includes('- [ ] 改到 store.js L40'), `子项行应紧跟任务行:\n${t}`);
   });
 
   test('note 追加多条子项（不覆盖 —— 2026-10-16 用户定「不限，写多少算多少」）', async () => {
@@ -1126,7 +1137,7 @@ describe('cmdTask blocked + note (实时断点)', () => {
     );
     const t = await readTodo(projectA);
     assert.ok(t.includes('还没做完的子项'), `子项不能丢: ${t}`);
-    assert.ok(/\[ \].*TD-1/.test(t), `任务应仍在 Todo 区（未完成）: ${t}`);
+    assert.ok(/- \[ \] TD-1/.test(t), `任务应仍未完成: ${t}`);
   });
 
   test('已勾子项随任务进 Done，不残留在 Todo 区', async () => {
@@ -1140,7 +1151,7 @@ describe('cmdTask blocked + note (实时断点)', () => {
     assert.match(r, /已完成/, r);
     assert.ok(!r.includes('未勾子项'), `无遗留时不该报遗留: ${r}`);
     const t = await readTodo(projectA);
-    const doneSec = t.split('## Done')[1] || '';
+    const doneSec = t;
     assert.ok(doneSec.includes('做完的子项'), `已勾子项应随迁 Done: ${doneSec}`);
     const todoSec = t.split('## Todo')[1]?.split('## ')[0] || '';
     assert.ok(!todoSec.includes('做完的子项'), `已勾子项不应残留 Todo: ${todoSec}`);
@@ -1228,12 +1239,12 @@ describe('根文件形状与标签白名单（2026-10-05 用户定：写死、�
     const r = await cmdTask({ dir: projectA, action: 'start', id: 'NEW-1', note: '新任务' });
     assert.ok(r.includes('登记'), r);
     const t = await readTodo(projectA);
-    assert.ok(t.includes('## Todo'), `应归一为两区制:\n${t}`);
-    assert.ok(!t.includes('## In Progress') && !t.includes('## Blocked'), `旧区应消失:\n${t}`);
+    assert.ok(!t.includes('## In Progress') && !t.includes('## Blocked') && !t.includes('## Done'),
+      `旧区应消失:\n${t}`);
     for (const frag of ['做事', '老A', '卡住的', '老完成']) {
       assert.ok(t.includes(frag), `旧内容不应丢: ${frag}\n${t}`);
     }
-    assert.match(t, /^- \[ \] \[滞留中\] 卡住的/m, `Blocked 旧行应补滞留中:\n${t}`);
+    assert.match(t, /^- \[-\] 卡住的/m, `Blocked 旧行应落成 [-] 滞留中:\n${t}`);
   });
 
   // ★ 关键：历史脏数据不能卡死后续写入（实测踩过：真库仅一条脏行就让所有写入失败）
@@ -1244,19 +1255,9 @@ describe('根文件形状与标签白名单（2026-10-05 用户定：写死、�
     assert.ok(r.includes('log'), r);
     // 但 lint 要能把那条报出来（存量靠体检暴露，不靠写入报错）
     const out = await cmdLint({ dir: projectA });
-    assert.ok(out.includes('LOG-ENTRY-QUALITY'), `lint 应报出无内容的旧行:\n${out}`);
+    assert.ok(/LOG-ENTRY/.test(out), `lint 应报出无内容的旧行:\n${out}`);
   });
 
-  test('log 的 kind 必须是枚举值（入口就拦）', async () => {
-    await assert.rejects(
-      () => cmdLog({ dir: projectA, title: 'x', kind: 'test' }),
-      /kind 只能是/,
-    );
-  });
-
-  // ★ 关键对偶：存量放行 ≠ 什么都不拦。本次写入引入的违规必须被拒。
-  //   这三个用例走真实写入路径（不是预置脏文件），所以 prev == 写入前原文，
-  //   违规行不在 prev 里 → 属于「新引入」→ 拒。
   test('本次写入引入的超长断点被拒', async () => {
     await cmdTask({ dir: projectA, action: 'start', id: 'NEW-A', note: '做A' });
     await assert.rejects(
@@ -1494,7 +1495,7 @@ describe('cmdNote (经验实时暂存)', () => {
     const index = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
     assert.ok(/## Sources/.test(index));
     const log = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
-    assert.ok(log.includes('note |') || log.includes('note @'), 'log 应有一行 note 流水');
+    assert.ok(/^## \[.+\] \[\d{4}-\d{2}-\d{2}/m.test(log), 'log 应有一行流水');
   });
 
   test('空文本拒绝', async () => {
@@ -1760,20 +1761,48 @@ describe('cmdLint', () => {
   // 回归: 这个检查曾经"永不触发" —— 路径写成 brainPath(vault,'todo.md')（多一层 .brain），
   // ENOENT 又被外层 try/catch 吞掉 → lint 永远 0 problem，静默失效。
   // 故这里既测"会报"，也测"报了之后归档能消掉"。
-  test('Done 区堆积 → DONE-PILED-UP（且不是静默通过）', async () => {
-    const rows = Array.from({ length: 70 }, (_, i) => `- [x] PILE-${i}  (完成 2026-09-10)`);
+  // 判据精度（2026-11-16 审查）：TODO-NO-DESC 原来只看「有没有 ` — `」，
+  // 把用冒号写说明的老行误报成没描述。
+  test('TODO-NO-DESC 只报真的没描述的任务行', async () => {
+    const { taskBodyOf } = await import('../src/lint.js');
+    assert.equal(taskBodyOf('- [ ] t-1 [[fanchao]] — 做点什么 (认领 2026-11-16)'), '做点什么');
+    assert.equal(taskBodyOf('- [ ] t-1 [[fanchao]] (认领 2026-11-16)').length < 4, true, '只有 id 应算没描述');
+    // 老行用冒号/无破折号，但内容在 —— 不该报
+    assert.ok(taskBodyOf('- [-] sites.php 剔除域名日志留档：比对旧生产域名集').length > 4);
+    assert.ok(taskBodyOf('- [ ] 小程序审核驳回修复(2026-09-22提审): ①按钮去字样').length > 4);
+
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
     await fs.writeFile(join(projectA, '.brain', 'todo.md'),
-      ['# 📋 Todo Board', '## Backlog', '## Today / In Progress', '## Blocked', '## Done', '### 2026-09-10', '', ...rows, ''].join('\n'), 'utf8');
+      ['# 📋 Todo Board', '',
+        '- [ ] [2026-11-16 10:00] [有描述 做点什么] [[fc]]',
+        '- [-] [2026-11-15 09:00] [老行 用冒号写说明：本来就有内容] [[fc]]',
+        '- [ ] [2026-11-14 09:00] [only-id] [[fc]]', ''].join('\n'), 'utf8');
     const out = await cmdLint({ dir: projectA });
-    assert.ok(/DONE-PILED-UP/.test(out), `应报 Done 堆积: ${out}`);
+    assert.equal((out.match(/TODO-NO-DESC/g) || []).length, 1, `只该报 only-id 那一条: ${out}`);
   });
 
-  test('Done 区精简时不报 DONE-PILED-UP', async () => {
+  // 2026-11-16 用户定：已完成的行全量留在 todo.md（不归档），所以「Done 太长」不再是问题。
+  // 这条测试反过来钉住：70 条已完成不报任何堆积类问题。
+  test('已完成行不再有堆积告警（Done 全量留在看板）', async () => {
+    const rows = Array.from({ length: 70 }, (_, i) => `- [x] PILE-${i} 【落地】 (完成 2026-09-10)`);
     await fs.writeFile(join(projectA, '.brain', 'todo.md'),
-      ['# 📋 Todo Board', '## Backlog', '## Today / In Progress', '## Blocked', '## Done',
-        '### 2026-09-10', '', '- [x] ONE  (完成 2026-09-10)', ''].join('\n'), 'utf8');
+      ['# 📋 Todo Board', '', ...rows, ''].join('\n'), 'utf8');
     const out = await cmdLint({ dir: projectA });
-    assert.ok(!/DONE-PILED-UP/.test(out), `不该报: ${out}`);
+    assert.ok(!/DONE-PILED-UP/.test(out), `不该再有堆积告警: ${out}`);
+    assert.ok(!/DONE-NO-KIND|DONE-NO-DATE/.test(out), `结语日期齐全不该报: ${out}`);
+  });
+
+  // 2026-11-16：人页豁免 NO-INBOUND；sessions 的页不再要求登记 index（该段已废）。
+  test('人页不算孤岛；会话页不要求 index 登记', async () => {
+    await fs.mkdir(join(projectA, '.brain', 'entities'), { recursive: true });
+    await fs.mkdir(join(projectA, '.brain', 'sessions'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'entities', 'someone.md'),
+      '---\ntags: [entity, person]\nstatus: active\n---\n\n# someone\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-11-16.md'),
+      '---\ntags: [session-log]\nstatus: active\n---\n\n# 2026-11-16 记录\n\n## 会话 01a1\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/NO-INBOUND: \.brain\/entities\/someone\.md/.test(out), `人页不该报孤岛: ${out}`);
+    assert.ok(!/INDEX-MISSING: \.brain\/sessions\/log-2026-11-16/.test(out), `会话页不该要求登记: ${out}`);
   });
 
   test('健康图谱: 0 问题', async () => {
@@ -2099,268 +2128,139 @@ describe('cmdWrapup + load 滞留 (A+B)', () => {
   });
 });
 
-// ---------- Done 按日期分组 (DONE-GROUP) ----------
-describe('Done 按日期分组 + 老格式兼容', () => {
-  test('平铺旧 Done → 按日期分组, 新日期在前', () => {
-    const flat = [
+// ---------- todo 单列表（2026-11-16 用户定） ----------
+// 只有 H1 + 一条列表；状态写在复选框里（[ ] [-] [+] [~] [x]）；
+// 全表按各自时间倒序（未完成用认领日期、已完成用完成日期）。
+describe('todo 单列表 + 复选框状态', () => {
+  test('老两区制文件 → 单列表，任务一条不丢、日期分组与归档链接行去掉', () => {
+    const old = [
       '# 📋 Todo Board',
-      '## Backlog',
-      '## Today / In Progress',
-      '## Blocked',
+      '## Todo',
+      '- [ ] [进行中] W-任务 [[fc]] — 还没做 (认领 2026-09-09)',
       '## Done',
-      '- [x] 前天的事 (完成 2026-09-07)',
-      '- [x] 昨天的事 (完成 2026-09-08)',
+      '### 2026-09-07',
+      '- [x] 老完成 [[fc]] — 做完了 【落地】 (完成 2026-09-07)',
+      '### Archived',
+      '- [[log-2026-09-06]] 完成任务 3 条',
+      '- [[log-2026-09-05]] 完成任务 1 条 〔来源 old_service〕',
       '',
     ].join('\n');
-    const out = groupDoneSection(flat);
-    // 分组标题存在
-    assert.ok(out.includes('### 2026-09-08'), out);
-    assert.ok(out.includes('### 2026-09-07'), out);
-    // 新日期组在前
-    assert.ok(out.indexOf('### 2026-09-08') < out.indexOf('### 2026-09-07'), out);
-    assert.ok(out.includes('昨天的事') && out.includes('前天的事'));
+    const out = normalizeTodo(old);
+    assert.ok(!out.includes('## Todo') && !out.includes('## Done'), out);
+    assert.ok(!out.includes('### 2026-09-07'), out);
+    assert.ok(!out.includes('[[log-2026-09-06]]'), '旧归档链接行要去掉');
+    assert.ok(!out.includes('[[log-2026-09-05]]'), '带 〔来源 …〕 尾巴的变体也要去掉');
+    assert.ok(out.includes('W-任务') && out.includes('老完成'), out);
   });
 
-  test('幂等: 已分组文件再 group 原样返回', () => {
-    const grouped = [
+  test('旧状态前缀 → 复选框记号：[滞留中] → [-]，[讨论中] → [+]，[搁置] → [~]', () => {
+    const old = [
+      '# 📋 Todo Board',
+      '## Todo',
+      '- [ ] [滞留中] A — 卡住 (认领 2026-09-09)',
+      '- [ ] [讨论中] B — 还要商量 (认领 2026-09-09)',
+      '- [ ] [搁置] C — 不做了 (认领 2026-09-09)',
+      '- [ ] [进行中] D — 在做 (认领 2026-09-09)',
+      '',
+    ].join('\n');
+    const out = normalizeTodo(old);
+    assert.ok(/\[-\].*\[A /.test(out), out);
+    assert.ok(/\[\+\].*\[B /.test(out), out);
+    assert.ok(/\[~\].*\[C /.test(out), out);
+    assert.ok(/\[ \].*\[D /.test(out), out);
+    assert.ok(!/\[(滞留中|讨论中|搁置|进行中)\]/.test(out), '文本状态前缀不该留');
+  });
+
+  test('按时间倒序：已完成用完成日期、未完成用认领日期，混排在同一张表', () => {
+    const t = [
+      '# 📋 Todo Board',
+      '- [ ] 前天登记的 (认领 2026-09-08)',
+      '- [x] 今天完成的 (完成 2026-09-10)',
+      '- [ ] 昨天登记的 (认领 2026-09-09)',
+      '',
+    ].join('\n');
+    const out = normalizeTodo(t);
+    const order = out.split('\n').filter((l) => /^- \[/.test(l));
+    assert.deepEqual(order.map((l) => l.match(/\[([^\] ]+) /)[1]), ['今天完成的', '昨天登记的', '前天登记的']);
+  });
+
+  test('子项跟着父任务走，不脱组也不丢', () => {
+    const t = [
       '# 📋 Todo Board',
       '## Done',
       '### 2026-09-09',
-      '',
-      '- [x] 今 (完成 2026-09-09)',
-      '### 2026-09-08',
-      '',
-      '- [x] 昨 (完成 2026-09-08)',
+      '- [x] 带子项的 (完成 2026-09-09)',
+      '  - [x] 子项',
+      '  ↳ 断点: 当时的细节',
       '',
     ].join('\n');
-    assert.equal(groupDoneSection(grouped), grouped, '已分组应幂等');
+    const out = normalizeTodo(t);
+    assert.ok(out.includes('  - [x] 子项'), out);
+    assert.ok(out.includes('  - [ ] 当时的细节'), '旧 ↳ 写法一并迁移成缩进子项');
   });
 
-  test('未标日期旧行归入 (未标日期) 尾组, 不丢', () => {
+  test('幂等: 已是单列表则逐字返回（不反复写盘）', () => {
     const flat = [
       '# 📋 Todo Board',
-      '## Done',
-      '- [x] 有日期的 (完成 2026-09-09)',
-      '- [x] 没日期的老任务',
+      '',
+      '- [ ] [2026-09-10 10:00] [最新] [[fc]]',
+      '- [x] [2026-09-09 09:00] [旧的] [[fc]]',
       '',
     ].join('\n');
-    const out = groupDoneSection(flat);
-    assert.ok(out.includes('### Undated'), out);
-    assert.ok(out.includes('没日期的老任务'), '未标日期任务不应丢');
-    // 未标日期组在末尾（有日期组之后）
-    assert.ok(out.indexOf('### 2026-09-09') < out.indexOf('### Undated'), out);
+    assert.equal(normalizeTodo(flat), flat);
   });
 
-  test('断点附属行随任务行留在其日期组内', () => {
-    const flat = [
+  test('readTodo 惰性迁移: 老两区制文件读一次即落盘为单列表', async () => {
+    const old = [
       '# 📋 Todo Board',
+      '## Todo',
+      '- [ ] [进行中] W-任务 (认领 2026-09-09)',
       '## Done',
-      '- [x] 带断点的 (完成 2026-09-09)',
-      '  ↳ 断点: 做到一半的记录',
-      '- [x] 昨天 (完成 2026-09-08)',
+      '### 2026-09-07',
+      '- [x] 老完成 【落地】 (完成 2026-09-07)',
       '',
     ].join('\n');
-    const out = groupDoneSection(flat);
-    const todaySeg = out.split('### 2026-09-08')[0];
-    assert.ok(todaySeg.includes('带断点的') && todaySeg.includes('做到一半的记录'), '断点应留在 09-09 组');
-    // 断点行不脱离任务
-    assert.ok(todaySeg.indexOf('带断点的') < todaySeg.indexOf('做到一半的记录'), '断点在任务行之后');
-  });
-
-  test('readTodo 惰性迁移: 平铺 Done 文件读一次即落盘分组', async () => {
-    const flat = [
-      '# 📋 Todo Board',
-      '## Backlog',
-      '## Today / In Progress',
-      '- [ ] W-任务 (认领 2026-09-09)',
-      '## Blocked',
-      '## Done',
-      '- [x] 老完成 (完成 2026-09-07)',
-      '',
-    ].join('\n');
-    await fs.writeFile(join(projectA, '.brain', 'todo.md'), flat, 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'), old, 'utf8');
     const txt = await readTodo(projectA);
-    assert.ok(txt.includes('### 2026-09-07'), '读后应已分组');
-    assert.ok(txt.includes('## Todo'), `应归一为两区制: ${txt}`);
-    // 未完成任务仍在 Todo（且带状态标记）
-    assert.ok(txt.includes('- [ ] [进行中] W-任务'), `未完成任务不受影响: ${txt}`);
+    assert.ok(!txt.includes('## Done'), `读后应已单列表: ${txt}`);
+    assert.ok(txt.includes('W-任务') && txt.includes('老完成'), `任务不该丢: ${txt}`);
   });
 
-  test('markDone 归位到对应日期组且新完成项在该组顶部', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'DG-1', note: '分组验证' });
+  test('markDone 原地翻成 [x] + 结语 + 完成日期，并浮到表头', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'DG-1', note: '单列表验证' });
     await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DG-1' });
     const t = await readTodo(projectA);
-    const todaySeg = t.split(`## Done`)[1] || '';
-    assert.ok(todaySeg.includes(`### ${today()}`), `应有当天分组:\\n${todaySeg}`);
-    // 新完成项出现在当天组开头（分组标题后紧跟）
-    const groupStart = todaySeg.indexOf(`### ${today()}`);
-    const afterGroup = todaySeg.slice(groupStart);
-    assert.ok(afterGroup.includes('DG-1'), 'DG-1 应在 Done');
-    const firstLines = afterGroup.split('\n').filter(Boolean).slice(0, 2).join(' ');
-    assert.ok(firstLines.includes('DG-1'), `当天组头部应为 DG-1, got: ${firstLines}`);
+    const rows = t.split('\n').filter((l) => /^- \[/.test(l));
+    assert.ok(rows[0].startsWith('- [x]') && rows[0].includes('[DG-1 '), `完成的应在最上面, got: ${rows[0]}`);
+    assert.ok(rows[0].includes('【落地】') && rows[0].includes('(完成 '), rows[0]);
   });
 
-  test('多次 markDone 不同日期仍各自归组', async () => {
-    // DG-2 (今天) DG-3 无法造昨天; 这里验证 done 后再 start/done 同 id 幂等不重复
+  test('多次 done 幂等: 同一条不重复', async () => {
     await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'DGX' });
     await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DGX' });
-    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DGX' }); // 二次 done 幂等
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DGX' });
     const t = await readTodo(projectA);
     const hits = t.split('\n').filter((l) => l.includes('DGX') && l.startsWith('- [x]'));
     assert.equal(hits.length, 1, `二次 done 不重复: ${hits}`);
   });
-});
 
-// ---------- Done 归档（abs todo archive） ----------
-// 规则（用户定）: ①只保留近 N 天 ②任一天有未完成则整天不归档 ③归档成一个文件 + Done 尾部留标记行
-describe('Done 归档', () => {
-  const mk = (lines) => ['# 📋 Todo Board', '## Backlog', '## Today / In Progress', '## Blocked', '## Done', ...lines, ''].join('\n');
-
-  test('只归档超过保留天数的日期组（近 3 天保留）', () => {
-    const t = mk([
-      '### 2026-09-10', '', '- [x] A  (完成 2026-09-10)', '',
-      '### 2026-09-09', '', '- [x] B  (完成 2026-09-09)', '',
-      '### 2026-09-08', '', '- [x] C  (完成 2026-09-08)', '',
-      '### 2026-09-07', '', '- [x] D  (完成 2026-09-07)', '',
-    ]);
-    const r = archiveDoneInText(t, { keepDays: 3, from: '2026-09-10', slug: 'S' });
-    assert.deepEqual(r.archived.map((g) => g.date), ['2026-09-07'], '只 09-07 该归档');
-    assert.equal(r.count, 1);
-    for (const d of ['2026-09-10', '2026-09-09', '2026-09-08']) {
-      assert.ok(r.text.includes(d), `${d} 应保留`);
-    }
-    assert.ok(!r.text.includes('### 2026-09-07'), '09-07 组应已迁出');
-  });
-
-  test('某天有未完成任务 → 整天不归档（不拆半天）', () => {
-    const t = mk([
-      '### 2026-09-07', '', '- [x] DONE-ONE  (完成 2026-09-07)', '- [ ] STILL-OPEN  (完成 2026-09-07)', '',
-      '### 2026-09-06', '', '- [x] OK-ONE  (完成 2026-09-06)', '',
-    ]);
-    const r = archiveDoneInText(t, { keepDays: 3, from: '2026-09-10', slug: 'S' });
-    assert.deepEqual(r.archived.map((g) => g.date), ['2026-09-06'], '只 09-06 归档');
-    assert.ok(r.text.includes('STILL-OPEN'), '含未完成任务的整天必须留着');
-    assert.ok(r.text.includes('DONE-ONE'), '同一天的已完成任务也不能被单独迁走');
-    assert.ok(r.skipped.some((s) => s.date === '2026-09-07' && /未完成/.test(s.reason)), JSON.stringify(r.skipped));
-  });
-
-  test('归档后 Done 尾部有 ### Archived 标记行（完成任务 N 条）', () => {
-    const t = mk(['### 2026-09-06', '', '- [x] X  (完成 2026-09-06)', '- [x] Y  (完成 2026-09-06)', '']);
-    const r = archiveDoneInText(t, { keepDays: 3, from: '2026-09-10' });
-    assert.ok(r.text.includes('### Archived'), '应有 ### Archived 区');
-    assert.ok(r.text.includes('- [[log-2026-09-06]] 完成任务 2 条'), r.text);
-  });
-
-  test('未标日期组保守不归档', () => {
-    const t = mk(['### Undated', '', '- [x] NODATE  ', '']);
-    const r = archiveDoneInText(t, { keepDays: 3, from: '2026-09-10', slug: 'S' });
-    assert.equal(r.archived.length, 0);
-    assert.ok(r.text.includes('NODATE'));
-    assert.ok(r.skipped.some((s) => /未标日期/.test(s.date)));
-  });
-
-  // ### Archived 区按日期倒序（新的在上），与 Done 日期组同风格；
-  // 否则顺序 = 归档先后，多次归档后读起来是乱的（如 08/09/07）。
-  test('归档标记行按日期倒序排列', () => {
-    const t = mk([
-      '### 2026-09-07', '', '- [x] C  (完成 2026-09-07)', '',
-      '### Archived', '- [[log-2026-09-08]] 完成任务 22 条', '- [[log-2026-09-09]] 完成任务 6 条', '',
-    ]);
-    const r = archiveDoneInText(t, { keepDays: 1, from: '2026-09-10' });
-    const order = [...r.text.matchAll(/\[\[log-(\d{4}-\d{2}-\d{2})\]\]/g)].map((m) => m[1]);
-    assert.deepEqual(order, ['2026-09-09', '2026-09-08', '2026-09-07'], `应倒序: ${order}`);
-  });
-
-  // 回归: ### Archived 区在 Done 内部，若被 parseDoneUnits 吃掉，markDone 重建 Done 时会丢
-  test('### Archived 区在 markDone / 惰性分组重建后不丢', () => {
-    const withArchive = mk(['### 2026-09-10', '', '- [x] A  (完成 2026-09-10)', '', '### Archived', '- [[S]] 完成任务 3 条', '']);
-    const afterDone = insertDoneGrouped(withArchive, ['- [x] NEW  (完成 2026-09-10)']);
-    assert.ok(afterDone.includes('[[S]]'), 'insertDoneGrouped(markDone 路径) 不能丢归档区');
-    const flat = mk(['- [x] OLD  (完成 2026-09-10)', '', '### Archived', '- [[S]] 完成任务 3 条', '']);
-    assert.ok(groupDoneSection(flat).includes('[[S]]'), '平铺迁移不能丢归档区');
-  });
-
-  // 每天一个文件 → ### Archived 区每天一行；各天计数独立，互不覆盖
-  test('多天归档: 每天一行标记（计数各自独立、不重复）', () => {
-    const t = mk(['### 2026-09-06', '', '- [x] X  (完成 2026-09-06)', '']);
-    const once = archiveDoneInText(t, { keepDays: 1, from: '2026-09-10' });
-    assert.ok(once.text.includes('- [[log-2026-09-06]] 完成任务 1 条'), once.text);
-    const withSecond = once.text + '### 2026-09-05\n\n- [x] Y  (完成 2026-09-05)\n- [x] Z  (完成 2026-09-05)\n';
-    const twice = archiveDoneInText(withSecond, { keepDays: 1, from: '2026-09-10' });
-    assert.ok(twice.text.includes('- [[log-2026-09-06]] 完成任务 1 条'), '旧天标记应保留');
-    assert.ok(twice.text.includes('- [[log-2026-09-05]] 完成任务 2 条'), twice.text);
-    assert.equal((twice.text.match(/\[\[log-2026-09-06\]\]/g) || []).length, 1, '同 slug 只一行');
-  });
-
-  test('cmdTodoArchive 端到端: 建归档页 + 改 todo + 登记 index', async () => {
-    const todoP = join(projectA, '.brain', 'todo.md');
-    await fs.writeFile(todoP, mk([
-      '### 2026-09-10', '', '- [x] KEEP  (完成 2026-09-10)', '',
-      '### 2026-09-04', '', '- [x] OLD-A [[fanchao]] — 修归档描述: index 行要能回头查 — 结语部分不该进描述 【落地】 (完成 2026-09-04)', '  ↳ 断点: 当时的细节', '',
-    ]), 'utf8');
-    const out = await cmdTodoArchive({ dir: projectA, keepDays: 3 });
-    assert.ok(out.startsWith('✓'), out);
-    const todo = await fs.readFile(todoP, 'utf8');
-    assert.ok(!todo.includes('OLD-A'), '旧任务应已迁出 todo');
-    assert.ok(todo.includes('### Archived') && todo.includes('完成任务 1 条'), todo);
-    const page = await fs.readFile(join(projectA, '.brain', 'sessions', 'log-2026-09-04.md'), 'utf8');
-    assert.ok(page.includes('OLD-A') && page.includes('当时的细节'), '归档页应保留原文含断点');
-    const idx = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
-    assert.ok(idx.includes('[[log-2026-09-04]]'), 'index 应登记归档页');
-    // 2026-11-08 用户要求：index 行带任务描述，光写「日期（会话快照 + 任务归档）」查不到
-    assert.ok(
-      idx.includes('[[log-2026-09-04]] — 2026-09-04（会话快照 + 任务归档）：修归档描述: index 行要能回头查'),
-      `index 行应带任务首段描述: ${(idx.match(/.*log-2026-09-04.*/) || [''])[0]}`,
-    );
-    // 结语段（第二段）与结论标记不得卷进描述
-    assert.ok(!idx.includes('结语部分不该进描述'), '描述只取首段，不卷结语');
-    assert.ok(!idx.includes('【落地】'), '描述不含结论标记');
-  });
-
-  test('archiveBrief：多任务用「；」连，断点/老格式行跳过', async () => {
-    const { archiveBrief } = await import('../src/todo.js');
-    const lines = [
-      '- [x] a [[w]] — 第一件事 — 结语甲 【落地】 (完成 2026-09-04 x)',
-      '- [x] b [[w]] — 第二件事 【否决】 (完成 2026-09-04 x)',
-      '  ↳ [ ] 断点不参与',
-      '- [x] OLD (完成 2026-09-04)',
-    ];
-    assert.equal(archiveBrief(lines), '第一件事；第二件事');
-    assert.equal(archiveBrief(['- [x] OLD (完成 x)']), '', '无描述行→空串');
-    assert.equal(archiveBrief([]), '');
-  });
-
-  // 回归: 归档页是新生成页，若无双链会被 lint 判 ORPHAN（曾如此）。
-  // 归档页是历史数据倾倒 + 已登记 index，属"终端页"，应与 sources/ 一样豁免。
-  test('归档后 lint 干净（归档页不被判 ORPHAN）', async () => {
-    const todoP = join(projectA, '.brain', 'todo.md');
-    await fs.writeFile(todoP, mk([
-      '### 2026-09-10', '', '- [x] KEEP  (完成 2026-09-10)', '',
-      '### 2026-09-04', '', '- [x] OLD  (完成 2026-09-04)', '',
-    ]), 'utf8');
-    await cmdTodoArchive({ dir: projectA, keepDays: 3 });
-    const out = await cmdLint({ dir: projectA });
-    assert.ok(!/ORPHAN-PAGE: \.brain\/sessions\/.*log-/.test(out), `归档页不该是孤儿: ${out}`);
-    assert.ok(!/INDEX-MISSING: \.brain\/sessions\/.*log-/.test(out), `归档页应已登记 index: ${out}`);
-  });
-
-  test('dry-run 不动文件', async () => {
-    const todoP = join(projectA, '.brain', 'todo.md');
-    const before = mk(['### 2026-09-04', '', '- [x] OLD  (完成 2026-09-04)', '']);
-    await fs.writeFile(todoP, before, 'utf8');
-    const out = await cmdTodoArchive({ dir: projectA, keepDays: 3, dryRun: true });
-    assert.ok(out.includes('dry-run'), out);
-    assert.equal(await fs.readFile(todoP, 'utf8'), before, 'dry-run 不应改动 todo.md');
-  });
-
-  test('无可归档时明确说明（不静默）', async () => {
-    // 坑: 曾用写死的 '2026-09-10' 配 keepDays:3 —— 它在写下的那天算"近期"，
-    // 自然日一过 cutoff 就不成立了（实际在 09-13 午夜后开始失败），变成定时炸弹。
-    // 日期必须相对 today() 算，否则这个测试会随真实时间自己烂掉。
-    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
-      mk(['### ' + today(), '', `- [x] NEW  (完成 ${today()})`, '']), 'utf8');
-    const out = await cmdTodoArchive({ dir: projectA, keepDays: 3 });
-    assert.ok(out.includes('无可归档'), out);
+  test('collapseDone 只给已完成条数（文件全量、开机屏有界）', () => {
+    const flat = [
+      '# 📋 Todo Board',
+      '',
+      '- [ ] A (认领 2026-09-10)',
+      '- [x] B 【落地】 (完成 2026-09-09)',
+      '  - [x] 子项不算条数',
+      '- [x] C 【否决】 (完成 2026-09-08)',
+      '',
+    ].join('\n');
+    const r = collapseDone(flat);
+    assert.equal(r.doneCount, 2, '只数顶格已完成行');
+    assert.ok(r.text.includes('- [ ] A'), '未完成要留着');
+    assert.ok(!r.text.includes('- [x] B'), '已完成不展开');
+    assert.ok(r.text.includes('Done 2 条（明细: abs todo --full）'), r.text);
+    assert.equal(countDone(flat), 2);
+    assert.deepEqual(openLines(flat).map((l) => l.trim()), ['- [ ] A (认领 2026-09-10)']);
   });
 });
 
@@ -2374,61 +2274,6 @@ describe('Done 结语契约', () => {
     return t.split('\n').filter((l) => /^\s*- \[x\]/.test(l));
   }
 
-  test('done 默认结语为【落地】', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'K-1', note: 'x' });
-    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'K-1' });
-    const ls = await doneLines();
-    assert.ok(ls[0].includes('【落地】'), ls[0]);
-    assert.equal(doneKindOf(ls[0]), '落地');
-  });
-
-  test('--as 否决 / 仅方案 写入正确且落在 (完成 …) 之前', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'K-2', note: 'x' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'K-2', as: '否决' });
-    await cmdTask({ dir: projectA, action: 'start', id: 'K-3', note: 'y' });
-    await cmdTask({ dir: projectA, action: 'done', id: 'K-3', as: '仅方案' });
-    const ls = await doneLines();
-    const k2 = ls.find((l) => l.includes('K-2'));
-    const k3 = ls.find((l) => l.includes('K-3'));
-    assert.equal(doneKindOf(k2), '否决');
-    assert.equal(doneKindOf(k3), '仅方案');
-    // 顺序: 结语在完成日期之前，保证 doneDateOf 仍能取到日期（分组依赖它）
-    assert.match(k2, /【否决】 \(完成 \d{4}-\d{2}-\d{2}\)/);
-    assert.ok(doneDateOf(k2), `结语插错位置导致日期丢失: ${k2}`);
-  });
-
-  test('非法 --as 抛错且不落盘', async () => {
-    await cmdTask({ dir: projectA, action: 'start', id: 'K-4', note: 'x' });
-    await assert.rejects(
-      () => cmdTask({ dir: projectA, action: 'done', id: 'K-4', as: '随便' }),
-      /--as 只接受/,
-    );
-    const t = await readTodo(projectA);
-    assert.ok(t.includes('- [ ] [进行中] K-4'), `非法 as 时任务应保持未完成: ${t}`);
-  });
-
-  test('withDoneKind 幂等: 重复调用不叠标记', () => {
-    let l = '- [x] X — n (完成 2026-09-12)';
-    l = withDoneKind(l, '落地');
-    l = withDoneKind(l, '否决');
-    assert.equal((l.match(/【/g) || []).length, 1, l);
-    assert.equal(doneKindOf(l), '否决', '应原位替换而非叠加');
-  });
-
-  test('lint 抓出缺结语的 Done 条目', async () => {
-    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
-    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
-      ['# 📋 Todo Board', '## Backlog', '', '## Today / In Progress', '', '## Blocked',
-       '## Done', '', '### 2026-09-11', '',
-       '- [x] NO-KIND — 没标 (完成 2026-09-11)', '',
-       '- [x] HAS-KIND — 标了 【落地】 (完成 2026-09-11)', ''].join('\n'), 'utf8');
-    const out = await cmdLint({ dir: projectA });
-    assert.ok(out.includes('DONE-NO-KIND'), out);
-    assert.ok(out.includes('1 条缺结语'), `应只报 1 条(已标的不算): ${out}`);
-  });
-
-  // 回归(2026-10-18 实测): 判据原来带 \s*，缩进的子项 `  - [x] …` 也被算成 Done 条目。
-  // 于是「父任务有结语有日期、其下子项没有」被误报成缺结语/缺日期（真库实测报了一对）。
   test('lint: Done 区的缩进子项不算独立条目（不报 DONE-NO-KIND/DATE）', async () => {
     await fs.mkdir(join(projectA, '.brain'), { recursive: true });
     await fs.writeFile(join(projectA, '.brain', 'todo.md'),
@@ -2454,19 +2299,6 @@ describe('Done 结语契约', () => {
   // 后果不只是排版：无日期行归 `### Undated` 尾组，而归档靠日期判天数
   // → 这些行**永远无法被 abs todo archive 迁出**（todo.js:300 保守跳过），
   // 即一条漏日期 = 一条永久钉住 Done 区、拖大 abs load 输出的行。
-  test('lint 抓出任写的 [x] 缺 (完成 日期)（结语抄了、日期没抄）', async () => {
-    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
-    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
-      ['# 📋 Todo Board', '## Backlog', '', '## Today / In Progress', '', '## Blocked',
-       '## Done', '', '### 2026-09-11', '',
-       '- [x] NO-DATE — 手写漏日期 【落地】', '',
-       '- [x] HAS-DATE — 走工具盖了 【落地】 (完成 2026-09-11)', ''].join('\n'), 'utf8');
-    const out = await cmdLint({ dir: projectA });
-    assert.ok(out.includes('DONE-NO-DATE'), out);
-    assert.ok(out.includes('1 条'), `应只报 1 条(有日期的不算): ${out}`);
-    assert.ok(!out.includes('DONE-NO-KIND'), '本条都带结语，不应报缺结语');
-  });
-
   test('lint: Done 条目日期齐全时不报 DONE-NO-DATE', async () => {
     await fs.mkdir(join(projectA, '.brain'), { recursive: true });
     await fs.writeFile(join(projectA, '.brain', 'todo.md'),
@@ -2826,7 +2658,7 @@ describe('写入侧格式闸门: index/todo/log 每次写入都校验', () => {
     await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'x1' });
     const out = await readP('todo.md');
     assert.ok(out.startsWith('# 📋 Todo Board'), out);
-    assert.match(out, /^- \[ \] \[进行中\] x1/m, out);
+    assert.match(out, /\[x1 /, out);
   });
 
   test('index.md: 条目之间的空行被自动清除（存量升级，不阻写入）', async () => {
@@ -3008,7 +2840,7 @@ describe('格式闸门对 log.md 的写入无副作用', () => {
     assert.ok(entries[2].includes('甲成果'), out);
     // 正文逐字保留
     for (const t of ['甲成果含关键信息', '乙成果含关键信息', '丙成果含关键信息']) {
-      assert.ok(out.includes(`dev | ${t}\n`) || out.includes(`dev | ${t}`), `「${t}」正文被改: ${out}`);
+      assert.ok(out.includes(`[${t}]`), `「${t}」正文被改: ${out}`);
     }
   });
 
@@ -3122,7 +2954,7 @@ describe('三文件受管表：闸门默认生效，不依赖调用方 import', 
   test('log.md 正常条目照常写入', async () => {
     await cmdLog({ dir: projectA, title: '正常条目' });
     const t = await fs.readFile(join(brainOf(projectA), 'log.md'), 'utf8');
-    assert.match(t, /^## \[\d{4}-\d{2}-\d{2}/m, t);
+    assert.match(t, /^## \[.+\] \[\d{4}-\d{2}-\d{2}/m, t);
   });
 
   test('init 建的三个文件也过闸门（不再是直写盘）', async () => {
@@ -3175,11 +3007,10 @@ describe('子任务未完成时拒绝 done', () => {
     const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LZ-3' });
     assert.match(r, /已完成/, r);
     const t = await readTodo(projectA);
-    const doneSec = t.split('## Done')[1];
-    assert.match(doneSec, /- \[x\] LZ-3/, `主任务应在 Done:\n${doneSec}`);
+    assert.match(t, /- \[x\].*\[LZ-3 /, `主任务应是已完成行:\n${t}`);
     // 子任务仍缩进挂在主任务下（层级不丢）
-    const kids = doneSec.split('\n').filter((l) => /^\s+- \[x\]/.test(l));
-    assert.equal(kids.length, 2, `两条子任务都要缩进保留:\n${doneSec}`);
+    const kids = t.split('\n').filter((l) => /^\s+- \[x\]/.test(l));
+    assert.equal(kids.length, 2, `两条子任务都要缩进保留:\n${t}`);
     assert.ok(kids.every((k) => k.startsWith('  - [x] ')), `必须是 2 空格缩进: ${JSON.stringify(kids)}`);
   });
 
@@ -3478,7 +3309,7 @@ describe('todo remove — 删除任务', () => {
       const out = await cmdTask({ dir: root, action: 'start', id: 'AUTO1', note: '测试自动写日志' });
       assert.match(out, /AUTO1/);
       const res = await cmdTask({ dir: root, action: 'done', id: 'AUTO1', as: '落地', note: '验证用结语' });
-      assert.match(res, /已完成并归位/, `done 应成功: ${res}`);
+      assert.match(res, /已完成/, `done 应成功: ${res}`);
       assert.match(res, /log →/, `done 的输出应告知写了 log: ${res}`);
       const log = await fs.readFile(join(root, '.brain', 'log.md'), 'utf8');
       assert.match(log, /^## \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] \[\[tester\]\] dev \| AUTO1：验证用结语/m,

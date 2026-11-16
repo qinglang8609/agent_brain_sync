@@ -4,7 +4,7 @@
 import { promises as fs } from 'node:fs';
 import { brainPath } from '../index.js';
 import { editFile, SKIP } from '../lock.js';
-import { enforceBrainFormat, ensureStateMark } from '../todo.js';
+import { enforceBrainFormat } from '../todo.js';
 import { clip } from '../text.js';
 
 /** 标准形状表（与 indexTemplate/logTemplate/todoTemplate 同源）。
@@ -16,7 +16,8 @@ import { clip } from '../text.js';
 export const BRAIN_SHAPE = {
   'todo.md': {
     h1: '# 📋 Todo Board',
-    order: ['## Todo', '## Done'],
+    // 无分区（2026-11-16 用户定）：H1 + 一条列表，状态写在复选框里
+    order: [],
   },
   'log.md': {
     h1: '# 🗒 Activity Log',
@@ -24,7 +25,8 @@ export const BRAIN_SHAPE = {
   },
   'index.md': {
     h1: '# 🗂 Graph Index',
-    order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'],
+    // 无 `## Sessions`（2026-11-16 用户定）：会话页清单不再登记进 index。
+    order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses'],
   },
 };
 
@@ -79,11 +81,12 @@ export async function checkBrainShape(root) {
       // 格式闸门收口在一处（见 todo.js enforceBrainFormat）：样式/空行/无头 三条规则
       // 与写入侧共用同一实现，写盘前顺手把破坏格式的部分整理回标准形态。
       // 走 normalizeTodo 的语义（Blocked → [滞留中]）由 enforceBrainFormat 内部保证。
-      const r = enforceBrainFormat(cur, { ...spec, renames: legacyRenames() });
-      // 兜底：仍无状态标记的未完成任务补默认值（新格式文件本就有标记，此处不触发）。
-      const next2 = file === 'todo.md'
-        ? r.text.split('\n').map((l) => (l.startsWith('- [ ] ') ? ensureStateMark(l, '进行中') : l)).join('\n')
-        : r.text;
+      // 第三个参数传 cur 自己：load 时的核对是**归一存量文件**，不存在「本次新增的违规」——
+      // 存量违规（超长任务行、裸文本）交给 lint 报，不在这里把整个库卡成「未能自动归一」。
+      // （2026-11-16 实测：回捞的老行有 515 字的，不带这个参数 load 会一直报归一失败。）
+      const r = enforceBrainFormat(cur, { ...spec, renames: legacyRenames() }, cur);
+      // 2026-11-16：状态就在复选框里，没有「缺状态标记」这回事 —— 不再兜底补标记。
+      const next2 = r.text;
       if (next2 === cur) return SKIP;
       changed = r.fixed.length ? r.fixed : ['结构按标准重排'];
       return { text: next2 };

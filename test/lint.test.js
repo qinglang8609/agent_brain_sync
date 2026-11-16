@@ -87,20 +87,12 @@ describe('checkGeneratedFileLinks — 生成的链接名必须逐字等于磁盘
     assert.deepEqual(await checkGeneratedFileLinks(sandbox), []);
   });
 
-  test('index.md ## Sessions 行同样管；指向不存在的名字即报', async () => {
+  // 2026-11-16：index.md 的 `## Sessions` 段已废（不再登记会话页），
+  // 这条检查只对 todo.md 的 `### Archived` 生效。
+  test('index.md 的旧 Sessions 段不再参与检查（该段已废）', async () => {
     await writeVault({
       files: ['log-2026-11-08'],
-      index: '# 🗂 Graph Index\n\n## Sessions\n- [[session-2026-11-05-s01a1a9c6]] — 会话\n\n## Syntheses\n- [[别处]]\n',
-    });
-    const out = await checkGeneratedFileLinks(sandbox);
-    assert.equal(out.length, 1, JSON.stringify(out));
-    assert.match(out[0], /index\.md ## Sessions -> \[\[session-2026-11-05-s01a1a9c6\]\]/);
-  });
-
-  test('只看自己那一段：## Sessions 之外的行不参与', async () => {
-    await writeVault({
-      files: ['log-2026-11-08'],
-      index: '# 🗂 Graph Index\n\n## Concepts\n- [[session-2026-11-05-s01a1a9c6]] — 不在 Sessions 段\n\n## Sessions\n- [[log-2026-11-08]] — 会话\n',
+      index: '# 🗂 Graph Index\n\n## Sessions\n- [[session-2026-11-05-s01a1a9c6]] — 会话\n',
     });
     assert.deepEqual(await checkGeneratedFileLinks(sandbox), []);
   });

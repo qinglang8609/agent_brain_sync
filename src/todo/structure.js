@@ -1,28 +1,21 @@
 // src/todo/structure.js — 结构重排与格式归一（rebuildStructure / enforceBrainFormat）。
 
-import { TODO_SECTIONS, H1_TO_FILE, TASK_STATES, RETIRED_SECTIONS } from './spec.js';
-import { checkFileShape, violationSignatures, assertNoStrayBlank, assertTodoContent } from './validate.js';
-import { trimBlank, sigOfLine, isPlaceholder, migrateLegacyChild } from './common.js';
+import { H1_TO_FILE, RETIRED_SECTIONS } from './spec.js';
+import { sortTodoLines } from './done.js';
+import { parseTaskLine } from './line.js';
+import { checkFileShape, violationSignatures, assertNoStrayBlank, assertTodoContent, orphanChildIssues } from './validate.js';
+import { trimBlank, sigOfLine, isPlaceholder, migrateLegacyChild, markOf, stateOfMark, STATE_MARK, TASK_STATES } from './common.js';
 
 export function todoTemplate() {
-  // 由 rebuildStructure 生成，保证“模板”与“重排结果”逐字节一致
-  // （否则 load 会把新建的模板又重排一次 = 无意义的写盘）。
-  // 注意（2026-09-13 踩坑）：rebuildStructure 的 order 要**带 `## ` 前缀**，
-  // 而 TODO_SECTIONS 是裸名（两者用途不同，不能复用 —— 曾误传裸名导致
-  // 生成出没有 `##` 的裸标题行，模板直接损坏、Backlog 分区消失）。
-  return rebuildStructure(
-    ['# 📋 Todo Board', ...TODO_SECTIONS.map((s) => `## ${s}`)].join('\n'),
-    { h1: '# 📋 Todo Board', order: TODO_SECTIONS.map((s) => `## ${s}`) },
-  ).text;
+  // 2026-11-16 用户定：todo.md 只剩一个 H1 + 一条列表 ——
+  // 不再有 `## Todo` / `## Done` 分区，状态写在复选框里（[ ] [-] [+] [~] [x]）。
+  return '# 📋 Todo Board\n';
 }
 
-// 只有两区（2026-09-13 用户定：精简）。为什么砍掉 Backlog/Today/Blocked：
-// 实测跨 4 个项目，Backlog 与 Today 常年为 **0 条** —— 而 log.md 有 120 条。
-// 根因：AI 的工作方式是「一口气做完」，任务从开始到完成都在同一会话内走完，
-// 中间那个「挂到进行时分区上」的动作既来不及也不需要发生。
-// 而 log 是在**结束时**写的，那个时点真实存在，所以它记满了。
-// 结论：进行时分区是符合直觉但不符合实际工作流的抽象 → 删掉，
-// 未完成的一律进 Todo，状态用**行首标记**表达（不靠分区区分）。
+// 分区是怎么没的：2026-09-13 先砍掉 Backlog/Today/Blocked（实测跨 4 个项目常年 0 条），
+// 2026-11-16 再砍掉 Todo/Done 两区：已完成与未完成本来就是一条时间线上的事，
+// 拆两个区之后「上周做过什么」还得往下翻，而 Done 又被反复压缩归档 —— 索性全平铺。
+// 状态由复选框记号表达（[ ] [−] [+] [~] [x]），不靠分区区分。
 
 export function rebuildStructure(text, spec) {
   const s = String(text ?? '');
@@ -198,7 +191,16 @@ export function enforceBrainFormat(text, spec, prev) {
     }
     prevForSig = lp.join('\n');
   }
-  const prevSig = prevForSig == null ? null : violationSignatures(String(prevForSig));
+  // prevSig 里同时收**归一后的** prev 签名：load 的核对是「先归一、再交给写入闸门」，
+  // 第二次闸门看到的 prev 是原始文件、text 是已归一的新格式 —— 只看原始签名会把
+  // 内容没变、只是格式升级的行判成「本次新引入」，于是长行永远修不动（2026-11-16 实测）。
+  const prevSigSet = prevForSig == null ? null : violationSignatures(String(prevForSig));
+  if (prevSigSet) {
+    try {
+      for (const l of normalizeTodo(String(prevForSig)).split('\n')) prevSigSet.add(sigOfLine(l));
+    } catch { /* 归一失败就只用原始签名 */ }
+  }
+  const prevSig = prevSigSet;
   if (spec?.h1 === '# 📋 Todo Board') assertTodoContent(src, prevSig);
   // ★ 标签白名单闸门放在**旧标记归一之后**（见下面 legacy 段之后）——
   // 旧标签（`## Backlog` / `## Today / In Progress`）是**待迁移**的，不是非法新标签。
@@ -273,16 +275,25 @@ export function enforceBrainFormat(text, spec, prev) {
       const conv = migrateLegacyChild(ls[i]);
       if (conv !== null) {
         if (conv !== ls[i]) { ls[i] = conv; migrated++; }
-        continue;
-      }
-      // 裸任务行（`- [ ] id …` 无状态标记）→ 补默认「进行中」
-      if (/^- \[ \] /.test(ls[i]) && !/^- \[ \] \[[^\]]+\]/.test(ls[i])) {
-        const fixed2 = ensureStateMark(ls[i], '进行中');
-        if (fixed2 !== ls[i]) { ls[i] = fixed2; fixed.push('补回缺失的状态标记'); }
       }
     }
     if (migrated) fixed.push(`旧 ↳ 子项写法 → 标准 md 缩进子项（${migrated} 行）`);
     body = ls.join('\n');
+    // ★ 孤儿子任务在归一**之前**判：归一含按时间重排，重排会把无主子项挪到别的任务下面，
+    //   从此看不出它是孤儿（2026-11-16 实测把「写入前就存在的孤儿」放过去了）。
+    const orphans = orphanChildIssues(ls);
+    if (orphans.length) {
+      throw new Error(
+        `✗ todo.md 格式不合规（写入被拒）：\n` +
+        orphans.map((o) => `  · ${o.msg}`).join('\n') +
+        `\n  出路：子任务必须挂在主任务下。给删掉的父任务行恢复一行任务行，或把那几条子项一起删掉。`,
+      );
+    }
+    // ★ 白名单闸门之前先归一（2026-11-16）：旧分区标题（## Todo / ## Done / ### 日期）
+    //   是**待迁移**的东西，不是非法新标签。不先归一，闸门就会把存量老文件一顿报红
+    //   并拒绝写入 —— 那正是 2026-10-05 踩过的坑（改了白名单顺序把 7 个测试干红）。
+    const normalized = normalizeTodo(body);
+    if (normalized !== body) { body = normalized; fixed.push('旧分区/日期分组 → 单列表'); }
   }
 
   // ★ 存量空行先清掉（2026-10-05）：必须跑在 assertShape **之前** ——
@@ -315,71 +326,88 @@ export function enforceBrainFormat(text, spec, prev) {
  * 其余文件原样进（rebuildStructure 自带旧分区名归一）。 */
 
 function normalizeTodoIf(body, spec) {
-  return spec.h1 === '# 📋 Todo Board' && spec.order?.[0] === '## Todo' ? normalizeTodo(body) : body;
+  // 判据只看 H1（2026-11-16 起 todo 没有分区，不能再拿 order[0] 当暗号）。
+  return spec.h1 === '# 📋 Todo Board' ? normalizeTodo(body) : body;
 }
 
+/** 旧分区/分组标题 —— 迁到单列表时整行丢（内容行会留下并参与排序）。
+ *  `📦 任务归档` 是过去日志页里的段名；旧 todo 不会出现，但一起认了不亏。 */
+const LEGACY_HEADING_RE = /^#{2,3}\s+(Todo|Done|Backlog|Today \/ In Progress|In Progress|Blocked|Archived|归档|Undated|（未标日期）|📦 任务归档|任务归档|\d{4}-\d{2}-\d{2})\s*$/;
+
+/** 旧归档链接行：`- [[log-2026-11-10]] 完成任务 4 条`。用户 2026-11-16 要求去掉。
+ *  实测还有带尾巴的变体：`… 完成任务 3 条 〔来源 service〕`（faxuehui 5 行）——
+ *  尾部括注不改变它「只是入口指针」的性质，一起认。 */
+const LEGACY_ARCHIVE_LINK_RE = /^-\s*\[\[[^\]]+\]\]\s+完成任务\s+\d+\s*条\s*(?:〔[^〕]*〕|\([^)]*\))?$/;
+
+/** todo.md 归一（读路径与写闸门共用，幂等）。
+ *
+ * 2026-11-16 用户定：只剩 H1 + 一条列表。迁移动作全在这里：
+ *   ① 旧 `↳` 子项 → 标准缩进子项；
+ *   ② 旧行首状态前缀 `[滞留中]` → 复选框记号；
+ *   ③ 丢掉旧分区标题（`## Todo` / `## Done` / `### 日期` / `### Archived` …）；
+ *   ④ 丢掉旧归档链接行（`- [[log-…]] 完成任务 N 条`）；
+ *   ⑤ 空行、占位任务行清掉；
+ *   ⑥ 按时间倒序重排（未完成用认领日期、已完成用完成日期）。
+ * 非任务行（人自加的小节/正文）原样保留 —— 机器不猜语义，报给 lint 处理。 */
 export function normalizeTodo(text) {
-  // ★ 旧 `↳` 子项写法先就地迁移（2026-10-20）。
-  //   为何放在 normalizeTodo 而不只放闸门：读路径（readTodo）不过写入闸门，
-  //   不在这里迁，旧行就会以「看不见」的状态留在盘上（面板/看板都不认它）。
-  //   迁移后走到下面的「已是标准两区」早退分支也没关系 —— 内容已经是新的了。
-  const migrated = String(text).split('\n').map((l) => migrateLegacyChild(l) ?? l).join('\n');
-  const lines = migrated.split('\n');
-  const has = (name) => lines.some((l) => l.trim() === `## ${name}`);
-  // 已是标准两区制 = 有 Todo 且**没有**任何进行时老分区。
-  // 坑（2026-09-13）：曾只判 has('Todo') 就 return —— 而最老格式里也可能有 `## Todo`
-  // （与 `## In Progress` 混用），于是旧文件永不迁移。
-  const legacy = ['Backlog', 'Today / In Progress', 'In Progress', 'Blocked'].some(has);
-  if (has('Todo') && !legacy) return migrated;
-  const out = ['# 📋 Todo Board'];
-  const grab = (name) => {
-    const items = [];
-    let inSec = false;
-    for (const l of lines) {
-      if (l.startsWith('## ')) { inSec = l.trim() === `## ${name}`; continue; }
-      if (inSec && l.trim() && !isPlaceholder(l)) items.push(l);
+  const raw = String(text ?? '').split('\n').map((l) => migrateLegacyChild(l) ?? l);
+  const kept = [];
+  // 旧分区名有语义：`## Blocked` 下的任务本来是「卡住了」，迁到单列表时要落成 `[-]` 滞留中，
+  // 不然一条卡住的任务被抹成「进行中」，看板读起来就是假的。
+  let legacyBlocked = false;
+  for (const l of raw) {
+    const t = l.trim();
+    if (/^#\s/.test(t)) continue;                       // 旧 H1 统一重写
+    if (/^<!--/.test(t)) continue;                       // 模板提示注释
+    if (LEGACY_HEADING_RE.test(t)) {                     // 旧分区/日期组/归档标题
+      legacyBlocked = /^##\s+Blocked\s*$/.test(t);
+      continue;
     }
-    return items;
-  };
-  const done = grab('Done');
-  // 未完成的一切（不论原来在 Backlog/In Progress/Todo/Blocked）→ 一律进 Todo。
-  // 状态信息由行首标记承接：原 Blocked 区的任务补 [滞留中]（其余默认 [进行中]，写入时补）。
-  const open = [];
-  for (const name of ['Backlog', 'Today / In Progress', 'In Progress', 'Todo']) {
-    open.push(...grab(name).map((l) => ensureStateMark(l, '进行中')));
+    if (LEGACY_ARCHIVE_LINK_RE.test(t)) continue;        // 旧归档链接行
+    if (!t) continue;                                    // 空行（闸门本来也不许）
+    if (isPlaceholder(l)) continue;                      // 占位任务行
+    // ★ 2026-11-16 起：normalizeTodo **不改写任务行格式**（行格式由迁移脚本一次性落地，
+    //   代码只负责迁移「旧分区标题 / 旧 ↳ 子项 / 旧归档链接行」这些结构性残留）。
+    //   唯一例外：`## Blocked` 下的未完成任务落成 `[-]` 滞留中。
+    const p0 = parseTaskLine(l);
+    if (!p0) { kept.push(l); continue; }
+    const mark0 = legacyBlocked && p0.mark === ' ' ? '-' : p0.mark;
+    kept.push(legacyBlocked && mark0 !== p0.mark ? l.replace(/^(\s*-\s*)\[ \]/, `$1[${mark0}]`) : l);
   }
-  open.push(...grab('Blocked').map((l) => ensureStateMark(l, '滞留中')));
-  out.push('## Todo', ...open);
-  out.push('## Done', ...done);
-  return out.join('\n');
+  const body = sortTodoLines(kept);
+  return ['# 📋 Todo Board', '', ...body].join('\n').replace(/\n+$/, '') + '\n';
 }
 
-/** 给任务行补行首状态标记（已有则不覆盖）。`- [ ] id …` → `- [ ] [状态] id …`
- *  缩进与 `- [ ]` 前缀都认（子项也要能补标记）。 */
+/** 把任务行的复选框记好改为 state 对应的记号（幂等）。
+ *  2026-11-16 起状态就写在复选框里：`[ ]` 进行中 / `[-]` 滞留中 / `[+]` 讨论中 / `[~]` 搁置。
+ *  已是该记号 → 原样返回（不为了"补"而改写行）。 */
 export function ensureStateMark(line, state) {
-  const m = String(line).match(/^(\s*-\s*\[[ x]\]\s*)(\[[^\]]+\]\s+)?(.*)$/);
+  const m = String(line).match(/^(\s*-\s*)\[([ x\-+~])\](.*)$/);
   if (!m) return line;
-  if (m[2] && TASK_STATES.includes(m[2].trim().replace(/[\x5B\x5D]/g, ''))) return line;
-  return `${m[1]}[${state}] ${m[3]}`;
+  const want = STATE_MARK[state] ?? ' ';
+  if (m[2] === want) return line;
+  // 只剥**旧状态前缀**（`[滞留中]` 这类）；新格式的 `[id 标题]` 不能动 ——
+  // 用裸 `/^\s*\[[^\]]+\]/` 会把标题整段吃掉（2026-11-16 实测）。
+  const body = m[3].replace(new RegExp(`^\\s*\\[(?:${TASK_STATES.join('|')})\\]\\s*`), '');
+  return `${m[1]}[${want}]${body}`;
 }
 
-/** 读任务行的状态标记；缩进与 `- [ ]` 前缀都认。 */
+/** 读任务行的状态；已完成（`[x]`）与不是任务行都返回 null。 */
 export function stateOfTaskLine(line) {
-  const m = String(line).match(/^\s*-\s*\[[ x]\]\s*\[([^\]]+)\]/);
-  return m && TASK_STATES.includes(m[1]) ? m[1] : null;
+  const mark = markOf(line);
+  return mark === null ? null : stateOfMark(mark);
 }
 
-/** 剥掉任务行的状态标记（`- [ ] [进行中] id …` → `- [ ] id …`），保留前缀与缩进。 */
+/** 剥掉旧写法的文本状态前缀（`- [ ] [进行中] id …` → `- [ ] id …`），保留缩进与复选框。
+ *  新写法状态在复选框里，没有前缀可剥 —— 这个函数只为存量迁移与 upsert 原位重建服务。 */
 
 export function stripStateMark(line) {
-  // 前缀只剥 `- [ ] `（缩进与状态标记的位置保留）。
-  // 旧正则里带 `↳ [ ]` 分支已在 2026-10-20 随旧写法一并移除。
-  return String(line).replace(/^(\s*-\s*\[[ x]\]\s*)\[[^\]]+\]\s*/, '$1');
+  return String(line).replace(/^(\s*-\s*\[[ x\-+~]\]\s*)\[[^\]]+\]\s*/, '$1');
 }
 
-/** 把未完成任务行的复选框从 `[ ]` 翻到 `[x]`（保留原前缀与缩进）。 */
+/** 把复选框翻成已完成 `[x]`（保留原前缀与缩进）。 */
 export function checkTaskBox(line) {
-  return String(line).replace(/^(\s*-\s*)\[ \]/, '$1[x]');
+  return String(line).replace(/^(\s*-\s*)\[[ x\-+~]\]/, '$1[x]');
 }
 
 /** 从已完成任务行提取 `(完成 YYYY-MM-DD)` 日期；无则返回 ''。兼容中英文括号。 */

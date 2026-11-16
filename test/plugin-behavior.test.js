@@ -1040,11 +1040,11 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
   //   实测踩过：首版 guidelines 漏了断点（对齐了也接不上），且 desc 空时拖个空破折号。
   test('guidelines 与面板对齐：任务/状态/子项三项都在', async () => {
     const { boardGuideline } = await loadPanelFns();
+    // 2026-11-16：todo.md 没有分区，状态写在复选框里
     const md = [
-      '## Todo',
-      '- [ ] [进行中] t1 [[fanchao]] — 第一件事',
+      '- [ ] t1 [[fanchao]] — 第一件事',
       '  - [ ] 改到 src/x.js',
-      '- [ ] [讨论中] t2 [[fanchao]]',
+      '- [+] t2 [[fanchao]]',
     ].join('\n');
     const g = boardGuideline(md, 'fanchao');
     assert.ok(g, '看板非空时应返回内容');
@@ -1174,6 +1174,22 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(taskLines[1].trimStart().startsWith('└─'), `末条（带断点）应 └─: ${taskLines[1]}`);
   });
 
+  // 回归（2026-11-16 真机实测）：已完成任务的子项被挂到了上一条未完成任务下 ——
+  // 面板把一串 [x] 子项画成了别人的子项。
+  test('★ 已完成任务的子项不上板（不挂到上一条未完成任务下）', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '- [ ] 在做的 [[fanchao]] — A',
+      '  - [ ] A 的子项',
+      '- [x] 已完成的 [[fanchao]] — B 【落地】 (完成 2026-11-15)',
+      '  - [x] B 的子项',
+      '  - [ ] 没做完却被一起 done 的子项',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    assert.equal(r.rows.length, 1, `只该有 A 一条未完成: ${JSON.stringify(r.rows)}`);
+    assert.deepEqual(r.rows[0].kids.map((k) => k.text), ['A 的子项'], 'B 的子项不得挂到 A 下');
+  });
+
   // ★ 2026-10-16 用户要求：面板是 todo.md 的只读视图 ——
   //   任务行带 `[ ]`，子项（标准 md 嵌套）画成树线并带自己的 `[ ]`/`[x]`。
   test('★ 任务行带 [ ]；子项画树线且带自己的复选框', async () => {
@@ -1190,10 +1206,9 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const lines = renderPanelLines(data, 'me', 80, fg).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
     const taskLines = lines.filter((l) => l.includes('进行中') || l.includes('滞留中'));
     assert.equal(taskLines.length, 2);
-    for (const l of taskLines) {
-      assert.ok(!l.includes('[ ]'), `有状态的任务行不该再有 [ ]: ${JSON.stringify(l)}`);
-      assert.ok(l.includes('进行中') || l.includes('滞留中'), `应有状态文字: ${JSON.stringify(l)}`);
-    }
+    // 2026-11-16 用户定：行首画文件里那个记号，后面跟状态名（两者都要有）
+    assert.ok(taskLines[0].includes('[ ]') && taskLines[0].includes('[进行中]'), `进行中的行: ${JSON.stringify(taskLines[0])}`);
+    assert.ok(taskLines[1].includes('[-]') && taskLines[1].includes('[滞留中]'), `滞留中的行应画 [-] + 状态名: ${JSON.stringify(taskLines[1])}`);
     // 两条子项都渲染，且带树线 ├─ / └─ 与各自的复选框
     const kid1 = lines.find((l) => l.includes('A 的子项一'));
     const kid2 = lines.find((l) => l.includes('A 的子项二'));
@@ -1206,7 +1221,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(kid1.trimStart().startsWith('│ '), `子项应缩进在父任务下: ${JSON.stringify(kid1)}`);
   });
 
-  // 2026-11-09 用户要求：子项也要能标四态 —— 解析要拆出 state，面板画 [状态] 而不是 [ ]。
+  // 2026-11-09 用户要求：子项也要能标四态 —— 解析要拆出标记与状态，面板先画记号再画状态名。
   test('★ 子项带四态标记：解析拆出 state，面板画 [状态]', async () => {
     const { parseOpenTasks, renderPanelLines } = await loadPanelFns();
     const md = [
@@ -1236,7 +1251,7 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     const kid2 = lines.find((l) => l.includes('子项二'));
     assert.ok(kid2.includes('[ ]'), `无状态子项仍是 [ ]: ${JSON.stringify(kid2)}`);
     const kid1 = lines.find((l) => l.includes('子项一'));
-    assert.ok(!kid1.includes('[ ]'), `有状态子项不该再有 [ ]: ${JSON.stringify(kid1)}`);
+    assert.ok(kid1.includes('[-]') && kid1.includes('[滞留中]'), `有状态子项应画 [-] + 状态名: ${JSON.stringify(kid1)}`);
   });
 
   // 2026-11-04 用户要求「去掉上边框」：首行直接是标题，不再有 `─` 描边线。

@@ -2,7 +2,8 @@
 // bin/abs.js — abs CLI 入口。
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
-import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdTodoArchive, cmdResolve, cmdSupersede, cmdReview } from '../src/store.js';
+import { cmdInit, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdRepair, cmdWrapup, cmdRule, cmdTeardownCheck, cmdResolve, cmdSupersede, cmdReview, restoreArchivedTasks } from '../src/store.js';
+import { findBrainRoot } from '../src/index.js';
 import { cmdCapture } from '../src/brain/capture.js';
 import { cmdSummon } from '../src/brain/summon-cmd.js';
 import { cmdIngest } from '../src/brain/ingest.js';
@@ -223,7 +224,6 @@ const FLAG_SPEC = {
   'kind': { type: 'string' },
   'by': { type: 'string' },
   'all': { type: 'boolean' },
-  'keep-days': { type: 'string' },
   // db evolve 用：多少天没动且无人链算 stale。未声明会被静默吞成 true（同 keep-days 坑）。
   'stale-days': { type: 'string' },
   'help': { type: 'boolean' },
@@ -249,7 +249,7 @@ const FLAG_SPEC = {
 };
 
 /** 已被"规范键"接管的 raw flag：不再原样漏出（见 parseArgv 返回处的白名单注释）。 */
-const KNOWN_RAW = new Set(['keep-days', 'stale-days', 'dry-run', 'no-mcp', 'no-skill']);
+const KNOWN_RAW = new Set(['stale-days', 'dry-run', 'no-mcp', 'no-skill']);
 
 function parseArgv(args) {
   // 坑: parseArgs 会把**任何** `-` 开头的 token 当选项，连正文一起吃：
@@ -323,9 +323,8 @@ function parseArgv(args) {
     yes: !!values.yes,
     repair: !!values.repair,
     full: !!values.full,
-    keepDays: values['keep-days'],
-    staleDays: values['stale-days'],
     dryRun: !!values['dry-run'],
+    staleDays: values['stale-days'],
     mcp: !values['no-mcp'],
     skill: !values['no-skill'],
   };
@@ -355,11 +354,11 @@ const usage = `abs — 跨会话记忆（.brain/ 图谱）
 
 【写任务】
   abs todo                  看板
-  abs todo add <id> --note "做什么"
-  abs todo note <id> --note "进度"      追加子项
-  abs todo done <id> --as 落地|否决|仅方案 [结语]
-  abs todo state <id> --note 进行中|讨论中|滞留中|搁置
-  abs todo remove <id>      删除（连子项，不可恢复）
+  abs todo add "<短标题>" [--note "详情"]
+  abs todo note <短标题> --note "进度"      追加子项
+  abs todo done <短标题>
+  abs todo state <短标题> --note 滞留中|讨论中|搁置|进行中
+  abs todo remove <短标题>      删除（连子项，不可恢复）
 
 【会话】
   abs ingest [--list]       把一场 pi 会话落成结构化页；--list 看还有哪些没落
@@ -445,20 +444,21 @@ const subUsage = {
     '',
     '用法:',
     '  abs todo                       看板',
-    '  abs todo add <id> [--note "做什么"] [--section 讨论中|滞留中|搁置]',
+    '  abs todo add "<短标题>" [--note "详情"] [--section 讨论中|滞留中|搁置]',
     '  abs todo rename <旧id> --note "<新id>"   改任务 id（起错名/不可读时）',
-    '  abs todo note <id> --note "进度/子项"     追加一条子项（标准 md 缩进列表）',
+    '  abs todo note <短标题> --note "进度/子项"     追加一条子项（标准 md 缩进列表）',
     '  abs todo child-done <id> [--n N]   勾子项（缺省最后一条）',
     '  abs todo child-undone <id> [--n N] 取消勾',
     '  abs todo memo <id> "随手记（可多句）"  任务笔记 → sessions/，不上看板；无文字=查看',
-    '  abs todo state <id> --note 进行中|讨论中|滞留中|搁置 [--n N]   --n = 改第 N 条子项（缺省改任务本身）',
-    '  abs todo remove <id>              删除任务（连子项，不可恢复；只是先不做请用 state 搁置）',
-    '  abs todo done <id> [--as 落地|否决|仅方案] [结语文字]',
-    '  abs todo archive [--keep-days N] [--dry-run]',
+    '  abs todo state <短标题> --note 滞留中|讨论中|搁置|进行中 [--n N]   --n = 改第 N 条子项',
+    '  abs todo remove <短标题>          删除任务（连子项，不可恢复；只是先不做请用 state 搁置）',
+    '  abs todo done <短标题>               勾完成（只翻记号，不再记结语/完成时间）',
+    '  abs todo restore [--dry-run]      把历史归档进 log 页的任务全量拿回看板',
     '',
-    'done 的结语:',
-    '  落地(默认) = 真做成且有验证; 否决 = 评估后不做(含做了又撤); 仅方案 = 只设计过',
-    '  结语失真会让下个会话把"想过"当成"做完了" —— 不确定就写清楚',
+    '行格式:',
+    '  - [记号] [id 标题] [YYYY-MM-DD HH:MM] [[作者]] [会话id]',
+    '  记号: [ ] 进行中 / [-] 滞留中 / [+] 讨论中 / [~] 搁置 / [x] 已完成',
+    '  结论与验证过程写 abs log —— 任务行只回答"做什么、什么时候登记"',
   ].join('\n'),
   note: [
     'abs note — 经验实时暂存 → sources/（幂等去重；先记后提炼）',
@@ -518,7 +518,7 @@ const TODO_ACTIONS = {
   'child-done': 'child-done', // 勾子项（标准 md 缩进列表项）
   'child-undone': 'child-undone', // 取消勾子项
   memo: 'memo', // 任务随手记：多句/追加/不占看板（无文字时=查看）
-  state: 'state', // 改行首状态标记：进行中|讨论中|滞留中|搁置（原地，不搬区）
+  state: 'state', // 改行首状态标记：滞留中|讨论中|搁置|进行中（原地，不搬区）
   rename: 'rename', // 改任务 id：人工起错名、或旧 id 不可读时用
   done: 'done',
   // 删除任务（2026-11-05 用户要求）：连子项一起移除，不可恢复。
@@ -611,20 +611,29 @@ async function main() {
           console.log(await cmdShow({ dir: opts.dir, view: 'todo', full: opts.full }));
           break;
         }
-        const action = TODO_ACTIONS[sub];
-        // 归档：Done 区迁出旧日期组（非任务子命令，单独处理）
-        if (sub === 'archive') {
-          rejectExtra(rest2, 'abs todo archive [--keep-days N] [--dry-run]');
-          const a = { dir: opts.dir, keepDays: opts.keepDays, dryRun: opts.dryRun };
-          console.log(await cmdTodoArchive(a));
+        // 回捞历史归档（非任务子命令，单独处理）
+        if (sub === 'restore') {
+          rejectExtra(rest2, 'abs todo restore [--dry-run]');
+          const root = await findBrainRoot(opts.dir);
+          if (!root) throw new Error('✗ 未找到 .brain/ 图谱。先在项目根运行: abs init');
+          const r = await restoreArchivedTasks(root, { dryRun: !!opts.dryRun });
+          if (!r.scanned && !r.added) {
+            console.log(`（sessions/ 无可回捞的归档任务）`);
+            break;
+          }
+          const tag = opts.dryRun ? '[dry-run] ' : '';
+          console.log(`${tag}✓ 回捞 ${r.added} 条 → .brain/todo.md`);
+          console.log(`  扫了 ${r.scanned} 张页，命中归档段 ${r.files.length} 张：${r.files.join(', ')}`);
+          console.log(`  log 页里的归档段原样保留（只读不删）`);
           break;
         }
+        const action = TODO_ACTIONS[sub];
         if (!action) {
           throw new Error(
             `✗ 未知子命令 "${sub}"\n` +
-            `  可用: add / start / note / child-done / child-undone / memo / state / done / archive\n` +
+            `  可用: add / start / note / child-done / child-undone / memo / state / done / restore\n` +
             `  看板: abs todo（不带参数）\n` +
-            `  登记任务: abs todo add <id> --note "做什么"`,
+            `  登记任务: abs todo add "<短标题>" [--note "详情"]`,
           );
         }
         // done 的结语：--note "结语" 或位置参数（`abs todo done X 验证: 全绿`）都收。
@@ -633,7 +642,7 @@ async function main() {
         // memo 同：随手记常是多句带空格，位置参数收全段比 --note 顺手。
         const isDone = action === 'done';
         const isMemo = action === 'memo';
-        const usage = `abs todo ${sub} <id>${isDone ? ' [--as 落地|否决|仅方案] [--note "结语"]' : action === 'state' ? ' --note "…" [--n N]' : ' --note "…"'}`;
+        const usage = `abs todo ${sub} <短标题>${isDone ? '' : action === 'state' ? ' --note "…" [--n N]' : ' --note "…"'}`;
         if (isDone) {
           const note = opts.note || (rest2.length ? rest2.join(' ') : undefined);
           console.log(await cmdTask({ dir: opts.dir, action, id, section: opts.section, note, as: opts.as, session: opts.session }));
@@ -648,14 +657,14 @@ async function main() {
         // 勾/取消勾子项：只收 <id>（子项位置 = 「某任务的第 N 条」，没有自己的 id）
         if (action === 'child-done' || action === 'child-undone') {
           rejectExtra(rest2, `abs todo ${sub} <id> [--n N]`);
-          if (!id) throw new Error(`✗ 缺 <id>\n  用法: abs todo ${sub} <id> [--n N]`);
+          if (!id) throw new Error(`✗ 缺短标题\n  用法: abs todo ${sub} <id> [--n N]`);
           const n = opts.n ? Number(opts.n) : undefined;
           if (opts.n && (!Number.isInteger(n) || n < 1)) throw new Error(`✗ --n 要是正整数（收到 "${opts.n}"）`);
           console.log(await cmdTask({ dir: opts.dir, action, id, n }));
           break;
         }
         rejectExtra(rest2, usage);
-        if (!id) throw new Error(`✗ 缺 <id>\n  用法: ${usage}`);
+        if (!id) throw new Error(`✗ 缺短标题\n  用法: ${usage}`);
         // --n：子项位置（state 用它改第 n 条子项，与 child-done 同一套坐标）
         const nKid = opts.n ? Number(opts.n) : undefined;
         if (opts.n && (!Number.isInteger(nKid) || nKid < 1)) throw new Error(`✗ --n 要是正整数（收到 "${opts.n}"）`);

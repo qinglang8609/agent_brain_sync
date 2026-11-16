@@ -52,17 +52,6 @@ export function sigOfLine(l) {
   return String(l).replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
-/** 一行落在 todo.md 的哪个分区（`## Todo` / `## Done`）。
- *  返回 'Todo' | 'Done' | null。用于「按区判」—— Done/Archived 区的行不该按
- *  Todo 区的白名单判（日期分组、归档链接都是合法内容）。 */
-export function todoSectionOf(lines, i) {
-  for (let k = i; k >= 0; k--) {
-    const m = String(lines[k]).match(/^##\s+(\S.*)$/);
-    if (m) return m[1].trim();
-  }
-  return null;
-}
-
 /** 把一份文本里所有「违规行」的签名收成集合（供存量/新增比对）。
  *  只有三个根文件用得上；非目标文件直接返回空集。
  *  ★ 空行特殊：签名取「上下两行拼接」不可靠 —— 插入一行就会让空行的
@@ -98,21 +87,37 @@ export function sentenceCount(s) {
  *  现在直接报错，让写入方自己写对。
  *  允许的位置：H1 与首个标签之间、标签与首条目之间、区与区之间（排版需要）。 */
 
-/** 任务行：`- [ ] …` / `- [x] …`。
+/** 任务行：`- [ ] …` / `- [x] …` / `- [-] …` / `- [+] …` / `- [~] …`。
  *
- * 顶层任务：顶格（缩进 0）的 `- [ ]` 行。
- * 子任务：缩进的 `- [ ]` 行（标准 Markdown 嵌套列表，2 空格一层）。
+ * 顶层任务：顶格（缩进 0）。子任务：缩进的同形行（标准 Markdown 嵌套，2 空格一层）。
  * 两者**都是任务行**（子任务可各自勾选）；层级的区分看缩进，不在本函数。
  *
- * 2026-10-20：旧 `↳ [ ]` 写法已彻底废弃，本函数不再认它。
- * 存量由 migrateLegacyChild 在 load 时就地转成标准 md（见下）。 */
+ * 2026-11-16 用户定：状态写在**复选框里**（不再用 `[进行中]` 文本前缀），
+ * 且 todo.md 不再分 `## Todo` / `## Done` 两个区 —— 一条列表靠记号区分。 */
 export function isTaskLine(l) {
-  return /^\s*-\s*\[[ x]\]/.test(l);
+  return /^\s*-\s*\[[ x\-+~]\]/.test(l);
 }
 
-/** 一行是否任务附属行（子项）：缩进的 `- [ ]`。 */
+/** 一行是否任务附属行（子项）：缩进的同形行。 */
 export function isChildLine(l) {
-  return /^\s+-\s*\[[ x]\]/.test(l);
+  return /^\s+-\s*\[[ x\-+~]\]/.test(l);
+}
+
+// ---------- 状态记号（2026-11-16 用户定：[-] 滞留中 / [+] 讨论中 / [~] 搁置 / [ ] 进行中） ----------
+/** 复选框记号 ↔ 状态名。`x` 不在这张表里：已完成的「状态」是行尾的 `(完成 日期)`。
+ *  排列顺序与 TASK_STATES 一致（滞留中 → 讨论中 → 搁置 → 进行中）。 */
+export const STATE_MARK = { 滞留中: '-', 讨论中: '+', 搁置: '~', 进行中: ' ' };
+export const MARK_STATE = { '-': '滞留中', '+': '讨论中', '~': '搁置', ' ': '进行中' };
+
+/** 取一行的记号字符；不是任务行返回 null。 */
+export function markOf(l) {
+  const m = String(l ?? '').match(/^\s*-\s*\[([ x\-+~])\]/);
+  return m ? m[1] : null;
+}
+
+/** 记号 → 状态名；`x`（已完成）返回 null。 */
+export function stateOfMark(mark) {
+  return Object.prototype.hasOwnProperty.call(MARK_STATE, mark) ? MARK_STATE[mark] : null;
 }
 
 // ---------- 子项行（标准 md 嵌套列表：缩进 2 空格 + `- [ ]`） ----------
@@ -127,10 +132,12 @@ export function isChildLine(l) {
  * 存量靠 migrateLegacyChild 一次性迁移（那是全仓唯一还认得 `↳` 的地方）。 */
 export const CHILD_INDENT = '  ';
 
-/** 行首状态标记的四个词（任务行与子项共用；2026-11-09 起子项也能标）。
+/** 四个状态词（任务行与子项共用；2026-11-09 起子项也能标）。
+ *  顺序 = 报错文案与帮助里的排列顺序（2026-11-16 用户定）：滞留中 → 讨论中 → 搁置 → 进行中，
+ *  把最常见的「进行中」放最后 —— 前面三个才是需要人做决定的异常态。
  *  放在本文件而不是 spec.js：parseChild / renderChild 要用它判「行首 [xx] 是不是状态」，
  *  而 common.js 是不 import 任何模块的叶子（spec.js 反向 re-export），放 spec 会成环。 */
-export const TASK_STATES = ['进行中', '讨论中', '滞留中', '搁置'];
+export const TASK_STATES = ['滞留中', '讨论中', '搁置', '进行中'];
 
 /** 把 `[xx] 正文` 拆成 { state, text }：只认 TASK_STATES 里的词，
  *  别的方括号（如 `[WIP]`）是正文的一部分，原样留在 text 里。 */
@@ -163,20 +170,37 @@ export function migrateLegacyChild(l) {
   return `${m[1]}- ${done ? '[x]' : '[ ]'} ${text}`;
 }
 
-/** 解析子项行 → { done, text, indent }；不是子项返回 null。
- * 只认标准 md（缩进的 `- [ ]`）。旧 `↳` 形态请先过 migrateLegacyChild。 */
+/** 解析子项行 → { done, text, indent, state }；不是子项返回 null。
+ * 只认标准 md（缩进的复选框行）。旧 `↳` 形态请先过 migrateLegacyChild。 */
 export function parseChild(l) {
-  const m = String(l || '').match(/^(\s+)-\s*\[([ x])\]\s*(.*)$/);
+  const m = String(l || '').match(/^(\s+)-\s*\[([ x\-+~])\]\s*(.*)$/);
   if (!m) return null;
-  const { state, text } = splitStateMark(m[3]);
-  return { done: m[2] === 'x', text: text.trim(), indent: m[1].length, state };
+  // 新格式子项：`  - [记号] [时间] [短标题] [[作者]] 详情 [会话id]`
+  // 交给 parseTaskLine 解析（此处不能直接 import，line.js 依赖本文件 → 用动态特征判断）
+  const rest = m[3].trim();
+  const newFmt = rest.match(/^(?:\[(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]\s*)?\[([^\]]+)\]/);
+  if (newFmt) {
+    const body = rest.replace(/^(?:\[[^\]]*\]\s*)?\[[^\]]+\]\s*/, '')
+      .replace(/^\[\[[^\]]+\]\]\s*/, '')
+      .replace(/\s*\[[^[\]]*\]\s*$/, '');
+    return { done: m[2] === 'x', text: newFmt[2].trim(), detail: body.trim(), indent: m[1].length, state: null };
+  }
+  const { state: legacyState, text } = splitStateMark(m[3]);
+  const mark = m[2];
+  return {
+    done: mark === 'x',
+    text: text.trim(),
+    indent: m[1].length,
+    state: legacyState ?? stateOfMark(mark),
+  };
 }
 
 /** 生成子项行（标准 md，统一入口 —— 格式只有这一个真源）。
  * indent 默认 2（挂在顶层任务下）；多层嵌套时传更深的值。
- * state 传四态之一则写成 `  - [ ] [滞留中] 正文`（与任务行同形）。 */
+ * `done` = 已完成；否则按 state 写字号（缺省 = 进行中 `[ ]`）。 */
 export function renderChild(text, { done = false, indent = CHILD_INDENT, state = null } = {}) {
-  return `${indent}- ${done ? '[x]' : '[ ]'} ${state ? `[${state}] ` : ''}${text}`;
+  const mark = done ? 'x' : (STATE_MARK[state] ?? ' ');
+  return `${indent}- [${mark}] ${text}`;
 }
 
 /** Todo 分区里「合法行」以外的东西 = 裸文本（总结/报告/清单）。
@@ -200,29 +224,21 @@ export function isAllowedTodoLine(l) {
 /** 把 Done 区文本（bodyLines，不含 `## Done` 标题）解析成任务单元 [{ date, lines:[main,...children] }]。
  * 剥 `### 日期` 分组标题与空行；任务行下紧跟的缩进子项并入该单元。 */
 
-export function daysAgo(n, from) {
-  const [y, m, d] = String(from).split('-').map(Number);
-  const t = new Date(y, m - 1, d);
-  t.setDate(t.getDate() - n);
-  const pad = (x) => String(x).padStart(2, '0');
-  return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
-}
-
 /** 一行是否为未完成任务行（- [ ]）。 */
 
 export function isPlaceholder(line) {
   const t = line.trim();
-  if (!/^- \[[ x]\]/.test(t)) return false; // 只判任务行
-  const body = t.replace(/^- \[[ x]\]\s*/, '').replace(/\(认领[^)]*\)/g, '').trim();
+  if (!/^- \[[ x\-+~]\]/.test(t)) return false; // 只判任务行
+  const body = t.replace(/^- \[[ x\-+~]\]\s*/, '').replace(/\(认领[^)]*\)/g, '').trim();
   return !body || /^(无|（无）|None|null)$/.test(body);
 }
 /** 在指定分区段落后插入一行任务；找不到分区则在文件末尾追加回退。写前惰性迁移老格式。 */
 
 export function extractId(text) {
-  // 先剥行首状态标记（`[进行中] <id>`），否则 id 会取成 "[进行中]"（2026-09-13 实测）。
-  // 再剥具体的 `- [ ] ` 前缀（CLI 传完整行时）。
+  // 先剥行首状态前缀（旧写法的 `[进行中] `，存量迁移期还会遇到），
+  // 再剥具体的复选框前缀（CLI 传完整行时）。
   const t = String(text)
-    .replace(/^\s*-\s*\[[ x]\]\s*/, '')
+    .replace(/^\s*-\s*\[[ x\-+~]\]\s*/, '')
     .replace(/^\[[^\]]+\]\s+/, '');
   // id = 到第一个空白 / `[` 为止的连续字符（id 不允许含空格或方括号）。
   // ★ 必须支持**中文 id**（2026-10-16 实测）：原正则 `^[A-Za-z][\w-]*` 要求英文开头，

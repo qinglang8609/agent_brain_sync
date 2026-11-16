@@ -2,8 +2,6 @@
 // 这里是纯数据 + 只读谓词。抽出来专为断开 structure ⇄ validate 的环：
 // structure 要靠它重排、validate 要靠它校验，两边都只依赖它。
 
-import { SEC } from './common.js';
-
 export const LEGACY_SECTION_RENAMES = [
   // H1（文件标题）
   ['# 🗂 图谱索引', '# 🗂 Graph Index'],
@@ -21,20 +19,10 @@ export const LEGACY_SECTION_RENAMES = [
   ['### （未标日期）', '### Undated'],
 ];
 
-export const TODO_SECTIONS = ['Todo', 'Done'];
-// todo 的 `###` 级标签（实测真实形态：`## Done` 下按日期分组 `### 2026-09-29`，
-// 归位的进 `### Archived`）。白名单只限这两类：日期组 + Archived。
-// 为什么必须列：`### ` 是 AI 最爱的「自建小节」位置（### 备忘 / ### 计划），
-// 只查 `## ` 会把它放过去。
-
-export const TODO_SUBSECTIONS = ['Archived'];
-/** `###` 标签是否放行：归档区 / 未标日期组 / 日期组 `YYYY-MM-DD`。
- *  `Undated` 是 LEGACY_MARKS 里的正式标准名（旧 `### （未标日期）` → `### Undated`），
- *  漏了它会把存量文件卡死（实测）。 */
-
-export function isAllowedTodoSub(name) {
-  return TODO_SUBSECTIONS.includes(name) || name === 'Undated' || /^\d{4}-\d{2}-\d{2}$/.test(name);
-}
+// todo.md 没有分区（2026-11-16 用户定）：只剩 H1 + 一条列表。
+// 任何 `## ` / `### ` 都是违规 —— `### ` 是 AI 最爱的「自建小节」位置（### 备忘 / ### 计划）：
+// 旧分区与日期组由 normalizeTodo 迁移时丢掉，不会卡住存量库。
+export const TODO_SECTIONS = [];
 
 // ---------- 三份根文件的标签白名单与条目形状（2026-10-05 用户定）----------
 // 用户原话：「index Rules Concepts Entities Sources Syntheses Sessions 包含这些标签
@@ -47,13 +35,20 @@ export function isAllowedTodoSub(name) {
 // 注意 Rules 区是例外：它放的是**规矩短句**（「写代码前先读 docs/STRUCTURE.md」），
 // 不是页链接 —— 实测 13 条规则全是这个形态。不能拿 [[页名]] 去卡它。
 
-export const INDEX_SECTIONS = ['Rules', 'Concepts', 'Entities', 'Sources', 'Syntheses', 'Sessions'];
-/** 需要 `- [[页名]] …` 形状的区（Rules 除外）。 */
+export const INDEX_SECTIONS = ['Rules', 'Concepts', 'Entities', 'Sources', 'Syntheses'];
+/** 需要 `- [[页名]] …` 形状的区（Rules 除外）。
+ *
+ * `Sessions` 已废（2026-11-16 用户定）：会话页与归档页的清单不再登记进 index ——
+ * 链接行只是把目录当第二张表，多一处要维护的重复。存量段由 RETIRED_SECTIONS 整段删除。 */
 
-export const INDEX_LINK_SECTIONS = ['Concepts', 'Entities', 'Sources', 'Syntheses', 'Sessions'];
+export const INDEX_LINK_SECTIONS = ['Concepts', 'Entities', 'Sources', 'Syntheses'];
 /** log 行的 kind 枚举（与 cmdLog 写入端同源；实测 238 条只有这 4 种）。 */
 
-export const LOG_KINDS = ['note', 'dev', 'concept', 'ingest'];
+export const LOG_KINDS = ['note', 'dev', 'concept', 'ingest', 'review', 'plan', 'fix', 'docs', 'devops', 'audit', 'migrate'];
+// 枚举来自 2026-11-16 的跨项目实测（9 个图谱 1000+ 条 log）：
+//   note/dev/concept/ingest 是主线四种；review/plan/fix/docs/devops/audit/migrate
+//   在 zj_shop 真库里各出现过 1–3 次。原枚举是从「238 条只有这 4 种」推的，样本不够——
+//   把实际用过的补进枚举，比批量改写历史行诚实（工具只报不改是同一原则的反面教材）。
 
 /** 条目形状规则表：文件 → 每行的预期形状。
  *  校验器只报告「不像这个形状」的行，不自动改写内容（机器不猜语义）。 */
@@ -107,40 +102,30 @@ export const ENTRY_SHAPES = {
   'log.md': [
     {
       name: 'LOG-ENTRY',
+      // 2026-11-16 用户定：log 行与 todo 行同构，kind 取消 ——
+      //   `## [标题] [YYYY-MM-DD HH:MM] [[作者]] [会话id]`
+      // log 只应有三类行：H1、条目行、HTML 注释（空行另由 STRAY-BLANK 判）。
       test: (l) => {
-        // ★ 2026-10-18 补的白名单：原来只检查 `## ` 开头的行，**其余行全放行**，
-        //   于是裸散文/报告能直接写进 log（实测能落盘）。log 只应有四种行：
-        //   H1、`## Log` 分区标题、`## [时间]` 条目、HTML 注释。
-        if (!l.trim()) return null;                        // 空行另由 STRAY-BLANK 判
-        if (/^#\s/.test(l)) return null;                   // H1
-        if (/^<!--/.test(l.trim())) return null;           // 模板提示注释
-        if (/^##\s+Log\s*$/.test(l)) return null;          // 唯一分区标题
-        if (!/^##\s/.test(l)) return 'log 里只能有 `## [时间] [[作者]] kind | 正文` 条目行（散文/报告请开一条条目）';
-        // 以下只对 `## ` 行判形状
-        // ★ log 没有分区概念：`## ` 开头的只能是条目。
-        //   否则 `## 2026-10-05 随便写点`（缺方括号/作者/竖线）会被当成「分区标题」滑过去 ——
-        //   而 log.md 的标签白名单是 null（不校验），这就是一个漏网口（实测）。
-        // 形状：## [YYYY-MM-DD HH:MM] [[作者]] kind | 正文
-        // ★ 放行历史旧模板的占位行 `## [YYYY-MM-DD] ingest | 沉淀 <slug>`：
-        //   它是早版 logTemplate 造出来的，不是人写的乱，而是模板自身的遗留。
-        //   新模板已改成 HTML 注释（见 store.js logTemplate）。存量这行由 lint 报。
+        if (!l.trim()) return null;
+        if (/^#\s/.test(l)) return null;                        // H1
+        if (/^<!--/.test(l.trim())) return null;                 // 模板提示注释
+        if (!/^##\s/.test(l)) return 'log 里只能有 `## [标题] [时间] [[作者]] [会话id]` 条目行（散文/报告请开一条条目）';
+        // 历史占位行（早版模板 `## [YYYY-MM-DD] ingest | 沉淀 <slug>`）放行，存量由 lint 报。
         if (/^##\s*\[YYYY-MM-DD\]/.test(l)) return null;
-        const m = l.match(/^##\s*\[(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]\s*\[\[([^\]]+)\]\]\s*([A-Za-z]+)\s*\|\s*(\S.*)$/);
-        if (!m) return '应为 `## [YYYY-MM-DD HH:MM] [[作者]] kind | 正文`（log 只能有这种行）';
-        if (!LOG_KINDS.includes(m[3])) return `kind 只能是 ${LOG_KINDS.join('/')}（收到 \`${m[3]}\`）`;
-        // ★ 2026-10-18：正文不能含代码围栏。一条 log 正文里出现 ``` 会把它之后的
-        //   所有条目都吞进代码块（渲染与 grep 双输），而这里本来就是单行条目。
-        if (m[4].includes('```')) return 'log 正文不能含 ``` —— 条目是单行摘要，代码请贴文件路径或拆成 source 页';
-        // 「正文只有个任务 id」不在这里拒（见下 lintOnly 规则）：它是**内容质量**
-        // 问题不是**结构格式**问题，当写入闸门会把存量脏库锁死（实测：真库仅一条
-        // 就让所有 abs log 失败）。留在此处只会误伤正常短标题（如 `log-0`）。
+        // 标题贪婪匹配：正文里可能有 `[[页名]]` 这类方括号。
+        // 2026-11-16 定稿：`## [时间] [短标题] [[作者]] 正文纯文本 [会话id]`
+        const m = l.match(/^##\s*\[(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]\s*\[([^\]]+)\]\s*(?:\[\[([^\]]+)\]\]|@([\w\u4e00-\u9fff.-]+))?\s*([\s\S]*?)\s*(?:\[([^\[\]]*)\])?\s*$/);
+        if (!m) return '应为 `## [标题] [YYYY-MM-DD HH:MM] [[作者]] [会话id]`（log 只能有这种行）';
+        if (!m[2].trim()) return '条目标题不能为空';
+        if (!(m[3] || m[4])) return '缺作者标记（`[[作者]]` 或历史的 `@作者`）';
+        if (m[2].includes('```') || (m[5] || '').includes('```')) return '条目不能含 ``` —— 一行摘要，代码请贴文件路径或拆成 source 页';
         return null;
       },
       // 仅在 lint 阶段生效的额外规则（不阻写入，只报存量）。
       lintOnly: (l) => {
-        const m = l.match(/^##\s*\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*\[\[[^\]]+\]\]\s*[A-Za-z]+\s*\|\s*(\S.*)$/);
+        const m = l.match(/^##\s*\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*\[([^\]]+)\]/);
         if (!m) return null;
-        if (/^[A-Z][A-Z0-9-]{2,}$/.test(m[1].trim())) return '正文只写了个任务 id（等于没记内容），补一句发生了什么';
+        if (/^[A-Z][A-Z0-9-]{2,}$/.test(m[1].trim())) return '标题只写了个任务 id（等于没记内容），补一句发生了什么';
         return null;
       },
     },
@@ -148,36 +133,15 @@ export const ENTRY_SHAPES = {
   'todo.md': [
     {
       name: 'TODO-ENTRY',
-      // 任务行形状（实测）：
-      //   新写入（cmdTask）：`- [ ] [状态] id [[作者]] — 描述 (认领 日期)`
-      //   旧存量（四区制迁移）：`- [ ] 中文描述 (认领 日期)` ← 没有 id / 作者
-      //   已完成：`- [x] id …`（markDone 会 stripStateMark 去掉状态）
-      //
-      // ★ 为什么不强制要求 id：旧存量的 id 缺失是**历史事实**，机器不能凭空编造
-      //   （编了就是静默改写语义）。闸门只确保「结构可解析」：
-      //     未完成必须有 `[状态]`（归一后的标志）；已完成必须有内容。
-      //   而「新写入必须带 id」由 cmdTask 拼装保证 —— 那是入口的职责，
-      //   不是事后逐行猜（猜不出哪行是新的、哪行是旧的）。
+      // 行格式（2026-11-16 定稿）：
+      //   `- [记号] [YYYY-MM-DD HH:MM] [短标题] [[作者]] 详情纯文本 [会话id]`
+      //   子项同格式（带缩进）。时间可缺省；详情允许任意文字（可含方括号/双链）。
       test: (l) => {
-        if (/^#{1,3}\s/.test(l)) return null; // 标题行（## Done / ### 日期）不是条目
-        if (!/^-\s/.test(l)) return null; // 非条目行（如缩进子项）由下面单独判
-        // Done 区的归档行：`- [[log-日期]] 完成任务 N 条`。
-        // ★ 历史命名不统一：还有 `[[2026-09-12-todo归档]]` 这种旧写法（实测），
-        //   只认 `log-` 前缀会把它误报为「缺状态标记」。状归档行与任务行的
-        //   区别不是命名而是**形态**：没有 `[ ]`/`[x]` 复选框的 [[链接]] 行。
-        if (/^-\s*\[\[[^\]]+\]\]\s+完成任务/.test(l)) return null;
-        if (/^-\s*\[\[log-\d{4}-\d{2}-\d{2}\]\]/.test(l)) return null;
-        const m = l.match(/^-\s*\[([ x])\]\s*(.*)$/);
-        if (!m) return '应以 `- [ ] ` 或 `- [x] ` 开头';
-        const rest = m[2].trim();
-        if (!rest) return '任务行不能只有复选框，要写做什么（已拒）';
-        // 未完成：必须有状态标记（新写法）——无标记的旧行由 enforceBrainFormat 自动补上，
-        // 走到这里还没标记 = 补不了（不是 `- [ ] ` 形状），报错。
-        if (m[1] === ' ' && !/^\[[^\]]+\]\s*\S/.test(rest)) {
-          return '未完成任务应为 `- [ ] [状态] …`（状态：进行中/讨论中/滞留中）';
-        }
-        // 子项不能挤在同一行（应另起 `  - [ ] `）
-        if (/↳/.test(rest) || /\[\s*\]\s*断点/.test(rest)) return '子项要另起一行写 `  - [ ] …`';
+        if (/^#{1,3}\s/.test(l)) return null;
+        if (!/^-\s/.test(l)) return null;
+        const m = l.match(/^\s*-\s*\[([ x\-+~])\]\s*(?:\[(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\]\s*)?\[([^\]]+)\]/);
+        if (!m) return '任务行应为 `- [记号] [时间] [短标题] [[作者]] 详情 [会话id]`';
+        if (!m[3].trim()) return '`[短标题]` 不能为空';
         return null;
       },
     },
@@ -215,7 +179,7 @@ export { TASK_STATES } from './common.js';
  *
  * 返回 { text, changed }；changed 为空的描述列表（空=无需改盘）。 */
 
-export const RETIRED_SECTIONS = ['## Roadmap'];
+export const RETIRED_SECTIONS = ['## Roadmap', '## Sessions'];
 
 /** 删除废弃分区的整段（标题到下一个同级/更高级标题前）。
  * 返回 { text, removed:[区名] }；只按整行精确匹配标题，不碰正文。 */
@@ -228,29 +192,3 @@ export const TASK_LINE_MAX = 400;
  *  用途：比对「这条违规是不是写入前就有的」——新增的拒，存量的放。
  *  不按行号比对：插入一行会让后面所有行号位移，按行号会误判。 */
 
-export const DONE_KINDS = ['落地', '否决', '仅方案'];
-
-/** 从 Done 任务行提取结语标记；无标记返回 ''。 */
-
-export const ARCHIVE_HEADING = `### ${SEC.archived}`;
-
-/** 把 Done 主体行切成 { groupLines, archiveLines }：把 `### 归档` 区当"不透明块"原样保留。
- * 注意不能简单"从标题切到文件尾" —— 否则一旦有日期组落在归档区之后（手改/旧数据），
- * 它会被当不透明内容除在分组之外，永远不参与归档。故只取到下一个 ###/## 标题为止。 */
-
-export const ARCHIVE_SECTION = '## 📦 任务归档';
-
-/** 把「任务归档」段合并进已有正文。**纯函数**（不碰磁盘）。
- *
- * 为何不再「每天一个文件」（2026-09-15 用户定）：
- *   归档页与 `log-<日期>.md` 会话快照是**同一天的记录**，分两处查着要开两个文件。
- *   改为：归档写进当天快照的 `ARCHIVE_SECTION` 段。
- *
- * 两个边界（都有测试钉住）：
- *   ① 文件不存在 → 建一个**只有归档段**的页（那天可能没写快照，仍只落这一个文件）。
- *   ② 文件已存在（含 AI 手写的快照）→ **只替换归档段**，段外内容逐字保留。
- *      同日重复归档（罕见）则把新日期组接在段内已有内容之后，不重复建段。
- *
- * @param body   现有全文（null = 文件不存在）
- * @param group  { date, lines, count }
- */

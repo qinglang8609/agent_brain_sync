@@ -170,20 +170,13 @@ describe('cli: todo', () => {
     assert.ok(!/T4[^\n]*\(认领/.test(md), '无认领则不留认领段');
   });
 
-  // 需求：归档到 sessions 后 id 也要跟着 —— 这样每条任务都能查到是哪个会话做的。
-  // 归档是整行搬运，理论上自动兼容；这条把它钉住。
-  test('★ 归档到 sessions/ 后 sid 完整保留', async () => {
+  // 需求：任务行要能查到是哪个会话做的 —— sid 记在 `(认领 …)` / `(完成 …)` 里。
+  // 2026-11-16 起不再有归档，所以这条直接钉 done 后的行。
+  test('★ done 后 sid 完整保留在行上', async () => {
     await run(['todo', 'start', 'T1', '--note', '带会话', '--session', '01a11eae']);
     await run(['todo', 'done', 'T1', '--as', '落地', '做完']);
-    // 把完成日期改成很久以前，让 archive 愿意搬它
-    const p = join(proj, '.brain', 'todo.md');
-    const md = (await fs.readFile(p, 'utf8')).replace(/\(完成 \d{4}-\d{2}-\d{2}/, '(完成 2020-01-01');
-    await fs.writeFile(p, md, 'utf8');
-    const a = await run(['todo', 'archive', '--keep-days', '1']);
-    assert.equal(a.code, 0, a.stderr);
-    const files = await fs.readdir(join(proj, '.brain', 'sessions'));
-    const arch = await fs.readFile(join(proj, '.brain', 'sessions', files[0]), 'utf8');
-    assert.match(arch, /01a11eae/, `归档后 sid 必须还在: ${arch.slice(0, 300)}`);
+    const md = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.match(md, /01a11eae/, `sid 必须还在: ${md}`);
   });
 
   test('start 登记 + done 归位 (默认 --dir = 进程 cwd)', async () => {
@@ -195,28 +188,22 @@ describe('cli: todo', () => {
     assert.ok(t.stdout.includes('T1'));
   });
 
-  // 坑（2026-10-05 实测抓到）：cmdTodoArchive 里 archiveDoneInText 有**两个调用点**
-  //   （plan 预算 + 锁内重算），只在第一个传了 maxLines → 锁内重算的 archived 为空
-  //   → 返回 SKIP → todo.md 一个字没动，而 sessions/ 归档页已经写了。
-  //   表现：命令说"已归档 33 条"，看板行数纹丝不动、lint 继续报 OVER-SIZE。
-  test('看板超行数上限时，archive 真把条目移出 todo.md（两个调用点都要传 maxLines）', async () => {
+  // 2026-11-16 用户定：Done 不再压缩、不再搬进日志页。
+  // 这条把「大量已完成行原地不动」钉住，防止归档逻辑被重新引入。
+  test('大量已完成行原地保留（不再 archive 搬走）', async () => {
     await run(['init', '--dir', proj]);
-    // 造一个超 60 行的看板：今天 40 条 Done
     const day = new Date().toISOString().slice(0, 10);
     const rows = Array.from({ length: 40 }, (_, i) =>
-      `### ${day}\n- [x] t${i} [[tester]] — 事项${i} — 做完了 【落地】 (完成 ${day})`).join('\n');
-    const md = `# 📋 Todo Board\n\n## Todo\n\n## Done\n${rows}\n`;
+      `- [x] t${i} [[tester]] — 事项${i} — 做完了 【落地】 (完成 ${day})`);
+    const md = `# 📋 Todo Board\n\n${rows.join('\n')}\n`;
     await fs.writeFile(join(proj, '.brain', 'todo.md'), md, 'utf8');
-    const before = (await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8')).split('\n').length;
-    assert.ok(before > 60, `前置条件：应超 60 行（实际 ${before}）`);
 
     const r = await run(['todo', 'archive']);
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout + r.stderr, /已归档/, `应报告归档: ${r.stdout}${r.stderr}`);
-
-    const after = (await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8')).split('\n').length;
-    assert.ok(after < before, `todo.md 应真的变短（${before} → ${after}）—— 只写 sessions/ 不算归档`);
-    assert.ok(!/\[x\] t0 /.test(await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8')), '归档的条目不该还在');
+    assert.notEqual(r.code, 0, 'archive 子命令已删除，应报未知子命令');
+    const after = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
+    assert.ok(after.includes('t0 '), '已完成行不该被搬走');
+    const sess = await fs.readdir(join(proj, '.brain', 'sessions')).catch(() => []);
+    assert.ok(!sess.some((f) => /log-\d{4}-\d{2}-\d{2}\.md$/.test(f) && /归档/.test('')), '不该再生成归档页');
   });
 
   // rename: 改任务 id（v1.15.2 后 hook 不再自动开占位，但这条通用能力保留 ——
@@ -277,19 +264,19 @@ describe('cli: todo', () => {
     const ok = await run(['todo', 'state', 'CN-1', '--note', '滞留中', '--n', '1']);
     assert.equal(ok.code, 0, ok.stderr);
     let t = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.match(t, /^ {2}- \[ \] \[滞留中\] 子项一$/m, `第 1 条应带标记:\n${t}`);
+    assert.match(t, /^ {2}- \[-\] 子项一$/m, `第 1 条应带标记（[-]）:\n${t}`);
     assert.match(t, /^ {2}- \[ \] 子项二$/m, `第 2 条不该被动:\n${t}`);
 
     // 不带 --n 仍是改任务本身（旧用法不能被拐走）
     await run(['todo', 'state', 'CN-1', '--note', '讨论中']);
     t = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.match(t, /- \[ \] \[讨论中\] CN-1/, `不带 --n 应改任务:\n${t}`);
-    assert.match(t, /^ {2}- \[ \] \[滞留中\] 子项一$/m, t);
+    assert.match(t, /- \[\+\] CN-1/, `不带 --n 应改任务（[+]）:\n${t}`);
+    assert.match(t, /^ {2}- \[-\] 子项一$/m, t);
 
     const over = await run(['todo', 'state', 'CN-1', '--note', '搁置', '--n', '9']);
     assert.ok(/NO_MATCH/.test(over.stdout + over.stderr), `越界 n 应报没匹配: ${over.stdout}${over.stderr}`);
     t = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.doesNotMatch(t, /\[搁置\]/, `越界 n 不该写任何东西:\n${t}`);
+    assert.doesNotMatch(t, /\[~\]/, `越界 n 不该写任何东西:\n${t}`);
 
     const bad = await run(['todo', 'state', 'CN-1', '--note', '搁置', '--n', '0']);
     assert.notEqual(bad.code, 0, '--n 0 应非零退出');
@@ -327,7 +314,7 @@ describe('cli: todo', () => {
     const st = await run(['todo', 'state', 'TB', '--note', '滞留中']);
     assert.equal(st.code, 0, st.stderr);
     const t = await run(['todo']);
-    assert.ok(t.stdout.includes('[滞留中] TB'), `应改行首标记: ${t.stdout}`);
+    assert.ok(t.stdout.includes('[-] TB'), `应改复选框记号（[-]）: ${t.stdout}`);
     // 标准 md 嵌套：子项以 2 空格缩进挂在该任务下
     const raw = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
     assert.ok(/\n {2}- \[ \] 改到 L40/.test(raw), `子项应缩进在任务下:\n${raw}`);
@@ -742,37 +729,13 @@ describe('cli: argv 解析', () => {
     assert.ok(!settings.includes('mcpServers'), `--no-mcp 不得注册 MCP: ${settings.slice(0, 300)}`);
   });
 
-  test('--keep-days 传值（非布尔）且 --dry-run 为开关', async () => {
+  // 2026-11-16：`--keep-days` 随 Done 归档一起删除。这里钉住它不再被接受，
+  // 而不是留一个「静默无效的开关」。
+  test('--keep-days / todo archive 已删除（不静默留死开关）', async () => {
     await run(['init', '--dir', proj]);
-    const r = await run(['todo', 'archive', '--keep-days', '7', '--dry-run']);
-    assert.equal(r.code, 0, r.stderr);
-    // 值真被读到: 输出里提到保留天数(而非把 '7' 当位置参数报错)
-    assert.ok(!r.stderr.includes('不认识多余参数'), `--keep-days 的值不得被当位置参数: ${r.stderr}`);
-  });
-
-  // 坑（2026-10-05 实测）：原写法 `Math.max(1, Number(keepDays) || 3)` ——
-  //   JS falsy 陷阱让 `0 || 3` 得 3，于是 `--keep-days 0` 被当成"没传值"，
-  //   静默变成保留 3 天（用户以为归档了全部，实际一条没动）。
-  //   改为显式校验：非法值明确报错，不静默改写用户意图。
-  test('--keep-days 传 0 明确报错（不得静默当成"没传"）', async () => {
-    await run(['init', '--dir', proj]);
-    const r = await run(['todo', 'archive', '--keep-days', '0']);
-    assert.match(r.stdout + r.stderr, /≥1 的整数/, `应明确拒绝 0: ${r.stdout}${r.stderr}`);
-    assert.ok(!/保留近 3 天/.test(r.stdout), '不得静默落到默认 3 天');
-  });
-
-  test('--keep-days 非法值（负数/非数/小数）一律拒绝', async () => {
-    await run(['init', '--dir', proj]);
-    for (const v of ['-1', 'abc', '2.5']) {
-      const r = await run(['todo', 'archive', '--keep-days', v]);
-      assert.match(r.stdout + r.stderr, /≥1 的整数/, `"${v}" 应被拒绝`);
-    }
-  });
-
-  test('--keep-days 合法值照常工作（文案跟随参数）', async () => {
-    await run(['init', '--dir', proj]);
-    const r = await run(['todo', 'archive', '--keep-days', '5']);
-    assert.match(r.stdout, /保留近 5 天/, `文案应跟随参数: ${r.stdout}`);
+    const r = await run(['todo', 'archive', '--keep-days', '7']);
+    assert.notEqual(r.code, 0, 'archive 子命令应已删除');
+    assert.match(r.stdout + r.stderr, /未知子命令/);
   });
 
   // help 结构（2026-09-16）：首次使用者打开终端要知道先输什么。
@@ -806,7 +769,7 @@ describe('cli: argv 解析', () => {
   // 现在只输出规范形状；raw flag 属于纯噪音（grep 验证 opts['keep-days'] 零引用）。
   // 断言方式: 直接 eval 提取的 parseArgv（它未导出，但这段是纯函数），
   // 比走 CLI 快且能看到完整形状。
-  test('opts 只带规范键，不携带 raw 双份（keep-days/stale-days/dry-run/no-mcp/no-skill）', async () => {
+  test('opts 只带规范键，不携带 raw 双份（stale-days/dry-run/no-mcp/no-skill）', async () => {
     const src = await fs.readFile(join(REPO, 'bin', 'abs.js'), 'utf8');
     const a = src.indexOf('const FLAG_SPEC');
     const b = src.indexOf('const usage = `');
@@ -814,8 +777,7 @@ describe('cli: argv 解析', () => {
     const { parseArgs } = await import('node:util');
     const parseArgv = new Function('parseArgs', `${extracted}\nreturn parseArgv;`)(parseArgs);
 
-    const o = parseArgv(['todo', 'archive', '--keep-days', '5', '--dry-run']);
-    assert.equal(o.keepDays, '5', '规范键 keepDays 应就位');
+    const o = parseArgv(['todo', 'restore', '--dry-run']);
     assert.equal(o.dryRun, true, '规范键 dryRun 应就位');
     for (const raw of ['keep-days', 'stale-days', 'dry-run', 'no-mcp', 'no-skill']) {
       assert.ok(!(raw in o), `raw 键 "${raw}" 不得出现在 opts: ${JSON.stringify(o)}`);
@@ -974,8 +936,8 @@ describe('cli: 使用者姓名与作者标记', () => {
     const r = await run(['todo', 'add', 'T1', '--note', '做点事', '--dir', proj], { env });
     assert.equal(r.code, 0, r.stderr);
     const todo = await fs.readFile(join(proj, '.brain', 'todo.md'), 'utf8');
-    assert.ok(/- \[ \] \[进行中\] T1 \[\[fanchao\]\] — 做点事 \(认领 \d{4}-\d{2}-\d{2}\)/.test(todo),
-      `todo 行应为 '[状态] ID [[name]] — 说明 (认领 date)': ${todo}`);
+    assert.ok(/- \[ \] T1 \[\[fanchao\]\] — 做点事 \(认领 \d{4}-\d{2}-\d{2}\)/.test(todo),
+      `todo 行应为 '[记号] ID [[name]] — 说明 (认领 date)': ${todo}`);
     // 人页随之建立并登记 index（否则 [[fanchao]] 是死链）
     const person = await fs.readFile(join(proj, '.brain', 'entities', 'fanchao.md'), 'utf8');
     assert.ok(person.includes('# fanchao'), `人页应有 H1: ${person}`);

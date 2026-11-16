@@ -4,10 +4,11 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { brainPath } from '../index.js';
 import { editFile, SKIP } from '../lock.js';
-import { today, localStamp, extractId, extractNote, extractAuthor, isLegacyAuthorTag, claimOf, parseChild, renderChild } from './common.js';
-import { todoTemplate, normalizeTodo, stateOfTaskLine, stripStateMark } from './structure.js';
+import { today, localStamp, parseChild, renderChild, STATE_MARK } from './common.js';
+import { parseTaskLine, renderTaskLine, taskIdOf, taskTimeOf, shortTitle } from './line.js';
+import { todoTemplate, normalizeTodo, stateOfTaskLine, ensureStateMark } from './structure.js';
 import { TASK_STATES } from './spec.js';
-import { collapseDone, groupDoneSection } from './archive.js';
+import { collapseDone, sortTodoLines } from './done.js';
 
 export async function readTodo(brainRoot) {
   const p = brainPath(brainRoot, 'todo.md');
@@ -17,12 +18,15 @@ export async function readTodo(brainRoot) {
   } catch {
     return ''; // 尚未创建，按空处理（不在此创建，避免读操作写文件）
   }
+  // normalizeTodo 里含 Done 区拉平（2026-11-16：老文件的 `### 日期` 分组展开成平铺列表，幂等）
   const norm = normalizeTodo(text);
-  const grouped = groupDoneSection(norm); // 平铺旧 Done → 按日期分组（幂等）
-  if (grouped !== text) {
-    // 惰性迁移也是写：走锁，避免与并发写互相覆盖（锁内 re-read 已是权威最新内容）
-    await editFile(p, (cur) => (cur === text ? { text: grouped } : SKIP));
-    return grouped;
+  if (norm !== text) {
+    // 惰性迁移也是写：走锁，避免与并发写互相覆盖（锁内 re-read 已是权威最新内容）。
+    // ★ 写失败**不能**让读操作崩掉（2026-11-05 实测教训：load 是开机第一入口，
+    //   一条无法归一的脏数据就让它整屏崩了）。归一后的文本照样返回，让看板能读；
+    //   写不进去这件事由 checkBrainShape 的「未能自动归一」警告报出来。
+    await editFile(p, (cur) => (cur === text ? { text: norm } : SKIP)).catch(() => {});
+    return norm;
   }
   return text;
 }
@@ -37,107 +41,104 @@ export async function ensureTodo(brainRoot) {
 /** 分区名常量（单一真源）。改名时只改这里 —— 之前散在 20+ 处，一改就漏。
  * 旧名（中文）留在 LEGACY_SECTION_RENAMES 作迁移用。 */
 
+/** 改任务状态：状态就写在复选框里（[ ] [-] [+] [~]）。 */
 export function setStateMark(text, id, state) {
   if (!TASK_STATES.includes(state)) return { text, changed: [] };
   const lines = String(text ?? '').split('\n');
   const idx = findTaskLine(lines, id);
   if (idx === -1) return { text, changed: [] };
-  const cur = lines[idx];
-  if (stateOfTaskLine(cur) === state) return { text, changed: [] };
-  const raw = stripStateMark(cur);          // 先剥旧标记，再补新的
-  // 前缀统一为 `- [ ]`（缩进保留）；旧 `↳` 写法已由 migrateLegacyChild 迁移掉。
-  lines[idx] = raw.replace(/^(\s*-\s*\[[ x]\]\s*)/, `$1[${state}] `);
+  if (stateOfTaskLine(lines[idx]) === state) return { text, changed: [] };
+  lines[idx] = ensureStateMark(lines[idx], state);
   return { text: lines.join('\n'), changed: [`${id} 状态 → ${state}`] };
 }
 
 /** 剥掉行首状态标记。 */
 
-export async function addTask(brainRoot, { section, text }) {
+export async function addTask(brainRoot, { id, title, state = '进行中' }) {
   const p = await ensureTodo(brainRoot);
-  await editFile(p, (orig) => ({ text: insertTask(orig, section, text) }));
-  return { file: p, text };
+  await editFile(p, (orig) => ({ text: insertTask(orig, makeLine({ id, title, state })) }));
+  return { file: p, text: title };
 }
 
-/** 纯函数：把任务行插到分区标题后。供 editFile mutator 复用（upsert 也用它）。 */
-
-function insertTask(orig, section, text) {
-  const base = normalizeTodo(orig);
-  const lines = base.split('\n');
-  const header = `## ${section}`;
-  const idx = lines.findIndex((l) => l.startsWith(header));
-  if (idx === -1) {
-    lines.push('', header, `- [ ] ${text}`);
-  } else {
-    // 在该分区标题后、下一个分区标题前插入。
-    // ★ 插入点要**跳过尾部空行**：分区末尾本来就有个排版空行（`## Done` 前的那个），
-    //   若插到它后面，新任务与前面的内容之间就隔了个空行 —— 每建一条多一个空行，
-    //   而闸门明写「条目之间不允许空行」（实测：建 4 条就有 3 个空行）。
-    let insertAt = idx + 1;
-    while (insertAt < lines.length && !lines[insertAt].startsWith('## ')) insertAt++;
-    while (insertAt > idx + 1 && !lines[insertAt - 1].trim()) insertAt--;
-    lines.splice(insertAt, 0, `- [ ] ${text}`);
-  }
-  return lines.join('\n');
-}
-
-/** 幂等登记：同 id 已有未完成任务行则原位更新（新 note/新认领日期），否则插入。 */
-
-export async function upsertTask(brainRoot, { section, text, session = '' }) {
-  const p = await ensureTodo(brainRoot);
-  const id = extractId(text);
-  const note = extractNote(text);
-  const out = await editFile(p, (orig) => {
-    const base = normalizeTodo(orig);
-    const lines = base.split('\n');
-    // 在所有分区中找该 id 对应的未完成任务行（Done 的已完成行不重复动）；全等比对
-    const idx = findTaskLine(lines, id);
-    // 状态标记：新建用 text 里带的（默认 进行中），更新保留原有的
-    const wanted = String(text).match(/^\[([^\]]+)\]/)?.[1];
-    const state = idx !== -1
-      ? (stateOfTaskLine(lines[idx]) || wanted || '进行中')
-      : (TASK_STATES.includes(wanted) ? wanted : '进行中');
-    if (idx !== -1) {
-      // 原位更新：保留断点附属行 + 原@作者 + 原状态，只换任务行本体
-      const raw = stripStateMark(lines[idx]).replace(/^- \[ \] /, '');
-      const author = extractAuthor(raw);
-      const legacy = isLegacyAuthorTag(raw); // 旧行保持旧形态，不静默改写
-      const oldNote = extractNote(raw);
-      const merged = note && oldNote && oldNote.startsWith(note) ? `${note}${oldNote.slice(note.length)}` : note || oldNote;
-      const at = author ? ` ${legacy ? '@' + author : '[['
-        + author + ']]'}` : '';
-      // 认领段整体搬回去（新的优：带了 sid 就用新的，旧行原本有就保留）——
-      //   不能无条件重写成 `(认领 today)`，否则重复 start 会把 sid 冲掉。
-      const sid = String(session || '').replace(/[^\w-]/g, '').slice(0, 16);
-      const claim = sid ? `(认领 ${today()} ${sid})` : (claimOf(raw) || `(认领 ${today()})`);
-      const newLine = `- [ ] [${state}] ${id}${at}${merged ? ' — ' + merged : ''} ${claim}`;
-      lines[idx] = newLine;
-      return { text: lines.join('\n'), updated: true };
-    }
-    return { text: insertTask(base, section, text), updated: false };
+/** 生成一条新任务行（时间 = 现在）。 */
+function makeLine({ title, detail = '', state = '进行中', sid = '', author = '', time = '' }) {
+  return renderTaskLine({
+    mark: STATE_MARK[state] ?? ' ',
+    time: time || localStamp(),
+    title: shortTitle(title),
+    author,
+    detail,
+    sid,
   });
-  return out.updated
-    ? { file: p, text, updated: true }
-    : { file: p, text, updated: false };
 }
 
-/** 从任务文本提取幂等键（行首 id，如 TASK-1 / T-2 / fix-hook）。 */
+/** 纯函数：把新任务行放到列表最上面（列表按时间倒序，刚登记的就是最新的）。 */
+function insertTask(orig, line) {
+  const base = normalizeTodo(orig);
+  const body = base.split('\n').filter((l) => l.trim() && !/^#\s/.test(l.trim()));
+  return ['# 📋 Todo Board', '', line, ...body].join('\n').replace(/\n+$/, '\n');
+}
 
+/** 幂等登记：同 id 已有未完成任务行则原位更新（标题/状态），否则插到最上面。
+ *  原位更新保留原来的时间与作者 —— 时间代表「这条任务是什么时候登记/最后一次被写的」，
+ *  重跑 start 不该把它刷成现在。 */
+export async function upsertTask(brainRoot, { title, detail = '', state = null, session = '', author = '' }) {
+  const p = await ensureTodo(brainRoot);
+  let updated = false;
+  await editFile(p, (orig) => {
+    const base = normalizeTodo(orig ?? '');
+    const lines = base.split('\n');
+    const idx = findTaskLine(lines, title);
+    const sid = String(session || '').replace(/[^\w-]/g, '').slice(0, 40);
+    if (idx === -1) {
+      return { text: insertTask(base, makeLine({ title, state: state || '进行中', sid, author, detail })) };
+    }
+    updated = true;
+    const old = parseTaskLine(lines[idx]);
+    const want = state && TASK_STATES.includes(state) ? state : (stateOfTaskLine(lines[idx]) || '进行中');
+    lines[idx] = renderTaskLine({
+      mark: STATE_MARK[want] ?? ' ',
+      time: old.time || taskTimeOf(lines[idx]),
+      title: shortTitle(title || old.title || old.id),
+      author: old.author,
+      detail: detail || old.detail,
+      sid: sid || old.sid,
+    });
+    return { text: sortTodoLines(lines.filter((l) => l.trim())).join('\n') + '\n' };
+  });
+  return { file: p, updated };
+}
+
+/** 行首 id（命令用来定位）。 */
 export function idOfTaskLine(line) {
-  if (!line) return null;
-  // 两区制下行首可带状态标记（`- [ ] [进行中] <id> …`）—— 必须先剥掉再取 id，
-  // 否则 id 会被读成 "[进行中]"，findTaskLine 全等比对永远落空（2026-09-13 实测）。
-  // 前缀允许缩进（`  - [ ]`）—— 子任务天然带缩进。
-  const m = line.match(/^\s*-\s*\[ \]\s*(?:\[[^\]]+\]\s*)?(\S+)/);
-  return m ? m[1].replace(/\u200b/g, '') : null;
+  return taskIdOf(line);
 }
 
-/** 定位 id 对应的未完成任务行下标；子项行不算独立任务。
- *  全等比对，不用 includes（否则 T1 会误命中 T11）。 */
-
-export function findTaskLine(lines, id) {
-  if (!id) return -1;
-  const want = String(id).replace(/\u200b/g, '');
-  return lines.findIndex((l) => idOfTaskLine(l) === want);
+/** 定位任务行：先按 id 全等（未完成的行），再按标题前缀唯一匹配。
+ *  返回 -1 = 没找到或前缀命中多条（调用方按 NO_MATCH 处理，不猜）。 */
+/** 定位任务行：按**标题**（新格式）/ id（旧格式）匹配；精确优先，其次唯一前缀。
+ *  返回 -1 = 没找到或有歧义（调用方按 NO_MATCH 处理，不猜）。 */
+export function findTaskLine(lines, key) {
+  const want = String(key ?? '').replace(/\u200b/g, '').trim();
+  if (!want) return -1;
+  const open = (l) => { const t = parseTaskLine(l); return t && t.indent === 0 && t.mark !== 'x'; };
+  const exact = lines.findIndex((l) => {
+    if (!open(l)) return false;
+    const t = parseTaskLine(l);
+    return (t.title && t.title === want) || (t.id && t.id === want);
+  });
+  if (exact !== -1) return exact;
+  // 其次：前缀唯一；再退一步：标题里包含它且唯一（按标题定位后，这点很重要）
+  const collect = (test) => {
+    const hits = [];
+    lines.forEach((l, i) => { if (open(l) && test(parseTaskLine(l))) hits.push(i); });
+    return hits;
+  };
+  const byPrefix = collect((t) => (t.title && t.title.startsWith(want)) || (t.id && t.id.startsWith(want)));
+  if (byPrefix.length === 1) return byPrefix[0];
+  if (byPrefix.length > 1) return -1;
+  const byContains = collect((t) => (t.title && t.title.includes(want)) || (t.id && t.id.includes(want)));
+  return byContains.length === 1 ? byContains[0] : -1;
 }
 
 /** 子项行解析：从 `idx+1` 起扫连续的缩进行（子项），返回它们的下标。
@@ -162,6 +163,7 @@ function childRange(lines, idx) {
 export async function setBreakpoint(brainRoot, { id, text }) {
   const p = await ensureTodo(brainRoot);
   let added = false;
+  let kidLineText = '';
   const res = await editFile(p, (orig) => {
     const lines = orig.split('\n');
     const idx = findTaskLine(lines, id);
@@ -169,7 +171,18 @@ export async function setBreakpoint(brainRoot, { id, text }) {
     const kids = childRange(lines, idx);
     const last = kids.length ? parseChild(lines[kids[kids.length - 1]]) : null;
     if (last && last.text === String(text).trim()) return SKIP; // 幂等：同文不重复追加
-    lines.splice(idx + 1 + kids.length, 0, renderChild(text));
+    // 子项与父任务同格式（继承父的时间/作者/会话 id）
+    const par = parseTaskLine(lines[idx]);
+    kidLineText = renderTaskLine({
+      indent: '  ',
+      mark: ' ',
+      time: par.time || '',
+      title: shortTitle(text),
+      author: par.author || '',
+      detail: String(text).length > shortTitle(text).length ? String(text).slice(shortTitle(text).length).replace(/^[，,、。；;：:\-\s]+/, '') : '',
+      sid: par.sid || '',
+    });
+    lines.splice(idx + 1 + kids.length, 0, kidLineText);
     added = true;
     return { text: lines.join('\n'), ok: true };
   });
@@ -178,7 +191,7 @@ export async function setBreakpoint(brainRoot, { id, text }) {
       ? { ok: true, msg: `✓ 子项已追加 → ${id}` }
       : { ok: false, msg: `[NO_MATCH] 未找到含 "${id}" 的未完成任务行（或子项已存在）` };
   }
-  return { ok: true, msg: `✓ 子项已追加 → ${id}\n  ${renderChild(text)}` };
+  return { ok: true, msg: `✓ 子项已追加 → ${id}\n  ${kidLineText}` };
 }
 
 /** 勾/取消勾子项：`- [ ] …` ↔ `- [x] …`。
@@ -199,7 +212,15 @@ export async function setBreakpointDone(brainRoot, { id, n, done = true }) {
     const child = parseChild(lines[target]);
     picked = child;
     // 保留印过的状态标记（2026-11-09）：只翻复选框，不能把 [滞留中] 这类标记抹掉。
-    lines[target] = renderChild(child.text, { done, indent: ' '.repeat(child.indent), state: child.state });
+    // 子项与任务同格式：翻记号时保留时间/作者/详情/会话 id
+    {
+      const c0 = parseTaskLine(lines[target]);
+      lines[target] = renderTaskLine({
+        indent: ' '.repeat(c0.indent),
+        mark: done ? 'x' : (STATE_MARK[child.state] ?? ' '),
+        time: c0.time, title: c0.title, author: c0.author, detail: c0.detail, sid: c0.sid,
+      });
+    }
     return { text: lines.join('\n'), ok: true };
   });
   if (res === SKIP || !picked) {
@@ -229,11 +250,14 @@ export function setChildStateMark(text, id, n, state) {
   const child = parseChild(lines[target]);
   if (!child || child.state === state) return { text, changed: [] };
   const ord = kids.indexOf(target) + 1;
-  lines[target] = renderChild(child.text, {
-    done: child.done,
-    indent: ' '.repeat(child.indent),
-    state,
-  });
+  {
+    const c0 = parseTaskLine(lines[target]);
+    lines[target] = renderTaskLine({
+      indent: ' '.repeat(c0.indent),
+      mark: STATE_MARK[state] ?? ' ',
+      time: c0.time, title: c0.title, author: c0.author, detail: c0.detail, sid: c0.sid,
+    });
+  }
   return { text: lines.join('\n'), changed: [`${id} 第 ${ord} 条子项状态 → ${state}`] };
 }
 
@@ -313,8 +337,8 @@ export async function boardText(brainRoot, textOverride, { full = false } = {}) 
   const text = textOverride !== undefined ? textOverride : await readTodo(brainRoot);
   const head = `📂 abs → 项目: ${brainRoot}`;
   if (!text.trim()) return `${head}\n\n（todo.md 为空，先 abs todo add 登记任务）`;
-  // Done 区折叠：它无上限增长，全量打印会把上下文塞满（见 collapseDone 注释）
+  // 已完成的行折叠成一条计数：它无上限增长（2026-11-16 起不再归档迁出），
+  // 全量打印会把上下文塞满。明细用 --full。
   const body = full ? text.trim() : collapseDone(text).text;
-  const hint = full ? '' : '\n\n（Done 只给计数；看明细: abs todo --full）';
-  return `${head}\n\n${body}${hint}`;
+  return `${head}\n\n${body}`;
 }

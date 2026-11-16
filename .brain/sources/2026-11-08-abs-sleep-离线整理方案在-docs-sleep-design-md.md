@@ -3,7 +3,7 @@ tags: [source, sleep, 设计, 方案]
 id: 2026-11-08-abs-sleep-离线整理方案在-docs-sleep-design-md
 author: fanchao
 updated: 2026-11-08
-status: draft
+status: active
 ---
 
 # 来源：abs sleep 离线整理方案在 docs/sleep-design.md（仅方案未实现）：夜里补空/压缩会话页/提炼概念/墓碑遗忘，默认 dry-run…

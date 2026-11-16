@@ -109,15 +109,17 @@ function resolveProjectDir(dir) {
 
 export function indexTemplate() {
   // 同 todoTemplate：由 rebuildStructure 生成，模板 = 重排结果，不会来回抖。
+  // ★ 无 `## Sessions`（2026-11-16 用户定）：会话页/归档页不再往 index 登记，
+  //   目录不再兼当第二张表。存量库的该段由 RETIRED_SECTIONS 整段删除。
   return rebuildStructure(
     ['# 🗂 Graph Index', '',
       '本文件唯一入口。每新建/大改一页，同步在此分类下加一行 [[页面名]] — 一句话。', '',
-      '## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'].join('\n'),
+      '## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses'].join('\n'),
     {
       h1: '# 🗂 Graph Index',
       // 无 `## Roadmap`：它是 AI 自己写的方向总结，会被 load 反复读到并带偏后续会话
       // （“看似是总结指引，其实是 AI 的总结指引” —— 2026-09-13 用户决策删除）。
-      order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'],
+      order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses'],
     },
   ).text;
 }

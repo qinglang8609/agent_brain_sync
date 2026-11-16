@@ -82,8 +82,8 @@ find ~ -maxdepth 4 -type d -name ".brain" -not -path "*/node_modules/*"
 
 ## 🛠 解法 3：机器生成的链接名必须**逐字等于磁盘文件名**（2026-11-08 用户定）
 
-index.md 的 `## Sessions` 段与 todo.md 的 `### Archived` 段都是机器生成的、
-指向 `sessions/` 下文件的链接行。它们跟文件名脱钩就成了指向不存在页的死名 ——
+todo.md 的 `### Archived` 段是机器生成的、指向 `sessions/` 下文件的链接行
+（index.md 的 `## Sessions` 段 2026-11-16 已废，不再生成也不再检查）。它们跟文件名脱钩就成了指向不存在页的死名 ——
 而 `sessions/` 的页豁免 DEAD-LINK（历史快照不改），所以这种死名没人发现：
 实测 `2026-09-12-todo归档` 在 todo.md 里挂了两个月，真页早已并成 `log-2026-09-12`。
 

@@ -1,42 +1,308 @@
 # 📋 Todo Board
 
-## Todo
-
-## Done
-
-### 2026-11-13
-- [x] absbare [[fanchao]] — 查 abs 单字只做 load 汇报、不触发收尾的原因，确定该改成什么行为 — abs 单字改为先判意图四行表（干完活→先收尾再报状态 / 没干完→只报状态 / 刚开始→load / 提问→只回应）；同时修好 11-06 留下的 4 条 resolve 死链、补回收尾循环 5 步、加死链门禁，1.31.6 已发布 【落地】 (完成 2026-11-13 01a1d04d-6598-76)
-- [x] loggap [[fanchao]] — 扫描全盘各项目 .brain/log.md 最新条目日期，定位 11-06 后集体停写的原因 — 根因：11-06 SKILL 精简删掉「收尾循环」+ 09-18 pi 收尾提醒停用，写入只剩模型自觉；已改代码 done 自动写 log，1.31.4 已发布、宿主已重装，779 测试绿 【落地】 (完成 2026-11-13 01a1d04d-6598-76)
-
-### 2026-11-12
-- [x] logwrite [[fanchao]] — 查 /Users/fanchao/Code/abs/.brain/log.md 写入异常（127 字节长期未更新），定位原因并修 — 归因：写入正常，是模型自 11-10 起零次执行 abs log（同期 herdr_app 跑 67 次）；常驻指引加第 10 条（done 必配 abs log），pi/omp/SKILL 三处同源 + 宿主两份已同步，777 测试绿；abs 项目补 5 条历史日志 【落地】 (完成 2026-11-12 01a1d04d-6598-76)
-- [x] abs-redesign-doc [[fanchao]] — 在新项目 /Users/fanchao/Code/abs 写重构设计文档：独立后台+多宿主+插件机制（todo/输入面板/胶囊）+Rust+SQLite 真相源+权重沉淀 — DESIGN.md v0.2 完成（11 章节：功能基线/分层/分功能/存储/多宿主/插件/skill 角色/选型/顺序/待确认）。纯设计文档，未动代码。续接点：/Users/fanchao/Code/abs/DESIGN.md §9 开发顺序 + §10 待确认项。 【仅方案】 (完成 2026-11-12 01a1c4c6-c75c-70)
-- [x] gap-vs-herdr [[fanchao]] — 对照 herdr-agent DESIGN.md 讨论 abs 缺什么：原文层、断点连接、时间衰减、激活加权、固化自驱动 — 对照 herdr DESIGN.md 讨论收敛：abs 缺原文对应、主动沉淀、断点/衰减/权重动力学；用户定 9 条重构方案（独立后台+多宿主+Rust+SQLite 真相源+插件机制），转入新项目写文档。 【落地】 (完成 2026-11-12 01a1c4c6-c75c-70)
-
-### Archived
-- [[log-2026-11-10]] 完成任务 4 条
-- [[log-2026-11-09]] 完成任务 20 条
-- [[log-2026-11-08]] 完成任务 10 条
-- [[log-2026-11-07]] 完成任务 10 条
-- [[log-2026-11-06]] 完成任务 4 条
-- [[log-2026-11-05]] 完成任务 7 条
-- [[log-2026-11-04]] 完成任务 5 条
-- [[log-2026-11-03]] 完成任务 4 条
-- [[log-2026-11-02]] 完成任务 9 条
-- [[log-2026-11-01]] 完成任务 11 条
-- [[log-2026-10-22]] 完成任务 4 条
-- [[log-2026-10-20]] 完成任务 1 条
-- [[log-2026-10-18]] 完成任务 10 条
-- [[log-2026-10-16]] 完成任务 3 条
-- [[log-2026-10-11]] 完成任务 2 条
-- [[log-2026-10-09]] 完成任务 12 条
-- [[log-2026-10-07]] 完成任务 7 条
-- [[log-2026-10-06]] 完成任务 9 条
-- [[log-2026-10-05]] 完成任务 35 条
-- [[log-2026-10-03]] 完成任务 7 条
-- [[log-2026-09-18]] 完成任务 2 条
-- [[log-2026-09-17]] 完成任务 8 条
-- [[log-2026-09-16]] 完成任务 14 条
-- [[log-2026-09-15]] 完成任务 11 条
-- [[log-2026-09-13]] 完成任务 5 条
-- [[log-2026-09-12]] 完成任务 13 条
+- [ ] [2026-11-16 11:34] [发布 1.32.0 并升级本地] [[fanchao]] 先把 60 多条旧格式测试断言改绿，再 git 提交、npm 发版、本地全局升级与宿主重装 [01a1e1c1-8258-77]
+- [x] [2026-11-16 10:33] [补 lint 判据] [[fanchao]] 任务行判据还停在旧格式（- [ ] id — 描述），新格式会被误报；同时把缺时间/缺作者的检查加进去 [01a1e1c1-8258-77]
+- [x] [2026-11-16] [todo.md 的 Archived] [[fanchao]] 段不再折叠压缩、不按日期分组，且不写入 ## Sessions 段 — todo.md 改为 H1 + 单列表（复选框记号表达五态：空格=进行中 -=滞留中 +=讨论中 ~=搁置 x=已完成），按时间倒序；Done 不再分组/归档（删 abs todo archive），新增 abs todo restore 从 log 页回捞历史任务；index.md 的 ## Sessions 段作废并自动删除；pi/omp 面板与 guidelines 改画「记号+状态名」；778 测试全绿、npm run check 通过 [01a1e1c1-8258-77]
+  - [x] [2026-11-16] [扩范围：todo.md 改为] [[fanchao]] 「只留 H1 + 一个平铺列表」，状态改由复选框表达（[ ]=进行中 [-]=滞留中 [+]=讨论中 [x]=已完成），不做 ## 分区、按时间倒序；并把历史压缩进 log 页的任务全部拿回 todo.md [01a1e1c1-8258-77]
+- [x] [2026-11-13] [查 abs 单字只做 load 汇报] [[fanchao]] 不触发收尾的原因，确定该改成什么行为 — abs 单字改为先判意图四行表（干完活→先收尾再报状态 / 没干完→只报状态 / 刚开始→load / 提问→只回应）；同时修好 11-06 留下的 4 条 resolve 死链、补回收尾循环 5 步、加死链门禁，1.31.6 已发布 [01a1d04d-6598-76]
+- [x] [2026-11-13] [扫描全盘各项目 .brain/log.md 最新条目日期，定位] [[fanchao]] 11-06 后集体停写的原因 — 根因：11-06 SKILL 精简删掉「收尾循环」+ 09-18 pi 收尾提醒停用，写入只剩模型自觉；已改代码 done 自动写 log，1.31.4 已发布、宿主已重装，779 测试绿 [01a1d04d-6598-76]
+- [x] [2026-11-12] [查 /Users/fanchao/Code/ab…] [[fanchao]] /.brain/log.md 写入异常（127 字节长期未更新），定位原因并修 — 归因：写入正常，是模型自 11-10 起零次执行 abs log（同期 herdr_app 跑 67 次）；常驻指引加第 10 条（done 必配 abs log），pi/omp/SKILL 三处同源 + 宿主两份已同步，777 测试绿；abs 项目补 5 条历史日志 [01a1d04d-6598-76]
+- [x] [2026-11-12] [在新项目 /Users/fanchao/Code/abs] [[fanchao]] 写重构设计文档：独立后台+多宿主+插件机制（todo/输入面板/胶囊）+Rust+SQLite 真相源+权重沉淀 — DESIGN.md v0.2 完成（11 章节：功能基线/分层/分功能/存储/多宿主/插件/skill 角色/选型/顺序/待确认）。纯设计文档，未动代码。续接点：/Users/fanchao/Code/abs/DESIGN.md §9 开发顺序 + §10 待确认项。 [01a1c4c6-c75c-70]
+- [x] [2026-11-12] [对照 herdr-agent DESIGN.md 讨论 abs] [[fanchao]] 缺什么：原文层、断点连接、时间衰减、激活加权、固化自驱动 — 对照 herdr DESIGN.md 讨论收敛：abs 缺原文对应、主动沉淀、断点/衰减/权重动力学；用户定 9 条重构方案（独立后台+多宿主+Rust+SQLite 真相源+插件机制），转入新项目写文档。 [01a1c4c6-c75c-70]
+- [x] [2026-11-10] [重启后验证 1.31.3] [[fanchao]] 全局 CLI 的 id 校验/原子写、MCP 连通、pi 扩展指向 — 重启后实测通过：全局 abs 1.31.3、CLI 与 MCP 都拒 a/b 与 bad[id]、合法 memo 正常且无 tmp/lock 残留、abs_resolve_project 连通、pi 扩展 hook 在刷面板。 [01a1c4c6-c75c-70]
+- [x] [2026-11-10] [提交本次审查修复] [[fanchao]] npm version patch 发 1.31.3，本地全局安装并重扇出宿主 hook — d93058d 修复提交 + b6d012c 1.31.3 已发 npm 并推 GitHub（tag v1.31.3）。全局包 1.31.3，pi 宿主 hook/MCP/skill 已重扇。重启 pi 生效。777 测试全绿。 [01a1c4c6-c75c-70]
+- [x] [2026-11-10] [修审查发现的 1-12 项：memo 路径穿越] [[fanchao]] 原子写、id 校验、install 帮助文案、闸门 basename、卸载备份、gitignore、PID 锁、测试等 — 修完 1-10、12：id 校验拒路径字符、lock 原子写+PID 锁、install 帮助对齐代码、闸门 basename、卸载前备份、gitignore 忽略锁/tmp、ingest 子串限长、event.sh 收 64KB。11 (query 跳过 sessions) 与既有「流水页隐藏要告知」契约冲突，已回退。13 (pi/omp 合并) 按审查结论不做。777 测试全绿。 [01a1c4c6-c75c-70]
+- [x] [2026-11-10] [对 agent_brain_sync] [[fanchao]] 本仓库做整体质量审查（bug、安全、负载、测试缺口、可删项）并向用户说明 — 整体审查完成，774 测试全绿。两个必须修：① setMemo 用未滤 `/` `..` 的 id 拼文件名，实测可写出 .brain 外；② lock.js 对 index/todo/log 用非原子 writeFile，崩溃可截断图谱。其余：id 注释说拒方括号但代码没拒、install --help 说 --yes 装全部而代码只装 pi、闸门用 split('/') 在 Windows 失效、卸载不备份。只出报告未改码。 [01a1c4c6-c75c-70]
+- [x] [2026-11-09] [working 动画改回右上角单字符，带间距] [[fanchao]] spinner 改走上边框的 label 槽（右上角，前后各 1 空格），去掉 placeSpinner 与对应 5 条用例；extractWorking 保留负责抠段补宽；25 条 format 用例 + 772 全量 + check 绿，副本已同步
+- [x] [2026-11-09] [working 只留动画，放输入框最右侧竖直居中] [[fanchao]] extractWorking 把 pi 嵌在上边框的 `⠇ Working` 抠走并用等宽虚线补平；placeSpinner 把首个字符放到正文最右一列、竖直居中行（末列非空格则不动）；772+ 测试与 check 绿，副本已同步
+- [x] [2026-11-09] [输入框右下角状态文字改回推理档位色] [[fanchao]] 去掉 labelFg 传入：状态文字恢复跟框线同色（= pi 档位推理色）；holdAnsi/HOLD_COLOR 与 colorMode 一并删；772 测试 + check 绿，副本已同步
+- [x] [2026-11-09] [发 1.31.0] [[fanchao]] 把子项四态 + 输入框配色改动提交、发版、重装全局与 pi 宿主 — 1.31.0 已发：提交+tag+push、npm publish（registry 延迟约 60s）、全局装 1.31.0、宿主四处重装；三处新码逐字节一致，全局 abs 实测子项四态与勾选保标记均通过
+- [x] [2026-11-09] [输入框右下角状态文字改搁置橙 #F59E0B] [[fanchao]] 右下角状态文字用 holdAnsi（#F59E0B，256 色退 214）经 roundBorder 的 labelFg 只染那一段；色模式在 session_start 取一次；772+ 测试与 check 绿，副本已同步
+- [x] [2026-11-09] [任务标题（id+描述）改固定灰白 #E2E8F0] [[fanchao]] 任务 id 与描述改固定灰白（原误改的是面板大标题）；档位色只管树线/复选框/子项；772 测试 + check 绿，abs.ts 已同步
+- [x] [2026-11-09] [面板标题改固定灰白，不跟档位色] [[fanchao]] 标题固定 #E2E8F0 灰白，不跟档位色也不回橙色；772 测试 + check 绿，abs.ts 已同步
+- [x] [2026-11-09] [面板文字（标题/树线/id/描述/子项）改用档位色] [[fanchao]] 除四个状态标签外，面板文字与树线全走档位色（含已勾子项：只留删除线不再降灰）；C 表删掉 title/tree/done 三项；772 测试 + check 绿，abs.ts 已同步
+- [x] [2026-11-09] [working 状态放回输入框上边框，颜色跟框线一致] [[fanchao]] 恢复 embedWorkingStatus: true：working 回到上边框、颜色随整行走框线色（= pi 档位色）
+- [x] [2026-11-09] [todo 面板主色改用主题的 thinking] [[fanchao]] 档位色，与输入框一致 — 面板主色改为向主题取 thinking<档位>（与输入框同一来源），off 也用 thinkingOff；删掉面板自配的 EFFORT_COLOR/effortAnsi；补一条接线实测用例；772 测试 + check 绿
+- [x] [2026-11-09] [输入框边框色改用 pi 的] [[fanchao]] editor.borderColor（七档 thinking），文字不上色 — 边框色改用 pi 给的 editor.borderColor（原版七档 thinking 色，含 off 暗灰）、框内文字不再上色；自配六档灰蓝从输入框停用（format.ts 保留备用）；去掉不再需要的 themeGetter/effortLevel/thinking_level_select 订阅；771 测试 + check 绿
+- [x] [2026-11-09] [临时停用圆角输入框扩展，对照 pi 原版效果，看完恢复] [[fanchao]] working 还原为 pi 原版：去掉 embedWorkingStatus（回到 pi 自己的 status 行），leadSpanOf/leadFg/holdAnsi 一并删；扩展已从 disabled-extensions 放回 extensions/；771 测试 + check 绿 [01a1bbd5-b32f-73]
+- [x] [2026-11-09] [调整输入框按推理强度变色的配色] [[fanchao]] 状态文字去黄、搬右下角；working 段上搁置橙；六档推理色定为偏蓝的灰（暗档提亮版，中性灰那版被用户否掉）；775 测试 + check 绿；~/.pi 三份副本已同步，等 /reload 看效果 [01a1bbd5-b32f-73]
+  - [x] [2026-11-09] [右上角状态文字去掉搁置橙，跟框线同色] [[fanchao]] 删掉 format.ts 的 HOLD_COLOR/holdAnsi 与对应测试；765 测试 + check 绿；已同步 ~/.pi 副本，等用户 /reload 看效果并定推理变色要不要一起改 [01a1bbd5-b32f-73]
+  - [x] [2026-11-09] [暗档提亮：medium/low/minimal] [[fanchao]] 三档只提亮度，输入框与 todo 面板两份同时改（明细见 abs log），765 测试+check 绿，已同步 ~/.pi 两份副本，等用户 /reload 看效果 [01a1bbd5-b32f-73]
+  - [x] [2026-11-09] [状态文字从右上角搬到右下角] [[fanchao]] 六档改中性灰（去蓝调）max #D1D1D1 → minimal #858585；765 测试 + check 绿，~/.pi 三份副本已同步，等 /reload 定效果 [01a1bbd5-b32f-73]
+- [x] [2026-11-09] [给子项加 进行中/讨论中/滞留中/搁置 四态] [[fanchao]] 子项加四态：parseChild/renderChild 带 state，CLI state --n N，MCP action=state 带 n，面板画 [状态]；child-done 不再抹标记；775 测试 + check 绿 [01a1bbd5-b32f-73]
+- [x] [2026-11-09] [发 1.31.2：参数规矩前置 + 修过时命令] [[fanchao]] 1.31.2 已发：tag+push、npm publish（registry 延迟约 2 分 40 秒）、全局装 1.31.2、宿主重装；新会话 system prompt 实测第 9 条在、旧命令已消失
+- [x] [2026-11-09] [把 abs_task 参数规矩提前写进常驻指引] [[fanchao]] 常驻指引加第 9 条：cwd 必填、id 一个词、start/add 需 note、child_done/child_undone/state 带 n、done 给结语+as、子项 note ≤200 字；顺手把已删的 abs recall 改成 abs query（指引与 load 用法行两处）；774 测试 + check 绿，abs.ts 已同步
+- [x] [2026-11-09] [发 1.31.1：输入框文字档位色 + 右下角档位字母] [[fanchao]] 1.31.1 已发：提交+tag+push、npm publish（registry 延迟约 60s）、全局装 1.31.1、宿主四处重装；三处新码一致
+- [x] [2026-11-09] [输入框文字也上推理档位色] [[fanchao]] 正文行先剥 pi 原生文字色再包 wrap（= editor.borderColor 档位色）；772 测试 + check 绿，副本已同步
+- [x] [2026-11-09] [右下角状态文字末尾加推理档位一个大写字母] [[fanchao]] buildStatus 加第三段档位字母（LEVEL_LETTER：O/N/L/M/H/X/A 无重）；index.ts 重新跟踪 thinkingLevel 并订 thinking_level_select；22 条 format 用例 + 772 全量 + check 绿，副本已同步
+- [x] [2026-11-09] [working 还原为 pi 嵌的左上角 动画+Working] [[fanchao]] 上边框恢复整行透传（pi 嵌的 左上角 `⠇ Working` + 动画，颜色随框线）；删掉 extractWorking 与其 4 条用例；21 条 format 用例 + 772 全量 + check 绿，副本已同步
+- [x] [2026-11-08] [面板恢复层次：标题/状态亮色，描述/子项灰阶] [[fanchao]] 文字提亮，边框压暗 — 文字提亮/边框压暗/面板恢复层次；821 绿，宿主已同源 [01a1b50b-9994-71]
+- [x] [2026-11-08] [skill/load/命令 精简] [[fanchao]] 四件全落地：英文skill/load 1603B/格式闸/命令折叠；821 绿；全局+pi 已同源 [01a1b50b-9994-71]
+  - [x] [2026-11-08] [四件事：skill 改英文路由风] [[fanchao]] load 砍到未完成todo+用法+近日志、清废弃代码、命令去重折叠 [01a1b50b-9994-71]
+- [x] [2026-11-08] [设计在 docs/sleep-design.md] [[fanchao]] 补空/压缩阶梯/提炼/墓碑，四条不碰的红线，M1-M4 分期，保留期数字等用户拍板 [01a1b50b-9994-71]
+- [x] [2026-11-08] [归档 index 行带任务首段描述] [[fanchao]] 本仓库 16 条旧机器行已回填；821 测试 + lint 绿 [01a1b50b-9994-71]
+- [x] [2026-11-08] [拆掉 SQLite 图库与检索那套] [[fanchao]] SQLite 图库整套拆掉：代码/命令/MCP/写后自动重建/文档/库文件，只留扫 .md 页的 abs query 与 resolve；766 测试绿、lint 0、check 0，宿主已同源 [01a1ba13-c015-70]
+  - [x] [2026-11-08] [代码已拆完] [[fanchao]] （db/db-cmd/evolve 删除、命令与 MCP 摘除、autoIndex/hotPages/recall/queryHint 清掉、769 测试绿）；剩 文档/删库/宿主同步 [01a1ba13-c015-70]
+  - [x] [2026-11-08] [全部拆完：代码+文档+删库+宿主同步] [[fanchao]] 766 测试绿、lint 0 [01a1ba13-c015-70]
+- [x] [2026-11-08] [todo 面板去掉进行中动画] [[fanchao]] todo 面板的进行中 spinner 整块拆掉（帧表/定时器/相位参数），刷新改由每次主动 requestRender；pi 与 omp 两份同步；766 测试绿 [01a1ba13-c015-70]
+- [x] [2026-11-08] [working 状态还回框线色不上橙] [[fanchao]] working 状态还回框线色（不再上搁置橙），右上角状态文字仍上橙；删掉已无用的 leadFg/leadSpanOf；840 测试绿，宿主已同源 [01a1ba13-c015-70]
+- [x] [2026-11-08] [todo 面板标题改搁置橙] [[fanchao]] todo 面板标题从纯金 #FFD700 换成搁置橙 #F59E0B（C.title）；843 测试绿，宿主已同源 [01a1ba13-c015-70]
+- [x] [2026-11-08] [输入框百分比/模型名/Working 改橙色] [[fanchao]] 输入框上边框的 working 状态与右上角状态文字改成搁置橙 #F59E0B（= C.hold）；虚线/圆角仍走正文色；843 测试绿，宿主已同源 [01a1ba13-c015-70]
+- [x] [2026-11-08] [统一生成的文件双链标签标准并加闸] [[fanchao]] 生成的文件双链名一律逐字等于磁盘文件名，lint 加闸；sessions/ 只收 log-<日期>，摘要并进当天页的 ## 会话 段；slugOf 不再切半句，3 个截断名改名回填；837 测试 + lint 绿 [01a1ba13-c015-70]
+- [x] [2026-11-07] [1.28.6 已提交+打标+推送+npm] [[fanchao]] publish；全局包与 ~/.pi 宿主副本已更新到新码（--prefer-online 绕过元数据缓存） [01a1b50b-9994-71]
+- [x] [2026-11-07] [提交待提交改动、bump 版本、npm] [[fanchao]] publish、本地安装验证 — 820 测试与 check 全绿；3 个 commit（48aeaee feat、964419d docs、fcfd4fd 1.28.5）推 main 并打 tag v1.28.5；npm publish 1.28.5；本地 npm pack 后 npm i -g 真实安装（95 依赖），abs --version=1.28.5，pi 与 omp 宿主扩展重装且与 repo 副本一致。registry 传播延迟，npm view 此刻仍返回 1.28.4 [01a1b538-e9cd-74]
+- [x] [2026-11-07] [推理色从绿色阶换成用户逐档给的六档灰蓝 hex（max] [[fanchao]] #ACB8CD … minimal #505867）；pi 版注释说色相是用户挑的，换色只许按用户给的值改 — 六档灰蓝色值落在 hooks/abs.pi.ts 与 abs-rounded-editor/format.ts，测试 820 全绿；终端实际观感未在本轮重看
+- [x] [2026-11-07] [推理色改绿色阶（max 纯绿 00ff00 → minimal] [[fanchao]] 006300 逐档变暗），todo 面板主色元素 + 输入框文字与边框同色；off 保持灰阶；进行中动画换四帧圆圈 ◐◓◑◒（200ms）。821 测试 + check 绿，已装到 ~/.pi。 [01a1b50b-9994-71]
+- [x] [2026-11-07] [落库并发布 1.28.4：先跑测试，再 bump] [[fanchao]] 提交推送、npm publish、本地全局安装与 pi 扩展重装 — 测试 817 全绿；提交 2 个 commit 并推 main 与 tag v1.28.4；npm publish 1.28.4；npm i -g 到 1.28.4 并 grep 验证新代码；宿主扩展与 skill 副本一致 [01a1b500-de50-72]
+- [x] [2026-11-07] [去掉输入框左下角 fanchao·昵称] [[fanchao]] 还原到 todo 面板 [01a1b4e1-7408-74]
+- [x] [2026-11-07] [排查：pi 切换模型后输入框上的模型名未及时刷新] [[fanchao]] 事件名改对（model_changed→model_select），用户重启后切模型实测正常 [01a1b4e1-7408-74]
+  - [x] [2026-11-07] [根因：pi 事件名是 model_select] [[fanchao]] 扩展监听的 model_changed 不存在；两副本（repo hooks/ 与 ~/.pi/agent/extensions/）都已改。待用户重启 pi 切模型实测 [01a1b4e1-7408-74]
+- [x] [2026-11-07] [推送 8 commit] [[fanchao]] 发版 1.28.0、本地全局更新与宿主重装 [01a1b105-5425-71]
+- [x] [2026-11-07] [作者名+昵称放输入框底部左上角] [[fanchao]] [01a1b105-5425-71]
+- [x] [2026-11-07] [无任务时不显示 todo 面板] [[fanchao]] [01a1b105-5425-71]
+- [x] [2026-11-06] [推理关闭时 todo 面板改成灰阶] [[fanchao]] [01a1b105-5425-71]
+- [x] [2026-11-06] [todo 面板文字色 +] [[fanchao]] 输入框文字色跟随推理强度 [01a1b105-5425-71]
+- [x] [2026-11-06] [提交未提交改动、推送、npm 发布、本地全局更新] [[fanchao]] [01a1b105-5425-71]
+- [x] [2026-11-06] [命令面 27→14（保留别名）] [[fanchao]] SKILL 303→~120 行分层、单一入口表；代码结构不动 — help 按意图分六组；index/log/status→show、db search→search、summon→ingest --list（旧名保留别名）；SKILL 303→107 行，长尾移两页；capture/concept 实测非重复保留。801 全绿 [01a1a9c6-6907-71]
+- [x] [2026-11-05] [收尾沉淀 → 推送 git → 发版 1.26.0 →] [[fanchao]] 本地安装验证 — 收尾沉淀+11commit推送（pre-push 796全绿）+npm发布1.26.0（直查registry确认）+本地安装重装hook/skill/MCP+安装版端到端验证全通 [01a1a9c6-6907-71]
+- [x] [2026-11-05] [db search 加 --no-rules] [[fanchao]] 并发到 MCP 暴露 abs_search — db search 加 --no-rules（43→22 行）+ MCP 暴露 abs_search（12 工具）；推翻「query/db search 重复」的原判断——实测是详略两档；796 全绿连跑三次 [01a1a9c6-6907-71]
+- [x] [2026-11-05] [修审查发现：ingest md5 空串] [[fanchao]] capture L5 产出坏页、L7 死代码、两 hook 重复函数 — 修 md5 空串/L5 坏页/L7 死代码；hook 公共模块方案经核实会崩（单文件安装）已撤回；765 全绿 [01a1a9c6-6907-71]
+- [x] [2026-11-05] [abs load 顶部加「未填会话页」段（只数条…] [[fanchao]] +页名），并真机验证 hook 接线 — load 顶部加未填会话页段（只数条数+页名）；真机验证查出 hook 指向全局包缺 ingest，重装后端到端跑通 [01a1a9c6-6907-71]
+- [x] [2026-11-05] [精简：capture --layer 7 改拒] [[fanchao]] MCP 删 abs_board 与 abs_wrapup — capture --layer 7 改拒指向 note；MCP 删 abs_board/abs_wrapup（13→11，握手验证）；758 全绿 [01a1a9c6-6907-71]
+- [x] [2026-11-05] [把 ingest 接到 session_shutdown] [[fanchao]] 机械触发（--last --auto），不往对话插话 — ingest 接进 session_shutdown（--last --auto），机械触发不靠 LLM 想起来；758 测试全绿 [01a1a9c6-6907-71]
+- [x] [2026-11-05] [调研现有会话总结提炼实现与 7 层思考机制，再做优化] [[fanchao]] abs ingest 落地：会话落成结构化页（技术/业务/讨论三种形状，按改过文件机械判），frontmatter 记 session-id 双向回溯；会话页检索亮度乘 0.5；lint NO-TAIL 按 kind 分档。753 测试全绿 [01a1a9c6-6907-71]
+- [x] [2026-11-04] [看面板渲染效果用，看完删] [[fanchao]] 看面板渲染效果，看完删除 [01a1a566-2588-75]
+- [x] [2026-11-04] [todo 面板标题的 📋 换成新图标] [[fanchao]] [01a1a566-2588-75]
+- [x] [2026-11-04] [输入框三改：working 改为框上单个运行图标] [[fanchao]] 去左右边距；右侧显示模型名 [01a1a566-2588-75]
+- [x] [2026-11-04] [pi 输入框改成左右两侧都有边线 + 圆角] [[fanchao]] [01a1a566-2588-75]
+- [x] [2026-11-04] [去掉 pi todo 面板上边框（两副本同步）] [[fanchao]] [01a1a566-2588-75]
+- [x] [2026-11-03] [修 query 流水页降权力度不足 + 补 draft] [[fanchao]] 草稿过滤，对齐 db search [01a19be2-af1d-76]
+- [x] [2026-11-03] [全项目审查后修复 4 个 P1 缺陷] [[fanchao]] [01a19be2-af1d-76]
+- [x] [2026-11-03] [新增 abs recall] [[fanchao]] 卡住时按处境主动取相关页 [01a19be2-af1d-76]
+- [x] [2026-11-03] [检索结果里给 sessions/log-* 与 sources/] [[fanchao]] 降权，不让流水页压过内容页 [01a19be2-af1d-76]
+- [x] [2026-11-02] [沉淀 herdr+pi 远程复制失败的根因与解法] [[fanchao]] [01a19be2-af1d-76]
+- [x] [2026-11-02] [提交 git、发布版本、本地安装] [[fanchao]] [01a19be2-af1d-76]
+- [x] [2026-11-02] [索引优先（摘要+token 成本+--full）+] [[fanchao]] 观察类型分档（gotcha/decision/tradeoff） — 索引优先（摘要+token 成本+--full）+ kind 分档（gotcha/decision/tradeoff/howto，capture --kind）；23 页标 gotcha，其余留空不猜 [01a19752-29b2-70]
+- [x] [2026-11-02] [evolve 区分单纯弃用与被取代] [[fanchao]] 原来没写 superseded-by 一律报断链，误报「需求已否决」的存档页；现分 replaced/retired，只有写了 by 但目标不存在才是断链 [01a19752-29b2-70]
+- [x] [2026-11-02] [清 4 条悬挂链接] [[fanchao]] 加了占位符形状判据（省略号/大写冒号）与 wiki 排除；PPT-CONVERSION-FORMULAS 改纯文本说明（原文档已不在仓库）；悬挂 4→0 [01a19752-29b2-70]
+- [x] [2026-11-02] [把 db search 接进 abs load] [[fanchao]] 开机带出最亮的几页正文 — load 首屏带出最亮 3 页（页名+摘要不贴正文）；抽出 contextKeywords 共用；首屏按纯亮度排不按层权重 [01a19752-29b2-70]
+- [x] [2026-11-02] [方向反转：库为真相] [[fanchao]] markdown 为导出产物（覆盖不检测）；旧项目一次性入库 — 评估后否决：库为真相会废掉人工直编 md 的能力与「人工内容一律不覆盖」铁律，单机场景只加复杂度不加能力。维持 markdown 为真相、库为查询索引 [01a19752-29b2-70]
+- [x] [2026-11-02] [知识自我进化：库里存推翻关系（supersede…] [[fanchao]] _by），做进化分析——哪些被推翻、哪些主题在堆积、哪些该合并 — abs db evolve：推翻关系进库，四条进化信号（推翻/断链/堆积/僵化）；修 3 个判据错误；7 个测试 [01a19752-29b2-70]
+- [x] [2026-11-02] [深度测试检索层] [[fanchao]] 深度测试发现并修 4 个检索缺陷：单字 gram 误连、归一化分母取反（曾输出 165 万亮度）、高频虚词凑门槛、解构吃掉 g 字段；35 个测试钉住 [01a19752-29b2-70]
+- [x] [2026-11-01] [abs log 落盘时顺手扇出会话] [[fanchao]] 增 size+mtime 预筛避开全读，然后把未总结/有更新的会话提给人 — abs log 落盘时深读会话，带出未总结/有更新的；加 size+mtime 与账本 day 双层预筛，避免全读 [01a19752-29b2-70]
+- [x] [2026-11-01] [扫 pi 会话目录] [[fanchao]] 把琐碎会话内容总结成知识（L5→L4 提炼）；补上「混沌层没有正常总结」这一环 — abs summon：扫 pi 会话目录，md5 账本判重 + 有快照跳过 + 活跃会话跳过；接进 teardown 提示给条数；6 个测试钉住 [01a19752-29b2-70]
+- [x] [2026-11-01] [清 lint 报错] [[fanchao]] capture 模板补验证尾巴（NO-TAIL 根治）；4 页碎片并入 memory-box-seven-layers 后删除；lint 13→7，剩余全是存量 sources 未提炼 [01a19752-29b2-70]
+- [x] [2026-11-01] [存量页标 L3] [[fanchao]] 12 页按判据转 L3（具体工具的用法/坑）；5 页通用设计规律留 L4；L3 3→15 页，L4 57→45 [01a19752-29b2-70]
+- [x] [2026-11-01] [建正式库并修 projects.json 路径] [[fanchao]] 正式库 ~/.abs/graph.db 已建；修 projects.json 落到家目录的路径 bug（dirname(dbPath) 不是 dbPath） [01a19752-29b2-70]
+- [x] [2026-11-01] [capture/note/concept 写后自动入库] [[fanchao]] 写后自动全量重建（0.07s）；库未建时不自动建；流水页排除出检索；老库自动迁移 [01a19752-29b2-70]
+- [x] [2026-11-01] [按七层判定落点的 capture 命令] [[fanchao]] abs capture --layer 1-7 落地：L3/L4 落 concepts 带 layer 字段，L7 落 sources，L1 走铁律门槛，L6 拒手写；8 个测试钉住，679 全绿 [01a19752-29b2-70]
+- [x] [2026-11-01] [设计记忆盒子：七层知识分层 + 双链图谱 +] [[fanchao]] 亮度衰减式联想检索，替代当前关键词 query — 七层规格落成 layers.js，双链与亮度已实现 [01a19752-29b2-70]
+- [x] [2026-11-01] [独立亮度程序：只读 .brain 的] [[fanchao]] markdown，现场扩散算每页亮度，输出排序。不存储、不改 abs、不加依赖。 — 亮度扩散做进 db.js 的 illuminate：按层衰减 + 枢纽惩罚 + HOPS=1 压制 [01a19752-29b2-70]
+- [x] [2026-11-01] [图数据库落地：todo/index/log 写库打项目标记后生成] [[fanchao]] markdown；搜索走 SQLite 亮度；老项目迁库；双链含跨项目链接重建。 — 七层规格 + SQLite 图库 + 亮度搜索 + 跨项目双链落地，671 测试全绿 [01a19752-29b2-70]
+- [x] [2026-11-01] [在 herdr-app 顶栏加按钮] [[fanchao]] 点击侧边栏以卡片展示 abs 的 index/todo/log — 用户取消。范围跑偏：先复制了 herdr_app_abs 整个项目、又反复重写 abs 解析；前端侧边栏界面未动，Rust 代码一次未编译。已停手。 [01a19622-7711-75]
+- [x] [2026-10-22] [修审查发现的前三条] [[fanchao]] fuzz 虚跑的 bp-done、spec.js 重复注释、pi hook 临时取证日志 — fuzz 改名 child-done/undone（原 bp-done 已不存在，跨界线全空转）；删 spec.js 重复注释；删 pi hook 临时取证日志。654 测试过，fuzz 200 轮过，子项边界命令行实测有正确报错。 [01a1624d-b32d-71]
+- [x] [2026-10-22] [审查 agent_brain_sync 项目本身] [[fanchao]] 代码、结构、测试、文档一致性 — 审查完成：5 处问题已报，前三条开始修 [01a1624d-b32d-71]
+  - [x] [2026-10-22] [已跑 check/lint/test/fuzz/pack；发现] [[fanchao]] 5 处问题（fuzz 虚跑、spec 重复注释、临时取证日志、双 hook 重复、死代码注释） [01a1624d-b32d-71]
+- [x] [2026-10-22] [把文档精简 9 条固定进 abs] [[fanchao]] 生成 todo/知识库文档时强制遵守 — 文档精简 9 条已写进 SKILL.md「文档精简」硬规则节，并成为 pi/omp hook 的常驻指引第 7 条；v1.20.1 已重装四处宿主，654 项测试全过。 [01a1624d-b32d-71]
+  - [x] [2026-10-22] [锚点已查：SKILL.md 两处渲染（写] [[fanchao]] 更新）＋ hooks/abs.pi.ts 常驻 TODO_GUIDELINES [01a1624d-b32d-71]
+- [x] [2026-10-22] [按文档精简 9 条规则精简技能 SKILL.md] [[fanchao]] 精简 abs SKILL.md 183→174 行（去掉重复段落、唠叨的禁令理由、错乱编号），并修正一处与代码相反的说明（note 实为追加式，原文写覆盖式）；654 项测试全过，五处宿主已重装同源。 [01a1624d-b32d-71]
+  - [x] [2026-10-22] [范围定案：只精简 abs 主技能 SKILL.md；改包内源 →] [[fanchao]] abs install → 清 ~/.agents 过期副本 [01a1624d-b32d-71]
+- [x] [2026-10-20] [彻底移除旧箭头子项写法及相关命令，统一到标准 md 嵌套列表] [[fanchao]] 旧箭头写法全删；存量由 migrateLegacyChild 自动迁移（实测三种变体零丢失）；命令改名为 child-done/child-undone [01a15394-cd03-70]
+- [x] [2026-10-18] [重启后验证 MCP 进程已是 1.19.4] [[fanchao]] 孤儿行应阻断写入 [01a14cf9-1259-73]
+  - [x] [2026-10-18] [子任务：不勾] [[fanchao]] [01a14cf9-1259-73]
+- [x] [2026-10-18] [子任务完成进 Done 后必须保持缩进挂在主任务…] [[fanchao]] 不能丢层级 [01a14cf9-1259-73]
+- [x] [2026-10-18] [闸门四漏全修，629/629 过，已提交 31f9541（原] [[fanchao]] release-1.19.1 遗留） — 已完成（数据修正：原为主任务的子项，被旧逻辑错误升格）
+- [x] [2026-10-18] [源码已提交 31f9541] [[fanchao]] 629/629 过（原 release-1.19.1 遗留） — 已完成（数据修正：原为主任务的子项，被旧逻辑错误升格）
+- [x] [2026-10-18] [临时子项A（原 mcp-restart-verify] [[fanchao]] 遗留）
+- [x] [2026-10-18] [重启后验证 MCP 进程已加载 1.19.1] [[fanchao]] 新逻辑 [01a14cf9-1259-73]
+- [x] [2026-10-18] [提交三文件闸门加固 + 发布 npm +] [[fanchao]] 本地安装 [01a14cf9-1259-73]
+- [x] [2026-10-18] [保证 index/log/todo 插入稳定] [[fanchao]] 禁止脏字段与格式污染 [01a14cf9-1259-73]
+- [x] [2026-10-18] [清理 index.md 里混入的无关内容] [[fanchao]] [01a14cf9-1259-73]
+- [x] [2026-10-18] [排查 todo 子项未完成但父任务已完成时] [[fanchao]] 子项不显示在面板 [01a14cf9-1259-73]
+- [x] [2026-10-16] [package.json 写 MIT 但仓库根没有] [[fanchao]] LICENSE — 已加 MIT LICENSE（Copyright 2026 fanchao）；npm pack 自动包含，无需改 files 白名单。顺手更正审核报告里被 awk 粗算错的函数长度数字。
+- [x] [2026-10-16] [src/todo/spec.js 里 119 行，占文件一半] [[fanchao]] 任务本身作废：我审核报告里写的「119 行」是它的行号、不是函数长度，实际只有 3 行（纯只读谓词，无需拆）。报告数字已更正，并加了「别拿行号/粗脚本输出当结论」的教训。
+  - [x] [2026-10-16] [不急，等下次碰这块再拆] [[fanchao]]
+- [x] [2026-10-16] [升 @modelcontextprotocol/sdk] [[fanchao]] 1.30.0 → 1.32.1，跑 npm audit fix — SDK 升 1.30.0→1.32.1（npm audit fix 在 ^1.30.0 范围内即修好，无需改 package.json 的版本约束）；4 个漏洞归零，proxy-addr/ip-address/fast-uri 全升；604 测试过 + MCP 真机握手通过
+- [x] [2026-10-11] [提交看板收尾 + 版本号升 1.17.1 + 推送 + npm] [[fanchao]] publish + 本地重装验证 — 1.17.1 已发布：两 commit 推送 c9006ce..a0fe159（pre-push 586 全过）；直查 registry 确认 latest→1.17.1（延迟约 2 分钟）；全局重装读注册表包，实际跑 memo 正常、看板干净。途中按用户追问补做了 abs todo memo（任务随手记落点，治总结塞看板），破坏验证两条都证明能红 [01a128f3-5153-74]
+- [x] [2026-10-11] [读 /Users/fanchao/.agents…] [[fanchao]] .brain/todo.md，确认总结/misc 被写进 todo 的形态与来源通路 — 测试结语 [01a128f3-5153-74]
+- [x] [2026-10-09] [第三个会话在做 — 演示数据，清掉] [[fanchao]] [01a11b27-9814-73]
+- [x] [2026-10-09] [没人认领，谁都能做（应无会话标记）] [[fanchao]] 演示数据，清掉
+- [x] [2026-10-09] [另一个 pi 在做的活（应显示 [会话 xxx] [[fanchao]] ）] [[fanchao]] 演示数据，清掉 [01a11f2a-9c8e-41]
+- [x] [2026-10-09] [本会话的活（应显示 [本会话] [[fanchao]] ）] [[fanchao]] 演示数据，清掉 [01a11ea9-8a37-74]
+- [x] [2026-10-09] [查清 plugin-behavior「★] [[fanchao]] 只首轮送一次」并发负载下低频偶发失败。先给测试加失败诊断（打印 loadPending/loadInjected/promptGuidelines），再全量跑——别再靠跑 N 次碰运气 — 用户决定关闭：该 flaky 在单跑/并发/定向压测下均不复现（24+300 次），且属已有 load 注入逻辑，非本次改动引入。不再投入排查——高频跑一次的代价（npm test 15s）高于收益 [01a11ea9-8a37-74]
+- [x] [2026-10-09] [发版：提交推送（项目整理 + 会话 sid 功能）→ npm] [[fanchao]] version → publish → 本地重装验证 — 1.17.0 已发布：直查 registry 确认收录（latest→1.17.0）。推送 be4b7d8..65b0c31（pre-push 576 全过）；本地全局软链读 1.17.0 + 插件已重装；冒烟实测带 session 登记/看板归属/done 双 sid 均正常
+- [x] [2026-10-09] [验证 hook 注入的 sid 真能被用上] [[fanchao]] 重启后实测：hook 注入生效（日志 session_guide=on sid=01a11ea9-8a37-74）；但查出真缺口——看板解析把整个 剥掉，sid 到不了 LLM。已修：Row 加 sid 字段 + 看板标 [本会话]/[会话 xxx]。途中又抓到正则宽松导致公海任务被误标 [会话 日期]，也修了并做破坏验证。576 测试全过 [01a11ea9-8a37-74]
+- [x] [2026-10-09] [B 会话在做的事 — 测试造的数据，清掉] [[fanchao]] [01a11f2a]
+- [x] [2026-10-09] [测试：生成一个 todo，验证看板能识别归属] [[fanchao]] 测试通过：abs_task 带 session=01a11fc2-769e-72 写入后，todo 行尾记成，sid 可读可比对。据此能区分这条属于本会话、另两条 (01a11ea9-8a37-74 / 01a11f2a) 属于其他会话 [01a11fc2-769e-72]
+- [x] [2026-10-09] [重装 pi 插件让会话 sid 功能生效] [[fanchao]] 已装插件是拷贝的旧版（10-07），缺 injectSessionGuideline 与看板正则修正 — 重装 pi 插件生效：查出三层里只 hook 层断（插件是拷贝不是软链）。重装后实测三项通过：已装插件能加载 + injectSessionGuideline 注入含 sid + 看板正则已改通配。CLI/MCP 层本就走全局软链早已生效。574 测试全过
+- [x] [2026-10-09] [多会话并发时任务串了] [[fanchao]] 两个 pi/opencode 读同一份 .brain/todo.md，A 在做的任务 B 也会拿来执行。要区分「谁在做什么 / 哪些是自己的 / 哪些进行中 / 哪些等执行」 — todo 行标会话 id 落地：复用了已有的 字段塞 sid（不新增字段）→ 归档整行搬运自动跟着走。CLI --session + MCP abs_task session 双通路（LLM 平时走 MCP，prompt 注入 [会话] 段让它自己填）。认领≠完成时两个 sid 都留。574 测试全过、eslint 0、图谱健康；破坏验证两处变红。其他文档未标 sid（用户拍定只做 todo）
+- [x] [2026-10-09] [全项目结构化+工程化整理：目录结构] [[fanchao]] 死代码（无引用函数/方法/文件）、无用文件清理、知识沉淀归位。先出体检报告再动手 — 全项目整理落地：删 12 处真死代码；src/todo.js 1305行→6模块（55导出零丢失、无环、barrel保留）；ESLint 75问题→0；加 CI（node18/22）。验证：556测试全过 + 语法/eslint 全绿 + 图谱lint 0 + 打包产物空项目实跑 init/todo/lint/load 全正常。方案 docs/plans/20261009-project-cleanup.md，经验落 .brain/concepts/dead-code-vs-over-export.md
+- [x] [2026-10-07] [pre-commit 注释/提示说可加] [[fanchao]] no-todo，但代码只认 ABS_NO_TODO 环境变量，用户照提示敲 git commit --no-todo 会失败。文档与实现必须一致 — pre-commit 逃生口对齐（--no-todo 根本做不到，git 先拒；改为说明只能走 ABS_NO_TODO）+ 查出并修复 pi 侧 hooks.log 无轮转（1.22MB）+ 并发竞态吞旧日志。556 测试全过，破坏验证过，已重装并真实验证轮转生效，已推送 be4b7d8
+- [x] [2026-10-07] [发版：提交两批修复（pre-push 门禁 + load] [[fanchao]] 性能）→ 推送 → npm version → publish → 本地重装验证。发布前过全量测试 + npm pack 解包直跑关键路径 — 1.16.4 已发布：两 commit（pre-push 门禁 + load 性能）已推送(f2cccc2)，registry 确认收录，产物冒烟全过。本机保持 npm link 未动
+- [x] [2026-10-07] [排查：改了 .brain/todo.md 之后 pi] [[fanchao]] 运行卡顿。只查不动代码，找根因+证据 — 根因定位：queryHint→topicStrength 每个词×每页重算整页 n-gram（17词×63页=156ms，CPU profile 占 load 82%）。已加页 gram 两级缓存：同规模 156→23ms，load 端到端 191→80ms。23 个 relevant 测试全绿，3 种破坏全被抓，全量 552 通过
+- [x] [2026-10-07] [bench — bench cleanup] [[fanchao]]
+- [x] [2026-10-07] [bench — bench cleanup] [[fanchao]]
+- [x] [2026-10-07] [pre-push 门禁静默失效] [[fanchao]] npm test | tail -20 管道取了 tail 的退出码，测试失败也放行。改为不接管道，并补测试守住 — pre-push 管道吞退出码已修（改临时文件取码）；新增 test/hooks-gate.test.js 直接跑真实脚本断言拦截，破坏验证过（注入原 bug→2 红，还原→4 绿）；全量 549 通过
+- [x] [2026-10-07] [全项目代码审查：结构、测试、实现完整度、文档一致性] [[fanchao]] 审查出 1 个严重 bug（pre-push 门禁静默失效，测试失败也放行）+ 2 个次要项（--no-todo 未实现、check-syntax 降级路径没写）；545 测试全通过、lint 健康、打包正常
+- [x] [2026-10-06] [index.md 空分区前置空行被归一吃掉] [[fanchao]] rebuildStructure 对空分区不补空行 — rebuildStructure 对空分区不补前导空行，致「有内容区→空区」接缝塌掉；已改为分区标题前恒补空行。真库验证 + 新增回归用例破坏验证通过，545 全绿。
+- [x] [2026-10-06] [空看板也显示面板 + 首轮3条硬规则 + 无图谱自动init +] [[fanchao]] abs update 方向判断；544全通过、破坏验证过、已commit 65224fa — 空看板说清事实（面板+对齐段）、首轮3条硬规则、无图谱自动init、abs update 方向判断修静默降级；544全通过+三处破坏验证；commit 65224fa
+- [x] [2026-10-06] [方案已落 docs/plans/20261006…] [[fanchao]] oversize-exempt.md，等拍板后改 src/lint.js（1处+1纯函数） — 超限豁免（keep-oversize 标记）user 2026-10-06 决定不做了
+- [x] [2026-10-06] [已改 hooks/abs.pi.ts 三处] [[fanchao]] 544 全通过、破坏验证过、已 install；待真机新窗口验证 — 首轮3条硬规则（先登记/名字说清/不攒）+ 空看板说清事实 + 无.brain自动init；544全通过、破坏验证过、已install
+- [x] [2026-10-06] [方案已落 docs/plans/20261006…] [[fanchao]] load-guide-reinject.md，等拍板后改 hooks/abs.pi.ts — 两个 bug 修完：送达确认移到 agent_end（中断则下轮补）、标记改成按 cwd 集合（切目录不被别的目录烧）；544 全通过、破坏验证过、已 install
+- [x] [2026-10-06] [修 abs update 缺方向判断导致的静默降级（本地版本高于] [[fanchao]] registry 时被 npm i -g @latest 覆盖）：bin/abs.js 加 cmpVersion 三元组比较 + cmdUpdate 三态分支。改到：bin/abs.js 已完成，三层验证通过（单元自检10例 + 场景1超前拦截 + 场景2相等跳过 + 场景3落后升级）；断点：3文件未 commit（bin/abs.js/src/text.js/.npmignore），1.16.3 未发版（待用户批准） — cmpVersion 三元组比较 + cmdUpdate 三态分支已实现，三层验证通过（单元10例/超前拦截/相等跳过/落后升级）。代码待 commit，1.16.3 未发版
+- [x] [2026-10-06] [开工第一轮自动 abs load（用户 2026-10-06] [[fanchao]] 定：第一轮会话 abs load 自带 todo，其他轮只 todo）：hooks/abs.pi.ts 新增 readLoadForGuide（走 ABS_BIN 跑子进程，2s 超时保护）+ injectLoadGuideline（[开工] 前缀）+ loadInjected flag（session_start 重置）。验证：3轮实测 load段=1/0/0，新会话重置生效，load段自带 Todo Board，534 全量通过 — 真机验证通过：新 pi 窗口 load_guide=on，第二句起 skip；新窗口 agent 主动报出三条滞留任务含断点
+- [x] [2026-10-06] [看板为空时对齐段静默不注入（开工那一刻最该对齐却…] [[fanchao]] 么都没摆）：hooks/abs.pi.ts boardGuideline 去掉『空→return null』，改为摆出「（空）」这个事实；并区分两种过滤后为空（真空白 vs 全是别人的任务→仍静默别误导）。测试：拆出作者过滤单独一条 + 破坏验证过；534 全量通过 — 看板空时不再静默：boardGuideline 摆出「（空）」这个事实（以前 return null，开工那刻最该对齐却什么都不摆）。并区分两种过滤后为空——真空白摆（空），全是别人的任务仍静默（别误导）。测试拆出作者过滤单独一条 + 破坏验证过；534 全量通过
+- [x] [2026-10-06] [发布 1.16.2 到 registry（源码有而] [[fanchao]] registry 没有的版本，导致 abs update 把全局从 1.16.2 降级回 1.16.1） — 已发布：清理 skill/.DS_Store（新增 .npmignore）+ 补 src/text.js 尾换行 → npm publish 成功 → registry latest 追平 1.16.2 → abs update 回归验证 1.16.1→1.16.2 正常 + 四宿主 hook/skill 已刷新
+- [x] [2026-10-05] [agent 常忘记登记（今天两会话实测] [[fanchao]] 一个登记了一个没登记）。根因不是不自觉，是指引锚点【first file edit】太晚——那一刻注意力在改什么上；且侦察阶段（只读+提问）完全无覆盖。改法：①指引锚点前移到「收到要改代码的指令时」②侦察也算干活③面板加非侵入提示（不写看板不起进程） — TODO_GUIDELINES 3→6 条：锚点前移到『收到指令时（含侦察）』、加反例、唯一进行中、结语要真实。照 rpiv-todo 改写
+- [x] [2026-10-05] [拆 src/store.js（1483 行 / 18 职责 /] [[fanchao]] 33 导出）为按职责分文件：task/log/query/page/lint 等。照 rpiv-todo 单文件 ≤300 行的规模 — 拆出 page.js(263)/note.js(274)/text.js(66)；store.js 1509→986 行。踩坑：export {x} from 只是转发，内部用需先 import（拆分时 200+ 测试红过）
+- [x] [2026-10-05] [加提交门禁（照 rpiv-mono 的] [[fanchao]] husky）：pre-commit 跑 lint+语法检查，pre-push 跑全测试。我们现在靠自觉 — pre-commit 语法检查（双向实测：坏代码拦住 exit 1 + 好代码放行）+ pre-push 全量测试；core.hooksPath=.githooks
+- [x] [2026-10-05] [加强制约束：同时只能一个 [进行中] [[fanchao]] 任务（照] [[fanchao]] rpiv-todo）。第二个 start 时提示或自动把前一个转讨论中 — 第二个 [进行中] 时提示（只提示不擅自改状态）；幂等更新同一任务时不重复提示
+- [x] [2026-10-05] [照 rpiv-todo 重写] [[fanchao]] TODO_GUIDELINES：①锚点从『first file edit』前移到『收到要改代码的指令时』②加 JSON 调用示例③加反例（测试不过/实现不全时不许标完成）④同时只能一个 in_progress — 指引从 3 条→6 条：锚点前移到『收到指令时（含侦察）』+ 反例（测试不过不许标完成）+ 唯一进行中 + 结语要真实
+- [x] [2026-10-05] [清掉指向已删「hook 自动登记」的陈旧文案与死…] [[fanchao]] 码：bin/abs.js help 行 + 2 处注释、src/store.js 待命名替换死路径 + 用例；改后 abs install 推落点 — 清掉指向已删 hook 自动登记的陈旧文案 + 待命名死路径：bin/abs.js help/2注释、src/store.js rename 注释+死分支、SKILL.md 尾句、cli 用例改验真实行为；commit 880fd47；cli 67/全量 455 绿、lint 0。另发现并修：全局包未被 install 更新（MCP/abs 走全局路径），已 npm link 打通
+- [x] [2026-10-05] [abs todo 全流程实测（8 子命令 + 11] [[fanchao]] 组边界）：发现并修 keep-days 静默失效；两次全量复测均通过 — 全局 1.15.3 跑 19 组场景全通过；keep-days 非法值明确报错、结语矛盾检测、断点随迁、归档产物均正确
+- [x] [2026-10-05] [abs todo archive --keep-days 0] [[fanchao]] 被静默改写成 1（Math.max(1,...)），用户不知道；且报错文案写死『保留近 3 天』与实际用的天数不符（两个 bug：静默失效 + 文案撒谎） — 显式校验替代静默改写；非法值明确报错；补 3 个 CLI 测试（含 0/负数/非数/小数）
+- [x] [2026-10-05] [用户实报两点：①卡顿 ②看板冒出大量 auto-TBD-xxx] [[fanchao]] 待命名。根因：agent_end 每轮 spawn 一个 node 进程（agentEndSeen 置位后条件恒真）+ 占位条目直接写看板。改法：删掉 hook 自动登记（不 spawn、不写看板），只保留日志留痕；登记回到 agent 主动调 abs task — hook 自动登记整体移除（三处 spawn/写看板 + 死代码 + CLI 命令）；rename 作为通用能力保留
+- [x] [2026-10-05] [rename 后 sweep] [[fanchao]] 仍按『自动登记』标记认领，把已被人明确接管的任务扫成 done（结语+『自动登记未接管』= 状态失真）。实测复现。改法：rename 时去掉『自动登记 <sid>』标记（改名=接管，标记随之失效） — 随自动登记一起消失（sweep 已删，不再有认领误杀）
+- [x] [2026-10-05] [待命名 (自动登记 01a10b96-372d-71)] [[fanchao]] 占位条目清理：hook 自动登记已按用户要求移除（卡顿 + 刷屏）
+- [x] [2026-10-05] [verify-tbd-placeholder (自动登记] [[fanchao]] 01a10b96-372d-71) — v1.15.0 实测：TBD 占位 + rename + 描述跟随 + 幂等键保留，全通过
+- [x] [2026-10-05] [test-tbd-placeholder (自动登记] [[fanchao]] 01a10b96-372d-71) — v1.15.0 实测通过：TBD 占位 + rename 改名
+- [x] [2026-10-05] [自动登记的名字不可用：机器从用户话里抽词] [[fanchao]] 抽到「我已经重启测试一下」「本轮有改动」这种开场白/系统文本（后者是拿机器自己生成的文本当前缀，更荒唐）。改成 hook 只开 TBD-<会话> 占位，由理解任务的我改名为 fix-xxx 风格 — hook 只开 auto-TBD-<会话> 占位 + 新增 abs todo rename 给占位起真名；不再抽用户话（实报抽出『我已经重启测试一下』开场白、『本轮有改动』hook 自己的文本）。修复过程中单测抓到：改固定占位后丢了「必须有 note」守门，导致纯寒暄也开条目
+- [x] [2026-10-05] [我已经重启测试一下 (自动登记] [[fanchao]] 01a10b96-372d-71) — 实测产物：验证 hook 自动登记已生效
+- [x] [2026-10-05] [频繁的意思是我说一句话可 (自动登记] [[fanchao]] 01a10b96-372d-71) — 自动登记未接管，收尾清理
+- [x] [2026-10-05] [自动登记时机太早：一按回车就登记，用户还在说/聊] [[fanchao]] 需求没成型就开出了任务。改法：从 before_agent_start 挪到第一次真改文件时（tool_call 写类工具）。光说/问/讨论都不登记 — 登记时机从 before_agent_start（一按回车）挪到第一次真改文件（tool_call）。光说/问/讨论都不登记；抽不出用户关键词时用断点里的文件名兜底（改 store / 改 abs.pi）。测试 17+10 全绿
+- [x] [2026-10-05] [先更新本地 (自动登记 01a10b96-372d-71)] [[fanchao]] 自动登记未接管，收尾清理
+- [x] [2026-10-05] [自动登记两个缺陷] [[fanchao]] ①疑问句被当任务（'为什么任务是这个啊'被登了）②id 用会话 uuid 人认不出。改法: 疑问句不登记 + id 换成指令关键词, 会话 id 退为隐藏幂等键 — 疑问句过滤 + id 改关键词（会话 id 退为标记里的隐藏幂等键）；sweep 改按标记认领防误杀；测试 +疑问句用例
+- [x] [2026-10-05] [为什么任务是这个啊 (自动登记待命名)] [[fanchao]] 设计缺陷产物：疑问句被误登记 + id 用会话 uuid 认不出。已修为疑问句不登记 + id 用关键词
+- [x] [2026-10-05] [好的发版沉淀 (自动登记待命名)] [[fanchao]] 自动登记未接管，收尾清理
+- [x] [2026-10-05] [pi 里 todo 总是不自动登记] [[fanchao]] 导致中途换会话断点丢失。现有 promptGuidelines 指引已注入(414次有痕)但行为没变——指引假设 agent 已决定'要开一个任务'，而排查类工作没有清晰起点。改成 hook 自动登记：一会话一条 + 从用户指令抽 id + wrapup 自动收尾，默认开(ABS_AUTO_TASK=0 关) — 自动登记未接管，收尾清理
+- [x] [2026-10-05] [skill 不自动触发] [[fanchao]] 两个杀手 —— description 是主题描述没写触发词(匹配不上), 且 ~/.agents 陈旧副本被 symlink 绕过 install 管理(读到的永远是旧文件); 另补 SKILL.md 总则的 abs 明确例外 — skill 触发修复完成: description 加触发词 + 总则加 abs 例外, 清除 symlink 指向的陈旧副本, 四宿主落点重装验证均新描述
+- [x] [2026-10-05] [opencode v2 插件契约 {id] [[fanchao]] server}→{id,setup}: 插件报 'Plugin failed' 加载失败。改 hooks/abs.opencode.ts 模板 + 全局副本 + 宿主落点三处(改一份不算改, install 会覆盖); test 里 v1 契约断言同步迁移 — opencode v2 契约迁移完成: setup(api)+api.event.subscribe, 三处同步改(模板/全局副本/落点), 重启后加载失败 0 条, 448/448 全绿
+- [x] [2026-10-05] [验证 promptGuidelines 能否治 todo] [[fanchao]] 不及时: 装扩展加静态 system prompt 指引(非插话), 重启后看 hooks.log 有无 before_agent_start todo_guide=on, 再观察动手前是否主动 abs_task start — pi 扩展用 before_agent_start 的 promptGuidelines 注入常驻指引（非插话），已装并验证 hooks.log 落痕
+- [x] [2026-10-05] [lint 同类问题折叠计数] [[fanchao]] 102 条 LOG-ENTRY(存量旧 log 缺作者) 淹没其它 12 条真问题，体检退化成不可读。改法：lint 输出按问题类型折叠，同类超阈值(如 >10)只报「N 条同类 + 前 3 条样例 + 提示批量查看方式」 — lint 输出按错误码折叠：同类>10 只报前3条+计数，全量留 --all；真机 114行→14行
+- [x] [2026-10-05] [制造真实触发：改代码不登记→提交→门禁弹提示→我是否去补记] [[fanchao]] 用户判定不必留在看板：门禁机制已实测会弹（83654c2），行为层观察无需挂着一条任务盯
+- [x] [2026-10-05] [对齐补三个缺口：②③下轮带上轮动过的文件] [[fanchao]] ④收尾 wrapup 带看板快照、⑤load 带上会话痕迹 — 越界了：wrapup存痕迹+touchedFor+load显示判断，都是替LLM发现问题。已撤回，只保留纯对齐（摆事实）
+- [x] [2026-10-05] [每轮把看板摆给 LLM（已装、四场景通过）] [[fanchao]] 是否让我主动登记：待观察，不下结论 — 每轮对齐看板已装并在用：用户一提就能接上、回答基于真实状态而非回忆。之前用「会不会主动登记」评判它是拿错尺子
+- [x] [2026-10-05] [加状态「搁置」：用户改方向/不做了] [[fanchao]] 与「滞留中」（还要做只是卡住）区分 — 加状态「搁置」+ 转状态提示具体到三种情形；反复对齐铁律写进代码并修一处对齐撒谎（看板清空后旧快照残留）
+- [x] [2026-10-05] [pre-commit 里加对比] [[fanchao]] 改了 src/bin/hooks 但没动 todo.md → 要求显式决定 — 门禁已装并四场景双向验证通过（改代码+不动todo→提示；动了todo/只改文档/ABS_NO_TODO→不提示）。能否真改变行为待真实提交验证
+- [x] [2026-10-05] [验证 hook 每轮把看板摆给 LLM 后] [[fanchao]] 是否真能让登记与干活对齐（本会话实测） — 结语纠正：机制本身在跑且验证通过（四场景）；仅「靠它让我主动登记」未达成
+- [x] [2026-10-05] [把「动手前先停」三问加进 Rules 第一位] [[fanchao]] 让 abs_load 每次强制读到 — lint 两侧同标准已修（对偶测试+破坏验证），首条 Rule 已上 load。附结论：Rule 文字拦不住 LLM（当晚即被本人违反）
+- [x] [2026-10-05] [提升测试密度（现 0.92] [[fanchao]] 人家 1.72）：重点补 lint/install/relevant 的边界用例 — 密度 0.93→1.00（529 测试），四文件补到 100% 覆盖。结论：密度指标对我们意义有限，该看函数覆盖率
+- [x] [2026-10-05] [ROOT-OVER-SIZE(看板>60行) 与] [[fanchao]] archive『保留近3天』打架：密集工作日 Done 区必超（今天 33 条=58 行），而 archive 拒绝动近 3 天的。改法：超限时允许提前归档（或把 Done 折叠计数做得更早生效） — archive 超限时放宽到含当天（cutoff 推到明天）；修两个调用点漏传 maxLines（真 bug：只写 sessions 不动 todo.md）；补破坏验证过的测试
+- [x] [2026-10-03] [给 abs 的 todo 加 pi 扩展层常驻指引(治不及时):] [[fanchao]] 在 before_agent_start 往 system prompt 的 Guidelines 段注入 3 条静态指引(动手前 start/完成立刻 done/断点及时 note), 判定条件=项目有 .brain/, 关掉用 ABS_TODO_GUIDE=0 — 3 条静态指引(动手前 start/完成立刻 done/断点及时 note)经 before_agent_start 注入 system prompt 的 Guidelines 段, 判定条件=项目有 .brain/, ABS_TODO_GUIDE=0 可关。实测 hooks.log: todo_guide=on cwd=<项目>; 破坏验证+7 单测。已随 1.10.1 发版(npm+git tag), 官方包含全部代码 → 之前的『手工补丁』风险已消除。注: 指引的**有效性**另由 verify-todo-guide 观察期判定, 与本条(实现完成)分开
+- [x] [2026-10-03] [看动画用 —— 这条是进行中，面板上它的三点应该在循环闪动] [[fanchao]] 三点循环动画已上线并实测可见: [进行中] 行后缀 ○○○→●○○→●●○→●●● 每 250ms 一帧, 只有进行中的行有, 宽度固定 3 列不抖, 无进行中任务时不跑定时器
+- [x] [2026-10-03] [todo 缺「等外部输入」状态] [[fanchao]] 现在只有 进行中/讨论中/滞留中, 导致'等用户反馈'的任务与被 agent 干着的任务混在一起(实例: verify-todo-guide 等用户日常观察)。候选: 加 [待确认] 或复用 滞留中+断点说明。不着急改——会干扰 todo 及时性验证的观察期 — 评估后不做: 只是状态标签, 不改任何功能; 且 [滞留中] + 断点说明已能表达'等外部输入'(verify-todo-guide 就是这么用的)。加新状态要改 4 处代码 + 测试, 收益不抵成本。用户 2026-10-03 确认不做
+- [x] [2026-10-03] [pi 编辑器上方显示 .brain/todo.md] [[fanchao]] 未完成任务面板: setWidget(aboveEditor) + session_start/turn_end 刷新, 按当前 user 过滤(含无作者的), 上线 10 行截断 — setWidget(aboveEditor) 显示 .brain/todo.md 未完成项, session_start(startup/reload)+turn_end 刷新, 按当前 user 过滤(含无作者的), 10 行截断 +N more, 无任务/无 .brain 自动隐藏, ABS_TODO_PANEL=0 关。实测用户重启后看到面板(hooks.log: panel drawn reason=reload); 与 rpiv-todo 区别: 不建第二套状态机(数据源在磁盘, 跨会话可续接), 代码 ~50 行 vs ~1800 行
+- [x] [2026-10-03] [发版 1.9.9: 3 commit + tag] [[fanchao]] git 与 npm 均发布 — 踩坑: git/npm 配的代理 127.0.0.1:1082 端口没开, 直连反而通; npm 本地缓存 stale 导致 view 连续 6 次报旧版本+404, 差点误判发布失败重发(实际首次已成功)。实机验收: 从 registry 装全新副本, tester/foo 被拒
+- [x] [2026-10-03] [清理图谱 tester 作者残留] [[fanchao]] entities/tester.md 删, index 合并, log/sessions/concepts/sources 21 处改回 fanchao — 保留『讲述 tester 故障本身』的正文不动(改掉即篡改证据)
+- [x] [2026-10-03] [拒绝占位名作者: setUser 加] [[fanchao]] PLACEHOLDER_NAMES + assertRealName, load 加 placeholderWarn 警告历史脏配置 — 根因: setUser 只校验字符合法性不校验是不是人 → 一次 config set user tester 因 {user} 是单一全局值污染所有项目。取舍: ABS_USER 环境变量不过校验(测试套件 7 文件靠它)。破坏验证两轮可抓, 394 测试全绿。发 1.9.9, registry shasum 核对一致
+- [x] [2026-09-18] [发版 1.9.5 + 本地更新（npm publish +] [[fanchao]] 四宿主 abs install） — npm latest=1.9.5；全局装 1.9.5（已非仓库软链）；四宿主 skill/hook 全部刷新并 diff 校验一致；ABS_BIN 指向真实全局 bin。395 测试全绿。教训：我误判 1.9.4/1.9.5 '卡在 staged 态不可用'，据此连发两个版号——实际只是 registry 传播慢（1-2 分钟），E409 是重复发布已在飞行中的版本。改档案在 8b5afd7 的提交信息里。
+- [x] [2026-09-18] [todo 登记不及时] [[fanchao]] SKILL 加开工前触发器 + 收尾注入任务优先 — 两个注意力缺口都补：①SKILL 加开工前 start 硬规则 ②agent_end 注入改两段式（先任务后沉淀），顺序断言钉住。未动注入频率。395 测试全绿。提交 137e11b
+- [x] [2026-09-17] [test/hook.test.js] [[fanchao]] 98 偶发失败，定位后确认是产品缺陷非测试问题：event.sh 幂等 mark 名钉在分钟级 STAMP 上，跨分钟就换身份 → 「60s 幂等」实际最坏退化为 1s。实测复现（STAMP 2359→0000 落 2 行）。已修：mark 名只含指纹 + 时间戳写进文件内比较（拒绝 find -newermt：BSD 不认 @epoch；拒绝 -mmin：仍是分钟级）。395 测试全绿、幂等测试 10 轮 0 失败（原 1/12）。提交 8e70c4d — 已修并提交 8e70c4d：幂等 mark 改为「只含 payload 指纹 + 时间戳写在文件内」，窗口=真 60s，与分钟边界无关；清理逻辑不再按分钟批量删（那会在跨分钟时误删刚写的 mark）。破坏验证：退回旧方案 → 两条新测试均 fail。自身踩坑：新写的第一版测试是空测试（只改 mark 内容，而旧代码不读内容）—— 破坏验证拓出来了，改为断言身份方案才真打到缺陷
+- [x] [2026-09-17] [abs load 每次都会修改] [[fanchao]] .brain/index.md（无条件写入）: checkBrainShape 的 rebuildStructure 在 ## Entities 前插一个空行，生成结果与磁盘不同 → 每次 load 都把 index.md 弄脏。可复现（git checkout 后跑一次 load，diff 立即出现）。危害: 干净的 git 树被判脏、可能被误提交 — 根因与我当初登记的不同（重要更正）：不是 rebuildStructure 的代码 bug。生成器的定点是「有内容的分区前插空行、空分区紧贴」，且幂等（跑两次第二次 changed=[]）。真因是提交的 .brain/index.md 被手改偏离了定点（## Entities 前漏空行、空 ## Syntheses 前又多一个）→ 首个 load 写回一次。修法：不动代码，把两个文件带到定点后提交。验证：全新 checkout 后连跑 3 次 load，git status 均 0 脏文件（原为每次 1 行）。教训：我第一版改成「只第一个分区插空行」是错的（差异 20→57 行），靠实测数据推翻；当时若直接提交就会把真定点改坏
+- [x] [2026-09-17] [收尾注入反复打断主任务] [[fanchao]] 证据: ~/.abs/log/hooks.log 同会话 5 分钟内 6 次 teardown-nudge（注释写每会话一次），全日志 55 次。根因一: hooks/abs.pi.ts:155 守卫是跨 await 的检查-后置位（teardownNudged=true 隔了 logHook/loggedToday 两个 await）→ 并发 agent_end 全先过检查再各自置位；已复刻复现（5 次触发→注入 5 次）。根因二: 扩展重复注册（session_start 11 分钟内 8 次，00:07:58 连续 3 次）→ 闭包守卫不共享，同进程多实例各有自己的 flag。附因: agent_end 不是会话结束（docs/extensions.md:569 明说），且 loggedToday 判据反向（今天没 abs log→第一次就打扰；已 log→全沉默）。修法待定 — 两个根因均修并实测：①守卫跨 await 竞态（并发 5 次→注入 5 次，已复现）→ 进函数首动作置 teardownInFlight；②扩展重复注册（session_start 11 分 8 次）→ 状态提到模块级。393 测试全绿 + 两条回归测试均做破坏验证。提交 5c148fc 并已安装到 ~/.pi/agent/extensions/abs.ts（已核对实际生效）
+- [x] [2026-09-17] [修 queryHint/rankPage 噪音] [[fanchao]] 英文 2-gram 模糊兜底使 ratio 恒为 1（实测 relevant 30 命中全 fuzzy score10、页面 0 命中）；拟只在中文用模糊。尺子=tag/页名级强命中（hook 6/todo 4/lock 2 vs relevant 0） — 两处缺陷均修复且实测验证：①rankPage 的 2-gram 模糊兜底对英文恒真（ratio 恒=1）→ 加 hasCJK 门，relevant 30→0；②queryHint 取词无质量信号 → 新增 topicStrength 按 tag/页名排序 + 剔0 + 剥掉任务行记号，load 提示 queryhint-noise tester 进行 → hook todo 实测。391 测试全绿、lint 0、三处破坏验证均能抓。提交 415008d
+- [x] [2026-09-17] [对照实验:空白目录测 .brain/] [[fanchao]] 是否真提升准确度。设计:同任务两轮(带/不带图谱)。关键约束:坑必须只在 .brain/ 里,代码里不能有答案 — 四轮对照实验完成: 未测出 .brain/ 的提升 —— 三轮因题面泄题失效(明写环境/提示陷阱/提示验证入口), 第四轮 abs ab 测出 B组3/4 vs A组2/4 但 n=1。唯一稳定发现: 乙组3/3主动引用 .brain/, 甲组0/3。实验过程暴露 abs ab 工具5个bug(已修) + 一个真缺口(test/hook.test.js未锁时间戳, 已修)。结论: 该实验设计无法证明 abs 有效性, 要真验证需另设计
+- [x] [2026-09-17] [abs ab 首次真实用例] [[fanchao]] 给 hooks/event.sh 日志加 cwd= 字段 + 要求真生效。题面首次不泄题(abs ab check 通过)。台: /tmp/absab/real1/{A轮,B轮}。判据跑前定死: 机械=grep cwd= hooks/event.sh; 语义S1-S4记四项。目的: 验证 abs ab 工具本身是否好用 — abs ab 首次真实使用: 暴露并修掉5个bug (①A轮自带.brain静默失效 ②非仓库目录误导性报错 ③两组并排B组diff到答案 ④init覆盖正在跑的实验 ⑤只约束读不约束写→B组写穿~/.abs/hooks/ 7个真实文件)。⑤最重: 任务需求'让它真正生效'本身在推agent越界, 故边界段必须显式禁止写工作目录之外(~/.abs等)+给替代做法。已按用户指示abs install正式恢复环境、作废v2数据(隔离保留)、加写保护。测试405全绿(+16 ab测试), 破坏验证覆盖①②③④⑤
+- [x] [2026-09-17] [load 的 queryHint] [[fanchao]] 从「给检索词」改为「给命中页」+ 命中页正文直接注入。依据: 本会话实测 hint 给 'exp-blank-dir fanchao 进行' 三词全废(id/作者/停用词); 读写比 308写入:3检索。step1 取词改为与 concepts 标题+tags 匹配(复用 QUERY-TAGS 的权重算法); step2 命中页注入 ❌表现+解法 两段 — load 的 queryHint 改为给命中页+摘要。实现: 接线 pickRelevant/renderRelevant(本就写好但从未调用); scorePage 补 tags 权重8; 新增 df 过滤(剔除过半页命中的无区分度词, 如作者名 fanchao 命中21/30页); 抽词前剥掉 [[wiki]] 与全大写ID。效果: 旧hint三词全废命中噪音页, 新hint命中 learning-loop/teardown-automation/host-plugin-silent-failure。测试 397 全绿(+8), 破坏验证2项均转红。全局是软链故改完即生效
+- [x] [2026-09-17] [实验A轮副产物: test/hook.test.js:74] [[fanchao]] 只断言 log.includes('SessionStart'), 未锁时间戳格式 —— 把 event.sh 里的 date 格式删掉测试照样全绿。补一行 assert.match(log, /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] SessionStart /m)。来自 agent 独立发现, 非实验设计 — test/hook.test.js 补时间戳格式断言(整行 match 而非只 includes 事件名)。破坏验证: 删掉 event.sh 的 date 输出 → 修复前 pass5/fail0(全绿) vs 修复后 pass4/fail1(立刻红)。已确认有牙
+- [x] [2026-09-16] [--open 死代码（FLAG_SPEC 无] [[fanchao]] open）、unref 不可达、--port abc NaN 不校验
+- [x] [2026-09-16] [help/update 用户可见输出含] [[fanchao]] U+200B，复制即坏。清洗输出侧字符串 + 守卫测试扩到输出
+- [x] [2026-09-16] [opencode 插件 nudged/wrote…] [[fanchao]] iles/idleSeen 不随 session.created 重置，同进程后续会话全部静默。重置+行为测试
+- [x] [2026-09-16] [bin/mcp.js import zod 但] [[fanchao]] package.json 未声明，靠 SDK 传递依赖碰巧能用。加一行 dependencies
+- [x] [2026-09-16] [收尾判据三宿主不一致：pi 已认 dev| 条目] [[fanchao]] store.js:838 与 opencode:51 仍是旧判据。回灌 dev 过滤
+- [x] [2026-09-16] [abs_task schema 缺 as 参数] [[fanchao]] done 分支忽略 note 静默盖。补 schema as + done 吃 note
+- [x] [2026-09-16] [abs serve 默认端口 7777 固定 →] [[fanchao]] 第二个项目起不来。改为 0 让系统分配空闲端口
+- [x] [2026-09-16] [abs serve] [[fanchao]] .brain/ 挂成只读网页。左目录树+右渲染+双链跳转+5主题+明暗切换+手机抽屉。零依赖(CDN 引 marked/hljs)，只绑127.0.0.1、只读、防路径穿越
+- [x] [2026-09-16] [todo 借 Anneal] [[fanchao]] 断点要素固定前缀(验证/边界/阻塞/不做) + Parked 标记故意搁置
+- [x] [2026-09-16] [写操作报错带机器可读错误码(仿 Anneal] [[fanchao]] templateRefusal): 没图谱/没设姓名/任务id不存在 各自有 code
+- [x] [2026-09-16] [x] [[fanchao]]
+- [x] [2026-09-16] [load 给该查的词(queryHint) + note] [[fanchao]] when 存触发条件; when 未接进检索
+- [x] [2026-09-16] [abs query 借 tags 做关联检索] [[fanchao]] tag权重8>标题4>正文1, 精确命中时模糊不混入
+- [x] [2026-09-16] [三层 n 分叉思考引擎 [[fanchao] [[fanchao]] ]]
+- [x] [2026-09-15] [desktop_herdr 20 个 source 提炼：8] [[fanchao]] 进度日志合并 + 10 坑提炼进 5 个新 concept + 2 已覆盖
+- [x] [2026-09-15] [补 44 页验证段] [[fanchao]] ~/Docker 11 + codebuddy 10 + zj_shop 16 + desktop_herdr 3 + 家目录 4
+- [x] [2026-09-15] [新增 abs concept 命令（概念页骨架] [[fanchao]] 只给结构不给内容）+ NO-TAIL 判据（放宽认动作词、收紧识破占位）
+- [x] [2026-09-15] [sessions/ 一天一文件命名契约] [[fanchao]] 归档并入当天 log（abs todo archive 自动）+ 4 条 lint 检查 + 6 个项目存量迁移
+- [x] [2026-09-15] [消化 sources/ 14 个堆积（>10 触发] [[fanchao]] SOURCES-PILED-UP）：提炼进 concepts/、清源页、清引用、修 index。另评估「自动消化门槛」可行性。
+- [x] [2026-09-15] [安装树与代码版本不一致的显式守卫] [[fanchao]] 包内一个 skill 都找不到时不再静默装 0 个，改报版本+布局+修复命令。触发源=fnos 半升级实测（旧代码1.8.2 + 新布局1.8.3 → 甩一个当前版本不存在的路径 ENOENT skill/SKILL.md）。
+- [x] [2026-09-15] [写文件即自动登记(hook 端)] [[fanchao]] 写项目文件→hook 直接 spawn abs autotask 建/追加 [待归类] 条目，不再只弹提醒。幂等键=会话(同会话只一条)。待发版(1.8.0 已发布版不含此功能，故本地实测走仓库 bin)
+- [x] [2026-09-15] [[待归类] [[fanchao]] 改了 src/oc-test.js] [[fanchao]]
+- [x] [2026-09-15] [[待归类] [[fanchao]] 改了 src/x.js] [[fanchao]]
+- [x] [2026-09-15] [写文件即任务开始] [[fanchao]] turn_end 检测到写文件→立刻注入登记提示(每会话每次写文件都提醒，频繁没关系)；判据=整个项目排除.brain自身；文案明说'纯讨论可跳过'；配套 reviewed→active 迁移 + SKILL.md 约束文档更新
+- [x] [2026-09-15] [经验/知识页生命周期] [[fanchao]] ①status 三值定死语义(active/superseded/draft) ②abs supersede <页> --by <页> 标记推翻 ③abs note 落页默认 draft ④query/load 默认不展示 superseded ⑤lint 查 superseded-by 指向是否存在 + 查 draft 超龄未核实。不含 todo 自动化(用户明确排除)
+- [x] [2026-09-13] [abs task 调用不稳定] [[fanchao]] 写代码时不登记，只有复盘/手工才更新
+- [x] [2026-09-13] [skill 双份漂移] [[fanchao]] 仓库 skill/SKILL.md（中文分区名）vs 安装版 ~/.claude/skills/abs-agent-brain-sync/SKILL.md（英文分区名）不一致。下次改 skill 极易改错一份。建议：安装器从仓库 skill/SKILL.md 单向覆盖，或文档化'安装版为准、仓库版只是模板'。
+- [x] [2026-09-13] [版本号谎言：v1.7.5 打标后] [[fanchao]] c3c9974(英文分区名+checkBrainShape)落地但未 bump，全局装 1.7.5 实为旧码。已 npm version patch→1.7.6 发布+全局重装，abs load 实测 checkBrainShape 生效(todo.md 结构重排)。教训:代码前进了版本号没跟=发布流程断，npm view 有 cache 延迟需 --force clean
+- [x] [2026-09-13] [load 顺手核对 index/log/todo 形状(每次] [[fanchao]] load 都读这三个): 缺分区=最严重→自动补建(幂等,不覆盖已有内容); 无头(H1不符)→只提醒不自动改(结构可能整体脱轨); 多分区→不管; log 条目只判 '## [' 开头, 不判内容完整(LOG-BACKFILL-34 已定论不修)。正常时静默零字节。已实现+沙盒验证5场景, 未发版(等用户核对)
+- [x] [2026-09-13] [①分区名/H1 全改英文(Roadmap/Rules/Graph] [[fanchao]] Index/Activity Log/Todo Board/Done/Archived/Undated) ②load 结构核对: 不符就按标准重建(B档, 自加分区留末尾, 内容零丢失, 幂等) ③新增 abs rule 命令+MCP abs_rule+lint 两项检查(RULES-PILED-UP/TOO-LONG) ④skill 按文件结构重写+精简(342→272行, -32%) ⑤5 个真实项目已迁移(内容零丢失)
+- [x] [2026-09-12] [parseArgv 返回的 opts 同时带 raw 与] [[fanchao]] normalized 两份 key(keep-days/keepDays, no-mcp/mcp...), 后者才是读者。审查建议收成显式白名单映射。收益=形状整洁, 风险=再碰刚修好的解析路径(现有 9 条测试钉着)。低优先。
+- [x] [2026-09-12] [作者标记 @name → 「双链」wiki 链接格式;] [[fanchao]] 用户独立实体页 entities/<user>.md (含技术栈/特点, config set user 或首次写操作时创建); extractAuthor 兼容旧 @name 与新「双链」写法; index.md 不塞作者, 改 query/load 输出附带页 author; lint 加「人名占位」有页存在校验
+- [x] [2026-09-12] [abs 增加用户姓名设置] [[fanchao]] 未设则写操作报错要求设置; todo/log/生成的文档标记 @name。方案已过目, 待用户确认三个歧义点(检查放哪层/配置存哪/标记格式与位置)后开工
+- [x] [2026-09-12] [验证作者标记 @fanchao] [[fanchao]]
+- [x] [2026-09-12] [src/install.js 三处注释(] [[fanchao]] 152/:209/:723)含 U+200B 零宽字符, 会让基于文本的匹配(edit/grep)静默失配 —— 本次修 bug 时反复踩到(edit 的 oldText 永远匹配不上, 因为多了一个不可见字符)。已清除, 两个源文件现为 0 处 Cf 字符。
+- [x] [2026-09-12] [AGENTS-SKILL-READONLY-DETECT] [[fanchao]] ~/.agents/skills/ 归 skills CLI 所有(abs 不写它), 但常有一份手工 cp 的残留副本会与真身脱节。处置: 只读检测+告警+给清理命令, 绝不代删代写。内容逐字节相同则静默, --no-skill 时不检查。
+- [x] [2026-09-12] [CODEX-TOML-ARGS-MULTILINE] [[fanchao]] codex config.toml 的 [mcp_servers.abs] 路径校对曾经只找单行 /^\s*args\s*=/ 原地替换 —— args 写成多行数组时那行不匹配, 走 else 只打印'无 args 行,未动', 旧路径静默保留。且 body.includes 判等会被 command 行里的同串骗过。修法: 新增 findTomlKeyRange 把 args 作整体替换(跨行吃到配对 ]); 无 args 行则整段重写 section。
+- [x] [2026-09-12] [install 时校正 9 个外部 MCP] [[fanchao]] store(~/.claude.json、~/.claude/mcp.json、Claude Desktop、Cursor、Windsurf、codex config.json 双容器名、~/.config/mcp/mcp.json、~/.agents/mcp.json ×2)里已存在的 mcpServers.abs.args。只改 args 不动 command、不新增条目、缺失/坏 JSON 静默跳过、幂等不写。uninstall 对称只删该键。校正挂在 runInstall/runUninstall 层(与宿主无关, 否则 --agent codex 单宿主路径漏跑)。
+- [x] [2026-09-12] [【已决定不修】log.md 34 条历史残句] [[fanchao]] 事实认定: 完整原文在文件/git 全历史/归档 session 页均不存在(逐 commit 核对), 截断发生在写入时且原文已销毁 → 属不可恢复, 只能推断重写。风险实证: 本次试写批量脚本即把'修 Pi 缺失 MCP 注册：'整段开头吃掉(已回滚并逐字节校验)。已向用户确认: 旧的不管。保留此条仅为记录认定结论, 避免后续会话重复调查。新写入自 1.5.4 起不再截断。
+- [x] [2026-09-12] [abs note --tags 被解析成布尔 true →] [[fanchao]] frontmatter 写成 tags: [source, true], 且 'abs,摘要' 还粘进了正文。复现: abs note '测试' --tags abs,摘要 → 页头 tags:[source,true]。根因疑在 bin/abs.js 的 parseArgv: --tags 被当成无值开关(与 --note 同类形态), 或值与下一位置参数错位。验证: 断言 tags 行含传入的各标签且正文不含标签串。非本次 LOG-TRUNC-100 引入(旧版同样复现, 已对 pristine 版验证)
+- [x] [2026-09-12] [abs install --help] [[fanchao]] 会静默执行全量安装而非打印帮助。根因: bin/abs.js 把 --help 只当顶层命令处理(case 'help': case '--help'), 跟在 install 后面时落到 parseArgv 的通用分支 o['help']=true, 而 install 分支根本不读它 → 走安装路径。危害: 用户想看帮助却改了四宿主配置(幂等所以不炸, 但是意外副作用)。修法: ①install/uninstall 分支开头检查 opts.help 则打印该命令用法并 return ②或在 parseArgv 里遇 --help 直接短路。验证: abs install --help 不产生任何文件写入(沙盒断言), 且输出用法
+- [x] [2026-09-12] [log.md/index.md 写入口硬切 100] [[fanchao]] 字符，34/85 条 log 断在词中间(revert-c/file-write-lockin/~/.cl​aude/ski)，且 abs load 开机读的就是这份残句 → 用户/AI 看到的'最近动作'天然是半句。根因: src/store.js:355 cmdLog 的 .slice(0,100) + index 描述复用同一段截断文本(store.js:~519) + slugify 后标题也截断造成死链标题（标题被截成 2026-09-10-主动推类-hook-回-decision-blo）。修法候选: A 删截断(最省, log 本为人类摘要) B 切句读边界 C 支持 ↳ 续行。验证: 断言写 200 字 log 后落盘完整 + index 描述非截断拼接 + 页面标题不被切。修完后需重新生成/修正 index 里已生成的截断标题
+- [x] [2026-09-12] [已修并发布 1.5.3] [[fanchao]] installPi 的 withMcp 分支只打印「MCP → Pi 走 extension 内桥接」却无任何桥接代码 —— 生成的 abs.ts 只 spawn abs wrapup + 挂 3 个 pi.on()，从不碰 bin/mcp.js。本机靠 mcp-adapter 的 hostConfigDiscovery=on 间接读到 ~/.claude/settings.json 的注册才侥幸可用，无 claude 宿主的机器上 abs MCP 完全缺失（用户在另一台机器复现）。修法：真写 ~/.pi/agent/mcp.json 的 mcpServers.abs={type:stdio,command:node,args:[mcpEntryPath()]}，路径走 mcpEntryPath 解析包稳定安装位置而非 ABS_DIR；uninstallPi 同步只删 abs 条目不误删他人 MCP。验证：+4 回归测试（真注册 / 幂等重装保留既有 mcpServers+settings+imports / 卸载只删自己），全量 193 pass；npm pack 解包产物在干净沙盒（无 claude/codex/opencode）直跑装 pi 成功注册；端到端拉起 serverInfo abs 1.5.3 + 9 tools；已发 registry latest + 本机全局升级 + 四宿主刷新。
+- [x] [2026-09-10] [abs load 的「最近动作」贴的是最旧 5] [[fanchao]] 条而不是最新：log.md 是新在上（头=今天23:18，尾=2026-09-08），而 cmdLoad 用 tailLines(log,5)=lines.slice(-5) 取尾部=最旧。实测 load 输出里最近动作全是 09-08 的旧条目，今天的最新记录从未显示。修法: 取前 N 条（或抽前 5 个 '## [' 条目），标签改「最新 5 条」。影响: abs load 是开机读状态入口，这一节目前无用。验证: 断言输出含今天最新条目、不含 09-08 最旧条目
+- [x] [2026-09-10] [index.md 的路线图停在「v1.2.2 已发布，166] [[fanchao]] 测试绿」，实际已到 1.5.1 / 189 测试（滞后 3 个版本）。这已在路线图自己的「下一阶段候选」里写着（"index 路线图随版本更新"）却没人做——无机制则必漂移。可选修法: ①发版时在 abs update/release 流程里同步写路线图版本 ②直接删掉路线图里的版本号（只留方向，避免这类失真） ③加 lint 检查 README/index 里的版本号与 package.json 一致
+- [x] [2026-09-10] [OVER-SIZE 阈值放宽 5120B → 8192B（行数] [[fanchao]] 150 不变），并提成常量 PAGE_MAX_BYTES/PAGE_MAX_LINES（原来检查条件与提示文本各写一份 150/5120，会漂移）。依据：跨 4 项目 68 页仅 2 页超限且都只超一点（codebuddy 5463B / faxuehui 5440B）；早先为满足它还把一页从 5319B 压到 4972B。放宽后两者归零。已加边界测试（6KB 放行 / 9KB 报）+ revert-check
+- [x] [2026-09-10] [lint 提示里的路径省略了 .brain/] [[fanchao]] 前缀，用户按报的路径去项目里找找不到（codebuddy 的 concepts/fnos-native-release-deploy.md 实际在 .brain/concepts/ 下，项目根没有 concepts/ 目录）。根因: listPages 里 rel=`${d}/${f}` 是 vault 相对；7 处提示(NO-FRONTMATTER/TEMPLATE-LINK/DEAD-LINK/ORPHAN-PAGE/UNRESOLVED-CONFLICT/OVER-SIZE/INDEX-MISSING)全用它。改法: rel 改 `.brain/${d}/${f}`。影响面: 只 lint 文本，无程序消费；但 test/store.test.js 两处正则（ORPHAN-PAGE/INDEX-MISSING 带 sessions\/ 的）需同步
+- [x] [2026-09-10] [lint 误报 [[todo] [[fanchao]] ] 死链] names 集合只含子目录页(concepts/entities/sources/syntheses/sessions)，.brain 顶层文件 index.md/log.md/todo.md 不被当作可链接页 → [[todo]] 被判 DEAD-LINK + INDEX-DEAD-LINK。实测 codebuddy 报 5 条、faxuehui 报 7 条，均属误报（todo.md 真实存在）。已修：names 补充 .brain 顶层 *.md 的 slug（仅用于链接目标存在性判定，不影响 ORPHAN/INDEX-MISSING）。验证：codebuddy 5 条消失、[[log]]/[[index]] 同样放行、真不存在的页仍报；新增回归测试，187 测试绿。待办：commit + 发版
+- [x] [2026-09-10] [在 skill 加「新需求受理协议」] [[fanchao]] 用户报 bug 或要求加功能时，agent 不得直接动手 —— ①先总结方案(问题复述/根因或做法/改哪些文件/怎么验证) ②abs todo add 登记 ③明确问用户是否开工，等确认再改代码。例外：用户已说"开工/直接做"、一行级修字/纯查询/纯沉淀、同一需求已登记且确认过。落点: skill/SKILL.md 新增节（紧随「触发总入口」）；需重装四宿主 skill 才生效
+- [x] [2026-09-10] [Done 区归档做成真流程] [[fanchao]] ①只保留近3天(可配) ②任一天内有未完成(- [ ])则整天不归档 ③归档为单个文件+在 todo 的 ### 归档 段留 `<slug>` 完成任务 N 条。含定时/触发规划 + lint 兜底
+- [x] [2026-09-10] [四宿主 abs MCP 注册路径不一致] [[fanchao]] codex 指向仓库(/Users/fanchao/Code/skills/.../bin/mcp.js), CC/opencode/pi 指向全局(lib/node_modules/...)。根因两处: ①install.js 三处都用 join(ABS_DIR,'bin','mcp.js'), 而 ABS_DIR 取决于'install.js 自己住哪' —— 从仓库跑 abs install 就写仓库路径 ②codex 分支 if(!text.includes('[mcp_servers.abs]')) 才写, 已存在即跳过 → 一旦写错永不修正。危害: 改了仓库但没装全局时, 真机跑的可能是另一份; 卸载全局后路径直接失效。修法: 路径应固定为该包的稳定安装位置(优先全局), 且已存在时也应更新为当前正确路径
+- [x] [2026-09-10] [重启后 MCP 写通道 + mcp.log] [[fanchao]] 双验证
+- [x] [2026-09-10] [withTrace 定义了但 9 处工具都没包它 →] [[fanchao]] mcp.log 从不生成(可观测性静默缺失,无任何症状)。已修: 统一经 tool() 注册,内部总是包 withTrace,遗漏不再可能; 新增 2 测试 + revert-check
+- [x] [2026-09-10] [验证 MCP 写通道（走 abs_abs_task 的 add] [[fanchao]] action）
+- [x] [2026-09-10] [已修: abs todo] [[fanchao]] 统一读写(add/start/note/blocked/done), 旧 task/board 报错提示, 只读命令拒绝多余参数, wrapup/teardown-check 移出 help。同步改 skill/README/MCP + 9 处代码内旧命令名
+- [x] [2026-09-10] [方案A: CLI/MCP 共用常驻 daemon (Unix] [[fanchao]] socket), 消除 22ms node 启动开销 + 统一锁. 要点: ①daemon 自拉起+心跳 ②CLI 连不上时退化本地直读(安全网,必须可测) ③ABS_NO_DAEMON=1 开关 ④MCP server 也走同一 daemon 保证一致. 实测依据: 独立起进程 28.8ms vs 单进程内 0.2ms, 进程启动占99%
+- [x] [2026-09-10] [任务 id 用 includes() 子串匹配定位 →] [[fanchao]] 前缀相同的 id 互相覆盖, 静默丢任务。复现(零并发): 先 task start T11, 再 task start T1 → T11 被 T1 原地改写并消失, 只剩 1 条。三处同源: src/todo.js:219(upsertTask, 会静默改写已有任务+新任务不出现), src/todo.js:250(findTaskLine), src/store.js:325(markDone, 会误标完成别的任务)。改法: 按行首标识符精确比对(取 '- [ ] <id>' 后的 id token 做 ===), 不用 includes。影响: T-1/T-10、ABS-1/ABS-10、fix-hook/fix-hook-2 等任何前缀相同命名
+- [x] [2026-09-10] [opencode 真机验证] [[fanchao]] 通道修完后真会话要看到 teardown-nudge 痕(当前 session.idle:seen 有痕但零 nudge)
+- [x] [2026-09-10] [CC/Codex 补主动推] [[fanchao]] Stop hook 回 decision:block 注入收尾指令(守卫抄 pi 插件四条件)，替代只写 wrapup.log
+- [x] [2026-09-10] [opencode 注入通道修复] [[fanchao]] promptAsync 是 fire-and-forget(204 void)，对终结态 idle session 只入队不重启 turn → 改 src/install.js opencodePluginSource() 用 session.command(同步200) 或把注入点提前到 turn 内(tool.execute.after/message.updated)
+- [x] [2026-09-10] [小件: loggedToday 守卫收紧] [[fanchao]] 日志轮转、测试计数 146→实测 144 对平
+- [x] [2026-09-10] [git 收尾: 25 文件未提交(今天整个 session] [[fanchao]] log、teardown-automation + host-plugin-silent-failure 概念页、7 个 source 删除)
+- [x] [2026-09-10] [版本对齐: 本地 package.json 0.3.0 vs] [[fanchao]] npm 已发布 1.1.0
+- [x] [2026-09-10] [补 abs update + abs --version:] [[fanchao]] 用户报'abs update 看不到新版本'实为命令不存在
+- [x] [2026-09-10] [真机验证: pi 会话首次触发] [[fanchao]] agent_end→seen→nudge 完整链路(11:43:23)
+- [x] [2026-09-10] [seen 痕补记 cwd+brain] [[fanchao]] 使 nudge 异常可事后解释(曾出现 nudge 但 log.md 有今天, 无法归因)
+- [x] [2026-09-10] [补 seen 痕可观测性] [[fanchao]] 首次 agent_end/session.idle 无条件留痕, 否则分不清'事件没触发'与'被守卫拦下'
+- [x] [2026-09-10] [补插件行为级测试(非字符串断言)] [[fanchao]] 真 import 生成产物 + 驱动真实事件 + 断言日志落痕; 含 ZWSP 守卫
+- [x] [2026-09-10] [op​encode 插件用命名导出(export] [[fanchao]] const)但加载器取 default → 插件被忽略, 改 export default {id, server}
+- [x] [2026-09-10] [op​encode 补收尾自动化] [[fanchao]] session.idle + promptAsync 注入(与 pi agent_end 同策略)
+- [x] [2026-09-10] [op​encode 插件 event] [[fanchao]] 回调签名错({name}→{event})+事件名错(session.start→session.created/idle): 插件从未触发过
+- [x] [2026-09-10] [收尾自动化: pi 扩展 agent_end] [[fanchao]] 注入收尾指令(被动记日志→主动推)
+- [x] [2026-09-10] [CO​DEX-HOOKS-FIX] [[fanchao]] 修 Co​dex hooks.json 形态错写导致安装崩溃(对象 vs 扁平数组)
+- [x] [2026-09-09] [制作为产品模式，打包成可执行文件安装到系统内，给我一个安装步骤] [[fanchao]] 类似 npm install xxx -g
+- [x] [2026-09-09] [todo Done 按日期分组(### date] [[fanchao]] 新在前)+老格式惰性迁移兼容
+- [x] [2026-09-09] [wrapup 快照(B)+load滞留展示(A)…] [[fanchao]] hook接入+skill开场强制对账
+- [x] [2026-09-09] [更新readme.md] [[fanchao]]
+- [x] [2026-09-09] [统一 .brain 文档读写为单一方法(所有需读写 .brain] [[fanchao]] 文档的地方都走它): 读=readBrain, 写=editBrain 内部自动套 lock 防重复/防并发(继承已做的 lock.js), 调用方不用各自拼 editFile+锁. 各页(todo/log/index/source)统一收口
+- [x] [2026-09-09] [深度测试四层CLI/install/MCP/hook,] [[fanchao]] 产出可回归单测+真实冒烟
+- [x] [2026-09-08] [本轮反馈处理: log.md只记工作沉淀(去ta…] [[fanchao]] k自动刷+重写) + 时间戳本地化 + codebuddy todo迁移B4 + cmdShow走readTodo触发迁移
+- [x] [2026-09-08] [修 .gitignore 缺] [[fanchao]] node_modules（提交前必须）
+- [x] [2026-09-08] [测试 pi opencode 的 abs] [[fanchao]] 功能是否正常、触发是否稳定（MCP 调用链、触发时机）
+- [x] [2026-09-08] [installClaudeCode 覆盖式写] [[fanchao]] settings.hooks[ev] 会顶掉同事件的 moshi-hook 等其它 hook; 改成分区合并追加(去掉旧abs条目幂等 + push新条目, 保留moshi), 沙盒验证后备份应用真实配置
+- [x] [2026-09-08] [每轮结束收尾自动化] [[fanchao]] Stop hook 读todo→判未登记完成→沉淀经验→更新 index/log/todo
+- [x] [2026-09-08] [以原版完整SKILL为骨架+新增「每轮结束收尾循环」节,] [[fanchao]] 整合abs工具命令, 重写skill/SKILL.md并重装
+- [x] [2026-09-08] [task note 在目标任务不存在/已完成时] [[fanchao]] 断点错挂到同区第一条任务下; 应找不到即报错不落盘
+- [x] [2026-09-08] [abs note 产出的 source 暂存页被判] [[fanchao]] ORPHAN: lint 应对 sources/ 豁免孤立检查(暂存页天然无链接, 提炼后才挂链)
+- [x] [2026-09-08] [测试反馈: hook请求流水移出log.md→技术日志;] [[fanchao]] MCP请求跟踪日志; todo格式归一; task操作自动记log
+- [x] [2026-09-08] [更新后的note] [[fanchao]]
+- [x] [2026-09-08] [实现 abs query + abs lint（PLAN D1] [[fanchao]] 验收缺项）
+- [x] [2026-09-08] [task start 幂等（同 id] [[fanchao]] 不重复写行）
+- [x] [2026-09-08] [event.sh shebang #] [[fanchao]] !/bin/sh 但用 bash 语法 ${PAYLOAD:0:120}，dash 下静默失败
+- [x] [2026-09-08] [second] [[fanchao]]
+- [x] [2026-09-08] [多项目隔离实测: 两个项目各自 CLI/MCP 读写不串] [[fanchao]] (PLAN D2 验收)
+- [x] [2026-09-08] [CC hook端到端] [[fanchao]] 装机已完(settings.json 4事件+MCP+skill), 验证 hook→log 落盘
+- [x] [2026-09-08] [实时化: task blocked/note 断点命令 +] [[fanchao]] abs note 经验暂存通道(CLI+MCP+测试)
+- [x] [2026-09-08] [补分工节: hook机械记log + task/note实时落盘] [[fanchao]] + skill自觉深提炼; 两份SKILL.md同步
+- [x] [2026-09-08] [写详细操作日志到 .brain/sessions/] [[fanchao]] 供用户测试追溯
+- [x] [2026-09-08] [npm link 全局命令 + 安装形态概念页] [[fanchao]]
+- [x] [2026-09-08] [board→todo改名 + index/log 查看命令] [[fanchao]] (log无参看带参写)
+- [x] [2026-09-08] [整批变更提交 git (分 conventional] [[fanchao]] commits)

@@ -1,7 +1,7 @@
 // src/todo/validate.js — 条目级闸门：形状校验、长度限制、空行检查。
 
-import { TODO_SECTIONS, isAllowedTodoSub, INDEX_SECTIONS, ENTRY_SHAPES, indexLinkSectionNeeds, BREAKPOINT_MAX, TASK_LINE_MAX } from './spec.js';
-import { sigOfLine, REPORT_MARKERS, sentenceCount, isTaskLine, isAllowedTodoLine, todoSectionOf, parseChild } from './common.js';
+import { TODO_SECTIONS, INDEX_SECTIONS, ENTRY_SHAPES, indexLinkSectionNeeds, BREAKPOINT_MAX, TASK_LINE_MAX } from './spec.js';
+import { sigOfLine, REPORT_MARKERS, sentenceCount, isTaskLine, isAllowedTodoLine, parseChild } from './common.js';
 
 export function checkFileShape(file, text, { lintMode = false } = {}) {
   const issues = [];
@@ -19,14 +19,12 @@ export function checkFileShape(file, text, { lintMode = false } = {}) {
       const name = (m ? m[1] : sub[1]).trim();
       // todo 的 `###` 标签单独判（只许日期组 + Archived）
       if (sub && file === 'todo.md') {
-        if (!isAllowedTodoSub(name)) {
-          issues.push({
-            code: 'SECTIONS-NOT-ALLOWED',
-            line: i + 1,
-            msg: `todo.md:${i + 1} 不允许的小节 \`### ${name}\`；` +
-              `todo.md 的 ### 只允许 \`### YYYY-MM-DD\`（Done 区日期组）、\`### Undated\` 与 \`### Archived\``,
-          });
-        }
+        issues.push({
+          code: 'SECTIONS-NOT-ALLOWED',
+          line: i + 1,
+          msg: `todo.md:${i + 1} 不允许的小节 \`### ${name}\`；` +
+            `todo.md 不分小節 —— 全部任务平铺在一条列表里，状态写在复选框（[ ] [-] [+] [~] [x]）`,
+        });
         continue;
       }
       if (!allowed.includes(name)) {
@@ -34,8 +32,7 @@ export function checkFileShape(file, text, { lintMode = false } = {}) {
           code: 'SECTIONS-NOT-ALLOWED',
           line: i + 1,
           msg: `${file}:${i + 1} 不允许的标签 \`${m ? '##' : '###'} ${name}\`；` +
-            `${file} 只允许 ${allowed.map((s) => `\`## ${s}\``).join(' / ')}${
-              file === 'todo.md' ? '（`###` 只许日期组与 `### Archived`）' : ''}。` +
+            `${file} 只允许 ${allowed.length ? allowed.map((s) => `\`## ${s}\``).join(' / ') : 'H1 与任务行'}。` +
             `内容按语义归入现有标签，确实需要例外请先改白名单（见 src/todo.js 的 SECTIONS 常量）`,
         });
       }
@@ -84,28 +81,7 @@ export function checkFileShape(file, text, { lintMode = false } = {}) {
   // —— 而当时 checkFileShape 报 0 违规，lint 也说健康，没人拦得住。
   // 现实中它会来自：手改文件、父任务行被删、分区重建时父任务被搬走。
   // 子任务离开父任务就没有意义（它靠缩进表达归属），所以这是硬错。
-  if (file === 'todo.md') {
-    for (let i = 0; i < lines.length; i++) {
-      if (!/^\s+- \[[ x]\]/.test(lines[i])) continue;
-      // 往上找最近的非空行
-      let p = i - 1;
-      while (p >= 0 && !lines[p].trim()) p--;
-      const prev = p >= 0 ? lines[p] : null;
-      // 父行可以是：顶层任务 `- [x]` 或子任务 `  - [x]`。
-      // （旧 `↳ [ ]` 形态已由 migrateLegacyChild 迁移，不再存在）
-      const ok = prev !== null && (
-        /^- \[[ x]\]/.test(prev) ||
-        /^\s+- \[[ x]\]/.test(prev)
-      );
-      if (!ok) {
-        issues.push({
-          code: 'TODO-ORPHAN-CHILD',
-          line: i + 1,
-          msg: `todo.md:${i + 1} 孤儿子任务（「${lines[i].trim().slice(0, 40)}」上方没有主任务）—— 子任务靠缩进表达归属，删父任务时要连子项一起删`,
-        });
-      }
-    }
-  }
+  if (file === 'todo.md') issues.push(...orphanChildIssues(lines));
   // 条目之间的空行（与写入闸门 assertNoStrayBlank 同判据）。
   // lint 只能「报」，不能抛 —— 体检不能因格式坏而挂。
   const isEntryLine = (l) => /^-\s/.test(l) || /^#{1,3}\s+\[/.test(l);
@@ -246,20 +222,50 @@ export function assertTodoContent(text, prevSig = null) {
       }
       continue;
     }
-    // 裸文本行（2026-10-11）：Todo 区里既不是任务行也不是子项的行 = 总结/报告/清单。
+    // 裸文本行（2026-10-11）：既不是任务行也不是子项的行 = 总结/报告/清单。
     // 前面的修法都挂在「行的形态」上（超长断点、多句断点），把总结写成裸文本行就全部绕过
     // ——同一个坑第三次复发。改成白名单后，换形态也落回这里。
-    // 按区判：Todo 区才管；Done/Archived 区有日期分组与归档链接，判据不同。
+    // 2026-11-16：todo.md 不再分区，所以这条对全文生效（以前只在 Todo 区判）。
     // 存量行（prevSig）放行，交给 lint 报 —— 否则老库直接被锁死写不进去。
-    if (todoSectionOf(lines, i) === 'Todo' && !isAllowedTodoLine(l) && !isLegacy(l)) {
+    if (!isAllowedTodoLine(l) && !isLegacy(l)) {
       throw new Error(
-        `✗ todo 的 Todo 区不允许裸文本（第 ${lineNo} 行）—— 这里只放任务行（- [ ] …）与子项（  - [ ] …）。\n` +
+        `✗ todo.md 不允许裸文本（第 ${lineNo} 行）—— 这里只放任务行（- [ ] …）与子项（  - [ ] …）。\n` +
         `  「总结/实施报告/清单」请分流：流水与测试数据 → abs log；经验与坑 → abs note；长设计与方案 → .brain/sources/ 页。\n` +
         `  原文开头: ${l.trim().slice(0, 60)}...`,
       );
     }
   }
   return true;
+}
+
+/** 孤儿子任务：缩进的任务行上方没有任务行。
+ *
+ * 为何单独抽出来（2026-11-16）：写闸门要在**归一之前**判它 —— 归一里含按时间重排，
+ * 重排会把一条无主子项挪到别的任务下面，从此看起来有主，坏数据就被洗白了。
+ * 返回 [{ code, line, msg }]，与 checkFileShape 的 issue 同形。 */
+export function orphanChildIssues(lines) {
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s+- \[[ x\-+~]\]/.test(lines[i])) continue;
+    // 往上找最近的非空行
+    let p = i - 1;
+    while (p >= 0 && !lines[p].trim()) p--;
+    const prev = p >= 0 ? lines[p] : null;
+    // 父行可以是：顶层任务 `- [x]` 或子任务 `  - [x]`。
+    // （旧 `↳ [ ]` 形态已由 migrateLegacyChild 迁移，不再存在）
+    const ok = prev !== null && (
+      /^- \[[ x\-+~]\]/.test(prev) ||
+      /^\s+- \[[ x\-+~]\]/.test(prev)
+    );
+    if (!ok) {
+      out.push({
+        code: 'TODO-ORPHAN-CHILD',
+        line: i + 1,
+        msg: `todo.md:${i + 1} 孤儿子任务（「${lines[i].trim().slice(0, 40)}」上方没有主任务）—— 子任务靠缩进表达归属，删父任务时要连子项一起删`,
+      });
+    }
+  }
+  return out;
 }
 
 /** 删掉「条目之间的空行」（条目前后紧贴才是标准形态）。

@@ -36,48 +36,28 @@ async function rotateIfNeeded(p) {
   await fs.writeFile(p, `[${localStamp()}] wrapup 轮转: 原文件 ${st.size} bytes > ${max}, 已移入 wrapup.log.1\n`, 'utf8').catch(() => {});
 }
 
-/** 从 todo 文本/快照块提取任务清单。兼容顶层(todo.md `- [ ]`)与缩进(快照 `  - [ ]`)两种行。
- * body = 去掉 `- [ ]` 前缀、`(认领|完成 date)` 标注后的核心文本。bp 去掉 `[ ]`/`[x]` 勾选前缀。
- * Done 区（## Done 下）不采。返回 [{ body, bp }]，bp 为附属断点数组（或空）。 */
+/** 从 todo 文本/快照块提取未完成任务（记号不是 `x` 的顶层行）。
+ *  body = `[id 标题]` 里的整段（去掉记号与时间/作者/会话字段），状态无关 ——
+ *  跨会话滞留靠 body 精确比对，状态一改不能让它消失。
+ *  bp = 子项文字（去掉记号）。返回 [{ body, bp }]。 */
 export function extractOpenTasks(todoText) {
   const lines = String(todoText || '').split('\n');
   const out = [];
-  let inDone = false;
   for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    if (/^##\s+Done/.test(l)) { inDone = true; continue; }
-    if (/^##\s+/.test(l)) { inDone = false; continue; }
-    if (inDone) continue;
-    const m = l.match(/^\s*- \[ \]\s*(.*)$/);
-    if (m) {
-      const taskBody = m[1]
-        // 先剥行首状态标记（`[进行中] <id> …`）—— 它是**易变**的：任务状态一改
-        // （abs todo state）body 就变，而 strandedFor 用 body 精确比对 →
-        // 跨会话滞留提醒会静默消失（2026-09-13 实测复现）。body 必须状态无关。
-        .replace(/^\[[^\]]+\]\s+/, '')
-        .replace(/\s*\(认领[^)]*\)\s*$/, '')
-        .replace(/\s*\(完成[^)]*\)\s*$/, '')
-        .trim();
-      if (taskBody && !isPlaceholderBody(taskBody)) {
-        const bp = [];
-        // 子项：缩进 `- [ ]`（标准 md）。旧快照里的 `↳` 行也能读 —— 那是历史
-        // wrapup.log 的序列化格式，不能因为改了新格式就让旧快照的日志读不出来。
-        while (i + 1 < lines.length && (/^\s+-\s*\[[ x]\]/.test(lines[i + 1]) || /^\s*↳/.test(lines[i + 1]))) {
-          i++;
-          // 子项快照带上勾选标记（`[ ] 内容` / `[x] 内容`）—— 快照是给人看的，
-          // 不保留勾选就分不清「当时已完成」与「还没做」。
-          const parsed = parseChild(lines[i]);
-          if (parsed) {
-            bp.push(`${parsed.done ? '[x]' : '[ ]'} ${parsed.text}`);
-          } else {
-            // 旧快照的非标准 ↳ 行：剥掉 ↳ 与可选标签，内容原样保留
-            bp.push(lines[i].trim().replace(/^↳\s*(断点|卡点|内容)?[:：]?\s*/, ''));
-          }
-        }
-        out.push({ body: taskBody, bp });
-      }
-      continue;
+    // 新格式：`- [记号] [时间] [id 标题] …` —— 第一个方括号是**时间**，body 要取第二个
+    const m = lines[i].match(/^\s*-\s*\[([ \-+~])\]\s*(?:\[\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?\]\s*)?\[([^\]]+)\]/);
+    if (!m) continue;
+    const body = m[2].trim();
+    if (!body || isPlaceholderBody(body)) continue;
+    const bp = [];
+    while (i + 1 < lines.length) {
+      const nx = lines[i + 1];
+      const kid = nx.match(/^\s+-\s*\[([ x\-+~])\]\s*(.*)$/);
+      if (kid) { i++; bp.push(`${kid[1] === 'x' ? '[x]' : '[ ]'} ${kid[2].trim()}`); continue; }
+      if (/^\s*↳/.test(nx)) { i++; bp.push(nx.trim().replace(/^↳\s*(断点|卡点|内容)?[:：]?\s*/, '')); continue; }
+      break;   // 空行/别的行 = 子项块结束（曾写成 continue 不推进 i → 死循环）
     }
+    out.push({ body, bp });
   }
   return out;
 }

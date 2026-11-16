@@ -6,7 +6,7 @@
 //   brain/gate.js     写入侧格式闸门的全局注册（import 即生效）
 //   brain/load.js     board / status / load —— 只读呈现
 //   brain/rules.js    index.md 的 `## Rules` 区读写
-//   brain/maintain.js 滞留快照 / Done 归档 / 收尾体检
+//   brain/maintain.js 滞留快照 / 收尾体检
 //   todo/task-cmd.js  abs todo 命令入口 + abs show
 //
 // 本文件只做转发，不含任何实现。bin/abs.js 与 bin/mcp.js 的导入路径不变。
@@ -25,7 +25,8 @@ export { cmdBoard, cmdStatus, cmdLoad, cmdShow, extractBlocks } from './brain/lo
 export { RULES_HEADING, RULES_MAX, RULE_BODY_MAX, readRules, cmdRule } from './brain/rules.js';
 
 // ---- 维护 ----
-export { cmdWrapup, cmdTodoArchive, cmdTeardownCheck } from './brain/maintain.js';
+export { cmdWrapup, cmdTeardownCheck } from './brain/maintain.js';
+export { restoreArchivedTasks } from './todo/restore.js';
 
 // ---- 按七层总结 ----
 export { cmdCapture, layerGuide } from './brain/capture.js';

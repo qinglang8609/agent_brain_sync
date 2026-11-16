@@ -122,7 +122,13 @@ export async function editFile(file, mutator) {
     //   宁可写失败也不要格崩坏——写不进去能重试，写脏了没人知道。
     if (write) {
       const gate = await gateFor();
-      if (gate) write = gate(file, write, current) ?? write;
+      // prevForGate：muttor 显式声明「这份文本自身就是基线」（唯一用户：abs todo restore）。
+      // 回捞的历史行是**存量**数据 —— 闸门该放行存量、只拒本次新引入的违规，
+      // 否则 2026-09 的老结论（超过 400 字）会把整次回捞顶回去。
+      const prevForGate = res && typeof res === 'object' && typeof res.prevForGate === 'string'
+        ? res.prevForGate
+        : current;
+      if (gate) write = gate(file, write, prevForGate) ?? write;
     }
     if (write && write !== current) {
       // 原子落盘：先写同目录临时文件再 rename。

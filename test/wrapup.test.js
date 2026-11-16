@@ -28,20 +28,20 @@ describe('extractOpenTasks — 只收未完成、body 状态无关', () => {
   });
 
   test('★ body 状态无关：改状态后 body 不变（否则跨会话提醒静默消失）', () => {
-    const a = extractOpenTasks('## Todo\n- [ ] [进行中] task-a [[me]] — 做第一件事\n');
-    const b = extractOpenTasks('## Todo\n- [ ] [滞留中] task-a [[me]] — 做第一件事\n');
+    const a = extractOpenTasks('- [ ] [2026-11-16 10:00] [task-a 做第一件事] [[me]]\n');
+    const b = extractOpenTasks('- [-] [2026-11-16 10:00] [task-a 做第一件事] [[me]]\n');
     assert.equal(a[0].body, b[0].body, '状态一改 body 就变 → strandedFor 比对失败、提醒消失');
     assert.ok(!/进行中|滞留中/.test(a[0].body), `body 不该含状态标记: ${a[0].body}`);
   });
 
-  test('剥掉认领/完成日期（它们也是易变的）', () => {
-    const r = extractOpenTasks('## Todo\n- [ ] [进行中] t1 [[me]] — 干活 (认领 2026-10-05)\n');
-    assert.ok(!/认领/.test(r[0].body), `不该留认领日期: ${r[0].body}`);
+  test('body 只取 [id 标题]，不带时间字段', () => {
+    const r = extractOpenTasks('- [ ] [2026-10-05 12:00] [t1 干活] [[me]] [01a1-aa]\n');
+    assert.ok(!/2026-10-05/.test(r[0].body), `不该留时间字段: ${r[0].body}`);
     assert.ok(r[0].body.includes('干活'));
   });
 
   test('断点行挂到上一条任务（不单独成条）', () => {
-    const r = extractOpenTasks('## Todo\n- [ ] [进行中] t1 [[me]] — 干活\n  ↳ 断点: 改到 a.js\n');
+    const r = extractOpenTasks('- [ ] [2026-11-16 10:00] [t1 干活] [[me]]\n  ↳ 断点: 改到 a.js\n');
     assert.equal(r.length, 1);
     assert.equal(r[0].bp.length, 1);
     assert.match(r[0].bp[0], /改到 a\.js/);

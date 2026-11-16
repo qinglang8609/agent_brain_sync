@@ -7,7 +7,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { requireBrain, brainPath } from './index.js';
 import { requireUser, atTag } from './userconfig.js';
-import { today, localStamp, LOG_KINDS } from './todo.js';
+import { today, localStamp, shortTitle } from './todo.js';
 import { editFile, SKIP } from './lock.js';
 import { impactOf } from './codegraph.js';
 import { clip, slugOf } from './text.js';
@@ -247,23 +247,17 @@ export async function registerInIndex(root, section, slug, desc) {
   });
 }
 // ---------- log: 追加工作成果沉淀摘要（用户/AI 主动 abs log "..." 记, 不收工具动作流水） ----------
-export async function cmdLog({ dir, title, kind = 'dev', summon = true }) {
+export async function cmdLog({ dir, title, subtitle, kind: _kind = 'dev', summon = true }) {
   const root = await requireBrain(dir || process.cwd());
   const who = await requireUser(); // 写操作守卫
-  // ★ kind 必须是枚举值（2026-10-05 加）：此前无校验，传什么写什么 ——
-  //   实测有测试传 kind:'test' 写进去，而形状闸门上线后才暴露。
-  //   枚举内校在**入口**（这里）比事后 lint 更早，且报错能直接告诉可用值。
-  if (!LOG_KINDS.includes(String(kind))) {
-    throw new Error(
-      `✗ log 的 kind 只能是 ${LOG_KINDS.join(' / ')}（收到 "${kind}"）\n` +
-      `  note=经验/踩坑 / dev=完成的工作 / concept=新建概念页 / ingest=沉淀资料`,
-    );
-  }
-  // 格式闸（2026-11-08 用户定）：空标题/纯空白的 log 打回。
+  // 2026-11-16 用户定：log 行与 todo 行同构，kind 字段取消 ——
+  //   `## [标题] [YYYY-MM-DD HH:MM] [[作者]] [会话id]`
+  // 传了 kind 也照收（老调用点还在传），但不再落盘。
+  // 格式闸（2026-11-08 用户定）：空标题打回 —— 只有时间没有内容的流水等于没记。
   if (!String(title || '').trim()) {
     throw new Error(
       `✗ log 必须有一句话结论 —— 空标题打回。\n` +
-      `  用法: abs log "做完什么 + 怎么验证的" --kind dev`,
+      `  用法: abs log "做完什么 + 怎么验证的"`,
     );
   }
   await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）
@@ -272,9 +266,13 @@ export async function cmdLog({ dir, title, kind = 'dev', summon = true }) {
   // 不硬切: log.md 是人类读的成果摘要, 也是 abs load 的开机入口。600 码点够一条完整小结,
   // 超出才在语义边界收口（曾 slice(0,100) → 34/85 条断在词中间）
   const clean = clip(String(title || '').replace(/\n/g, ' '), 600);
-  // 作者前置于 kind：`## [时间] @name dev | 内容`。
-  // 一眼先看到谁做的（与 todo 行 `ID @name — 说明` 排版对齐）。
-  const line = `## [${stamp}] ${atTag(who)} ${kind} | ${clean}`;
+  // 行形态与 todo 同构：`## [标题] [YYYY-MM-DD HH:MM] [[作者]] [会话id]`
+  const sid = String(process.env.ABS_SESSION_ID || '').replace(/[^\w-]/g, '').slice(0, 40);
+  // 2026-11-16 用户定：`## [时间] [短标题] [[作者]] 正文纯文本 [会话id]`
+  // subtitle（可选）给了就分开写；没给就在正文里切：短标题 + 剩下的当正文
+  const shortT = shortTitle(String(subtitle || clean));
+  const bodyT = String(subtitle ? clean : (clean.length > shortT.length ? clean.slice(shortT.length).replace(/^[，,、。；;：:]\s*/, '') : '')).trim();
+  const line = ['##', `[${stamp}]`, `[${shortT}]`, atTag(who), bodyT, sid ? `[${sid}]` : ''].filter(Boolean).join(' ');
   const res = await editFile(p, (cur) => {
     const text = cur ?? '# 🗒 Activity Log\n';
     // 倒序：新行插在标题后（若已是模板占位行则替换它）
