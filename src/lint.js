@@ -284,7 +284,7 @@ function checkPage(pg, names, linkedNames, inbound) {
   if (pg.slug.includes('-todo归档')) {
     // 旧归档页命名（`<日期>-todo归档`，2026-09-15 治理时已并进 `log-<日期>.md`）。
     // 留一条命中即报的规则：漏一个就会在 todo.md 的 Archived 里留一条死名。
-    issues.push(`SESSIONS-OLD-NAME: ${pg.rel}（旧归档命名，应并进 sessions/log-<日期>.md）`);
+    issues.push(`SESSIONS-OLD-NAME: ${pg.rel}（旧命名，应并进 sessions/log-<日期>.md）`);
   }
   if (pg.dir === 'concepts' && !hasTail(pg.body)) {
     // 尾巴按 kind 分档（2026-11-05）：原来「必须写验证命令」对所有 concepts 页一律要求，
@@ -368,7 +368,7 @@ async function checkGraph(root, pages) {
   for (const [date, slugs] of sessByDate) {
     if (slugs.length > 1) {
       issues.push(`SESSIONS-SPLIT: ${date} 在 sessions/ 有 ${slugs.length} 个文件（${slugs.join('、')}）；` +
-        `一天只应有一个 \`log-${date}.md\`：归档写进其「## 📦 任务归档」段，多主题写成多个 ## 子段`);
+        `一天只应有一个 \`log-${date}.md\`：多主题写成多个 ## 子段`);
     }
   }
 
