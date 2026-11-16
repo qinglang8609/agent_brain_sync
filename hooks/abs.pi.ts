@@ -657,7 +657,9 @@ export function injectLoadGuideline(options: any, text: string): boolean {
 // 与 rpiv-todo 的区别：那个把状态存会话 transcript（跨会话丢失），我们用磁盘文件（可续接）。
 // 关掉即设 ABS_TODO_PANEL=0。
 const PANEL_KEY = "abs-todo-panel"
-const PANEL_MAX_ROWS = 10
+// 面板默认**不截断、不按作者过滤**（2026-11-16 用户定：面板要列 todo.md 里所有未完成任务）。
+// 想限行数就设 ABS_TODO_PANEL_MAX（正整数）；作者归属改由行首 `[会话 xxx]` 标签体现。
+const PANEL_MAX_ROWS = Number(process.env.ABS_TODO_PANEL_MAX || 0) || Number.POSITIVE_INFINITY
 
 // 标题后缀昵称池（2026-10-03 用户提供）—— 每次**启动会话**随机抽一条，会话内保持不变。
 // 不能每帧随机（panel 每帧都重渲染，那样会疯狂闪烁）。
@@ -885,11 +887,10 @@ export function parseOpenTasks(md: string, max = PANEL_MAX_ROWS, who = ''): {
     const desc = sid ? rest.slice(0, tail.index).trim() : rest
     parsed.push({ state: MARK_STATE[mark] || '进行中', mark, id, desc: body || desc, kids: [], authors, sid })
   }
-  const mine = who
-    ? parsed.filter((r) => r.authors.length === 0 || r.authors.includes(who))
-    : parsed
-  const rows = mine.map(({ state, mark, id, desc, kids, sid }) => ({ state, mark, id, desc, kids, sid }))
-  return { total: rows.length, rows: rows.slice(0, max), hidden: Math.max(0, rows.length - max) }
+  // 2026-11-16：不再按作者过滤（`who` 保留参数只为兼容调用方/测试）
+  const rows = parsed.map(({ state, mark, id, desc, kids, sid }) => ({ state, mark, id, desc, kids, sid }))
+  const limit = Number.isFinite(max) && max > 0 ? max : rows.length
+  return { total: rows.length, rows: rows.slice(0, limit), hidden: Math.max(0, rows.length - limit) }
 }
 
 /** 当前使用者名（读 ~/.abs/config.json 的 user，ABS_USER 环境变量优先）。

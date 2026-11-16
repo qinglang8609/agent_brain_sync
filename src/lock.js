@@ -2,6 +2,7 @@
 // 所有读-改-全写回 .md 的操作都经此串行化，避免跨进程(CLI/MCP/hook)丢失更新。
 // 原语：同目录 <file>.lock 用 open('wx') 原子抢占；拿不到则带过期让步重试。
 import { promises as fs } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join, dirname, basename } from 'node:path';
 
 /** 哨兵：mutator 返回它表示「无需写盘」；editFile 原样把它回传给调用方。 */
@@ -51,15 +52,20 @@ function pidAlive(pid) {
 async function acquireLock(lockPath) {
   const start = Date.now();
   let backoff = LOCK_WAIT_BASE_MS;
+  let lockToken = '';
   for (;;) {
     let handle = null;
     try {
       handle = await fs.open(lockPath, 'wx'); // 原子创建(O_EXCL)；已存在则抛 EEXIST → 排队等
-      // 写入 PID：后来者据此判断持锁人是否已死（崩溃残留可立刻摘，不等 60s）。
-      // 写 PID 失败不回滚 —— 空锁退回按年龄判残留，锁本身仍然有效。
-      await handle.writeFile(String(process.pid), 'utf8').catch(() => {});
+      // 写入「PID + 本进程唯一令牌」：
+      //   · PID 让后来者判断持锁人是否已死（崩溃残留可立刻摘，不等 60s）
+      //   · 令牌让**释放时能确认真是自己的锁** —— 旧实现无条件 rm，一旦有进程误判残留
+      //     摘了别人的锁，原持有者释放时会把新持有者的锁删掉 → 两个写者同时进临界区 → 丢写。
+      //     （2026-11-16 并发 task start 偶发丢一条，怀疑就是这一类。）
+      lockToken = `${process.pid} ${randomUUID()}`;
+      await handle.writeFile(lockToken, 'utf8').catch(() => {});
       await handle.close(); // 锁的存在即持有信号；无需保持 fd
-      return;
+      return lockToken;     // 交给调用方，释放时据此确认「是自己的锁」
     } catch (e) {
       if (handle) await handle.close().catch(() => {});
       if (e.code !== 'EEXIST') throw e;
@@ -68,7 +74,7 @@ async function acquireLock(lockPath) {
       // ★ 持锁进程还活着就绝不摘 —— 哪怕超过 STALE_MS。
       //   旧逻辑按 60s 硬摘，mutator 跑慢一点就让两个进程同时进临界区（2026-11-10 审查）。
       try {
-        const raw = (await fs.readFile(lockPath, 'utf8')).trim();
+        const raw = (await fs.readFile(lockPath, 'utf8')).trim().split(/\s+/)[0];
         const alive = pidAlive(Number(raw));
         if (alive === false) {
           await fs.rm(lockPath, { force: true });
@@ -95,8 +101,13 @@ async function acquireLock(lockPath) {
   }
 }
 
-async function releaseLock(lockPath) {
-  await fs.rm(lockPath, { force: true }).catch(() => {});
+/** 只释放**自己**的锁：内容对不上说明锁已被别人接手，绝不能删。 */
+async function releaseLock(lockPath, token) {
+  if (!token) return;
+  try {
+    const cur = (await fs.readFile(lockPath, 'utf8')).trim();
+    if (cur === token) await fs.rm(lockPath, { force: true });
+  } catch { /* 锁已被移除或读不到 → 什么都不做 */ }
 }
 
 /** 串行读-改-写一个文件：锁内 readFile → mutator(currentText) → 写盘。
@@ -107,7 +118,7 @@ async function releaseLock(lockPath) {
  * 返回：写盘后=mutator 返回值；SKIP 时原样返回 SKIP。抛错则锁内不落盘、锁释放、上抛。 */
 export async function editFile(file, mutator) {
   const lockPath = join(dirname(file), `.${basename(file)}.lock`);
-  await acquireLock(lockPath);
+  const lockToken = await acquireLock(lockPath);
   try {
     let current = null;
     try { current = await fs.readFile(file, 'utf8'); } catch { /* 尚无文件 */ }
@@ -146,6 +157,6 @@ export async function editFile(file, mutator) {
     }
     return res;
   } finally {
-    await releaseLock(lockPath);
+    await releaseLock(lockPath, lockToken);
   }
 }

@@ -955,7 +955,8 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     assert.ok(g.includes('[会话 01a11f2a]'), '别人的 sid 仍要露出来');
   });
 
-  test('作者过滤：显示自己的 + 无作者的，隐藏别人的', async () => {
+  // 2026-11-16 用户定：面板列 todo.md 里**所有未完成**任务，不再按作者过滤。
+  test('不过滤作者：所有人的未完成任务都回显', async () => {
     const { parseOpenTasks } = await loadPanelFns();
     const md = [
       '## Todo',
@@ -967,7 +968,16 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
     ].join('\n');
     const r = parseOpenTasks(md, 10, 'fanchao');
     const ids = r.rows.map((t) => t.id);
-    assert.deepEqual(ids, ['mine', 'bare'], `应只显示自己的+无作者的: ${JSON.stringify(ids)}`);
+    assert.deepEqual(ids, ['mine', 'other', 'bare'], `所有未完成都要显示: ${JSON.stringify(ids)}`);
+  });
+
+  test('默认不截断：20 条未完成全都在（ABS_TODO_PANEL_MAX 才限行）', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = Array.from({ length: 20 }, (_, i) => `- [ ] [2026-11-16 10:00] [t${i} 任务${i}] [[fanchao]]`).join('\n');
+    const r = parseOpenTasks(md);
+    assert.equal(r.total, 20, String(r.total));
+    assert.equal(r.rows.length, 20, `默认应全显示，实际 ${r.rows.length}`);
+    assert.equal(r.hidden, 0);
   });
 
   // 审查发现的真 bug：原先边解析边过滤，被滤掉的条目下方的断点会挂到它上面那条。
@@ -1074,9 +1084,10 @@ describe('pi 扩展 todo 面板 解析与渲染', () => {
 
   // 作者过滤（另一件事，与本页改动无关）：别人的任务不算我的 → 不注入。
   // 单独立一条，别被上面「空看板」的改动顺手带走。
-  test('全是别人的任务时不注入（作者过滤）', async () => {
+  test('别人的任务也算（不再按作者过滤）', async () => {
     const { boardGuideline } = await loadPanelFns();
-    assert.equal(boardGuideline('## Todo\n- [ ] x [[fanchao]]', 'bob'), null, '别人的任务不算');
+    const g = boardGuideline('- [ ] [2026-11-16 10:00] [x 任务] [[fanchao]]', 'bob');
+    assert.ok(g && g.includes('x'), `别人的任务也要摆出来: ${g}`);
   });
 
   // ★ 反复对齐（用户 2026-10-05 定）：「对齐永远是反反复复的，不厌其烦」。

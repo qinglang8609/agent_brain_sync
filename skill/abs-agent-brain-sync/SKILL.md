@@ -70,6 +70,8 @@ abs todo restore [--dry-run]             # one-off: pull tasks archived into ses
 - Register before touching files. A rough id is fine (`rename` later).
 - `done` immediately when a unit of work finishes; do not batch at session end.
 - One `[进行中]` at a time. `搁置` = parked on the board; `remove` = never existed.
+- The editor panel lists **every** unfinished task in `todo.md` (no author filter, no row cap;
+  set `ABS_TODO_PANEL_MAX` only if you want a cap). The `[session …]` tag shows who claimed it.
 - Board layout (since 2026-11-16): one flat list sorted newest-first, no `## Todo`/`## Done`
   sections. State lives in the checkbox: `[-]` 滞留中, `[+]` 讨论中, `[~]` 搁置,
   `[ ]` 进行中, `[x]` done. Children use the same markers. Finished rows stay on the board; nothing is archived away.
