@@ -7,7 +7,7 @@ import { brainPath, requireBrain, absLogDir } from '../index.js';
 import { appendWrapup } from '../wrapup.js';
 import { readIfExists } from '../text.js';
 import { getUser } from '../userconfig.js';
-import { localStamp } from '../todo.js';
+import { localStamp, taskSidOf, parseTaskLine } from '../todo.js';
 export async function cmdWrapup({ dir }) {
   const root = await requireBrain(dir || process.cwd());
   return appendWrapup(root);
@@ -27,10 +27,11 @@ export async function cmdTeardownCheck({ dir, payload }) {
     // 条件①: 本会话真改过文件。CC 的 Stop payload 不带工具足迹,
     // 故以 transcript_path 为准; 取不到就退化为"本项目今日是否已有产物"判断。
     const transcript = ev.transcript_path || ev.transcriptPath;
+    let wroteFiles = false;   // 只有**确认**写过文件才提醒登记（取不到 transcript 就沉默）
     if (transcript) {
       const txt = await readIfExists(transcript);
-      const wrote = /"(Write|Edit|MultiEdit|NotebookEdit)"/.test(txt);
-      if (!wrote) return '{}'; // 纯只读会话不打扰
+      wroteFiles = /"(Write|Edit|MultiEdit|NotebookEdit)"/.test(txt);
+      if (!wroteFiles) return '{}'; // 纯只读会话不打扰
     }
 
     // 条件②: 本项目有 .brain
@@ -50,6 +51,37 @@ export async function cmdTeardownCheck({ dir, payload }) {
     // log 行格式（2026-11-16 定稿）：`## [YYYY-MM-DD HH:MM] [短标题] [[作者]] …`
     // 时间是**第一段** —— 判据认这个，别再按「[标题] [时间]」的老顺序写。
     if (new RegExp('^## \\[' + day + ' \\d{2}:\\d{2}\\]', 'm').test(logTxt)) return '{}';
+
+    // 条件③'（2026-11-16 用户定）：**提醒登记** —— 本会话改过文件、看板上却没有本会话认领的任务。
+    // 用户原话：「hook 触发就提醒，但不要强制」。所以：
+    //   · 只注入一句话，不拦截任何操作（宿主侧本来就是 decision:block 回灌提示，不是闸门）；
+    //   · 独立节流标记（teardown-reg-*.mark），不与「今日无 log」那条共用；
+    //   · 判据只看「有没有本会话 sid 的任务」，改错别字这类不登记也不会有后果。
+    if (wroteFiles && ev.stop_hook_active !== true) {
+      const sidReg = String(ev.session_id || ev.sessionId || '').replace(/[^\w-]/g, '');
+      if (sidReg) {
+        const todoTxt = await readIfExists(brainPath(root, 'todo.md'));
+        const mine = todoTxt.split('\n').some((l) => {
+          const t = parseTaskLine(l);
+          return t && t.indent === 0 && taskSidOf(l) === sidReg;
+        });
+        if (!mine) {
+          const regMark = join(absLogDir(), `teardown-reg-${sidReg}.mark`);
+          let pushedBefore = false;
+          try { await fs.access(regMark); pushedBefore = true; } catch { /* 没推过 */ }
+          if (!pushedBefore) {
+            await fs.mkdir(dirname(regMark), { recursive: true });
+            await fs.writeFile(regMark, stamp, 'utf8').catch(() => {});
+            const why = [
+              '[abs] 本会话改过文件，但看板上没有本会话认领的任务。',
+              '这条只是提醒，不是命令：值得留档就登记，无关紧要就忽略。',
+              '登记：abs todo add "<短标题>" --note "详情" --session ' + sidReg,
+            ].join('\n');
+            return 'push:' + JSON.stringify({ decision: 'block', reason: why });
+          }
+        }
+      }
+    }
 
     // 条件④: 每会话一次。
     // 双保险, 因为官方 stop_hook_active 有已知

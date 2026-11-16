@@ -841,6 +841,42 @@ describe('cli: argv 解析', () => {
   // 坑5: teardown mark 曾用裸 homedir() 拼路径 → 彽过 ABS_LOG_DIR，
   // 测试注入沙盒永远隔离不到它（会往真实 ~/.abs/log/ 写 mark，污染真机去重状态）。
   // 断言: HOME 与 ABS_LOG_DIR 分开时，mark 落 ABS_LOG_DIR，绝不落 HOME。
+  // 2026-11-16 用户定：hook 触发时提醒「登记任务」，但只提醒不强制。
+  test('改过文件但没登记任务 → 提醒登记（不拦截）', async () => {
+    await run(['init', '--dir', proj]);
+    const logDir = join(sandbox, 'reg-log');
+    const trans = join(sandbox, 't2.jsonl');
+    await fs.writeFile(trans, JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'Write' }] } }) + '\n', 'utf8');
+    const payload = JSON.stringify({ session_id: 'ses_REG', cwd: proj, transcript_path: trans });
+    const r = await run(['teardown-check', '--payload', payload], { env: { ABS_LOG_DIR: logDir } });
+    assert.match(r.stdout, /^push:/, r.stdout);
+    assert.ok(r.stdout.includes('没有本会话认领的任务'), `应提醒登记: ${r.stdout}`);
+    await fs.access(join(logDir, 'teardown-reg-ses_REG.mark')); // 独立节流标记
+  });
+
+  test('已登记本会话任务 → 不再提醒登记', async () => {
+    await run(['init', '--dir', proj]);
+    const logDir = join(sandbox, 'reg-log2');
+    const trans = join(sandbox, 't3.jsonl');
+    await fs.writeFile(trans, JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'Edit' }] } }) + '\n', 'utf8');
+    await run(['todo', 'start', '已经登记了', '--dir', proj], { env: { ABS_SESSION_ID: 'ses_IDEM' } });
+    const payload = JSON.stringify({ session_id: 'ses_IDEM', cwd: proj, transcript_path: trans });
+    const r = await run(['teardown-check', '--payload', payload], { env: { ABS_LOG_DIR: logDir } });
+    assert.ok(!r.stdout.includes('没有本会话认领的任务'), `不该再提醒登记: ${r.stdout}`);
+  });
+
+  test('同一会话只提醒一次（独立节流）', async () => {
+    await run(['init', '--dir', proj]);
+    const logDir = join(sandbox, 'reg-log3');
+    const trans = join(sandbox, 't4.jsonl');
+    await fs.writeFile(trans, JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'Write' }] } }) + '\n', 'utf8');
+    const payload = JSON.stringify({ session_id: 'ses_ONCE', cwd: proj, transcript_path: trans });
+    const first = await run(['teardown-check', '--payload', payload], { env: { ABS_LOG_DIR: logDir } });
+    const second = await run(['teardown-check', '--payload', payload], { env: { ABS_LOG_DIR: logDir } });
+    assert.ok(first.stdout.includes('没有本会话认领的任务'), first.stdout);
+    assert.ok(!second.stdout.includes('没有本会话认领的任务'), `第二次不该重复提醒: ${second.stdout}`);
+  });
+
   test('teardown mark 落 ABS_LOG_DIR，不落 HOME/.abs/log', async () => {
     await run(['init', '--dir', proj]);
     const logDir = join(sandbox, 'td-log');
