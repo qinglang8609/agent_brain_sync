@@ -1,0 +1,3288 @@
+// test/store.test.js — store/todo 层单测（node:test，零外部依赖）。
+// 覆盖: init/load/board/task/query/lint 命令 + todo 读写 + 定位层。
+import { test, describe, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+
+import { cmdInit, cmdBoard, cmdStatus, cmdLoad, cmdTask, cmdLog, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdShow, cmdWrapup, cmdRule, cmdResolve, cmdSupersede, cmdReview, resolvePage, idOfPage, backfillPageId, statusOfPage, clip, collapseIndex, indexTemplate, checkBrainShape, LEGACY_MARKS, extractBlocks } from '../../code/store.js';
+import { foldSameKind } from '../../code/lint.js';
+import { readTodo, todoTemplate, today, addTask, normalizeTodo, openLines, countDone, collapseDone, upsertTask, findTaskLine, LEGACY_SECTION_RENAMES, extractId } from '../../code/todo/index.js';
+import { assertTodoContent, violationSignatures } from '../../code/todo/validate.js';
+import { parseChild, renderChild } from '../../code/todo/common.js';
+import { editFile } from '../../code/lock.js';
+import { findBrainRoot, requireBrain, brainPath } from '../../code/index.js';
+import { strandedFor } from '../../code/wrapup.js';
+
+// ---------- 测试沙盒: 每个用例一个临时目录 ----------
+let sandbox;
+let projectA; // A 项目根（含 .brain/）
+let projectB; // B 项目根（无 .brain/）→ 定位应为 null（不向上搜索）
+
+async function mkProject(name) {
+  const p = join(sandbox, name);
+  await fs.mkdir(join(p, 'sub', 'deep'), { recursive: true });
+  return p;
+}
+
+beforeEach(async () => {
+  sandbox = await fs.mkdtemp(join(tmpdir(), 'abs-test-'));
+  projectA = await mkProject('proj-a');
+  projectB = await mkProject('proj-b');
+  // 写操作现要求设置使用者姓名（否则报错不落盘）。测试统一用固定姓名，
+  // 既避开依赖 ~/.abs/config.json，也直接断言标记内容。
+  process.env.ABS_USER = 'tester';
+  await cmdInit({ dir: projectA });
+});
+
+afterEach(async () => {
+  await fs.rm(sandbox, { recursive: true, force: true });
+});
+
+// ---------- 定位层 (src/index.js) ----------
+describe('findBrainRoot 定位', () => {
+  test('只认当前目录自身的 .brain/', async () => {
+    const root = await findBrainRoot(join(projectA, 'sub', 'deep'));
+    assert.equal(root, null, '子目录不应向上穿透命中祖先图谱');
+  });
+
+  test('当前目录就是项目根时命中', async () => {
+    const root = await findBrainRoot(projectA);
+    assert.equal(root, projectA);
+  });
+
+  test('无图谱返回 null', async () => {
+    const root = await findBrainRoot(projectB);
+    assert.equal(root, null);
+  });
+
+  // 回归: 曾从 cwd 无限上爬，在 vault/家目录场景命中 ~/.brain，静默把项目挂到别人图谱上。
+  test('祖先目录有 .brain/ 也不误命中', async () => {
+    await cmdInit({ dir: sandbox }); // sandbox 建图谱
+    await fs.rm(join(projectA, '.brain'), { recursive: true, force: true }); // A 自己无图谱
+    const root = await findBrainRoot(projectA);
+    assert.equal(root, null, '祖先有图谱不等于本项目有图谱');
+  });
+
+  test('requireBrain 无图谱时抛带码的错 (NO_BRAIN + fallback 含 abs init)', async () => {
+    // 错误码是 hook/脚本的分支依据（借 Anneal templateRefusal）—— 比字符串匹配稳。
+    await assert.rejects(
+      () => requireBrain(projectB),
+      (e) => {
+        assert.equal(e.code, 'NO_BRAIN', '应带 NO_BRAIN 码');
+        assert.match(e.fallback, /abs init/, 'fallback 应给出修复命令');
+        assert.match(e.message, /没有 \.brain\//, 'message 应说明原因');
+        return true;
+      },
+    );
+  });
+
+  test('brainPath 拼接图谱内路径', () => {
+    assert.equal(brainPath(projectA, 'todo.md'), join(projectA, '.brain', 'todo.md'));
+  });
+
+  // 错误码契约（2026-09-16）：可预期的失败都带 code，调用方按码分支不看文案。
+  test('requireUser 未设姓名时抛 NO_USER 码 + fallback', async () => {
+    const { requireUser } = await import('../../code/userconfig.js');
+    const old = process.env.ABS_USER;
+    const oldHome = process.env.HOME;
+    process.env.HOME = join(projectB, 'no-such-home');
+    delete process.env.ABS_USER;
+    try {
+      await assert.rejects(
+        () => requireUser(),
+        (e) => {
+          assert.equal(e.code, 'NO_USER');
+          assert.match(e.fallback, /config set user/);
+          return true;
+        },
+      );
+    } finally {
+      process.env.HOME = oldHome;
+      if (old === undefined) delete process.env.ABS_USER;
+      else process.env.ABS_USER = old;
+    }
+  });
+
+  test('任务 id 不存在时输出带 NO_MATCH 前缀', async () => {
+    const out = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: '绝对不存在的任务X' });
+    assert.match(out, /^\[NO_MATCH\]/, `应带 NO_MATCH 前缀: ${out}`);
+  });
+});
+
+describe('extractBlocks（卡点提取）', () => {
+  test('抽出 阻塞/等待/等 开头的附属行', () => {
+    const todo = [
+      '## Todo',
+      '- [ ] [进行中] A [[u]] — 任务',
+      '  ↳ 断点: 阻塞: 等 1.8.9 发版',
+      '- [ ] [进行中] B [[u]] — 任务',
+      '  ↳ 断点: 等待: 上游修完',
+      '- [ ] C [[u]] — 无卡点',
+      '  ↳ 断点: 普通进度而已',
+    ].join('\n');
+    const r = extractBlocks(todo);
+    assert.equal(r.length, 2, JSON.stringify(r));
+    assert.deepEqual(r[0], { id: 'A', why: '等 1.8.9 发版' });
+    assert.equal(r[1].id, 'B');
+  });
+
+  test('已完成行下的卡点不再抽出', () => {
+    const todo = ['- [x] A [[u]] — 完成', '  ↳ 阻塞: 旧的'].join('\n');
+    assert.deepEqual(extractBlocks(todo), []);
+  });
+
+  test('没写前缀不猜（普通断点不当卡点）', () => {
+    const todo = ['- [ ] A [[u]] — 任务', '  ↳ 断点: 改了 3 个文件'].join('\n');
+    assert.deepEqual(extractBlocks(todo), []);
+  });
+
+  test('空输入不报错', () => {
+    assert.deepEqual(extractBlocks(''), []);
+    assert.deepEqual(extractBlocks(undefined), []);
+  });
+});
+
+// ---------- init ----------
+describe('cmdInit', () => {
+  test('已存在时拒绝重建', async () => {
+    await assert.rejects(() => cmdInit({ dir: projectA }), /已存在/);
+  });
+
+  test('骨架齐全: 6 目录 + 3 文件', async () => {
+    for (const d of ['entities', 'concepts', 'sources', 'syntheses', 'sessions']) {
+      const st = await fs.stat(join(projectA, '.brain', d));
+      assert.ok(st.isDirectory(), `缺目录 ${d}`);
+    }
+    for (const f of ['index.md', 'log.md', 'todo.md']) {
+      await fs.access(join(projectA, '.brain', f));
+    }
+  });
+
+  test('结构损坏诊断: 缺目录/缺文件被 reportBrain 指出', async () => {
+    const { reportBrain } = await import('../../code/store.js');
+    await fs.rm(join(projectA, '.brain', 'sessions'), { recursive: true });
+    await fs.rm(join(projectA, '.brain', 'index.md'));
+    const r = await reportBrain({ dir: projectA });
+    assert.equal(r.ok, false);
+    assert.ok(r.problems.some((p) => p.includes('sessions/')), r.problems.join(';'));
+    assert.ok(r.problems.some((p) => p.includes('index.md')), r.problems.join(';'));
+  });
+
+  test('init 拒绝重建时可带 --repair 补齐损坏骨架', async () => {
+    const { cmdRepair } = await import('../../code/store.js');
+    await fs.rm(join(projectA, '.brain', 'sources'), { recursive: true });
+    await fs.rm(join(projectA, '.brain', 'todo.md'));
+    const r = await cmdRepair({ dir: projectA });
+    assert.ok(r.includes('✓') || r.includes('补齐'), r);
+    await fs.access(join(projectA, '.brain', 'sources'));
+    await fs.access(join(projectA, '.brain', 'todo.md'));
+    // 已存在的 index.md 不被覆盖
+    await fs.writeFile(join(projectA, '.brain', 'index.md'), '# 自定义索引', 'utf8');
+    await cmdRepair({ dir: projectA });
+    assert.equal(await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8'), '# 自定义索引');
+  });
+});
+
+// ---------- todo 层 ----------
+describe('todo 层', () => {
+  test('todoTemplate = H1 + 一条列表（不再有 ## 分区）', () => {
+    const t = todoTemplate();
+    assert.equal(t.trim(), '# 📋 Todo Board');
+    for (const gone of ['## Todo', '## Done', '## Backlog']) assert.ok(!t.includes(gone), `不该再有 ${gone}: ${t}`);
+  });
+
+  test('addTask 把新任务插到列表最上面', async () => {
+    await addTask(projectA, { id: 'X', title: '优先级:P1' });
+    await addTask(projectA, { id: 'Y', title: '后来的' });
+    const t = await readTodo(projectA);
+    const rows = t.split('\n').filter((l) => /^- \[/.test(l));
+    assert.ok(rows[0].includes('[后来的]'), `最新登记的在最上面: ${t}`);
+    assert.ok(t.includes('[优先级:P1]'));
+  });
+
+  // 回归: id 定位曾用 l.includes(id) 子串匹配, 导致前缀相同的 id 互相覆盖 ——
+  // 先建 T11 再建 T1 时, T1 误命中 T11 那一行并原地改写, T11 静默消失。
+  test('前缀相同的 id 不互相覆盖 (T11 vs T1)', async () => {
+    await upsertTask(projectA, { id: 'T11 — 第十一', title: 'T11 — 第十一' });
+    await upsertTask(projectA, { id: 'T1 — 第一个', title: 'T1 — 第一个' });
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('T11 — 第十一'), 'T11 必须还在(修前被 T1 覆盖而消失)');
+    assert.ok(t.includes('T1 — 第一个'), 'T1 必须新增为独立一行');
+    assert.equal((t.match(/^- \[ \] .*?T\d+/gm) || []).length, 2, `应有 2 条独立任务: ${t}`);
+  });
+
+  test('findTaskLine 全等比对, 不被前缀/子串误命中', () => {
+    const lines = ['- [ ] [进行中] T11 — a', '- [ ] [进行中] T1 — b', '- [ ] TASK-10 — c'];
+    assert.equal(findTaskLine(lines, 'T1'), 1, 'T1 应命中第 2 行而非 T11');
+    assert.equal(findTaskLine(lines, 'T11'), 0);
+    assert.equal(findTaskLine(lines, 'TASK-1'), -1, 'TASK-1 不应命中 TASK-10');
+    assert.equal(findTaskLine(lines, 'TASK-10'), 2);
+  });
+
+  test('id 里混入零宽字符也能定位 (历史瑕疵容错)', () => {
+    const lines = ['- [ ] [2026-11-16 10:00] [CO\u200bDEX-HOOKS-FIX 任务] [[a]]'];
+    assert.equal(findTaskLine(lines, 'CODEX-HOOKS-FIX'), 0, '查干净标题首词应命中含 ZWSP 的行');
+    assert.equal(findTaskLine(lines, 'CO\u200bDEX-HOOKS-FIX'), 0, '查含 ZWSP 的 id 也应命中');
+  });
+
+  // ★ 断点任务（2026-10-16 用户报）：`  ↳ [ ] <id> …` 与普通任务同等可操作。
+  //   原实现 idOfTaskLine 写死 startsWith('- [ ]')，缩进/`↳` 前缀一律不认 ——
+  //   实测 done/note/state 全报 NO_MATCH（写得进去、看得见、完不成）。
+  // ★ 中文 id（2026-10-16 实测）：extractId 原正则 `^[A-Za-z][\w-]*` 要求英文开头，
+  //   中文 id 一律返回 null → findTaskLine 永远找不到 → 同 id 重复 start 每次都新建。
+  //   即幂等静默失效（实测同一 id 落了两行，且子项被追加两轮）。
+  //   中文写作里拿短语当 id 很自然，不能只收 ASCII。
+  test('★ 中文 id 能提取（否则幂等静默失效）', () => {
+    for (const [input, want] of [
+      ['[进行中] 升级-sdk-修依赖漏洞 [[u]] — 升 SDK (认领 2026-10-16)', '升级-sdk-修依赖漏洞'],
+      ['- [ ] [进行中] 中文id任务 [[u]] — 描述', '中文id任务'],
+      ['[进行中] task-a [[u]] — desc', 'task-a'],
+      ['TASK-1', 'TASK-1'],
+    ]) {
+      assert.equal(extractId(input), want, `extractId(${JSON.stringify(input)})`);
+    }
+  });
+
+  test('★ 中文 id 的同 id 重复 start 只留一条（幂等）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: '中文幂等任务', note: 'v1' });
+    await cmdTask({ dir: projectA, action: 'start', id: '中文幂等任务', note: 'v2' });
+    const t = await readTodo(projectA);
+    const n = t.split('\n').filter((l) => l.includes('中文幂等任务')).length;
+    assert.equal(n, 1, `中文 id 重复 start 只应有一行:\n${t}`);
+    assert.ok(t.includes('v2'), `应更新为最新描述:\n${t}`);
+  });
+
+  // ★ 模糊测试挖出来的（2026-10-16）：id 含空格会**静默丢信息** ——
+  //   `abs todo start "带 空格"` 落盘成 `- [ ] 带`，后面的词与描述一起消失，不报错。
+  //   宁可明确拒掉，也不替人猜哪个词算 id。
+  test('★ 短标题允许空格（标题就是一句话）；换行仍被拒', async () => {
+    const r = await cmdTask({ dir: projectA, action: 'start', id: '带 空格', note: '描述' });
+    assert.ok(/登记|更新/.test(r), r);
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('[带 空格]'), `标题应原样落盘:\n${t}`);
+  });
+
+  test('★ findTaskLine 认得缩进子任务；旧 ↳ 写法已不再被当任务', () => {
+    const lines = [
+      '- [ ] [进行中] norm — 普通',
+      '  - [ ] [进行中] sub — 缩进子任务',
+    ];
+    assert.equal(findTaskLine(lines, 'sub'), -1, '子项没有独立标题，不按任务定位');
+    assert.equal(findTaskLine(lines, 'norm'), 0);
+    // 2026-10-20：旧 `↳ [ ]` 写法彻底废弃 —— 它不再被认成任务行。
+    assert.equal(findTaskLine(['- [ ] a', '  ↳ [ ] bp — x'], 'bp'), -1,
+      '↳ [ ] 已不再是任务行（存量由 migrateLegacyChild 迁走）');
+    assert.equal(findTaskLine(['- [ ] a', '  ↳ 断点: x'], 'x'), -1);
+  });
+
+  test('★ 旧 ↳ 任务行经 load 自动迁移成标准 md 子项（存量不丢）', async () => {
+    // 存量兼容：真库里有这种写法（实测 zj_shop 6 行），迁移后必须能当子项用。
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo',
+        '- [ ] [进行中] parent [[fanchao]] — 主任务 (认领 2026-10-16)',
+        '  ↳ [ ] [进行中] bp [[fanchao]] — 旧写法子项 (认领 2026-10-16)',
+        '', '## Done', ''].join('\n'));
+    const t = await readTodo(projectA);
+    assert.doesNotMatch(t, /↳/, `旧写法应已被迁移掉: \n${t}`);
+    assert.match(t, /^ {2}- \[ \] (?:[^\n]*?)旧写法子项/m, `应迁移成缩进子项且保留内容: \n${t}`);
+  });
+
+  test('★ 裸 ↳ 内容行也迁移成未完成子项（旧格式变体）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo',
+        '- [ ] [进行中] parent [[fanchao]] — 主任务 (认领 2026-10-16)',
+        '  ↳ 断点: 后端已改完',
+        '  ↳ 内容: 另一个变体',
+        '', '## Done', ''].join('\n'));
+    const t = await readTodo(projectA);
+    assert.doesNotMatch(t, /↳/, `两种变体都应迁走: \n${t}`);
+    assert.match(t, /^ {2}- \[ \] .*另一个变体/m, t);
+  });
+
+  // 2026-11-16 用户定：枚举顺序 = 滞留中 → 讨论中 → 搁置 → 进行中（进行中放最后）。
+  // 顺序只影响帮助/报错文案的排列，别让它在某次改动里悄悄变回去。
+  test('★ 状态枚举顺序固定为 滞留中 → 讨论中 → 搁置 → 进行中', async () => {
+    const { TASK_STATES, STATE_MARK } = await import('../../code/todo/common.js');
+    assert.deepEqual(TASK_STATES, ['滞留中', '讨论中', '搁置', '进行中']);
+    assert.deepEqual(Object.keys(STATE_MARK), TASK_STATES, '记号表顺序应与枚举一致');
+    assert.deepEqual(STATE_MARK, { 滞留中: '-', 讨论中: '+', 搁置: '~', 进行中: ' ' });
+  });
+
+  test('★ 子项可 note / state（标准 md 缩进列表）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo',
+        '- [ ] [进行中] bp2 [[fanchao]] — 主任务 (认领 2026-10-16)',
+        '', '## Done', ''].join('\n'));
+    const n = await cmdTask({ dir: projectA, action: 'note', id: 'bp2', note: '改到 src/x.js' });
+    assert.doesNotMatch(String(n), /NO_MATCH/, `note 应命中: ${n}`);
+    const s = await cmdTask({ dir: projectA, action: 'state', id: 'bp2', note: '讨论中' });
+    assert.doesNotMatch(String(s), /NO_MATCH/, `state 应命中: ${s}`);
+    const t = await readTodo(projectA);
+    assert.match(t, /\[\+\].*\[bp2 /, `状态应已改（[+] = 讨论中）: \n${t}`);
+    assert.match(t, /^ {2}- \[ \] (?:[^\n]*?)改到 src\/x\.js/m, '子项应挂上（标准 md 缩进列表）');
+  });
+
+  // 2026-11-09 用户要求：子项也要能标四态（原来只有勾/未勾）。
+  test('★ 子项能标四态：state --n 定位第几条，勾/取消勾不丢标记', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo',
+        '- [ ] [进行中] cs-1 [[fanchao]] — 主任务 (认领 2026-11-09)',
+        '  - [ ] 子项一',
+        '  - [ ] 子项二',
+        '', '## Done', ''].join('\n'));
+    const r1 = await cmdTask({ dir: projectA, action: 'state', id: 'cs-1', note: '滞留中', n: 1 });
+    assert.doesNotMatch(String(r1), /NO_MATCH/, `应命中第 1 条子项: ${r1}`);
+    let t = await readTodo(projectA);
+    assert.match(t, /^ {2}- \[-\] (?:[^\n]*?)子项一/m, `第 1 条应带标记（[-] = 滞留中）: \n${t}`);
+
+    // 勾选走的是另一条路径（child-done）。勾上时标记变 [x]，取消勾回到 [ ] ——
+    assert.match(t, /^ {2}- \[ \] .*子项二/m, `第 2 条不该被动: \n${t}`);
+    // 所以取消勾后拿不回原来的滞留中，回到默认的进行中。这是有意的代价，不是丢失。
+    await cmdTask({ dir: projectA, action: 'child-done', id: 'cs-1', n: 1 });
+    t = await readTodo(projectA);
+    assert.match(t, /^ {2}- \[x\] (?:[^\n]*?)子项一/m, `勾上应变 [x]: \n${t}`);
+    await cmdTask({ dir: projectA, action: 'child-undone', id: 'cs-1', n: 1 });
+    t = await readTodo(projectA);
+    assert.match(t, /^ {2}- \[ \] .*子项一/m, `取消勾回到进行中: \n${t}`);
+
+    // 不带 n 仍是改任务本身（不能因为子项能标状态就把旧用法拐走）
+    await cmdTask({ dir: projectA, action: 'state', id: 'cs-1', note: '讨论中' });
+    t = await readTodo(projectA);
+    assert.match(t, /^- \[\+\].*\[cs-1 /m, `不带 n 应改任务（[+] = 讨论中）: \n${t}`);
+
+    // 越界 n：报没匹配，且绝不静默改到别的行
+    const over = await cmdTask({ dir: projectA, action: 'state', id: 'cs-1', note: '搁置', n: 9 });
+    assert.match(String(over), /NO_MATCH/, `越界 n 应报没匹配: ${over}`);
+    t = await readTodo(projectA);
+    assert.doesNotMatch(t, /\[~\]/, `越界 n 不该写任何东西: \n${t}`);
+  });
+
+  test('★ parseChild / renderChild 往返：记号表四态 + 完成，旧文本前缀也认', async () => {
+    // 新写法：状态就在复选框里
+    assert.equal(parseChild('  - [-] 改到哪一步').state, '滞留中');
+    assert.equal(parseChild('  - [-] 改到哪一步').text, '改到哪一步');
+    assert.deepEqual({ done: parseChild('  - [x] 没状态').done, text: parseChild('  - [x] 没状态').text },
+      { done: true, text: '没状态' });
+    // 存量写法的文本前缀仍能读出来（迁移期不能把旧行读丢）
+    assert.equal(parseChild('  - [ ] [滞留中] 改到哪一步').state, '滞留中');
+    assert.equal(parseChild('  - [ ] [滞留中] 改到哪一步').text, '改到哪一步');
+    // 未知方括号是正文，不是状态 —— 否则 [WIP] 这类词会被静默吃掉
+    // 未标状态 = 记号 `[ ]`，就是「进行中」；`[WIP]` 是正文不是状态
+    // `[WIP]` 在新格式里就是标题字段（不是状态），正文在它后面
+    assert.equal(parseChild('  - [ ] [WIP] 正文').text, 'WIP');
+    assert.equal(renderChild('改到哪一步', { state: '滞留中' }), '  - [-] 改到哪一步');
+    assert.equal(renderChild('一句话', { done: true }), '  - [x] 一句话');
+    // 往返：解析再渲染 == 原行（缩进、记号都不凭空变）
+    for (const l of ['  - [-] 改到哪一步', '  - [x] 没状态', '    - [ ] 缩进 4 格的子项']) {
+      const c = parseChild(l);
+      assert.equal(renderChild(c.text, { done: c.done, state: c.state, indent: ' '.repeat(c.indent) }), l, `往返应逐字不变: ${l}`);
+    }
+  });
+
+  test('★ 闸门：子项长度按去掉状态标记的正文算', async () => {
+    const body = '改'.repeat(200);           // 正文顶到上限 200
+    const mk = (text) => `# 📋 Todo Board\n\n- [ ] g-1 (认领 2026-11-16)\n  - [-] ${text}\n`;
+    assert.doesNotThrow(() => assertTodoContent(mk(body)), '标记不该算进长度（200 字正文应放行）');
+    assert.throws(() => assertTodoContent(mk(body + '再')), /子项太长/, '201 字正文应被拒');
+  });
+});
+
+// ---------- 老格式迁移 (用户报告: bootstrap 老模板 In Progress/Todo 与 B4 定稿冲突) ----------
+describe('normalizeTodo 老格式迁移', () => {
+  const OLD = [
+    '# 📋 Todo Board',
+    '## In Progress',
+    '- [ ] 正在做的事 (认领 2026-09-08)',
+    '## Todo',
+    '- [ ] 老待办A',
+    '- [ ] 老待办B',
+    '## Blocked',
+    '- [ ] 卡住的事 — 原因',
+    '## Done',
+    '- [x] 老完成 — 完成日期',
+    '',
+  ].join('\n');
+
+  test('老格式 → 单列表：内容不丢，旧分区标题去掉', () => {
+    const out = normalizeTodo(OLD);
+    for (const gone of ['## In Progress', '## Todo', '## Blocked', '## Done']) {
+      assert.ok(!out.includes(gone), `旧分区应去掉 ${gone}: ${out}`);
+    }
+    // 未完成的内容全部保留（不论原来在哪个区），已完成也在同一张表里
+    for (const frag of ['正在做的事', '老待办A', '老待办B', '卡住的事', '老完成']) {
+      assert.ok(out.includes(frag), `内容应保留 ${frag}: ${out}`);
+    }
+    assert.ok(out.split('\n').every((l) => !l.trim() || /^- |^# /.test(l.trim())), `单列表里只该有任务行与 H1: ${out}`);
+  });
+
+  test('两张迁移表互锁：LEGACY_MARKS 必须覆盖 LEGACY_SECTION_RENAMES', () => {
+    // 两个迁移路径用两张独立表（todo.js 给 normalizeTodo，store.js 给 rebuildStructure）。
+    // 历史上只改一张导致另一条路径认不出旧名（未完成任务被当非标准分区留末尾）。
+    // 这条测试把"共享键必须两边一致"钉住，防单边改名。
+    const marks = new Map(LEGACY_MARKS);
+    const missing = LEGACY_SECTION_RENAMES.filter(([o]) => !marks.has(o));
+    assert.deepEqual(missing, [], `LEGACY_MARKS 缺这些旧名（单边改名会静默回归）: ${JSON.stringify(missing)}`);
+    const conflicts = LEGACY_SECTION_RENAMES.filter(([o, n]) => marks.has(o) && marks.get(o) !== n);
+    assert.deepEqual(conflicts, [], `两表对同一旧名给出了不同新名: ${JSON.stringify(conflicts)}`);
+  });
+
+  test('wrapup body 状态无关：任务状态改了，跨会话滞留仍能认出', async () => {
+    // 回归 2026-09-13（评审 P1）：状态标记曾被算进 body，而 strandedFor 用 body 精确比对
+    // → abs todo state 一改，滞留提醒静默消失。body 必须剥掉行首状态标记。
+    const { appendWrapup, strandedFor } = await import('../../code/wrapup.js');
+    const env = { ...process.env, ABS_LOG_DIR: join(sandbox, 'wu-log') };
+    const prev = process.env.ABS_LOG_DIR;
+    process.env.ABS_LOG_DIR = env.ABS_LOG_DIR;
+    try {
+      await cmdTask({ dir: projectA, action: 'start', id: 'WP-1', note: '做 W' });
+      await appendWrapup(projectA);                       // 快照时是 [进行中]
+      await cmdTask({ dir: projectA, action: 'state', id: 'WP-1', note: '滞留中' });
+      const s1 = await strandedFor(projectA);
+      assert.equal(s1.length, 1, `状态改过后仍应认出滞留: ${JSON.stringify(s1)}`);
+      assert.ok(s1[0].body.includes('WP-1'), s1[0].body);
+      assert.ok(!/\[(进行中|讨论中|滞留中)\]/.test(s1[0].body), `body 不该含状态标记: ${s1[0].body}`);
+    } finally {
+      if (prev === undefined) delete process.env.ABS_LOG_DIR; else process.env.ABS_LOG_DIR = prev;
+    }
+  });
+
+  test('两种状态标记的覆盖 + state 空操作不写盘', async () => {
+    // 评审 P2：[讨论中] 从未被任何测试用过；setStateMark 的 no-op 分支也没断言。
+    for (const st of ['进行中', '讨论中', '滞留中']) {
+      await cmdTask({ dir: projectA, action: 'start', id: 'ST-1', note: '描述x' });
+      await cmdTask({ dir: projectA, action: 'state', id: 'ST-1', note: st });
+      const t = await readTodo(projectA);
+      const mark = { 进行中: ' ', 讨论中: '+', 滞留中: '-' }[st];
+    const stLine = t.split('\n').find((l) => l.includes('[ST-1]')) || '';
+    assert.ok(stLine.startsWith(`- [${mark}]`), `状态应为 ${st}（记号 [${mark}]）: ${t}`);
+    }
+    // no-op：同状态再设一次 → 文件字节不变
+    const before = await readTodo(projectA);
+    const r = await cmdTask({ dir: projectA, action: 'state', id: 'ST-1', note: '滞留中' });
+    assert.match(r, /未找到|状态未变|无变化/, `同状态应报无变化: ${r}`);
+    assert.equal(await readTodo(projectA), before, 'no-op 不该改盘');
+  });
+
+  test('upsertTask 保留已有状态标记（再 start 不重置状态）', async () => {
+    // 评审 P2：只有默认状态的 re-start 被测过，状态保留分支未钉。
+    await cmdTask({ dir: projectA, action: 'start', id: 'UP-1', note: '描述x' });
+    await cmdTask({ dir: projectA, action: 'state', id: 'UP-1', note: '讨论中' });
+    await cmdTask({ dir: projectA, action: 'start', id: 'UP-1', note: '改了说明' });
+    const t = await readTodo(projectA);
+    assert.ok(/\[\+\].*\[UP-1\]/.test(t), `再 start 不该重置状态（[+] = 讨论中）: ${t}`);
+    assert.ok(t.includes('改了说明'), '说明应更新');
+    assert.equal((t.match(/UP-1/g) || []).length, 1, `不该重复登记: ${t}`);
+  });
+
+  test('非默认状态的任务 done 后变成 [x]，不留状态记号与文本前缀', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'DN-1', note: '描述x' });
+    await cmdTask({ dir: projectA, action: 'state', id: 'DN-1', note: '讨论中' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DN-1' });
+    const t = await readTodo(projectA);
+    const dnLine = t.split('\n').find((l) => l.includes('DN-1'));
+    assert.ok(dnLine.startsWith('- [x]') && dnLine.includes('[DN-1]'), `应变成已完成: ${dnLine}`);
+    assert.ok(!/\[(进行中|讨论中|滞留中)\]/.test(dnLine), `不该带文本状态前缀: ${dnLine}`);
+  });
+
+  test('四区制存量文件：load 时的 rebuildStructure 也要能迁移（不只是 normalizeTodo）', async () => {
+    // 回归 2026-09-13：normalizeTodo 与 rebuildStructure 是两条不同的迁移路径。
+    // 只改 normalizeTodo 时，load（走 rebuildStructure/renames）仍认不出 Backlog/Blocked，
+    // 会把它们当"非标准分区"原样留末尾 —— 未完成任务留在文件里但不再被当 TODO，
+    // 或整段错位。本测试钉住 renames 里有这三条。
+    const legacy = [
+      '# 📋 Todo Board',
+      '## Backlog', '- [ ] L-1 — 想做',
+      '## Today / In Progress', '- [ ] L-2 [[tester]] — 在做 (认领 2026-09-10)',
+      '  ↳ 断点: 改到 L40',
+      '## Blocked', '- [ ] L-3 — 卡住',
+      '## Done', '- [x] L-0 — 完了 (完成 2026-09-01)',
+      '',
+    ].join('\n');
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'), legacy, 'utf8');
+    await checkBrainShape(projectA);            // load 走的就是这条
+    const t = await fs.readFile(join(projectA, '.brain', 'todo.md'), 'utf8');
+    // 旧分区全部消失，只剩 H1 + 一条列表
+    for (const gone of ['## Todo', '## Done', '## Backlog', '## Today / In Progress', '## Blocked']) {
+      assert.ok(!t.includes(gone), `不该再有 ${gone}: ${t}`);
+    }
+    // 内容零丢失
+    for (const frag of ['L-1 — 想做', 'L-2 [[tester]] — 在做', 'L-3 — 卡住', 'L-0 — 完了']) {
+    assert.ok(t.includes(frag.split(' ')[0]), `内容应保留 ${frag}: ${t}`);
+    }
+    // 子项随迁（内容不丢即可 —— rebuildStructure 只重排分区，不静默改行格式：
+    // 存量 `↳ 断点:` 原样留着，下一次写入才升级为标准 md）
+    assert.ok(t.includes('改到 L40'), `子项内容应保留: ${t}`);
+    // 幂等：再跑一次零变化
+    const r2 = await checkBrainShape(projectA);
+    assert.equal(r2.fixed.length, 0, `再跑应幂等: ${JSON.stringify(r2)}`);
+  });
+
+  test('新格式幂等: 模板原样返回', () => {
+    const t = todoTemplate();
+    assert.equal(normalizeTodo(t), t);
+  });
+
+  test('迁移后 task done 能正确归位 (端到端)', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'), OLD, 'utf8');
+    const r = await cmdTask({ dir: projectA, action: 'start', id: 'MIG-1', note: '迁移后登记' });
+    assert.ok(r.includes('登记'), r);
+    const t = await readTodo(projectA);
+    assert.ok(!t.includes('## In Progress'), `应已归一为单列表:\n${t}`);
+    assert.ok(t.includes('MIG-1'));
+    const r2 = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'MIG-1' });
+    assert.ok(r2.includes('✓'), r2);
+    const t2 = await readTodo(projectA);
+    const row = t2.split('\n').find((l) => l.includes('MIG-1'));
+    assert.ok(row.startsWith('- [x]') && row.includes('[MIG-1]'), `迁移后 done 应变成已完成:\n${t2}`);
+  });
+});
+
+// ---------- task: 登记/完成 + 幂等 ----------
+describe('cmdTask', () => {
+  test('start 登记进 Today 区并带认领日期', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-1', note: '做 X' });
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('[T-1]') && t.includes('[[tester]]'), `作者应是 wikilink: ${t}`);
+    assert.match(t, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]/, t);
+  });
+
+  test('幂等: 同 id 重复 start 只有一行（更新 note，不重复登记）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-2', note: 'v1' });
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-2', note: 'v2' });
+    const t = await readTodo(projectA);
+    const hits = t.split('\n').filter((l) => l.includes('T-2') && l.startsWith('- [ ]'));
+    assert.equal(hits.length, 1, `应只有一行 T-2，实际 ${hits.length}:\n${hits.join('\n')}`);
+    assert.ok(t.includes('v2'), '重复 start 应更新 note 为最新');
+    assert.ok(!t.includes('v1'), '旧 note 不应残留');
+    // 坑: upsertTask 原位更新时会重建整行 —— 重建时若不把原 @author 带上，作者会静默丢失。
+    assert.ok(t.includes('[T-2]') && t.includes('v2'), `幂等更新后标题应更新: ${hits.join('\n')}`);
+  });
+
+  test('done 勾选并归位（保持一行，标完成日期）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-3', note: '做 Y' });
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-3' });
+    assert.ok(r.includes('✓'), r);
+    const t = await readTodo(projectA);
+    const row = t.split('\n').find((l) => l.includes('T-3'));
+    assert.ok(/^- \[x\]/.test(row), `T-3 应是已完成行:\n${t}`);
+    assert.ok(t.includes(`[${today()}`));
+  });
+
+  // 原意：修 trimStart bug —— 断点行不能「任务走了、断点剩在原区」。
+  // 2026-10-18 调整：未勾子项（含 note 写的断点）不再随迁 Done，而是升为 Todo 区的
+  // 独立任务。所以「不残留原区」仍成立，但落点变了：不是进 Done，是变成新任务。
+  // 2026-10-18：note 写下的行也是子任务，同样受"子任务未完成不许 done"约束。
+  // 本测试原本验的是 trimStart bug（断点不残留在原区），现在改为：
+  // 有未勾断点时拒绝 done；勾掉后 done，断点随任务进 Done 且内容不丢。
+  test('带未勾断点时拒绝 done；勾掉后随任务进 Done 且不残留原区', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-BP', note: '带断点任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'T-BP', note: '改到 store.js L40' });
+    await assert.rejects(() => cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-BP' }), /子任务未完成/);
+    await cmdTask({ dir: projectA, action: 'child-done', id: 'T-BP' });
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-BP' });
+    assert.ok(r.includes('✓'), r);
+    const t = await readTodo(projectA);
+    // 子项就挂在已成完的行下面（单列表里没有「区」可残留）
+    const rows = t.split('\n');
+    const at = rows.findIndex((l) => l.includes('T-BP') && l.startsWith('- [x]'));
+    assert.ok(at !== -1, `T-BP 应是已完成行:\n${t}`);
+    assert.ok(rows[at + 1] && rows[at + 1].includes('改到 store.js L40'), `断点应紧跟任务行:\n${t}`);
+    assert.equal((t.match(/改到 store\.js L40/g) || []).length, 1, `断点只该出现一次:\n${t}`);
+  });
+
+  test('done 幂等: 重复 done 不再追加行', async () => {
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'T-4' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-4' });
+    const after1 = await readTodo(projectA);
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'T-4' });
+    const after2 = await readTodo(projectA);
+    assert.equal(after1, after2, '二次 done 不应再改文件');
+  });
+
+  test('done 未找到 id 时给明确提示不抛错', async () => {
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'NOPE' });
+    assert.ok(r.includes('NOPE'));
+  });
+
+  test('已设姓名但人页缺失: 下次写入自动重建（不报错、不丢沉淀）', async () => {
+    const personPath = join(projectA, '.brain', 'entities', 'tester.md');
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'T-P1' }); // 首次写 → 建页
+    assert.ok(await fs.readFile(personPath, 'utf8').then(() => true, () => false), '首次写应建人页');
+    await fs.rm(personPath); // 模拟被删/未同步
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-P2', note: '重建' });
+    const back = await fs.readFile(personPath, 'utf8');
+    assert.ok(back.includes('# tester'), `人页应重建: ${back}`);
+    const index = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(index.includes('[[tester]]'), '重建后应重新登记 index');
+  });
+
+  test('旧 @name 行原位更新时保持旧形态（不静默改写历史行）', async () => {
+    // 坑: extractAuthor 只认新 [[name]] 的话，遇到历史 @name 行会取不到作者 →
+    // upsertTask 重建整行时把作者静默抹掉。两种形态必须都认。
+    const todoPath = join(projectA, '.brain', 'todo.md');
+    await fs.writeFile(todoPath,
+      '# 📋 Todo Board\n\n- [ ] [进行中] T-OLD @legacy — 老行 (认领 2026-09-01)\n', 'utf8');
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-OLD', note: '新说明' });
+    const after = await readTodo(projectA);
+    assert.ok(/\[T-OLD\] @legacy/.test(after) && after.includes('新说明'), `旧 @name 应保留且不升级为 [[ ]]: ${after}`);
+    assert.ok(!after.includes('[[legacy]]'), '旧行不应被静默改写成 wikilink');
+  });
+});
+
+// ---------- board/load/status ----------
+describe('board/load/status', () => {
+  test('board 输出项目头 + 看板', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'T-5', note: '描述Z' });
+    const out = await cmdBoard({ dir: projectA });
+    assert.ok(out.includes('T-5'));
+    assert.ok(out.includes('📂'));
+  });
+
+  // 回归: log.md 是新在上，而 load 曾用 tailLines(取末尾) → 「最近动作」永远显示最旧几条。
+  // 症状是"开机读状态最该看的一节长期是两天前的东西"，且不报错，很容易一直没发现。
+  test('load 的「最近动作」取最新几条（不是最旧）', async () => {
+    const logP = join(projectA, '.brain', 'log.md');
+    // 需 >5 条，否则"最新 5 条"会把最旧的一条也包含进来，测不出差别
+    const entries = Array.from({ length: 7 }, (_, i) => `## [2026-09-${String(10 - i).padStart(2, '0')} 10:00] dev | 第${i + 1}条`);
+    entries[0] = '## [2026-09-10 10:00] dev | 最新一条 NEWEST-MARK';
+    entries[6] = '## [2026-09-04 10:00] dev | 最旧一条 OLDEST-MARK';
+    await fs.writeFile(logP, ['# 🗒 Activity Log', ...entries, ''].join('\n'), 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(out.includes('NEWEST-MARK'), `应显示最新条目: ${out}`);
+    assert.ok(!out.includes('OLDEST-MARK'), `不该显示最旧条目: ${out}`);
+    assert.ok(/最新 3 条/.test(out), `标签应写"最新": ${out}`);
+  });
+
+  test('load 输出 未完成 + 用法 + log 三段（2026-11-08 收口）', async () => {
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(out.includes('未完成'), `应输出未完成: ${out}`);
+    assert.ok(out.includes('用法'), `应输出用法: ${out}`);
+    assert.ok(out.includes('log.md'), `应输出日志: ${out}`);
+    assert.ok(!out.includes('## Concepts'), 'index 明细不再进 load');
+  });
+
+  // 回归(2026-09-17 实测): hint 原取词是 keywords() 保序 + slice(0,2)。
+  // todo 行以 `<任务id> [[作者]] — 描述` 开头，任务 id 与用户名稳占前两位，
+  // 于是提示语变成 `abs query queryhint-noise tester 进行`（实测强度全为 0~1，全是废词）。
+  // 两处修正: (a) 分词前剥掉任务行结构记号（id / [[作者]]）(b) 按 topicStrength 排序 + 剔 0。
+  //
+  // 夹具为何要带 `tester` 这个弱词：只放一个强词时，去不去排序都能碰对，测不出排序。
+  // tester 在夹具里命中它自己的 entities/tester.md 页名（强度 1），且**写在 hook 前面** ——
+  // 这样「不排序」会先选中 tester，测试才能真的保住排序这一步。
+  // 回归: load/todo 曾全量打印 Done 区，而 Done 无上限增长 → 长历史项目上
+  // abs load 直接把上下文塞满（实报：「另一台机器 abs load 塞了 40%」）。
+  // 实测本仓库修复前 Done 占 load 输出的 68.8%（19.6KB/28.4KB）。
+  test('load 输出不随 Done 区增长（按日期折叠计数）', async () => {
+    const todoP = join(projectA, '.brain', 'todo.md');
+    const base = await fs.readFile(todoP, 'utf8');
+    const small = base.split('## Done')[0] + '## Done\n- [x] D-1 [[tester]] — 小事 (完成 2026-09-01) 【落地】\n';
+    await fs.writeFile(todoP, small, 'utf8');
+    const smallOut = await cmdLoad({ dir: projectA });
+
+    // 塞 300 条 Done（~40KB），load 输出大小应基本不变
+    const many = Array.from({ length: 300 }, (_, i) =>
+      `- [x] D-BIG-${i} [[tester]] — 一条很长的历史任务说明文字用来模拟真实积累 (完成 2026-08-${String(1 + (i % 28)).padStart(2, '0')}) 【落地】`);
+    await fs.writeFile(todoP, base.split('## Done')[0] + '## Done\n' + many.join('\n') + '\n', 'utf8');
+    const bigOut = await cmdLoad({ dir: projectA });
+
+    const growth = Buffer.byteLength(bigOut) / Buffer.byteLength(smallOut);
+    assert.ok(growth < 1.5,
+      `Done 从 1 条涨到 300 条，load 输出不得显著膨胀（实际 ${Buffer.byteLength(smallOut)}→${Buffer.byteLength(bigOut)}B, ×${growth.toFixed(2)}）`);
+    assert.ok(bigOut.includes('300 条'), `应给出 Done 计数: ${bigOut.slice(-400)}`);
+    assert.ok(!bigOut.includes('D-BIG-7 '), 'Done 明细不应进 load 输出');
+    // 明细仍可拿（逃生口）
+    const full = await cmdShow({ view: 'todo', dir: projectA, full: true });
+    assert.ok(full.includes('D-BIG-7 '), '--full 应给全量明细');
+  });
+
+  // 回归: 日志条目本身可长达 800B+，5 条就 2.9KB。load 是开机读状态，每条按语义边界收口。
+  test('load 的「最近动作」每条收口，不随日志条目变长而膨胀', async () => {
+    const logP = join(projectA, '.brain', 'log.md');
+    const long = 'X'.repeat(3000);
+    await fs.writeFile(logP, ['# 🗒 Activity Log', `## [2026-09-10 10:00] dev | ${long}`, ''].join('\n'), 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(!out.includes(long), '超长日志条目应被收口，不原样进 load');
+    const sec = out.split('--- 最近动作')[1] || '';
+    assert.ok(Buffer.byteLength(sec) < 1200, `最近动作一段应受控，实际 ${Buffer.byteLength(sec)}B`);
+  });
+
+  // 回归: index 的 concept 清单带每页一句话描述，**隨图谱线性增长** ——
+  // 本仓库 17 条占 load 输出 64%（2286/3571 tok），另一台 40 条的项目约 2.3 倍。
+  // 与 Done 同类：都是"清单隨历史膨胀"。load 只需知道去哪个分区找，不需要每页写了什么。
+  test('load 的 index 区不隨图谱页数增长（清单折成计数）', () => {
+    const idxP = join(projectA, '.brain', 'index.md');
+    const build = (n) => [
+      '# 🗂 Graph Index', '', '## Rules', '', '> 硬规则一条。', '',
+      '## Concepts',
+      ...Array.from({ length: n }, (_, i) => `- [[concept-${i}]] — 一条相当时长的概念页描述文字用来模拟真实积累`),
+      '## Sessions', '- [[log-1]] — 一次会话', '',
+    ].join('\n');
+    return (async () => {
+      await fs.writeFile(idxP, build(3), 'utf8');
+      const smallOut = await cmdLoad({ dir: projectA });
+      await fs.writeFile(idxP, build(60), 'utf8');
+      const bigOut = await cmdLoad({ dir: projectA });
+      const growth = Buffer.byteLength(bigOut) / Buffer.byteLength(smallOut);
+      assert.ok(growth < 1.3,
+        `concept 从 3 条涨到 60 条，load 输出不得显著膨胀（${Buffer.byteLength(smallOut)}→${Buffer.byteLength(bigOut)}B, ×${growth.toFixed(2)}）`);
+      assert.ok(!bigOut.includes('concept-59'), 'index 明细不应进 load 输出');
+      // 2026-11-08 用户定：Rules 全文也撤出 load，只给条数；全文走 abs rule / abs show index
+      assert.ok(/Rules \d+ 条/.test(bigOut), `Rules 只给条数: ${bigOut.slice(0, 400)}`);
+      assert.ok(!bigOut.includes('> 硬规则一条。'), 'Rules 全文不进 load');
+      // 逃生口：完整 index 仍可拿
+      const full = await cmdShow({ view: 'index', dir: projectA });
+      assert.ok(full.includes('concept-59'), 'abs show index 应给完整清单');
+    })();
+  });
+
+  test('collapseIndex: 清单只计数（Rules 交给 rulesSection 单独成段）', () => {
+    const t = ['# H', '', '## Rules', '', '> 引用行', '', '## Concepts', '- [[a]] — x', '- [[b]] — y', '## Syntheses', ''].join('\n');
+    const o = collapseIndex(t);
+    assert.ok(o.includes('# H'), `文件头应原样: ${o}`);
+    assert.ok(!o.includes('## Rules'), `Rules 不得重复输出（已单独成段）: ${o}`);
+    assert.ok(o.includes('## Concepts（2 页）'), `应计数: ${o}`);
+    assert.ok(o.includes('## Syntheses'), `空分区保留名字（不写 0 页）: ${o}`);
+    assert.ok(!o.includes('[[a]]'), `清单行不得保留: ${o}`);
+    assert.equal(collapseIndex(''), '');
+  });
+
+
+
+
+  test('indexTemplate 不含 Roadmap；存量 Roadmap 被删除（2026-10-05 用户定：先搬内容再删区）', async () => {
+    const t = indexTemplate();
+    assert.ok(!t.includes('Roadmap'), `模板不应再有 Roadmap: ${t}`);
+    assert.ok(t.includes('## Rules') && t.includes('## Concepts'), `模板分区应完整: ${t}`);
+    // 决策变更（2026-10-05）：原行为是「归为非标准分区留末尾」（护栏防丢失），
+    // 但结果是删分区的决策从未生效 —— AI 每次重写 index 都能把 Roadmap 加回来。
+    // 现改为：Roadmap 进废弃白名单，整段删除。前提是内容已先归位
+    // （实测 ~/.brain：范围约定→index 正文，herdr 同步项→实体页，归档计数→log）。
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Roadmap\n\n**已落地**：X。\n\n## Rules\n\n- 一条。\n', 'utf8');
+    await checkBrainShape(projectA);
+    const after = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(!after.includes('## Roadmap'), `废弃分区该被删除: ${after}`);
+    assert.ok(!after.includes('**已落地**：X。'), `Roadmap 正文随之删除: ${after}`);
+    assert.ok(after.includes('## Rules') && after.includes('- 一条。'), `标准分区与正文保留: ${after}`);
+  });
+
+  test('rule add 门槛：纪律不是记事本（长度≤42 且不带链接）', async () => {
+    // 2026-09-13 用户定：Rules 是最前面的项目纪律，每条一眼扫完；
+    // 细节/出处/例子进 concepts/，Rules 不带 [[链接]]（它会被反复全量打印）。
+    const long = '规'.repeat(43);
+    const r1 = await cmdRule({ dir: projectA, action: 'add', text: long });
+    assert.match(r1, /太长/, `超 42 应被拒: ${r1}`);
+    const r2 = await cmdRule({ dir: projectA, action: 'add', text: '带链接的规则 [[some-page]]' });
+    assert.match(r2, /不带链接/, `带链接应被拒: ${r2}`);
+    const r3 = await cmdRule({ dir: projectA, action: 'add', text: '短纪律能加。' });
+    assert.match(r3, /✓/, `短句应通过: ${r3}`);
+    // 42 是边界内
+    const r4 = await cmdRule({ dir: projectA, action: 'add', text: '边'.repeat(42) });
+    assert.match(r4, /✓/, `42 字符应通过: ${r4}`);
+    // hmm 43 已拒，故加不进两个
+    const idx = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(idx.includes('短纪律能加。'), '应落盘');
+    assert.ok(!idx.includes('some-page'), '带链接的不得落盘');
+  });
+
+  test('status 报告项目 + 各类页数', async () => {
+    const out = await cmdStatus({ dir: projectA });
+    assert.ok(out.includes('concepts/: 0 页'));
+  });
+});
+
+// ---------- log ----------
+describe('cmdLog', () => {
+  test('★ 同一分钟同文不重复落行（2026-10-19 实测 bug）', async () => {
+    // 原实现无条件 splice 插入 → cmdNote 结尾自动写一条 + 收尾又写一条时，
+    // log.md 落成多行一模一样的流水（时间戳只到分钟，同分钟重写就是重复记录）。
+    const before = (await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8'))
+      .split('\n').filter((l) => l.startsWith('## [')).length;
+    const one = await cmdLog({ dir: projectA, title: '同分钟去重探针' });
+    const two = await cmdLog({ dir: projectA, title: '同分钟去重探针' });
+    const after = (await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8'))
+      .split('\n').filter((l) => l.startsWith('## [')).length;
+    assert.ok(one.includes('✓'), `首次应真写入: ${one}`);
+    assert.ok(two.includes('已跳过'), `第二次应报跳过而不是谎报✓: ${two}`);
+    assert.equal(after - before, 1, `只应多一行，实际 ${after - before}`);
+  });
+
+  test('追加一行且换行被清洗、超长在语义边界收口', async () => {
+    await cmdLog({ dir: projectA, title: '[SessionStart]\nlong'.repeat(30) });
+    const log = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
+    const line = log.split('\n').find((l) => l.startsWith('## ['));
+    assert.ok(line, '应有流水行');
+    assert.ok(!line.includes('\n'), '换行必须被清洗成单行');
+    // 不再断言"被硬切到 120 字符" —— 旧行为会把句子切在词中间(见 LOG-TRUNC-100)。
+    // 现仅在超长(>600)时于标点/空格边界收口, 且以 '…' 标识截断。
+    assert.ok(line.length <= 620, `超长应收口到 600 + 时间戳前缀: ${line.length}`);
+    assert.ok(!/(^|…)[\s,，、;；.。]+…$/.test(line), '收口处不应残留标点+空白');
+  });
+
+  test('超长摘要在标点边界收口, 且带省略号', async () => {
+    await cmdLog({ dir: projectA, title: '这是一句完整的结论。'.repeat(61) });
+    const log = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
+    const line = log.split('\n').find((l) => l.startsWith('## ['));
+    assert.ok(line.endsWith('…'), `超长应带省略号收口: ${line.slice(-20)}`);
+    assert.ok(!/[\s,，、;；.。]+…$/.test(line), '不应切出"标点+省略号"的残尾');
+  });
+
+  test('长摘要不被硬切在词中间（LOG-TRUNC-100 回归）', async () => {
+    const long = '修复 revert-check 在 file-write-locking 场景下的假通过问题，并补齐回归测试。';
+    await cmdLog({ dir: projectA, title: long });
+    const log = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
+    assert.ok(log.includes(long.slice(0, 10).replace(/[\[\]]/g, '')), '未超限的摘要必须原样落盘，不得截断');
+  });
+
+  test('clip: 短文本原样、超长切在标点、无标点才硬切', () => {
+    assert.equal(clip('abc', 10), 'abc');
+    assert.equal(clip('一二三四五六七八九十', 20), '一二三四五六七八九十');
+    const s = '第一句结束。第二句结束。第三句结束。第四句很长很长很长';
+    assert.equal(clip(s, 14), '第一句结束。第二句结束…');
+    assert.equal(clip('a'.repeat(50), 10), 'aaaaaaaaaa…', '无边界可切时硬切兜底');
+    // 边界太靠前(不足一半)则宁可硬切, 不留残破短头
+    assert.equal(clip(`短。${'x'.repeat(40)}`, 20), `短。${'x'.repeat(18)}…`, '边界太靠前则硬切');
+  });
+
+  test('note 文件名在标点边界收口，不切出残字（LOG-TRUNC-100 回归）', async () => {
+    await cmdNote({
+      dir: projectA,
+      text: '排查摘要读起来抽象的问题：先怀疑写入侧被硬切，不要先去调 prompt。判据是统计落盘文本的行尾。',
+    });
+    const files = await fs.readdir(join(projectA, '.brain', 'sources'));
+    const f = files.find((x) => x.includes('排查摘要'));
+    assert.ok(f, `应生成源页: ${files.join(', ')}`);
+    // 旧行为: 24 字硬切 → '...-硬切-不.md' (切出孤字 '不')
+    // 新行为（2026-11-08）：整句到句读就停，不按长度窗口切 —— 所以名字停在「问题」后面
+    assert.ok(!/-\S\.md$/.test(f), `文件名不应以单字残尾结束: ${f}`);
+    assert.ok(f.endsWith('-排查摘要读起来抽象的问题.md'), `应切在句读处（冒号），不切半句: ${f}`);
+    // 完整文本仍保留在页内
+    const body = await fs.readFile(join(projectA, '.brain', 'sources', f), 'utf8');
+    assert.ok(body.includes('判据是统计落盘文本的行尾。'), '完整标题必须保留在页内');
+  });
+});
+
+// ---------- query: 检索（TASK-02） ----------
+describe('cmdQuery', () => {
+  test('命中 concept 页并带页面路径', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'docker-prisma-429.md'),
+      '---\ntags: [concept, docker]\nupdated: 2026-09-08\nstatus: active\n---\n# 概念\n429 是连接池超限\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['docker', '429'] });
+    assert.ok(out.includes('docker-prisma-429'), out);
+  });
+
+  test('多词是 OR：任一命中即出', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'a-page.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: active\n---\nalpha 专属词\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['专属词'] });
+    assert.ok(out.includes('a-page'), out);
+  });
+
+  // tags 关联（2026-09-16）：tags 是人工提炼的关键词，权重应高于正文。
+  test('tag 命中的页排在只正文命中的页前面', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'tagged.md'),
+      '---\ntags: [concept, 专属关联词]\nstatus: active\n---\n正文无此词\n',
+      'utf8'
+    );
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'untagged.md'),
+      '---\ntags: [concept]\nstatus: active\n---\n正文里提到 专属关联词\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['专属关联词'] });
+    const ti = out.indexOf('tagged');
+    const ui = out.indexOf('untagged');
+    assert.ok(ti !== -1 && ui !== -1, `两页都应命中: ${out}`);
+    assert.ok(ti < ui, `tag 命中应排前: ${out}`);
+    assert.ok(out.includes('[tag: 专属关联词]'), `应标出 tag 命中渠道: ${out}`);
+  });
+
+  // 回归（2026-09-16 实测）：模糊命中曾把无关页混进结果 ——
+  // 查 file-write-locking 返回 26 页（几乎全图，共 27 页）。
+  // 连字符词的 2-gram 太通用，模糊命中必须让位给精确命中。
+  test('有精确命中时模糊命中不混入结果 (但告知条数)', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'exact-hit-page.md'),
+      '---\ntags: [concept]\nstatus: active\n---\n含 专有复合词XYZ 一词\n',
+      'utf8'
+    );
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'fuzzy-only-page.md'),
+      '---\ntags: [concept]\nstatus: active\n---\n无那个词，但字形部分相近的正文\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['专有复合词XYZ'] });
+    assert.ok(out.includes('exact-hit-page'), `精确命中应在: ${out}`);
+    assert.ok(!/📄\s*fuzzy-only-page/.test(out), `模糊命中不得混入列表: ${out}`);
+  });
+
+  // 基线（2026-09-15 实测 296 条片段）: 25% 是非内容行（tags:/H1/段落标题）。
+  // 典型症状: 查「发布」时页面返回 `tags: [concept, npm, publish, 发布]` —— frontmatter
+  // 在第 3 行，跑在正文前，「含关键词的第一行」永远先命中它。故必须跳过非内容行。
+  test('片段跳过 frontmatter/tags 行（不得返回元数据当答案）', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'meta-page.md'),
+      '---\ntags: [concept, 专属标签词]\nupdated: 2026-09-08\nstatus: active\n---\n' +
+      '# 概念：专属标签词\n\n## 触发场景\n真正的内容在这里 专属标签词\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['专属标签词'] });
+    assert.ok(!/^\s*tags:/m.test(out.split('\n').filter((l) => l.startsWith('    ')).join('\n')),
+      `片段不该是 tags 行: ${out}`);
+    assert.ok(out.includes('真正的内容在这里'), `应返回正文行: ${out}`);
+  });
+
+  test('片段跳过 H1/段落标题行（标题不是内容）', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'head-page.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: active\n---\n' +
+      '# 概念：独有词标题\n\n## 独有词小节\n\n正文里提到 独有词\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['独有词'] });
+    const snippetLines = out.split('\n').filter((l) => l.startsWith('    '));
+    assert.ok(snippetLines.some((l) => l.includes('正文里提到')),
+      `应给正文行而非标题: ${out}`);
+    assert.ok(!snippetLines.some((l) => /^\s*#{1,6}\s/.test(l)),
+      `片段不该是标题行: ${out}`);
+  });
+
+  test('片段优先取「解法/验证」这类答案段的行', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'answer-page.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: active\n---\n' +
+      '# 概念\n\n## 触发场景\n开场先提一次 答案词\n\n## 🛠 解法\n真正的解法针对 答案词\n',
+      'utf8'
+    );
+    const out = await cmdQuery({ dir: projectA, terms: ['答案词'] });
+    assert.ok(out.includes('真正的解法'), `应优先给答案段的行: ${out}`);
+  });
+
+  // 坑: 引号包起来的 "发布 流程" 曾整体当一个短语 → 全图无命中（静默失效）。
+  test('引号包住的多词等价于分开传（词内再按空白拆）', async () => {
+    // 自带 fixture：不依赖前面测试留下的页面（测试顺序不该影响结果）
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'quote-page.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: active\n---\n引号词 空格词\n',
+      'utf8'
+    );
+    const quoted = await cmdQuery({ dir: projectA, terms: ['引号词 空格词'] });
+    const split = await cmdQuery({ dir: projectA, terms: ['引号词', '空格词'] });
+    assert.ok(quoted.includes('quote-page'), `引号写法应命中: ${quoted}`);
+    assert.equal(quoted.split('\n')[0], split.split('\n')[0], '两种写法结果应一致');
+  });
+
+  // 流水页默认隐藏（2026-11-03 改）：从「降权 20 分排后」改成「不进默认结果」。
+  // 旧降权在命中分数接近时失效（实测「长期记忆 提炼 主动回忆」前 10 仍混 3 个 log 页，
+  // 因内容页只有 5 个、log 页补位）。对齐 db search：流水页不是知识页，不该进结果。
+  test('流水页（sessions/log-*）默认隐藏，--all 可见', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'flowrank-content.md'),
+      '---\ntags: [concept]\nstatus: active\n---\n# 内容页\n仅正文提到 流水降权词\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-08.md'),
+      '---\ntags: [流水降权词]\nstatus: active\n---\n# 流水降权词\n流水降权词\n', 'utf8');
+    const out = await cmdQuery({ dir: projectA, terms: ['流水降权词'] });
+    assert.ok(out.includes('flowrank-content'), `内容页应在结果里: ${out}`);
+    assert.ok(!out.includes('log-2026-09-08'), `流水页默认不应出现: ${out}`);
+    assert.ok(/流水已隐藏/.test(out), `应告知流水页被隐藏: ${out}`);
+    // --all 可见（逃生口）
+    const all = await cmdQuery({ dir: projectA, terms: ['流水降权词'], includeSuperseded: true });
+    assert.ok(all.includes('log-2026-09-08'), `--all 应能看到流水页: ${all}`);
+  });
+
+  test('无命中时明确提示并建议 abs init', async () => {
+    const out = await cmdQuery({ dir: projectB, terms: ['x'] });
+    assert.ok(out.includes('abs init'), out);
+  });
+
+  test('无 terms 时给用法提示', async () => {
+    const out = await cmdQuery({ dir: projectA, terms: [] });
+    assert.ok(out.includes('用法') || out.toLowerCase().includes('usage'), out);
+  });
+
+  test('命中超过 10 页时截断并给收窄提示（read-side-output-must-not-scale）', async () => {
+    // 造 12 页都命中同一词（零填充保证字典序=数值序，避免 bulk-10 排在 bulk-2 前面）
+    for (let i = 1; i <= 12; i++) {
+      const n = String(i).padStart(2, '0');
+      await fs.writeFile(join(projectA, '.brain', 'concepts', `bulk-${n}.md`),
+        `---\ntags: [concept]\nstatus: active\n---\n# 页${n}\n共同词 bulkword\n`, 'utf8');
+    }
+    const out = await cmdQuery({ dir: projectA, terms: ['bulkword'] });
+    assert.ok(/展示前 10 页/.test(out), `应说明展示上限: ${out}`);
+    assert.ok(/另有 2 页未展示/.test(out), `应告知还有 2 页未展示: ${out}`);
+    // 第 11/12 页不应出现在输出里
+    assert.ok(!out.includes('bulk-11'), `第 11 页不应展示: ${out}`);
+    assert.ok(!out.includes('bulk-12'), `第 12 页不应展示: ${out}`);
+  });
+});
+
+// ---------- abs concept: 概念页脚手架（给写入定结构，不替判断） ----------
+describe('cmdConcept', () => {
+  test('生成带四段骨架的页，并登记进 index', async () => {
+    const r = await cmdConcept({ dir: projectA, slug: 'docker-oom', title: 'Docker 内存超限', tags: 'docker,坑' });
+    assert.ok(r.includes('docker-oom'), r);
+    const p = join(projectA, '.brain', 'concepts', 'docker-oom.md');
+    const body = await fs.readFile(p, 'utf8');
+    // 骨架该有的位置都在（内容仍由人填）
+    for (const sec of ['## 触发场景', '## ❌ 表现', '## 🛠 解法', '## 验证', '## 关联连接']) {
+      assert.ok(body.includes(sec), `缺段 ${sec}: ${body}`);
+    }
+    assert.ok(body.includes('tags: [concept, docker, 坑]'), `tags 未生效: ${body}`);
+    assert.ok(body.includes('id: docker-oom'), `id 未冻结: ${body}`);
+    const idx = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(idx.includes('[[docker-oom]]'), `应登记进 index: ${idx}`);
+  });
+
+  // 硬规则「已存在的人工内容一律不覆盖」—— 重复建必须拒绝，不能清掉别人写的正文。
+  test('已存在时不覆盖（保留人工内容）', async () => {
+    const p = join(projectA, '.brain', 'concepts', 'keepme.md');
+    await fs.writeFile(p,
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: active\n---\n' +
+      '# 概念：人工写的重要内容\n\n## 触发场景\nX\n\n## 验证\n跑 test\n', 'utf8');
+    const r = await cmdConcept({ dir: projectA, slug: 'keepme', title: '试图覆盖' });
+    assert.ok(r.includes('不覆盖'), `应拒绝覆盖: ${r}`);
+    const body = await fs.readFile(p, 'utf8');
+    assert.ok(body.includes('人工写的重要内容'), '原内容不该被改');
+    assert.ok(!body.includes('试图覆盖'), '不该写入新标题');
+  });
+
+  // slug 即文件名 —— 必须挡住路径分隔符，否则能写到 concepts/ 之外。
+  test('slug 清洗：路径分隔符不能逃出 concepts/', async () => {
+    const r = await cmdConcept({ dir: projectA, slug: '../../evil', title: '越界' });
+    assert.ok(!/[/\\]/.test(r.replace(/^.*→\s*/, '').split('\n')[0].split('.brain/concepts/')[1] || ''),
+      `生成的路径不该含分隔符: ${r}`);
+    await assert.rejects(() => fs.access(join(projectA, 'evil.md')), '不该写到项目根');
+  });
+
+  test('无 slug 时给用法', async () => {
+    const r = await cmdConcept({ dir: projectA });
+    assert.ok(r.includes('用法'), r);
+  });
+});
+
+// ---------- 实时化: blocked / note / 进度断点 (TASK-RT) ----------
+describe('cmdTask blocked + note (实时断点)', () => {
+  test('state: 改行首状态标记（原地，不搬区）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TB-1', note: '做 W' });
+    const r = await cmdTask({ dir: projectA, action: 'state', id: 'TB-1', note: '滞留中' });
+    assert.ok(r.includes('滞留中'), r);
+    const t = await readTodo(projectA);
+    assert.ok(/\[-\].*\[TB-1\]/.test(t), `应在原行改标记（[-] = 滞留中）:\n${t}`);
+    assert.ok(!t.includes('## Blocked'), '不该再有 Blocked 区');
+    assert.ok(t.includes('做 W'), '说明不应丢');
+    // 非法状态被拒
+    await assert.rejects(() => cmdTask({ dir: projectA, action: 'state', id: 'TB-1', note: '莫名其妙' }));
+  });
+
+  test('note: 子项追加到任务下（标准 md，不挪任务位置）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TN-1', note: '做 V' });
+    const r = await cmdTask({ dir: projectA, action: 'note', id: 'TN-1', note: '改到 store.js L40，卡在 markDone' });
+    assert.ok(r.includes('✓') || r.includes('子项'), r);
+    const t = await readTodo(projectA);
+    const rows = t.split('\n');
+    const at = rows.findIndex((l) => l.includes('TN-1'));
+    assert.ok(rows[at + 1].includes('改到 store.js L40'), `子项行应紧跟任务行:\n${t}`);
+  });
+
+  test('note 追加多条子项（不覆盖 —— 2026-10-16 用户定「不限，写多少算多少」）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'TN-2' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TN-2', note: '子项A' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TN-2', note: '子项B' });
+    const t = await readTodo(projectA);
+    const forTask = t.split('\n');
+    const idx = forTask.findIndex((l) => l.includes('TN-2'));
+    // 两条都在，且都缩进在任务下（标准 md 嵌套）
+    assert.ok(forTask[idx + 1].includes('子项A'), `第一条子项应在:\n${forTask.slice(idx, idx + 3).join('\n')}`);
+    assert.ok(forTask[idx + 2].includes('子项B'), `第二条子项应在:\n${forTask.slice(idx, idx + 3).join('\n')}`);
+    // 都是 2 空格缩进（嵌套层级）
+    assert.ok(forTask[idx + 1].startsWith('  - [ ] '), `子项要 2 空格缩进: ${JSON.stringify(forTask[idx + 1])}`);
+  });
+
+  test('note 幂等：同文子项不重复追加', async () => {
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'TN-3' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TN-3', note: '同一条' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TN-3', note: '同一条' });
+    const t = await readTodo(projectA);
+    const n = t.split('\n').filter((l) => l.includes('同一条')).length;
+    assert.equal(n, 1, `同文子项只应有一条:\n${t}`);
+  });
+
+  // ★ 回归（2026-10-18 实测）：`abs todo done` 原来把孩子无条件一起搬进 Done 区，
+  //   包括还没勾的 `- [ ]`。Done 区被 collapseDone 折叠成计数 → 那条待办从此看板里消失，
+  //   父任务却盖了【落地】。实测 data: .agents/.brain/todo.md 的 factory-docs-slim。
+  //   改为：未勾子项不随迁，留在 Todo 区，并在结语里点名。
+  // 2026-10-18 用户定：主子都是任务，子任务没完成就不许 done。
+  // 原来的做法（未勾子项随父进 Done）会让它在折叠区看不见 —— 那是错的，
+  // 现在改为直接拒绝，让人先勾完或先删。
+  test('★ 子项没做完就不许 done（拒绝，不动文件）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TD-1', note: '做带子项的' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TD-1', note: '还没做完的子项' });
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'TD-1' }),
+      /子任务未完成/,
+    );
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('还没做完的子项'), `子项不能丢: ${t}`);
+    assert.ok(/\[ \].*TD-1|\[ \] TD-1/.test(t), `任务应仍未完成: ${t}`);
+  });
+
+  test('已勾子项随任务进 Done，不残留在 Todo 区', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TD-2', note: '做完了的' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TD-2', note: '做完的子项' });
+    // 手动把子项勾上（note 写的是未完成形态）
+    const f = join(projectA, '.brain', 'todo.md');
+    const before = await fs.readFile(f, 'utf8');
+    await fs.writeFile(f, before.replace('- [ ] 做完的子项', '- [x] 做完的子项'), 'utf8');
+    await cmdTask({ dir: projectA, action: 'child-done', id: 'TD-2', n: 1 });
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'TD-2' });
+    assert.match(r, /已完成/, r);
+    assert.ok(!r.includes('未勾子项'), `无遗留时不该报遗留: ${r}`);
+    const t = await readTodo(projectA);
+    const doneSec = t;
+    assert.ok(doneSec.includes('做完的子项'), `已勾子项应随迁 Done: ${doneSec}`);
+    const todoSec = t.split('## Todo')[1]?.split('## ')[0] || '';
+    assert.ok(!todoSec.includes('做完的子项'), `已勾子项不应残留 Todo: ${todoSec}`);
+  });
+
+  // ★ 回归（2026-10-16 实测）：带子项的任务后面再 start，会在中间插一个空行。
+  //   根因：insertTask 插在「分区末尾」，而分区末尾本来就有排版空行，
+  //   插到它后面 → 每建一条多一个空行，而闸门明写「条目之间不允许空行」。
+  test('★ 带子项的任务后新建任务，不得插空行（条目之间不允许空行）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TN-4', note: '有子项的' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'TN-4', note: '子项' });
+    await cmdTask({ dir: projectA, action: 'start', id: 'TN-5', note: '后面的' });
+    const t = await readTodo(projectA);
+    const sec = t.split('## Todo')[1]?.split('## Done')[0] || '';
+    // 只看**条目之间**的空行（分区标题前后的排版空行不算）。
+    // 取首条目到末条目之间，里面不得有空行。
+    const lines = sec.split('\n');
+    const isItem = (l) => l.trimStart().startsWith('- ');
+    const first = lines.findIndex(isItem);
+    let last = first;
+    for (let i = lines.length - 1; i >= 0; i--) { if (isItem(lines[i])) { last = i; break; } }
+    const between = lines.slice(first, last + 1).filter((l) => l.trim() === '');
+    assert.equal(between.length, 0, `条目之间不该有空行:\n${JSON.stringify(sec)}`);
+  });
+
+  test('state 未找到 id 时明确提示', async () => {
+    const r = await cmdTask({ dir: projectA, action: 'state', id: 'NOPE2', note: '滞留中' });
+    assert.ok(r.includes('NOPE2'), r);
+  });
+});
+
+describe('根文件形状与标签白名单（2026-10-05 用户定：写死、不允许新增）', () => {
+  // ★ 存量 vs 新增的分界（2026-10-05 真机实测定案）：
+  //   写入前就存在的脏行 → **不阻写入**（否则一条历史脏行就把整个库锁成只读，
+  //   实测真库 corp_agent 就因一条超长断点 + 8 条 []() 条目，连 abs rule add 都做不到），
+  //   改由 lint 报出；只有**本次写入引入**的违规才拒。
+  //   代价：「预先往文件里塞脏行」造不出拒绝场景 —— 那本身就是存量，放行是对的。
+  test('存量非法标签不阻写入（降级为 lint 报告）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## 备忘\n- 乱加的东西\n', 'utf8');
+    const r = await cmdRule({ dir: projectA, action: 'add', text: '乙' });
+    assert.ok(r.includes('乙'), r); // 写入必须成功
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('SECTIONS-NOT-ALLOWED'), `lint 应报出非法标签:\n${out}`);
+  });
+
+  test('todo 的存量 ### 非法小节也不阻写入', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      '# 📋 Todo Board\n\n## Todo\n## Done\n### 备忘\n- 乱加\n', 'utf8');
+    const r = await cmdTask({ dir: projectA, action: 'start', id: 'X1', note: '描述x' });
+    assert.ok(r.includes('登记'), r);
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('不允许的小节'), `lint 应报出非法小节:\n${out}`);
+  });
+
+  // ★ 对偶：写入侧与体检侧必须同标准。曾只查条数不查单条长度，
+  //   手工编辑绕过写入校验 → 89 字的条目静默通过，lint 报 0 问题（假健康）。
+  test('超长 Rule：写入被拒 + 存量 lint 能报（两侧同标准）', async () => {
+    const long = '动手前先停，自问三条：① 需求明确吗（不明确先问，别猜）② 登记 todo 了吗（要改文件就先 start）③ 怎么验证（跑什么、什么算过）。问完再改文件。';
+    // 侧一：写入必须拒
+    const r = await cmdRule({ dir: projectA, action: 'add', text: long });
+    assert.ok(/太长/.test(r), `写入侧应拒超长 Rule（${long.length} 字）: ${r}`);
+    // 侧二：手工写入的同一条，lint 必须能报（存量靠体检暴露）
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      `# 🗂 Graph Index\n\n## Rules\n- ${long}\n`, 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('RULES-TOO-LONG'), `lint 应报出超长 Rule（修前报 0 问题）:\n${out}`);
+  });
+
+  test('index 条目 [[]] 形状（存量 []() 由 lint 报）', async () => {
+    // 注：写入闸门只能校验「本次写入经过的区」，而 cmdRule 只动 Rules 区；
+    // Concepts 区的存量脏行靠 lint 全文件扫出来（真库实测：一次报出 8 条）。
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## Concepts\n- [a](concepts/a.md) — 页a\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('INDEX-ENTRY'), `lint 应报出 []() 格式的条目:\n${out}`);
+  });
+
+  // ★ 关键：旧格式必须能自动升级，不能被闸门卡死（用户 2026-10-05 要求）
+  test('旧四区制文件在下次写入时自动升级为新样式（内容不丢）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '## In Progress', '- [ ] 做事 (认领 2026-09-08)',
+        '## Todo', '- [ ] 老A', '## Blocked', '- [ ] 卡住的 — 原因', '## Done', '- [x] 老完成', ''].join('\n'),
+      'utf8');
+    const r = await cmdTask({ dir: projectA, action: 'start', id: 'NEW-1', note: '新任务' });
+    assert.ok(r.includes('登记'), r);
+    const t = await readTodo(projectA);
+    assert.ok(!t.includes('## In Progress') && !t.includes('## Blocked') && !t.includes('## Done'),
+      `旧区应消失:\n${t}`);
+    for (const frag of ['做事', '老A', '卡住的', '老完成']) {
+      assert.ok(t.includes(frag), `旧内容不应丢: ${frag}\n${t}`);
+    }
+    assert.match(t, /^- \[-\].*卡住的/m, `Blocked 旧行应落成 [-] 滞留中:\n${t}`);
+  });
+
+  // ★ 关键：历史脏数据不能卡死后续写入（实测踩过：真库仅一条脏行就让所有写入失败）
+  test('存量脏行不阻后续写入（降级为 lint 报告）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'log.md'),
+      '# 🗒 Activity Log\n\n## [2026-09-29 23:56] [[tester]] note | APP-DESIGNKIT\n', 'utf8');
+    const r = await cmdLog({ dir: projectA, title: '新流水一句' });
+    assert.ok(r.includes('log'), r);
+    // 但 lint 要能把那条报出来（存量靠体检暴露，不靠写入报错）
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/LOG-ENTRY/.test(out), `lint 应报出无内容的旧行:\n${out}`);
+  });
+
+  test('本次写入引入的超长断点被拒', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'NEW-A', note: '做A' });
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'note', id: 'NEW-A', note: '报告'.repeat(120) }),
+      /子项太长/,
+    );
+  });
+
+  test('本次写入引入的报告体断点被拒', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'NEW-B', note: '做B' });
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'note', id: 'NEW-B', note: '① 先做X ② 再做Y ③ 最后做Z' }),
+      /报告\/清单/,
+    );
+  });
+
+  test('本次写入引入的脏条目被拒（走 editFile 闸门直写）', async () => {
+    const p = brainPath(projectA, 'index.md');
+    const before = await fs.readFile(p, 'utf8');
+    const bad = before.replace('## Concepts', '## Concepts\n- 没有方括号的裸条目');
+    await assert.rejects(
+      () => editFile(p, () => ({ text: bad })),
+      /应以 `- \[\[页名\]\] …` 开头/,
+    );
+  });
+});
+
+// ---------- TODO 内容闸门（2026-10-05）----------
+// 背景：闸门此前只管骨架（分区/H1/空行），不管内容 → AI 把 todo 当笔记本，
+// 实施报告/测试数据/需求清单全塞进断点，文件涨到上百行而 lint 报 0 问题。
+// 这几个用例锁住「todo 只能加 todo」：超长/报告体 一律拒绝写入，不静默截断。
+describe('todo 内容闸门（只放 todo）', () => {
+  test('正常短断点照常写入', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TG-1', note: '做 A' });
+    const r = await cmdTask({ dir: projectA, action: 'note', id: 'TG-1', note: '改到 store.js L40，卡在 markDone' });
+    assert.ok(r.includes('子项'), r);
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('改到 store.js L40'), `短子项应写入:\n${t}`);
+  });
+
+  test('超长断点被拒（不静默截断）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TG-2', note: '做 B' });
+    const huge = '实施报告内容'.repeat(50); // 300 字 > 200
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'note', id: 'TG-2', note: huge }),
+      /子项太长/,
+    );
+    // 关键：拒了就不能落盘（不能只报错却把截断后的半截写进去）
+    const t = await readTodo(projectA);
+    assert.ok(!t.includes(huge.slice(0, 20)), `被拒的内容不应部分写入:\n${t}`);
+  });
+
+  test('报告体断点被拒（多句 / 编号清单）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TG-3', note: '做 C' });
+    const report = '① tab 位置错了 ② 文字重复两遍 ③ 去掉归档按钮';
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'note', id: 'TG-3', note: report }),
+      /报告\/清单/,
+    );
+  });
+
+  // 回归（2026-10-05 实测误报）：分号被当成句子分隔符，把一条完全正常的
+  // 「改到哪；同类约束见 xx」断点判成 3 句而拒绝写入。中文技术写作里
+  // 分号常用来连接同一个意思的两部分，不是新句子。
+  test('断点里的分号不算多句（不误伤正常断点）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'TG-4', note: '做 D' });
+    const r = await cmdTask({
+      dir: projectA,
+      action: 'note',
+      id: 'TG-4',
+      note: '改到 src/lint.js 的汇总处；同族约束见 read-side-output-must-not-scale（Done 区已折叠计数）',
+    });
+    assert.ok(r.includes('子项'), `带分号的正常子项应写下:\n${r}`);
+    const t = await readTodo(projectA);
+    assert.ok(t.includes('汇总处'), `内容应落盘:\n${t}`);
+  });
+
+  test('lint 报出历史遗留的臃肿断点与超长根文件', async () => {
+    const p = brainPath(projectA, 'todo.md'); // beforeEach 已 init 过骨架
+    const bloat = '报告内容'.repeat(60);
+    await fs.writeFile(
+      p,
+      ['# 📋 Todo Board', '', '## Todo', `- [ ] [进行中] TL-1 [[tester]] — 旧任务 (认领 ${today()})`,
+        `  - [ ] ${bloat}`, '## Done', ''].join('\n'),
+      'utf8',
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('TODO-BREAKPOINT-BLOAT'), `lint 应报臃肿断点:\n${out}`);
+  });
+});
+
+// ---------- TODO 裸文本闸门（2026-10-11）----------
+// 同一个坑的第三次复发，所以换个测法：不再测「某种写法的报告」，而是测
+// 「任何非任务/非断点的文本行」。
+//
+// 背景：2026-10-05 补的判据挂在**行的形态**上 —— 只查 `↳ 断点:` 行。
+// 于是 AI 把实施报告写成**紧跟任务行下面的裸文本行**（不带 ↳ 前缀），
+// 三层防线全部放行：
+//   · 写入闸门 assertTodoContent：只认任务行/断点行，其余 continue（无 else）
+//   · 形状闸门 checkFileShape：只看标签与分区，裸文本不在形状规则内
+//   · lint checkRootFiles：只查断点行；60 行上限也没到
+// 实测 .agents/.brain/todo.md 被塞进 10 行实施报告（第 4-7、10-15 行），
+// 而 lint 报 0 问题 —— 与 2026-10-05 那次的症状一模一样。
+// 改法是白名单（isAllowedTodoLine）：Todo 区里除了任务行/断点/空行/标题，别的都非法。
+describe('todo 裸文本闸门（Todo 区只放任务）', () => {
+  // 回归（2026-10-11 真库复现）：报告写成裸文本行，必须拒。
+  // 注意要经 enforceBrainFormat —— 闸门是那里调用的（structure.js），
+  // 而它按「本次写入新引入」判：prev = 写入前的内容。
+  test('Todo 区里的裸文本行被拒（真库形态复现）', async () => {
+    const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+    const spec = { h1: '# 📋 Todo Board' };
+    const clean = [
+      '# 📋 Todo Board', '', '## Todo',
+      `- [ ] [进行中] TB-1 [[tester]] — 重写看图流程 (认领 ${today()})`, '',
+      '## Done', '',
+    ].join('\n');
+    // 在干净内容上新增一行裸文本报告（= 2026-10-11 真库的形态）
+    const dirty = clean.replace(
+      `(认领 ${today()})`,
+      `(认领 ${today()})\n一、看图要用 preview.py，不要导成 pptx 再 shot_pptx`,
+    );
+    assert.throws(
+      () => enforceBrainFormat(dirty, spec, clean),
+      /不允许裸文本/,
+      '裸文本行应被拒写入',
+    );
+    // 对照：同样位置写合法子项则放行
+    const good = clean.replace(
+      `(认领 ${today()})`,
+      `(认领 ${today()})\n  - [ ] 改到 src/lint.js 的白名单判据`,
+    );
+    assert.doesNotThrow(() => enforceBrainFormat(good, spec, clean));
+  });
+
+  // 按区判：Done/Archived 区的行不该按 Todo 区白名单判。
+  test('Done 区的日期分组与归档链接不算裸文本', async () => {
+    const p = brainPath(projectA, 'todo.md');
+    await fs.writeFile(
+      p,
+      [
+        '# 📋 Todo Board', '', '## Todo', '',
+        '## Done', '', '### 2026-10-11',
+        `- [x] TD-1 [[tester]] — 已完成的事 (完成 ${today()})`,
+        '', '### Archived', '- [[log-2026-10-11]] 完成任务 7 条', '',
+      ].join('\n'),
+      'utf8',
+    );
+    // 加一条正常任务应当放行（Done 区的 `###` 与归档链接不该被判非法）
+    const r = await cmdTask({ dir: projectA, action: 'start', id: 'TD-2', note: '新任务' });
+    assert.ok(r.includes('TD-2'), `Done 区内容不应阻塞新写入:\n${r}`);
+  });
+
+  // 存量放行：老库已经有裸文本时，不能连新任务都写不进去（否则库被锁死）。
+  test('存量裸文本放行（不锁死老库）', async () => {
+    const p = brainPath(projectA, 'todo.md');
+    const dirty = [
+      '# 📋 Todo Board', '', '## Todo',
+      `- [ ] [进行中] TE-1 [[tester]] — 旧任务 (认领 ${today()})`,
+      '一、这是历史遗留的裸文本报告', '', '## Done', '',
+    ].join('\n');
+    await fs.writeFile(p, dirty, 'utf8');
+    // 带 prevSig（= 现有内容签名）时放行
+    assert.doesNotThrow(() => assertTodoContent(dirty, violationSignatures(dirty)));
+    // 不带 prevSig（= 凭空写这份内容）时必须拦住
+    assert.throws(() => assertTodoContent(dirty, null), /不允许裸文本/);
+  });
+
+  // lint 同源：存量脏数据要能被报出来（闸门拦新的，lint 抓老的）。
+  test('lint 报出 Todo 区的裸文本（存量脏数据）', async () => {
+    const p = brainPath(projectA, 'todo.md');
+    await fs.writeFile(
+      p,
+      [
+        '# 📋 Todo Board', '', '## Todo',
+        `- [ ] [进行中] TF-1 [[tester]] — 旧任务 (认领 ${today()})`,
+        '一、历史遗留的实施报告', '', '## Done', '',
+      ].join('\n'),
+      'utf8',
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('TODO-STRAY-PROSE'), `lint 应报裸文本:\n${out}`);
+  });
+});
+
+// ---------- 实时化: abs note 经验暂存通道 (TASK-RT) ----------
+describe('cmdNote (经验实时暂存)', () => {
+  test('写一条 source 页: 文件名带日期slug、frontmatter 齐、内容含原文', async () => {
+    const r = await cmdNote({ dir: projectA, text: 'docker 内存超限导致 prisma 429', tags: 'docker,坑' });
+    assert.ok(r.includes('✓'), r);
+    const srcDir = join(projectA, '.brain', 'sources');
+    const files = (await fs.readdir(srcDir)).filter((f) => f.endsWith('.md'));
+    assert.equal(files.length, 1);
+    const body = await fs.readFile(join(srcDir, files[0]), 'utf8');
+    assert.ok(body.startsWith('---\n'), '应有 frontmatter');
+    assert.ok(body.includes('tags: [source'), '首标签 source');
+    assert.ok(body.includes('docker 内存超限导致 prisma 429'));
+  });
+
+  test('幂等: 同文本 60s 内重复只落一份', async () => {
+    await cmdNote({ dir: projectA, text: '重复我' });
+    await cmdNote({ dir: projectA, text: '重复我' });
+    const srcDir = join(projectA, '.brain', 'sources');
+    const files = (await fs.readdir(srcDir)).filter((f) => f.includes('dedup') || f.endsWith('.md'));
+    const n = files.length;
+    assert.ok(n >= 1, '至少一条');
+    // 关键断言: 两次调用后含"重复我"的文件只有一个
+    let dup = 0;
+    for (const f of files) {
+      const b = await fs.readFile(join(srcDir, f), 'utf8');
+      if (b.includes('重复我')) dup++;
+    }
+    assert.equal(dup, 1, `同文本应只落一份, 实际 ${dup}`);
+  });
+
+  test('★ 子串不算重复（2026-10-19 实测 bug）：新经验只是旧经验的一段时必须照落', async () => {
+    // 原实现用 body.includes(clean) 判重 → 已落「某长句」后，再记它里面的一段
+    // 会被当成重复静默丢掉，内容永久丢失。用本轮唯一的长句/短句对避开前面用例的污染。
+    await cmdNote({ dir: projectA, text: '子串判重探针长长长长句' });
+    await cmdNote({ dir: projectA, text: '子串判重探针' });
+    const srcDir = join(projectA, '.brain', 'sources');
+    const bodies = [];
+    for (const f of await fs.readdir(srcDir)) {
+      bodies.push(await fs.readFile(join(srcDir, f), 'utf8'));
+    }
+    // ★ 断言必须用**整行相等**，不能 `b.includes('TITLE: 子串判重探针')`：
+    //   长串页写的是 `TITLE: 子串判重探针长长长长句`，它也包含那个前缀 ——
+    //   用 includes 会让这条测试在旧实现下也绿（实测踩到，同一个子串陷阱）。
+    const titles = bodies.flatMap((b) => b.split('\n').filter((l) => l.startsWith('TITLE: ')).map((l) => l.trim()));
+    assert.ok(titles.includes('TITLE: 子串判重探针'), `短的那条应独立成页；被误判成重复则这里会红（现有: ${titles.join(' | ')}）`);
+    assert.ok(titles.includes('TITLE: 子串判重探针长长长长句'), '长的那条也应在');
+  });
+
+  test('追加到 index Sources 区 + log 一行', async () => {
+    await cmdNote({ dir: projectA, text: '要进索引的经验' });
+    const index = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(/## Sources/.test(index));
+    const log = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
+    assert.ok(/^## \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]/m.test(log), 'log 应有一行流水');
+  });
+
+  test('空文本拒绝', async () => {
+    const r = await cmdNote({ dir: projectA, text: '   ' });
+    assert.ok(r.includes('用法') || r.includes('text'), r);
+  });
+
+  test('--type 写入 frontmatter（合法值）', async () => {
+    const r = await cmdNote({ dir: projectA, text: '用户要求发布前人工核对', type: 'constraint' });
+    assert.ok(r.includes('✓'), r);
+    const srcDir = join(projectA, '.brain', 'sources');
+    const files = (await fs.readdir(srcDir)).filter((f) => f.endsWith('.md'));
+    const body = await fs.readFile(join(srcDir, files[0]), 'utf8');
+    assert.ok(body.includes('type: constraint'), 'frontmatter 应含 type: constraint');
+  });
+
+  test('--type 非法值不写入（静默降级为无类型）', async () => {
+    const r = await cmdNote({ dir: projectA, text: '类型非法值', type: 'bogus' });
+    assert.ok(r.includes('✓'), r);
+    const srcDir = join(projectA, '.brain', 'sources');
+    const files = (await fs.readdir(srcDir)).filter((f) => f.endsWith('.md'));
+    const body = await fs.readFile(join(srcDir, files[0]), 'utf8');
+    assert.ok(!body.includes('type: bogus'), '非法 type 不应写入');
+  });
+});
+
+// ---------- 查看命令: todo/index/log (TASK-CLI) ----------
+describe('cmdShow (todo/index/log 查看)', () => {
+  test('view=todo 等价 board 输出', async () => {
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'TS-1' });
+    const a = await cmdShow({ dir: projectA, view: 'todo' });
+    const b = await cmdBoard({ dir: projectA });
+    assert.equal(a, b);
+    assert.ok(a.includes('TS-1'));
+  });
+
+  test('view=index 输出 index.md 全文', async () => {
+    const out = await cmdShow({ dir: projectA, view: 'index' });
+    assert.ok(out.includes('Graph Index'));
+  });
+
+  test('view=log 输出 log.md 倒序流水', async () => {
+    await cmdLog({ dir: projectA, title: '查看用流水行' });
+    const out = await cmdShow({ dir: projectA, view: 'log' });
+    assert.ok(out.includes('Activity Log'));
+    assert.ok(out.includes('查看用流水行'));
+  });
+
+  test('index/log 缺文件时给友好提示不抛错', async () => {
+    await fs.rm(join(projectA, '.brain', 'index.md'));
+    const out = await cmdShow({ dir: projectA, view: 'index' });
+    assert.ok(out.includes('index.md') && (out.includes('不存在') || out.includes('init')), out);
+  });
+
+  test('未知 view 报用法', async () => {
+    const out = await cmdShow({ dir: projectA, view: 'nope' });
+    assert.ok(out.includes('todo') && out.includes('index') && out.includes('log'), out);
+  });
+});
+
+describe('cmdLint', () => {
+  const PAGE = (body) => `---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n${body}`;
+
+  // 回归（2026-10-05 实测）：体检输出被同类问题淹没 —— abs 自带的 log.md 有 102 条
+  // 历史行缺 [[作者]]，102 条 LOG-ENTRY 遮住了其它 12 条真问题（DRAFT-STALE/DEAD-LINK）。
+  // 同类 > 阈值折叠成「前 3 条 + N 条同类」，全量用 --all 拿。
+  test('同类问题折叠计数（不淹没真问题）', () => {
+    const many = ['# 🗒 Activity Log', ''].concat(
+      Array.from({ length: 20 }, (_, i) => `## [2026-09-0${(i % 9) + 1} 10:0${i % 10}] dev | 旧格式第${i}条`),
+    ).join('\n');
+    const folded = foldSameKind(many.split('\n').filter((x) => x.startsWith('## ['))
+      .map(() => `LOG-ENTRY: log.md 应为 \`## [YYYY-MM-DD HH:MM] [[作者]] kind | 正文\``));
+    assert.equal(folded.length, 4, `20 条同类应折成 3 条样例 + 1 行计数: ${JSON.stringify(folded)}`);
+    assert.ok(folded[3].includes('还有 17 条'), folded[3]);
+    assert.ok(folded[3].includes('共 20 条'), folded[3]);
+  });
+
+  test('不同类问题各自展开（不混为一类）', () => {
+    const mixed = [
+      ...Array.from({ length: 12 }, () => 'LOG-ENTRY: log.md 格式'),
+      ...Array.from({ length: 2 }, () => 'DEAD-LINK: a -> [[b]]'),
+    ];
+    const out = foldSameKind(mixed);
+    assert.equal(out.filter((x) => x.startsWith('DEAD-LINK')).length, 2, '小类不折');
+    assert.equal(out.filter((x) => x.startsWith('LOG-ENTRY')).length, 3, '大类折成 3 条');
+  });
+
+  // 回归（2026-10-05 实测）：对 sessions/ 报 DRAFT-STALE 与 DEAD-LINK 都是**误报** ——
+  // 会话快照是历史事实记录（「那天发生什么」），不存在「是否仍然有效」；
+  // 它正文里的 `[[x]]` 常是在谈这个记号本身（如「缺 [[作者]] 这个标记」），
+  // 不承担图谱链接职责。而 sessions 不可改 —— 改它就是改历史。
+  test('sessions/ 不参与 DRAFT-STALE 与 DEAD-LINK（历史快照豁免）', async () => {
+    const p = join(projectA, '.brain', 'sessions', 'log-2020-01-01.md');
+    await fs.writeFile(p,
+      '---\ntags: [session-log]\nupdated: 2020-01-01\nstatus: draft\n---\n\n' +
+      '# 会话 2020-01-01\n\n## 记录\n断点: 剥掉 <id>/[[作者]] 记号；另见 [[wiki]] 页\n',
+      'utf8');
+    // 把 mtime 推到 30 天前，触发 DRAFT-STALE 的时间条件（否则测不出豁免）
+    const old = new Date(Date.now() - 30 * 86400 * 1000);
+    await fs.utimes(p, old, old);
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/DRAFT-STALE[^\n]*log-2020-01-01/.test(out), `sessions 不该报 DRAFT-STALE:\n${out}`);
+    assert.ok(!/DEAD-LINK[^\n]*log-2020-01-01/.test(out), `sessions 不该报 DEAD-LINK:\n${out}`);
+  });
+
+  test('非 sessions 的页仍然照常报（豁免不扩大）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'hasdeadlink.md'),
+      PAGE('# 概念：有断链\n\n## 触发场景\n见 [[不存在的页]]\n\n## 验证\n跑 abs lint\n'),
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/DEAD-LINK[^\n]*hasdeadlink/.test(out), `concepts 仍应报 DEAD-LINK:\n${out}`);
+  });
+
+  // 回归: lint 提示里的路径带 .brain/ 前缀。
+  // 曾经只给 vault 相对路径（concepts/x.md）→ 用户到项目根找 concepts/ 找不到（真实踩过）。
+  // NO-TAIL: concept 只有「头」（触发场景/表现）没「尾」（可执行的东西）→ 只能信，不能验。
+  // 判据刻意宽松: 尾巴的本质不是「叫验证」，而是给出可执行的东西。
+  // 实测依据: 本仓 26 页段名高度分散（`## ✅ 处置` 出现 17 次 > `## 🛠 解法`），
+  // 首版只认「验证」二字误报 7/11（64%）→ 噪音 → 规则会被忽略。
+  test('NO-TAIL: 只有头、无任何可执行尾巴的页要被报出来', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'headonly.md'),
+      PAGE('# 概念：只有头\n\n## 触发场景\n遇到了某问题\n\n## ❌ 表现\n报错了\n'),
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/NO-TAIL[^\n]*headonly\.md/.test(out), `应报 NO-TAIL: ${out}`);
+  });
+
+  // 宽松判据的核心：这些「不叫验证」的段名都算有尾 —— 一个都不该报。
+  // 每一条都来自本仓真实页面的段名（不是编的）。
+  test('NO-TAIL 宽松判据: 处置/做法/步骤/清单/判据/测试要点 都算有尾', async () => {
+    const tails = {
+      dispose: '## ✅ 处置\n按这个来\n',        // agents-skills-not-ownerless
+      howto: '## 做法\n这样修\n',              // self-authored-evidence
+      order: '## ✅ 正确顺序\n1. 先取证\n',     // silent-data-loss-diagnosis
+      checklist: '## ✅ 部署检查清单\n- 查副本\n', // deploy-artifact-copies
+      criteria: '## 判据（可量化）\n先统计\n',   // summary-truncation-hidden-cause
+      testpoints: '## 测试要点\n靠回归测试守住\n', // self-triggering-hook-loop
+      steps: '## ✅ 分析步骤（可复用）\n分解开销\n', // perf-fixed-overhead
+      itemform: '## 🛠 解法\n3. 验证命令：`npm test`\n', // hook-sh-not-bash 的写法
+    };
+    for (const [n, tail] of Object.entries(tails)) {
+      await fs.writeFile(join(projectA, '.brain', 'concepts', `${n}.md`),
+        PAGE(`# 概念\n\n## 触发场景\nX\n\n${tail}`), 'utf8');
+    }
+    const out = await cmdLint({ dir: projectA });
+    for (const n of Object.keys(tails)) {
+      assert.ok(!new RegExp(`NO-TAIL[^\\n]*${n}\\.md`).test(out), `${n} 有尾，不该被误报: ${out}`);
+    }
+  });
+
+  // 防判据退化成「什么都算」: 正文随口提「验证」但没有可执行内容 → 仍须报。
+  test('NO-TAIL: 正文提了「验证」但没有可执行尾巴，仍要报（防判据放宽过头）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'proseonly.md'),
+      PAGE('# 概念：只在正文提到验证\n\n## 触发场景\n这个坑要在验证环境里复现\n\n## ❌ 表现\n报错了\n'),
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/NO-TAIL[^\n]*proseonly\.md/.test(out), `只在正文提「验证」不算有尾，应报: ${out}`);
+  });
+
+  // 骨架自带 `## 验证` 占位；判据必须能识破「只有占位注释的空段」，
+  // 否则 abs concept 建完就自动"合格"，永远没人填尾巴（假阴性）。
+  test('NO-TAIL: abs concept 的未填骨架要被报出（占位注释不算内容）', async () => {
+    await cmdConcept({ dir: projectA, slug: 'skel-empty', title: '未填骨架' });
+    let out = await cmdLint({ dir: projectA });
+    assert.ok(/NO-TAIL[^\n]*skel-empty\.md/.test(out), `未填骨架应报 NO-TAIL: ${out}`);
+    // 填上真内容后不该再报
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'skel-empty.md'),
+      PAGE('# 概念：填好了\n\n## 触发场景\nX\n\n## 验证\n跑 `npm test` 全绿\n'), 'utf8');
+    out = await cmdLint({ dir: projectA });
+    assert.ok(!/NO-TAIL[^\n]*skel-empty\.md/.test(out), `填好后不该再报: ${out}`);
+  });
+
+  // sessions/ 命名契约：一天一个文件（实测 codebuddy 一天曾出现 5 个文件、5 种 tags）。
+  test('SESSIONS-SPLIT: 同一天多个文件会被报出', async () => {
+    for (const n of ['log-2026-09-07', '2026-09-07-ui-fixes', '2026-09-07-todo归档']) {
+      await fs.writeFile(join(projectA, '.brain', 'sessions', `${n}.md`),
+        '---\ntags: [session-log]\nupdated: 2026-09-07\nstatus: active\n---\n# X\n\n## 验证\n跑 test\n', 'utf8');
+    }
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/SESSIONS-SPLIT[^\n]*2026-09-07/.test(out), `应报同天多文件: ${out}`);
+    assert.ok(/SESSIONS-SPLIT[^\n]*3 个文件/.test(out), `应给文件数: ${out}`);
+  });
+
+  test('SESSIONS-SPLIT 不误报: 一天一个文件就放行', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-08.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-08\nstatus: active\n---\n# X\n\n## 验证\n跑 test\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SESSIONS-SPLIT[^\n]*2026-09-08/.test(out), `单文件不该报: ${out}`);
+  });
+
+  // 实例: codebuddy 的 2026-09-07-ui-fixes.md（tags: [source]）等页错位在 sessions/。
+  // 尾巴按 kind 分档（2026-11-05）：决策类知识天生没有可跑的验证命令，
+  // 硬要写就是编。用户定的方向是 abs 要做大型知识图谱 —— 不能只有故障排查一种形态。
+  test('NO-TAIL 分档: kind=decision 给出取舍依据就放行（不要求验证命令）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'pickdb.md'),
+      '---\ntags: [concept]\nkind: decision\nupdated: 2026-11-05\nstatus: active\n---\n' +
+      '# 概念：为什么用 SQLite\n\n## 触发场景\n想换图数据库\n\n' +
+      '## 当时的依据\n放弃 Neo4j：多养一个常驻进程，而本场景是开工时查一次\n',
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/NO-TAIL[^\n]*pickdb\.md/.test(out), `决策类有依据就不该报 NO-TAIL: ${out}`);
+  });
+
+  test('NO-TAIL 分档: kind=decision 既无验证也无依据仍要报', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'nobasis.md'),
+      '---\ntags: [concept]\nkind: decision\nupdated: 2026-11-05\nstatus: active\n---\n' +
+      '# 概念：选了个方案\n\n## 触发场景\n要选一个\n\n## 结论\n选了 A\n',
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/NO-TAIL[^\n]*nobasis\.md/.test(out), `只有结论没有依据，应报: ${out}`);
+  });
+
+  test('NO-TAIL 分档: kind=gotcha 仍要验证尾巴（现状不变）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'gotcha1.md'),
+      '---\ntags: [concept]\nkind: gotcha\nupdated: 2026-11-05\nstatus: active\n---\n' +
+      '# 概念：一个坑\n\n## 触发场景\nX\n\n## 当时的依据\n因为这么想过\n',
+      'utf8');
+    const out = await cmdLint({ dir: projectA });
+    // 「依据」不是 gotcha 要的东西 —— 坑必须给出怎么确认不再犯
+    assert.ok(/NO-TAIL[^\n]*gotcha1\.md/.test(out), `坑类只写依据不够，应报: ${out}`);
+  });
+
+  // SESSIONS-MISPLACED: sessions/ 里放 source 页会被报出
+  test('SESSIONS-MISPLACED: sessions/ 里放 source 页会被报出', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-09-exhaust.md'),
+      '---\ntags: [source]\nupdated: 2026-09-09\nstatus: draft\n---\n# 来源：X\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/SESSIONS-MISPLACED[^\n]*2026-09-09-exhaust/.test(out), `应报错位页: ${out}`);
+  });
+
+  // 归档页（旧命名 todo-archive tag）与快照（session-log）都必须放行 —— 否则全局误报。
+  test('SESSIONS-MISPLACED 不误报: session-log 与 todo-archive 都放行', async () => {    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-10-todo归档.md'),
+      '---\ntags: [todo-archive, 历史]\nupdated: 2026-09-10\nstatus: reviewed\n---\n# Todo 归档\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-10.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-10\nstatus: active\n---\n# X\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SESSIONS-MISPLACED[^\n]*2026-09-10/.test(out), `两种合法 tag 都不该报: ${out}`);
+  });
+
+  test('lint 提示的路径带 .brain/ 前缀（可直接去项目里找）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'over.md'),
+      PAGE('# 概念：超长\n' + Array.from({ length: 160 }, (_, i) => `行 ${i}`).join('\n')), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/OVER-SIZE: \.brain\/concepts\/over\.md/.test(out), `应带 .brain/ 前缀: ${out}`);
+    assert.ok(!/(^|[^.])concepts\/over\.md/.test(out.replace(/\.brain\/concepts/g, '')), `不该出现无前缀路径: ${out}`);
+  });
+
+  // 回归: .brain 顶层文件（index/log/todo）也是真实页。
+  // 以前只把子目录当页 → [[todo]] 被判死链（误报），反过来逼用户删掉正确引用。
+  test('链到顶层文件 [[todo]] 不算死链；真不存在的仍报', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'link-top.md'),
+      PAGE('# 概念：链到顶层\n[[todo]] [[log]] [[index]] [[查无此页]]'), 'utf8');
+    const idxP = join(projectA, '.brain', 'index.md');
+    const idx = await fs.readFile(idxP, 'utf8');
+    await fs.writeFile(idxP, idx.replace('## Sources', '## Sources\n- [[link-top]] — 链到顶层\n- [[todo]] — 看板'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/\[\[todo\]\]/.test(out), `[[todo]] 不该报死链: ${out}`);
+    assert.ok(!/\[\[log\]\]/.test(out), `[[log]] 不该报死链: ${out}`);
+    assert.ok(!/\[\[index\]\]/.test(out), `[[index]] 不该报死链: ${out}`);
+    assert.ok(/\[\[查无此页\]\]/.test(out), `真死链仍要报: ${out}`);
+  });
+
+  // 回归: 这个检查曾经"永不触发" —— 路径写成 brainPath(vault,'todo.md')（多一层 .brain），
+  // ENOENT 又被外层 try/catch 吞掉 → lint 永远 0 problem，静默失效。
+  // 故这里既测"会报"，也测"报了之后归档能消掉"。
+  // 判据精度（2026-11-16 审查）：TODO-NO-DESC 原来只看「有没有 ` — `」，
+  // 把用冒号写说明的老行误报成没描述。
+  test('TODO-NO-DESC 只报真的没描述的任务行', async () => {
+    const { taskBodyOf } = await import('../../code/lint.js');
+    assert.equal(taskBodyOf('- [ ] t-1 [[fanchao]] — 做点什么 (认领 2026-11-16)'), '做点什么');
+    assert.equal(taskBodyOf('- [ ] t-1 [[fanchao]] (认领 2026-11-16)').length < 4, true, '只有 id 应算没描述');
+    // 老行用冒号/无破折号，但内容在 —— 不该报
+    assert.ok(taskBodyOf('- [-] sites.php 剔除域名日志留档：比对旧生产域名集').length > 4);
+    assert.ok(taskBodyOf('- [ ] 小程序审核驳回修复(2026-09-22提审): ①按钮去字样').length > 4);
+
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '',
+        '- [ ] [2026-11-16 10:00] [有描述 做点什么] [[fc]]',
+        '- [-] [2026-11-15 09:00] [老行 用冒号写说明：本来就有内容] [[fc]]',
+        '- [ ] [2026-11-14 09:00] [only-id] [[fc]]', ''].join('\n'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/TODO-NO-DESC/.test(out) || (out.match(/TODO-NO-DESC/g) || []).length <= 1, `标题本身就是描述，不该大面积报: ${out}`);
+  });
+
+  // 2026-11-16 用户定：已完成的行全量留在 todo.md（不归档），所以「Done 太长」不再是问题。
+  // 这条测试反过来钉住：70 条已完成不报任何堆积类问题。
+  test('已完成行不再有堆积告警（Done 全量留在看板）', async () => {
+    const rows = Array.from({ length: 70 }, (_, i) => `- [x] PILE-${i} 【落地】 (完成 2026-09-10)`);
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', ...rows, ''].join('\n'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/DONE-PILED-UP/.test(out), `不该再有堆积告警: ${out}`);
+    assert.ok(!/DONE-NO-KIND|DONE-NO-DATE/.test(out), `结语日期齐全不该报: ${out}`);
+  });
+
+  // 2026-11-16：人页豁免 NO-INBOUND；sessions 的页不再要求登记 index（该段已废）。
+  test('人页不算孤岛；会话页不要求 index 登记', async () => {
+    await fs.mkdir(join(projectA, '.brain', 'entities'), { recursive: true });
+    await fs.mkdir(join(projectA, '.brain', 'sessions'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'entities', 'someone.md'),
+      '---\ntags: [entity, person]\nstatus: active\n---\n\n# someone\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-11-16.md'),
+      '---\ntags: [session-log]\nstatus: active\n---\n\n# 2026-11-16 记录\n\n## 会话 01a1\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/NO-INBOUND: \.brain\/entities\/someone\.md/.test(out), `人页不该报孤岛: ${out}`);
+    assert.ok(!/INDEX-MISSING: \.brain\/sessions\/log-2026-11-16/.test(out), `会话页不该要求登记: ${out}`);
+  });
+
+  test('健康图谱: 0 问题', async () => {
+    // 挂到 index 且互相链接的规范页。
+    // 含「## 验证命令」：NO-TAIL 规则要求 concept 给得出可跑的检查 ——
+    // 一个只有头没有尾的页不算「健康」（判据见 cmdLint 里 NO-TAIL 的注释）。
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'good.md'),
+      PAGE('# 概念：好页\n[[good-2]]\n\n## 验证命令\n跑 `npm test`\n'),
+      'utf8'
+    );
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'good-2.md'),
+      PAGE('# 概念：好页二\n关联 [[good]]\n\n## 验证命令\n看 `abs lint` 输出\n'),
+      'utf8'
+    );
+    let index = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    index = index.replace('## Concepts', '## Concepts\n- [[good]] — a\n- [[good-2]] — b');
+    await fs.writeFile(join(projectA, '.brain', 'index.md'), index, 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('0'), `应 0 问题: ${out}`);
+  });
+
+  test('死链被检出', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'bad-link.md'), PAGE('→ [[no-such-page]]'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('DEAD-LINK'), out);
+  });
+
+  test('孤岛页被检出', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'lonely.md'), PAGE('无任何链接'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('ORPHAN-PAGE'), out);
+  });
+
+  test('缺 frontmatter 被检出', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'nofm.md'), '直接正文', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('NO-FRONTMATTER'), out);
+  });
+
+  test('超尺寸页被检出', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'big.md'), PAGE('x'.repeat(9 * 1024)), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('OVER-SIZE'), out);
+  });
+
+  // 上限从 5120B 放宽到 8KB（实测偏紧: 68 页里仅 2 页超限且都只超一点）。
+  // 边界钉住：6KB 该放行，9KB 该报。
+  test('容量上限为 8KB：6KB 放行、9KB 报 OVER-SIZE', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'six.md'), PAGE('x'.repeat(6 * 1024)), 'utf8');
+    let out = await cmdLint({ dir: projectA });
+    assert.ok(!/OVER-SIZE[^\n]*six\.md/.test(out), `6KB 不该报超限: ${out}`);
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'six.md'), PAGE('x'.repeat(9 * 1024)), 'utf8');
+    out = await cmdLint({ dir: projectA });
+    assert.ok(/OVER-SIZE[^\n]*six\.md/.test(out), `9KB 应报超限: ${out}`);
+    assert.ok(/150L\/8KB/.test(out), `提示应反映新阈值(150L/8KB): ${out}`);
+  });
+
+  test('模板残留链接被检出', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'tpl.md'), PAGE('见 [[EntityName]]'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('TEMPLATE-LINK'), out);
+  });
+
+  // 回归: 占位符必然不在 names 里，若不短路就**同一条链接报两次**
+  // （TEMPLATE-LINK 一条对 + DEAD-LINK 一条噪音），让 lint 输出虚胖且误导。
+  test('模板占位只报 TEMPLATE-LINK，不再重复报 DEAD-LINK', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'tpl2.md'), PAGE('见 [[页面名]]'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    const lines = out.split('\n').filter((l) => l.includes('tpl2.md'));
+    assert.ok(lines.some((l) => l.startsWith('TEMPLATE-LINK')), `应报模板残留: ${out}`);
+    assert.ok(!lines.some((l) => l.startsWith('DEAD-LINK')),
+      `同一条占位符不得再报 DEAD-LINK: ${lines.join(' | ')}`);
+  });
+
+  // 描述语法的字面量 `[[<slug>]]`（尖括号不是合法 wikilink 字符）在任务描述里很常见，
+  // 归为 TEMPLATE-LINK（非真链接），而非 DEAD-LINK。
+  test('尖括号占位 [[<slug>]] 归为模板残留而非死链', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'tpl3.md'), PAGE('在 ### Archived 段留 [[<slug>]] 完成任务'), 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    const lines = out.split('\n').filter((l) => l.includes('tpl3.md'));
+    assert.ok(lines.some((l) => l.startsWith('TEMPLATE-LINK')), `应报模板残留: ${out}`);
+    assert.ok(!lines.some((l) => l.startsWith('DEAD-LINK')), `不应报死链: ${lines.join(' | ')}`);
+  });
+
+  test('index 漏列被检出', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'entities', 'Docker.md'),
+      '---\ntags: [entity]\nupdated: 2026-09-08\nstatus: draft\n---\n见 [[good]]',
+      'utf8'
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('INDEX-MISSING'), out);
+  });
+
+  // 回归: 删页/归档 source 后忘清 index 的残留引用。lint 原来只查 page→index (INDEX-MISSING),
+  // 不查 index→page, 导致死引用静默留在入口文件里(实际踩过: 归档 7 个 source 后 index 仍列着)。
+  test('index 列了不存在的页被检出 (INDEX-DEAD-LINK)', async () => {
+    const idxP = join(projectA, '.brain', 'index.md');
+    await fs.appendFile(idxP, '\n- [[ghost-page-xyz]] — 不存在的页\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('INDEX-DEAD-LINK'), out);
+    assert.ok(out.includes('ghost-page-xyz'), out);
+  });
+
+  test('sources 堆积被检出', async () => {
+    for (let i = 0; i < 11; i++) {
+      await fs.writeFile(
+        join(projectA, '.brain', 'sources', `2026-09-0${i % 9}-s${i}.md`),
+        '---\ntags: [source]\nupdated: 2026-09-08\nstatus: draft\n---\n内容',
+        'utf8'
+      );
+    }
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('SOURCES-PILED-UP'), out);
+  });
+
+  test('source 暂存页孤立不报 ORPHAN (豁免)', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'sources', '2026-09-08-孤立线索.md'),
+      '---\ntags: [source]\nupdated: 2026-09-08\nstatus: draft\n---\n待提炼的孤立线索',
+      'utf8'
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!out.includes('ORPHAN-PAGE'), out);
+  });
+
+  test('concept 页孤立仍报 ORPHAN (不豁免)', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', '真孤立.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n无任何链接的概念',
+      'utf8'
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('ORPHAN-PAGE'), out);
+  });
+
+  // NO-INBOUND: 有出边但无人指向。ORPHAN-PAGE 只抓"零出零入"，
+  // 抓不到"连了 5 条出去却没人连它"的悬挂页（实测本仓 file-shape-check-on-load 即是）。
+  test('有出边但零入边 → NO-INBOUND (ORPHAN 抓不到这种)', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'hangs.md'),
+      PAGE('# 悬挂页\n链向 [[good]]\n关联 [[good]]'),
+      'utf8'
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('NO-INBOUND'), `应报悬挂: ${out}`);
+    assert.ok(!out.includes('ORPHAN-PAGE: .brain/concepts/hangs.md'), `有出边不该报 ORPHAN: ${out}`);
+  });
+
+  test('有人链接后不再报 NO-INBOUND', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'pointed.md'),
+      PAGE('# 被指向\n无出边'),
+      'utf8'
+    );
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'pointer.md'),
+      PAGE('# 指向者\n关联 [[pointed]]'),
+      'utf8'
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!out.includes('NO-INBOUND: .brain/concepts/pointed.md'), `被指向不该报: ${out}`);
+  });
+
+  // SOURCE-UNDISTILLED: source 超龄仍未链到任何 concept = 暂存了没归位。
+  // 只数总量（SOURCES-PILED-UP）抓不到"4 个 source 里 3 个没提炼"。
+  test('超龄未提炼的 source → SOURCE-UNDISTILLED (按 mtime 判龄)', async () => {
+    const p = join(projectA, '.brain', 'sources', '2026-01-01-老线索.md');
+    await fs.writeFile(p, '---\ntags: [source]\nupdated: 2026-01-01\nstatus: draft\n---\n没归结到概念页', 'utf8');
+    const old = new Date(Date.now() - 10 * 86400 * 1000);
+    await fs.utimes(p, old, old);
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('SOURCE-UNDISTILLED'), `应报未提炼: ${out}`);
+  });
+
+  test('新鲜 source 不报 SOURCE-UNDISTILLED (未超龄)', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'sources', '2026-09-13-今日线索.md'),
+      '---\ntags: [source]\nupdated: 2026-09-13\nstatus: draft\n---\n刚记的',
+      'utf8'
+    );
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!out.includes('SOURCE-UNDISTILLED: .brain/sources/2026-09-13-今日线索.md'), `新鲜不该报: ${out}`);
+  });
+
+  test('source 链到 concept 后不再报 SOURCE-UNDISTILLED（即使超龄）', async () => {
+    await fs.writeFile(
+      join(projectA, '.brain', 'concepts', 'distilled-target.md'),
+      PAGE('# 提炼目标\n无出边'),
+      'utf8'
+    );
+    const p = join(projectA, '.brain', 'sources', '2026-01-02-已提炼.md');
+    await fs.writeFile(p, '---\ntags: [source]\nupdated: 2026-01-02\nstatus: draft\n---\n## 关联连接\n- [[distilled-target]] — 已提炼', 'utf8');
+    const old = new Date(Date.now() - 10 * 86400 * 1000);
+    await fs.utimes(p, old, old);
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!out.includes('SOURCE-UNDISTILLED: .brain/sources/2026-01-02-已提炼.md'), `已提炼不该报: ${out}`);
+  });
+});
+
+// ---------- 收尾保险: wrapup 快照 + load 滞留展示 (WRAPUP) ----------
+describe('cmdWrapup + load 滞留 (A+B)', () => {
+  let logDir;
+  const savedEnv = process.env.ABS_LOG_DIR;
+
+  beforeEach(async () => {
+    logDir = join(sandbox, 'abs-log');
+    process.env.ABS_LOG_DIR = logDir;
+  });
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.ABS_LOG_DIR;
+    else process.env.ABS_LOG_DIR = savedEnv;
+  });
+
+  async function wrapupLogText() {
+    try { return await fs.readFile(join(logDir, 'wrapup.log'), 'utf8'); } catch { return ''; }
+  }
+
+  // wrapup.log 是只追加的, 与 hooks.log 同类有增长问题。
+  // parseWrapup 用 byProj.set 覆盖, 前面的旧块永远不会被读到 = 死重量。
+  test('超阈值轮转为 .1, 且不丢当前项目状态', async () => {
+    await fs.mkdir(logDir, { recursive: true });
+    // 先造一个真实快照(当前未完成任务), 再灌大文件把它顶过阈值
+    await cmdWrapup({ dir: projectA });
+    const real = await wrapupLogText();
+    await fs.writeFile(join(logDir, 'wrapup.log'), 'x'.repeat(2 * 1024 * 1024) + '\n' + real, 'utf8');
+
+    await cmdWrapup({ dir: projectA });
+
+    const rotated = await fs.readFile(join(logDir, 'wrapup.log.1'), 'utf8');
+    assert.ok(rotated.length > 2 * 1024 * 1024, '旧内容应整体移入 .1');
+    const now = await wrapupLogText();
+    assert.ok(now.length < 2 * 1024 * 1024, '当前文件应已瘦身');
+    // 关键: 轮转后本项目状态仍可被读到(strandedFor 依赖 wrapup.log)
+    const stranded = await strandedFor(projectA);
+    assert.ok(Array.isArray(stranded), 'strandedFor 不应因轮转报错');
+  });
+
+  test('未超阈值不轮转 (常见路径零副作用)', async () => {
+    await cmdWrapup({ dir: projectA });
+    const before = await wrapupLogText();
+    await cmdWrapup({ dir: projectA });
+    const after = await wrapupLogText();
+    assert.ok(after.startsWith(before.slice(0, 20)), '小文件应只追加、不移位');
+    let hasRot = true;
+    try { await fs.access(join(logDir, 'wrapup.log.1')); } catch { hasRot = false; }
+    assert.equal(hasRot, false, '不应产生 wrapup.log.1');
+  });
+
+  test('B: 快照把 Today 未完成任务+断点写入 wrapup.log (带 proj 归属)', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'W-1', note: '做 A' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'W-1', note: '改到 store.js L40' });
+    const r = await cmdWrapup({ dir: projectA });
+    assert.ok(r.includes('✓'), r);
+    const text = await wrapupLogText();
+    assert.ok(/W-1|做 A/.test(text), text);
+    assert.ok(text.includes('改到 store.js L40'), text);
+  });
+
+  test('B: Done 区已完成的旧任务不进快照', async () => {
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'W-2' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'W-2' });
+    await cmdWrapup({ dir: projectA });
+    const text = await wrapupLogText();
+    // W-2 已完成, 快照里不应有它
+    assert.ok(!text.includes('W-2'), text);
+  });
+
+  test('B: 同内容短间隔内重复 wrapup 幂等不重复写', async () => {
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'W-3' });
+    await cmdWrapup({ dir: projectA });
+    const first = await wrapupLogText();
+    const r2 = await cmdWrapup({ dir: projectA });
+    assert.ok(r2.includes('跳过') || r2.includes('同内容'), r2);
+    assert.equal(await wrapupLogText(), first, '同内容幂等不应再写');
+  });
+
+  test('B: 多项目隔离 — 各项目独立 proj 快照互不串', async () => {
+    const projC = join(sandbox, 'proj-c');
+    await fs.mkdir(projC, { recursive: true });
+    await cmdInit({ dir: projC });
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'WA-1' });
+    await cmdTask({ dir: projC, action: 'start', note: '测试任务', id: 'WC-1' });
+    await cmdWrapup({ dir: projectA });
+    await cmdWrapup({ dir: projC });
+    const text = await wrapupLogText();
+    assert.ok(text.includes(`proj=${projectA}`) && text.includes('WA-1'), text);
+    assert.ok(text.includes(`proj=${projC}`) && text.includes('WC-1'), text);
+  });
+
+  test('A: load 展示上会话滞留；任务 done 后滞留自动消失 (交叉核对自清理)', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LA-1', note: '滞留任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LA-1', note: '断点X' });
+    await cmdWrapup({ dir: projectA }); // 模拟上会话结束快照
+    // 下会话 load → 应顶出滞留
+    const load1 = await cmdLoad({ dir: projectA });
+    assert.ok(load1.includes('上会话滞留'), load1);
+    assert.ok(load1.includes('滞留任务'), load1);
+    assert.ok(load1.includes('断点X'), load1);
+    // 把任务 done 了 → 快照里的那个任务不应再被报为滞留。
+    // 2026-10-18：子任务（断点X）没勾时不许 done，先勾掉它再完成。
+    await cmdTask({ dir: projectA, action: 'child-done', id: 'LA-1' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LA-1' });
+    const load2 = await cmdLoad({ dir: projectA });
+    assert.ok(!load2.includes('滞留任务'), `done 后原任务不应再报滞留:\n${load2}`);
+  });
+
+  test('A: 无遗留子项时 done 后滞留完全消失', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LA-2', note: '干净任务' });
+    await cmdWrapup({ dir: projectA });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LA-2' });
+    const load = await cmdLoad({ dir: projectA });
+    assert.ok(!load.includes('上会话滞留'), `无遗留时不应报滞留:\n${load}`);
+  });
+
+  test('A: 无 wrapup.log 时 load 正常不报滞留', async () => {
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(!out.includes('上会话滞留'), out);
+    assert.ok(out.includes('Todo Board'), out);
+  });
+});
+
+// ---------- todo 单列表（2026-11-16 用户定） ----------
+// 只有 H1 + 一条列表；状态写在复选框里（[ ] [-] [+] [~] [x]）；
+// 全表按各自时间倒序（未完成用认领日期、已完成用完成日期）。
+describe('todo 单列表 + 复选框状态', () => {
+  test('老两区制文件 → 单列表，任务一条不丢、日期分组与归档链接行去掉', () => {
+    const old = [
+      '# 📋 Todo Board',
+      '## Todo',
+      '- [ ] [进行中] W-任务 [[fc]] — 还没做 (认领 2026-09-09)',
+      '## Done',
+      '### 2026-09-07',
+      '- [x] 老完成 [[fc]] — 做完了 【落地】 (完成 2026-09-07)',
+      '### Archived',
+      '- [[log-2026-09-06]] 完成任务 3 条',
+      '- [[log-2026-09-05]] 完成任务 1 条 〔来源 old_service〕',
+      '',
+    ].join('\n');
+    const out = normalizeTodo(old);
+    assert.ok(!out.includes('## Todo') && !out.includes('## Done'), out);
+    assert.ok(!out.includes('### 2026-09-07'), out);
+    assert.ok(!out.includes('[[log-2026-09-06]]'), '旧归档链接行要去掉');
+    assert.ok(!out.includes('[[log-2026-09-05]]'), '带 〔来源 …〕 尾巴的变体也要去掉');
+    assert.ok(out.includes('W-任务') && out.includes('老完成'), out);
+  });
+
+  test('旧状态前缀 → 复选框记号：[滞留中] → [-]，[讨论中] → [+]，[搁置] → [~]', () => {
+    const old = [
+      '# 📋 Todo Board',
+      '## Todo',
+      '- [ ] [滞留中] A — 卡住 (认领 2026-09-09)',
+      '- [ ] [讨论中] B — 还要商量 (认领 2026-09-09)',
+      '- [ ] [搁置] C — 不做了 (认领 2026-09-09)',
+      '- [ ] [进行中] D — 在做 (认领 2026-09-09)',
+      '',
+    ].join('\n');
+    const out = normalizeTodo(old);
+    assert.ok(/\[-\].*A/.test(out), out);
+    assert.ok(/\[\+\].*\[B /.test(out), out);
+    assert.ok(/\[~\].*\[C /.test(out), out);
+    assert.ok(/\[ \].*\[D /.test(out), out);
+    assert.ok(!/\[(滞留中|讨论中|搁置|进行中)\]/.test(out), '文本状态前缀不该留');
+  });
+
+  test('按时间倒序：已完成用完成日期、未完成用认领日期，混排在同一张表', () => {
+    const t = [
+      '# 📋 Todo Board',
+      '- [ ] 前天登记的 (认领 2026-09-08)',
+      '- [x] 今天完成的 (完成 2026-09-10)',
+      '- [ ] 昨天登记的 (认领 2026-09-09)',
+      '',
+    ].join('\n');
+    const out = normalizeTodo(t);
+    const order = out.split('\n').filter((l) => /^- \[/.test(l));
+    assert.deepEqual(order.map((l) => (l.match(/\[([^\]]+)\]/g) || [])[2]?.slice(1, -1)), ['今天完成的', '昨天登记的', '前天登记的']);
+  });
+
+  test('子项跟着父任务走，不脱组也不丢', () => {
+    const t = [
+      '# 📋 Todo Board',
+      '## Done',
+      '### 2026-09-09',
+      '- [x] 带子项的 (完成 2026-09-09)',
+      '  - [x] 子项',
+      '  ↳ 断点: 当时的细节',
+      '',
+    ].join('\n');
+    const out = normalizeTodo(t);
+    assert.ok(/(^|\n) {2}- \[[ x-]\] .*子项/.test(out), out);
+    assert.ok(/ {2}- \[[ x-]\] .*当时的细节/.test(out), '旧 ↳ 写法一并迁移成缩进子项');
+  });
+
+  test('幂等: 已是单列表则逐字返回（不反复写盘）', () => {
+    const flat = [
+      '# 📋 Todo Board',
+      '',
+      '- [ ] [2026-09-10 10:00] [最新] [[fc]]',
+      '- [x] [2026-09-09 09:00] [旧的] [[fc]]',
+      '',
+    ].join('\n');
+    assert.equal(normalizeTodo(flat), flat);
+  });
+
+  test('readTodo 惰性迁移: 老两区制文件读一次即落盘为单列表', async () => {
+    const old = [
+      '# 📋 Todo Board',
+      '## Todo',
+      '- [ ] [进行中] W-任务 (认领 2026-09-09)',
+      '## Done',
+      '### 2026-09-07',
+      '- [x] 老完成 【落地】 (完成 2026-09-07)',
+      '',
+    ].join('\n');
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'), old, 'utf8');
+    const txt = await readTodo(projectA);
+    assert.ok(!txt.includes('## Done'), `读后应已单列表: ${txt}`);
+    assert.ok(txt.includes('W-任务') && txt.includes('老完成'), `任务不该丢: ${txt}`);
+  });
+
+  test('markDone 原地翻成 [x] + 结语 + 完成日期，并浮到表头', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'DG-1', note: '单列表验证' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DG-1' });
+    const t = await readTodo(projectA);
+    const rows = t.split('\n').filter((l) => /^- \[/.test(l));
+    assert.ok(rows[0].startsWith('- [x]') && rows[0].includes('[DG-1]'), `完成的应在最上面, got: ${rows[0]}`);
+    assert.ok(rows[0].startsWith('- [x]'), rows[0]);
+  });
+
+  test('多次 done 幂等: 同一条不重复', async () => {
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'DGX' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DGX' });
+    await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'DGX' });
+    const t = await readTodo(projectA);
+    const hits = t.split('\n').filter((l) => l.includes('DGX') && l.startsWith('- [x]'));
+    assert.equal(hits.length, 1, `二次 done 不重复: ${hits}`);
+  });
+
+  test('collapseDone 只给已完成条数（文件全量、开机屏有界）', () => {
+    const flat = [
+      '# 📋 Todo Board',
+      '',
+      '- [ ] A (认领 2026-09-10)',
+      '- [x] B 【落地】 (完成 2026-09-09)',
+      '  - [x] 子项不算条数',
+      '- [x] C 【否决】 (完成 2026-09-08)',
+      '',
+    ].join('\n');
+    const r = collapseDone(flat);
+    assert.equal(r.doneCount, 2, '只数顶格已完成行');
+    assert.ok(r.text.includes('- [ ] A'), '未完成要留着');
+    assert.ok(!r.text.includes('- [x] B'), '已完成不展开');
+    assert.ok(r.text.includes('Done 2 条（明细: abs todo --full）'), r.text);
+    assert.equal(countDone(flat), 2);
+    assert.deepEqual(openLines(flat).map((l) => l.trim()), ['- [ ] A (认领 2026-09-10)']);
+  });
+});
+
+// ---------- Done 结语契约 ----------
+// Done 结语契约（【落地/否决/仅方案】）与完成日期已在 2026-11-16 取消：
+// 新格式只认 `[记号] [时间] [短标题] [[作者]] 详情 [会话id]`，这两组判据连同测试一起删了。
+
+describe('page id (abs resolve)', () => {
+  test('idOfPage: 有 id 行读 id，无 id 行回退 slug', () => {
+    assert.equal(idOfPage('---\nid: my-id\ntags: [x]\n---\n# H', 'file-slug'), 'my-id');
+    assert.equal(idOfPage('---\ntags: [x]\n---\n# H', 'file-slug'), 'file-slug');
+    // 无 frontmatter 的裸 md 也不能炸
+    assert.equal(idOfPage('# H only', 'bare'), 'bare');
+  });
+
+  test('resolvePage: 按 slug 命中；改名后按 id 仍能找回', async () => {
+    const cdir = join(projectA, '.brain', 'concepts');
+    // 建一个「已改过名」的页：文件名是新名，frontmatter 留着旧 id
+    await fs.writeFile(join(cdir, 'new-name.md'),
+      '---\nid: old-name\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 页\n', 'utf8');
+    const bySlug = await resolvePage(projectA, 'new-name');
+    assert.equal(bySlug.slug, 'new-name');
+    const byId = await resolvePage(projectA, 'old-name');
+    assert.ok(byId, '按旧 id 应能找回改名后的页');
+    assert.equal(byId.slug, 'new-name');
+    assert.equal(byId.id, 'old-name');
+    assert.equal(await resolvePage(projectA, 'zzz-none'), null);
+  });
+
+  test('lint 抓 ID-DRIFT: frontmatter id 与文件名不一致', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'drifted.md'),
+      '---\nid: original-slug\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 页\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('ID-DRIFT'), out);
+    assert.ok(out.includes('drifted.md'), out);
+  });
+
+  test('lint 不因 id==slug 误报 ID-DRIFT', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'same.md'),
+      '---\nid: same\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 页\n\n[[todo]]\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    // 只断言没有 ID-DRIFT 类问题 —— 该页可能因其它规则(如 NO-INBOUND)被列，
+    // 那些与本机制无关，一并 grep 文件名会把无关问题当成失败。
+    assert.ok(!/ID-DRIFT[^\n]*same\.md/.test(out), `id==slug 不应报 ID-DRIFT: ${out}`);
+  });
+
+  test('backfillPageId: 给存量页补 id，已有 id 不动', async () => {
+    const cdir = join(projectA, '.brain', 'concepts');
+    const f = join(cdir, 'legacy.md');
+    await fs.writeFile(f, '---\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 老页\n', 'utf8');
+    assert.equal(await backfillPageId(f, 'legacy'), 'added');
+    const after = await fs.readFile(f, 'utf8');
+    assert.ok(/^id: legacy$/m.test(after), after);
+    // id 必须落在 frontmatter 内（第一个 --- 与第二个 --- 之间），不能跑到正文
+    const fmEnd = after.indexOf('\n---', 3);
+    assert.ok(after.indexOf('id: legacy') < fmEnd, `id 应在 frontmatter 内: ${after}`);
+    // 二次调用幂等
+    assert.equal(await backfillPageId(f, 'legacy'), 'exists');
+  });
+
+  test('cmdResolve: 命中给路径，未命中给逃生口', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'r1.md'),
+      '---\nid: r1\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 页\n', 'utf8');
+    const ok = await cmdResolve({ dir: projectA, refs: ['r1'] });
+    assert.ok(ok.includes('.brain/concepts/r1.md') || ok.includes('concepts/r1.md'), ok);
+    const miss = await cmdResolve({ dir: projectA, refs: ['zzz'] });
+    assert.ok(miss.includes('未找到'), miss);
+  });
+
+  test('cmdNote 落页时写 id（新页自带改名安全的句柄）', async () => {
+    await cmdNote({ dir: projectA, text: 'id 化验证用的一条经验 xyzid', tags: 'idtest' });
+    const files = (await fs.readdir(join(projectA, '.brain', 'sources'))).filter((f) => f.endsWith('.md'));
+    const hit = files.find((f) => f.includes('xyzid'));
+    assert.ok(hit, `应落一个含 xyzid 的 source: ${files.join(',')}`);
+    const body = await fs.readFile(join(projectA, '.brain', 'sources', hit), 'utf8');
+    assert.ok(/^id: /m.test(body), `新页 frontmatter 应有 id: ${body.slice(0, 200)}`);
+    assert.ok(body.includes(`id: ${hit.replace(/\.md$/, '')}`), 'id 应等于建页时的 slug');
+  });
+});
+
+// ---------- page status: 经验的生命周期（active/superseded/draft） ----------
+// 存在的理由：经验写进去就永远躺在那里 —— 推翻时删不掉（人工内容不覆盖），
+// 读的时候又看不见 → 旧经验持续骗下一个会话。核心契约是「推翻 = 改一行 frontmatter，
+// 不删文件不丢历史」，且被推翻的内容默认不再出现在检索结果里。
+describe('page status (abs supersede)', () => {
+  test('statusOfPage: 无字段/未知值都当 active（存量页零迁移）', () => {
+    assert.equal(statusOfPage('---\nid: a\n---\n# H'), 'active');
+    assert.equal(statusOfPage('---\nstatus: reviewed\n---\n# H'), 'active', '旧的 reviewed 值归为 active');
+    assert.equal(statusOfPage('---\nstatus: superseded\n---\n# H'), 'superseded');
+    assert.equal(statusOfPage('---\nstatus: draft\n---\n# H'), 'draft');
+    assert.equal(statusOfPage('', ''), 'active');
+  });
+
+  test('cmdSupersede: 标记失效并写 superseded-by（不删文件）', async () => {
+    const cdir = join(projectA, '.brain', 'concepts');
+    await fs.writeFile(join(cdir, 'old-way.md'),
+      '---\nid: old-way\ntags: [concept]\nupdated: 2026-01-01\nstatus: active\n---\n\n# 老做法\n\n[[todo]]\n', 'utf8');
+    await fs.writeFile(join(cdir, 'new-way.md'),
+      '---\nid: new-way\ntags: [concept]\nupdated: 2026-01-01\n---\n\n# 新做法\n\n[[todo]]\n', 'utf8');
+    const out = await cmdSupersede({ dir: projectA, refs: ['old-way'], by: 'new-way' });
+    assert.ok(out.includes('superseded'), out);
+    const body = await fs.readFile(join(cdir, 'old-way.md'), 'utf8');
+    assert.ok(/^status: superseded$/m.test(body), body);
+    assert.ok(/^superseded-by: new-way$/m.test(body), body);
+    assert.ok(body.includes('# 老做法'), '文件不能被删/清空，历史要留');
+  });
+
+  test('cmdSupersede 幂等：重复标记不重复写', async () => {
+    const cdir = join(projectA, '.brain', 'concepts');
+    await fs.writeFile(join(cdir, 'a.md'), '---\nid: a\ntags: [concept]\n---\n\n# A\n', 'utf8');
+    await cmdSupersede({ dir: projectA, refs: ['a'] });
+    const out2 = await cmdSupersede({ dir: projectA, refs: ['a'] });
+    assert.ok(/已是 superseded/.test(out2), out2);
+    const body = await fs.readFile(join(cdir, 'a.md'), 'utf8');
+    assert.equal((body.match(/status:/g) || []).length, 1, `status 行不应重复: ${body}`);
+  });
+
+  test('cmdSupersede: --by 指向不存在的页 → 拒绝（防写悬空引用）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'b.md'), '---\nid: b\n---\n\n# B\n', 'utf8');
+    const out = await cmdSupersede({ dir: projectA, refs: ['b'], by: 'no-such-page' });
+    assert.ok(out.includes('没有这页'), out);
+    const body = await fs.readFile(join(projectA, '.brain', 'concepts', 'b.md'), 'utf8');
+    assert.ok(!/superseded-by/.test(body), '拒绝时不应写盘');
+  });
+
+  test('query 默认隐藏 superseded，--all 可见且给计数', async () => {
+    const cdir = join(projectA, '.brain', 'concepts');
+    await fs.writeFile(join(cdir, 'live.md'),
+      '---\nid: live\ntags: [concept]\n---\n\n# LIVE 关键词 zebra\n', 'utf8');
+    await fs.writeFile(join(cdir, 'dead.md'),
+      '---\nid: dead\ntags: [concept]\nstatus: superseded\n---\n\n# DEAD 关键词 zebra\n', 'utf8');
+    const def = await cmdQuery({ dir: projectA, terms: ['zebra'] });
+    assert.ok(def.includes('live'), def);
+    assert.ok(!def.includes('dead'), `被推翻的不应出现在默认结果: ${def}`);
+    assert.ok(/1 页 superseded 已隐藏/.test(def), `应告知隐藏了几条: ${def}`);
+    const all = await cmdQuery({ dir: projectA, terms: ['zebra'], includeSuperseded: true });
+    assert.ok(all.includes('dead') && all.includes('live'), all);
+  });
+
+  test('query 默认隐藏 draft，--all 可见', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'dd.md'),
+      '---\nid: dd\ntags: [concept]\nstatus: draft\n---\n\n# DD 关键词 quokka\n', 'utf8');
+    const out = await cmdQuery({ dir: projectA, terms: ['quokka'] });
+    assert.ok(/被隐藏/.test(out), `draft 应被提示隐藏: ${out}`);
+    assert.ok(!out.includes('dd.md') && !out.includes('关键词 quokka'), `draft 页不应出现在默认结果: ${out}`);
+    const all = await cmdQuery({ dir: projectA, terms: ['quokka'], includeSuperseded: true });
+    assert.ok(all.includes('dd'), `--all 应能看到 draft 页: ${all}`);
+  });
+
+  test('lint 抓 SUPERSEDED-DANGLING（取代者页不存在）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'dangling.md'),
+      '---\nid: dangling\ntags: [concept]\nstatus: superseded\nsuperseded-by: ghost-page\n---\n\n# D\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(out.includes('SUPERSEDED-DANGLING'), out);
+    assert.ok(out.includes('ghost-page'), out);
+  });
+
+  test('lint 不误报：superseded 无 superseded-by 是合法状态', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'abandoned.md'),
+      '---\nid: abandoned\ntags: [concept]\nstatus: superseded\n---\n\n# A\n\n[[todo]]\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SUPERSEDED-DANGLING[^\n]*abandoned/.test(out), `无取代者不该报: ${out}`);
+  });
+
+  test('abs note 落的新页是 draft（未经核实）', async () => {
+    await cmdNote({ dir: projectA, text: '生命周期验证用经验 statusprobe' });
+    const files = (await fs.readdir(join(projectA, '.brain', 'sources'))).filter((f) => f.includes('statusprobe'));
+    assert.ok(files.length, '应落 source 页');
+    const body = await fs.readFile(join(projectA, '.brain', 'sources', files[0]), 'utf8');
+    assert.ok(/^status: draft$/m.test(body), `新经验应为 draft: ${body.slice(0, 300)}`);
+  });
+});
+
+describe('cmdReview (待确认页队列)', () => {
+  test('列出 draft 页（只扫 concepts/sources，跳过 entities/sessions）', async () => {
+    // 造一个 draft 概念页 + 一个 draft 人页 + 一个 draft 日志页
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'rv-concept.md'),
+      '---\nid: rv-concept\ntags: [concept]\nstatus: draft\n---\n\n# 概念草稿\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'entities', 'rv-person.md'),
+      '---\ntags: [entity, person]\nstatus: draft\n---\n\n# 人页\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'rv-log.md'),
+      '---\ntags: [session-log]\nstatus: draft\n---\n\n# 日志页\n', 'utf8');
+    const out = await cmdReview({ dir: projectA });
+    assert.ok(out.includes('rv-concept'), `概念页应在队列: ${out}`);
+    assert.ok(!out.includes('rv-person'), `人页不应进队列: ${out}`);
+    assert.ok(!out.includes('rv-log'), `日志页不应进队列: ${out}`);
+  });
+
+  test('--accept 把 draft 升为 active', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'rv-acc.md'),
+      '---\nid: rv-acc\ntags: [concept]\nstatus: draft\n---\n\n# 待确认\n', 'utf8');
+    const out = await cmdReview({ dir: projectA, refs: ['rv-acc'], action: 'accept' });
+    assert.ok(out.includes('active'), out);
+    const body = await fs.readFile(join(projectA, '.brain', 'concepts', 'rv-acc.md'), 'utf8');
+    assert.ok(/^status: active$/m.test(body), body);
+  });
+
+  test('--reject 把 draft 标为 superseded', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'rv-rej.md'),
+      '---\nid: rv-rej\ntags: [concept]\nstatus: draft\n---\n\n# 待否决\n', 'utf8');
+    const out = await cmdReview({ dir: projectA, refs: ['rv-rej'], action: 'reject' });
+    assert.ok(out.includes('superseded'), out);
+    const body = await fs.readFile(join(projectA, '.brain', 'concepts', 'rv-rej.md'), 'utf8');
+    assert.ok(/^status: superseded$/m.test(body), body);
+  });
+});
+describe('load 顶部「待消化」提示（与滞留同构的送达机制）', () => {
+  /** 往 sources/ 放 n 条占位 source。 */
+  async function fillSources(n) {
+    const d = join(projectA, '.brain', 'sources');
+    await fs.rm(d, { recursive: true, force: true });
+    await fs.mkdir(d, { recursive: true });
+    for (let i = 1; i <= n; i++) {
+      await fs.writeFile(join(d, `2026-09-15-fake-${i}.md`),
+        `---\ntags: [source]\nupdated: 2026-09-15\n---\n# 占位${i}\n\n## 关联连接\n`, 'utf8');
+    }
+  }
+
+  // 坑（实现时踩到）: root 是【项目根】，图谱在 root/.brain/ 下。首版忘走 brainPath
+  // 直接用 join(root,'sources') → ENOENT 被 catch 吞成 0 → 提示永不出现（又一个静默失效）。
+  // 故此处必须断言"真会提示"，只测"不报错"是测不出这个 bug 的。
+  test('sources 超阈值时在 Rules 之前提示；未超则不提', async () => {
+    await fillSources(11);
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(out.includes('待消化'), `11 条应提示: ${out}`);
+    const iRemind = out.indexOf('待消化');
+    const iRules = out.indexOf('--- Rules');
+    assert.ok(iRules === -1 || iRemind < iRules, '提示应在 Rules 之前（开工必经的顶部）');
+  });
+
+  test('边界: 恰好 10 条不提示（阈值是 >，不是 >=）', async () => {
+    await fillSources(10);
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(!out.includes('待消化'), `10 条不该提示: ${out}`);
+  });
+
+  test('下划线开头的文件（模板）不计入', async () => {
+    await fillSources(11);
+    await fs.writeFile(join(projectA, '.brain', 'sources', '_template.md'),
+      '---\ntags: [source]\n---\n# 模板\n', 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(out.includes('有 11 条'), `模板不该被计数（应仍为 11）: ${out}`);
+  });
+});
+
+// 长期归档页豁免（2026-09-15）: sessions/ 里 tags 含 archive 的页不算「当天记录」，
+// 不参与 SESSIONS-SPLIT/MISPLACED。实例: codebuddy 的 2026-09-07-todo-md-archive.md
+// （495行/33KB，仓库根 todo.md 全文，被 10 个页引用）—— 它永远无法并入当天 log。
+// 不豁免就会永久挂一条报警，而永久报警会训练人忽略报警。
+describe('sessions/ 长期归档页豁免', () => {
+  test('tags 含 archive 的页不报 SPLIT（可与 log 共存）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-20.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-20\nstatus: active\n---\n# X\n\n## 验证\n跑 test\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-20-todo-md-archive.md'),
+      '---\ntags: [session-log, archive]\nupdated: 2026-09-20\nstatus: reviewed\n---\n# 归档\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SESSIONS-SPLIT[^\n]*2026-09-20/.test(out), `归档页应与 log 共存不报: ${out}`);
+    assert.ok(!/SESSIONS-MISPLACED[^\n]*todo-md-archive/.test(out), `archive tag 不该报错位: ${out}`);
+  });
+
+  // 反向钉住: 豁免不能扩大 —— tags 只含 session-log 的第二份文件仍要报（那才是真分裂）。
+  test('无 archive tag 的同天第二个文件仍要报', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-21-extra.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-21\nstatus: active\n---\n# X\n', 'utf8');
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-21.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-21\nstatus: active\n---\n# X\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/SESSIONS-SPLIT[^\n]*2026-09-21/.test(out), `无 archive tag 仍应报: ${out}`);
+  });
+});
+
+// UNRESOLVED-CONFLICT 判据: 认【段标题】而非页内出现字样。
+// 坑（2026-09-15 实测）: 原用裸子串 → codebuddy 会话快照因任务描述写了
+// 「更新 xxx（知识冲突裁决）」而误报（它并无该段）。同 NO-TAIL 的教训: 判据看结构。
+describe('UNRESOLVED-CONFLICT 判据', () => {
+  test('有「## 知识冲突」段且 status:draft → 报', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'real-conflict.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n' +
+      '# 概念\n\n## 知识冲突\n两版说法并存，待裁决\n\n## 验证\n跑 test\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/UNRESOLVED-CONFLICT[^\n]*real-conflict/.test(out), `真冲突应报: ${out}`);
+  });
+
+  test('正文只提「知识冲突」字样但无该段 → 不报（防误报）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'mentions-conflict.md'),
+      '---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n' +
+      '# 概念\n\n## 做了什么\n- [x] 更新某页（知识冲突裁决）\n\n## 验证\n跑 test\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/UNRESOLVED-CONFLICT[^\n]*mentions-conflict/.test(out),
+      `只是提到不该报: ${out}`);
+  });
+});
+
+// 旧命名单独存在也要报（2026-09-15 在 ~/Docker 实测抓到的漏报）:
+// 4 个日期各只有一份 `<日期>-todo归档.md`（无对应 log-）→ 首版只看「同天 >1」一个都不报。
+describe('SESSIONS-NAMING: 旧命名单独存在', () => {
+  test('单个 <日期>-todo归档.md（无 log-）→ 报 NAMING', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-25-todo归档.md'),
+      '---\ntags: [todo-archive, 历史]\nupdated: 2026-09-25\nstatus: reviewed\n---\n# 归档\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/SESSIONS-NAMING[^\n]*2026-09-25/.test(out), `旧命名单独存留应报: ${out}`);
+  });
+
+  // 反向钉住 1: 规范名单独存在不报。
+  test('单个 log-<日期>.md → 不报', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', 'log-2026-09-26.md'),
+      '---\ntags: [session-log]\nupdated: 2026-09-26\nstatus: active\n---\n# X\n\n## 验证\n跑 test\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SESSIONS-NAMING[^\n]*2026-09-26/.test(out), `规范名不该报: ${out}`);
+  });
+
+  // 反向钉住 2: 豁免只认独立 `archive` 标签，不认 `todo-archive`。
+  // 坑: 首版用 /\barchive\b/ —— `todo-archive` 里 '-' 与 'a' 之间也是词边界 → 全被豁免。
+  test('todo-archive 标签不享受 archive 豁免', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-27-todo归档.md'),
+      '---\ntags: [todo-archive]\nupdated: 2026-09-27\nstatus: reviewed\n---\n# 归档\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(/SESSIONS-NAMING[^\n]*2026-09-27/.test(out),
+      `todo-archive 不该被豁免: ${out}`);
+  });
+
+  test('独立 archive 标签仍豁免（可与 log- 共存）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'sessions', '2026-09-28-full-archive.md'),
+      '---\ntags: [session-log, archive]\nupdated: 2026-09-28\nstatus: reviewed\n---\n# 全文归档\n', 'utf8');
+    const out = await cmdLint({ dir: projectA });
+    assert.ok(!/SESSIONS-(NAMING|SPLIT)[^\n]*2026-09-28/.test(out), `archive 应豁免: ${out}`);
+  });
+});
+
+// ---------- 写入侧格式闸门（2026-10-05 用户定） ----------
+// 三个入口文件 index.md / todo.md / log.md 在**每次写盘前**过格式校验：
+//   1 固定样式（标题/分区名逐字对标准，旧名归一）
+//   2 不允许空行（条目之间不留空行）
+//   3 结构固定、不允许无头（缺 H1 补回，分区按标准顺序重排）
+// 收口在 lock.js 的 editFile（所有写入的唯一通道），故 CLI/MCP/hook 三条路径共用同一条闸门。
+describe('写入侧格式闸门: index/todo/log 每次写入都校验', () => {
+  const readP = (f) => fs.readFile(join(projectA, '.brain', f), 'utf8');
+
+  test('log.md: 条目之间的空行被删（两个空行也是空行）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'log.md'),
+      '# 🗒 Activity Log\n\n## [2026-10-05 10:00] [[tester]] dev | 甲\n\n\n## [2026-10-05 10:01] [[tester]] dev | 乙\n', 'utf8');
+    await cmdLog({ dir: projectA, title: '丙' });
+    const out = await readP('log.md');
+    assert.ok(!/\n\n## \[/.test(out), `条目之间不该有空行: ${JSON.stringify(out)}`);
+    assert.ok(out.includes('甲') && out.includes('乙') && out.includes('丙'), out);
+  });
+
+  test('todo.md: 无头文件（缺 H1）写回时补回标准 H1', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'), '## Todo\n\n## Done\n', 'utf8');
+    await cmdTask({ dir: projectA, action: 'start', note: '测试任务', id: 'x1' });
+    const out = await readP('todo.md');
+    assert.ok(out.startsWith('# 📋 Todo Board'), out);
+    assert.match(out, /\[x1 \]|\[x1\]/, out);
+  });
+
+  test('index.md: 条目之间的空行被自动清除（存量升级，不阻写入）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n- 乙\n\n## Concepts\n- [[a]] — 页a\n\n- [[b]] — 页b\n', 'utf8');
+    // 空行不携带信息 → 直接清掉（而不是拒绝）。
+    // 为何空行与其它违规区别对待：超长断点/[]() 条目截断或改格式会丢/改语义，
+    // 只能拒；空行删了不丢任何东西，可以安全自动升级。
+    await cmdRule({ dir: projectA, action: 'add', text: '新规则一句' });
+    const out = await readP('index.md');
+    assert.ok(!/\n\n- /.test(out), `条目之间不应留空行: ${JSON.stringify(out)}`);
+    const rules = out.split('## Rules')[1].split('## Concepts')[0];
+    assert.equal(rules.split('\n').filter((l) => l.startsWith('- ')).length, 3, rules);
+  });
+
+  test('index.md: 格式本已合规时，新条目落进正确分区', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n- 乙\n\n## Concepts\n- [[a]] — 页a\n- [[b]] — 页b\n', 'utf8');
+    await cmdRule({ dir: projectA, action: 'add', text: '新规则一句' });
+    const out = await readP('index.md');
+    const rules = out.split('## Rules')[1].split('## Concepts')[0];
+    assert.equal(rules.split('\n').filter((l) => l.startsWith('- ')).length, 3, rules);
+  });
+
+  test('正文段落之间的空行保留（闸门不吞人写的分段）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n第一段说明。\n\n第二段说明。\n\n## Rules\n- 甲\n', 'utf8');
+    await cmdRule({ dir: projectA, action: 'add', text: '乙规则' });
+    const out = await readP('index.md');
+    assert.match(out, /第一段说明。\n\n第二段说明。/, `分段被吞了: ${JSON.stringify(out)}`);
+  });
+
+  test('非目标页不受影响（concepts/ 页写入原样落盘）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'concepts', 'c1.md'),
+      '---\nid: c1\ntags: [concept]\n---\n\n# 标题\n\n正文第一段。\n\n正文第二段。\n', 'utf8');
+    await cmdSupersede({ dir: projectA, refs: ['c1'], by: 'c2' });
+    const out = await fs.readFile(join(projectA, '.brain', 'concepts', 'c1.md'), 'utf8');
+    assert.match(out, /正文第一段。\n\n正文第二段。/, `概念页不该被格式闸门改: ${out}`);
+  });
+});
+
+// ---------- log.md 只记成果，不记「命令副作用」 ----------
+describe('abs concept 不往 log.md 写流水', () => {
+  test('建页后 log.md 零新增（该页存在已由 index.md 承接）', async () => {
+    const logP = join(projectA, '.brain', 'log.md');
+    const before = await fs.readFile(logP, 'utf8');
+    const out = await cmdConcept({ dir: projectA, slug: 'no-log-line', title: '不写流水的页' });
+    assert.ok(out.includes('概念页骨架'), out);           // 页确实建了
+    assert.ok((await fs.readFile(logP, 'utf8')) === before, '建页不该在 log.md 留行');
+    // 而 index.md 该有它（存在性由 index 承接，不是丢失了记录）
+    assert.match(await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8'), /\[\[no-log-line\]\]/);
+  });
+
+  test('abs note 仍写 log（经验正文是真内容，砍了才是丢东西）', async () => {
+    const logP = join(projectA, '.brain', 'log.md');
+    const before = await fs.readFile(logP, 'utf8');
+    // 文本要唯一：cmdNote 的 60s 幂等按 includes 判重，与前面用例的文本撞了会被静默跳过。
+    const unique = 'note-keeps-log-line-唯一文本-7f3a';
+    await cmdNote({ dir: projectA, text: unique });
+    const after = await fs.readFile(logP, 'utf8');
+    // 按【条目数】判，不按行数：格式闸门会顺手删掉条目间的空行（文件行数可能反而变少）。
+    const entries = (t) => t.split('\n').filter((l) => l.startsWith('## [')).length;
+    assert.ok(entries(after) > entries(before), 'note 该留一条');
+    assert.ok(after.includes(unique.slice(0, 6)), `log 里应有这次 note 的正文: ${after.slice(0, 80)}`);
+  });
+});
+
+// ---------- 废弃分区白名单（2026-10-05 用户定） ----------
+// ## Roadmap 是 2026-09-13 用户亲手删的分区，但 rebuildStructure 的「非标准分区原样保留」
+// 护栏把它当人自加的区留了下来 —— 删分区的决策从未生效，AI 每次重写 index 都能加回来。
+describe('废弃分区: 删过的标准分区不再复活，人自加的分区仍保留', () => {
+  const readIndex = () => fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+
+  test('index.md 里的 ## Roadmap 被整段删除（含其下条目）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## Concepts\n- [[a]] — 页a\n\n## Roadmap\n未来计划一段话。\n- 已落地的事\n', 'utf8');
+    await cmdRule({ dir: projectA, action: 'add', text: '乙规则' });
+    const out = await readIndex();
+    assert.ok(!out.includes('## Roadmap'), `Roadmap 该被删: ${out}`);
+    assert.ok(!out.includes('未来计划一段话'), `Roadmap 正文该随之删除: ${out}`);
+    assert.ok(out.includes('乙规则'), `其它内容不该受影响: ${out}`);
+  });
+
+  test('存量非法标签不阻写入且内容不被改（不半途写盘）', async () => {
+    const bad = '# 🗂 Graph Index\n\n## Rules\n- 甲\n\n## 备忘\n- 一条备忘\n';
+    await fs.writeFile(join(projectA, '.brain', 'index.md'), bad, 'utf8');
+    await cmdRule({ dir: projectA, action: 'add', text: '乙规则' });
+    const after = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(after.includes('一条备忘'), `存量内容不应丢: ${after}`);
+    assert.ok(after.includes('乙规则'), `新规则应写入: ${after}`);
+  });
+});
+
+// ---------- 回归：旧 H1 经【写入侧】也要归一（2026-10-05 实测漏网） ----------
+// 坑：格式闸门初版只把 `## `/`### ` 开头的旧名传给 enforceBrainFormat，因为 H1 归一
+// 当时归 rebuildStructure 管。但 log.md 的 order 为空、根本不走 rebuildStructure ——
+// 于是「# 🗒 操作日志」成了唯一无人归一的路径，永不修正（todo/index 因走重排而正常，
+// 所以只测两者会漏掉这条）。
+describe('写入侧格式闸门: 旧 H1 归一（log 无分区，是唯一漏网路径）', () => {
+  test('log.md 旧 H1 在下次写入时归一，内容不丢', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'log.md'),
+      '# 🗒 操作日志\n\n## [2026-10-05 10:00] [[tester]] dev | 旧H1测试\n', 'utf8');
+    await cmdLog({ dir: projectA, title: '新条目' });
+    const out = await fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
+    assert.ok(out.startsWith('# 🗒 Activity Log'), `旧 H1 该归一: ${out.slice(0, 60)}`);
+    assert.ok(out.includes('旧H1测试'), `旧内容不该丢: ${out}`);
+  });
+
+  test('index.md 旧 H1 在下次写入时归一', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 图谱索引\n\n## Rules\n- 甲\n', 'utf8');
+    await cmdRule({ dir: projectA, action: 'add', text: '乙规则' });
+    const out = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.ok(out.startsWith('# 🗂 Graph Index'), `旧 H1 该归一: ${out.slice(0, 60)}`);
+    assert.ok(out.includes('- 甲'), `旧内容不该丢: ${out}`);
+  });
+});
+
+// ---------- 回归：H1 后必须恒有空行（2026-10-05 实测漏网） ----------
+// 坑：rebuildStructure 原条件「有内容 或 (首个分区 且 有前言)」才 push 前导空行。
+// 当【前言为空】且【首个分区为空】时（H1 缺失被补回、而 ## Rules 还没条目），
+// 两个条件都不满足 → `# H1` 与 `## Rules` 直接相贴。首行是文件门面，不容忍。
+describe('结构重建: H1 后恒有一个空行', () => {
+  test('前言为空 + 首个分区为空（H1 补回场景）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '## Concepts\n- [[a]] — 甲\n', 'utf8');
+    await cmdConcept({ dir: projectA, slug: 'b', title: '页b' });   // 触发写盘
+    const out = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    const L = out.split('\n');
+    assert.equal(L[0], '# 🗂 Graph Index', out);
+    assert.equal(L[1], '', `H1 后该有空行: ${JSON.stringify(L.slice(0, 4))}`);
+    assert.equal(L[2], '## Rules', `空行后该是首个分区: ${JSON.stringify(L.slice(0, 4))}`);
+  });
+
+  test('幂等：已规范的产物再写一次不产生变更', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n\n## Concepts\n- [[a]] — 甲\n', 'utf8');
+    const before = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    await cmdConcept({ dir: projectA, slug: 'c', title: '页c' });
+    const after = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    assert.match(after, /^# 🗂 Graph Index\n\n## Rules\n\n## Concepts\n/, `前导结构不该抖: ${after}`);
+    assert.ok(after.startsWith(before.slice(0, before.indexOf('## Entities'))), after);
+  });
+
+  // 回归（2026-10-06 实测）：空分区的前置空行被吃 —— 「有内容分区 → 空分区」接缝
+  // 被挤成 `- [[页]] …` 紧贴 `## Sources`。表现为「index 那个空行反复丢」：人工补回、
+  // 下次写操作又归一掉（本机 corp_agent: 17961e5 补、f3f7e84 又丢）。
+  // 根因：rebuildStructure 对空分区走 `else out.push(name)`，不 push 前导 ''。
+  test('空分区前也要有一个空行（且不塌到上一条目上）', async () => {
+    await fs.writeFile(join(projectA, '.brain', 'index.md'),
+      '# 🗂 Graph Index\n\n## Rules\n\n## Concepts\n- [[a]] — 甲\n\n## Sources\n\n## Syntheses\n\n## Sessions\n- [[log-1]] — 快照\n', 'utf8');
+    await cmdConcept({ dir: projectA, slug: 'd', title: '页d' });  // 触发写盘
+    const out = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');
+    const L = out.split('\n');
+    for (let i = 0; i < L.length; i++) {
+      if (!/^## /.test(L[i])) continue;
+      assert.equal(L[i - 1], '', `${L[i]} 前该有空行: ${JSON.stringify(L.slice(Math.max(0, i - 3), i + 2))}`);
+    }
+    // 空区（Sources）不蹋到上一条目上：它前面得是空行，不是 `- [[…]]`
+    assert.ok(out.includes('- [[d]] — 页d\n\n## Entities'), `空区不该贴上一条目: ${out}`);
+  });
+});
+
+// ---------- log.md 写入不被闸门破坏（用户 2026-10-05 追问） ----------
+// 闸门跑在 log 的每次写入上，所以要钉住它【只整理排版、不动正文语义】。
+describe('格式闸门对 log.md 的写入无副作用', () => {
+  const readLog = () => fs.readFile(join(projectA, '.brain', 'log.md'), 'utf8');
+
+  test('连写多条：条条完整、倒序、正文一字不改', async () => {
+    for (const t of ['甲成果含关键信息', '乙成果含关键信息', '丙成果含关键信息']) {
+      await cmdLog({ dir: projectA, title: t });
+    }
+    const out = await readLog();
+    // 排除模板占位行（它也以 `## [` 开头，是 init 留下的骨架，不是真条目）
+    const entries = out.split('\n').filter((l) => l.startsWith('## [') && !l.includes('YYYY-MM-DD'));
+    assert.equal(entries.length, 3, out);
+    // 倒序：最后写的在最前
+    assert.ok(entries[0].includes('丙成果'), out);
+    assert.ok(entries[2].includes('甲成果'), out);
+    // 正文逐字保留
+    for (const t of ['甲成果含关键信息', '乙成果含关键信息', '丙成果含关键信息']) {
+      assert.ok(out.includes(`[${t}]`), `「${t}」正文被改: ${out}`);
+    }
+  });
+
+  test('正文里带 ##/-/空行样内容不被当结构处理', async () => {
+    await cmdLog({ dir: projectA, title: '重构 ## Roadmap 区：已删除' });
+    const out = await readLog();
+    // 独立行才是分区；正文里出现 ## 不触发删除
+    assert.ok(out.includes('重构 ## Roadmap 区：已删除'), `正文被误删: ${out}`);
+    assert.equal(out.split('\n').filter((l) => l.trim() === '## Roadmap').length, 0, out);
+  });
+
+  test('note 走同一闸门：log 行与 source 页都在，正文完整', async () => {
+    const text = '经验条目：需要完整保留的长正文，确认闸门不截断不吞内容';
+    await cmdNote({ dir: projectA, text });
+    const out = await readLog();
+    assert.ok(out.includes(text.slice(0, 10)), `note 正文被改: ${out}`);
+    const srcs = await fs.readdir(join(projectA, '.brain', 'sources'));
+    assert.equal(srcs.filter((f) => f.endsWith('.md')).length, 1, srcs.join(','));
+  });
+
+  test('幂等：已规范的 log 再写一条，旧条目一字不动', async () => {
+    await cmdLog({ dir: projectA, title: '第一条' });
+    const before = await readLog();
+    await cmdLog({ dir: projectA, title: '第二条' });
+    const after = await readLog();
+    // 旧条目原样保留（第二遍不再被重排/改动）
+    for (const line of before.split('\n').filter((l) => l.startsWith('## ['))) {
+      assert.ok(after.includes(line), `旧条目被改动: ${line}`);
+    }
+  });
+});
+
+// ---------- index 链接区闸门（2026-10-18）----------
+// 真库实测：Sources 区被塞进 `场景：…` 散文段落、裸编号列表项、带 `## ` 前缀的摘要。
+// 根因：INDEX-ENTRY 只检查 `- ` 开头的行，不以 `- ` 开头的行全被放行。
+describe('index 链接区闸门（只放 `- [[页名]] — 一句话`）', () => {
+  const clean = [
+    '# 🗂 Graph Index', '', '## Rules', '', '> 硬规则一条。', '',
+    '## Concepts', '- [[a]] — 一句话描述', '',
+    '## Sources', '- [[s1]] — 一条来源', '',
+    '## Sessions', '',
+  ].join('\n');
+  const spec = { h1: '# 🗂 Graph Index', order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Sessions'] };
+
+  const cases = [
+    ['散文段落（真库实际污染形态）', '场景：6405 个下载包文件全量导入知识库，边导边优化存储…'],
+    ['裸编号列表项', '1. **卡片 id = n + nodes**'],
+    ['没跟描述的条目', '- [[bad]] 没有破折号'],
+  ];
+  for (const [name, dirty] of cases) {
+    test(`拒绝：${name}`, async () => {
+      const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+      const bad = clean.replace('## Sources\n- [[s1]] — 一条来源', `## Sources\n- [[s1]] — 一条来源\n\n${dirty}`);
+      assert.throws(() => enforceBrainFormat(bad, spec, clean), /格式不合规/);
+    });
+  }
+
+  test('拒绝：摘要带 `## ` 标题前缀（摘要取了页面首行）', async () => {
+    const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+    const bad = clean.replace('- [[s1]] — 一条来源', '- [[s1]] — ## 标题残留');
+    assert.throws(() => enforceBrainFormat(bad, spec, clean), /标题前缀/);
+  });
+
+  test('放行：正常新增一条', async () => {
+    const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+    const good = clean.replace('- [[s1]] — 一条来源', '- [[s1]] — 一条来源\n- [[s2]] — 另一条');
+    assert.doesNotThrow(() => enforceBrainFormat(good, spec, clean));
+  });
+
+  test('Rules 区不受链接形状约束（它放的是硬规则短句）', async () => {
+    const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+    const good = clean.replace('> 硬规则一条。', '> 硬规则一条。\n- 只写做过、跑过、测过的事实。');
+    assert.doesNotThrow(() => enforceBrainFormat(good, spec, clean));
+  });
+});
+
+// ---------- 三文件受管表：闸门不可绕过（2026-10-18）----------
+// 用户的定位很明确：index/log/todo 是数据库表，markdown 只是呈现层。
+// 表不能被"某个入口忘了注册校验"就写脏 —— 闸门必须默认在场。
+describe('三文件受管表：闸门默认生效，不依赖调用方 import', () => {
+  const brainOf = (proj) => join(proj, '.brain');
+
+  test('只 import lock.js（未注册闸门）也拦得住脏写入', async () => {
+    // ★ 必须在**子进程**里跑：本进程已经加载过 store.js，formatGate 早就不是空，
+    //   根本走不到「懒加载」分支 —— 那条路径就没被盖到（实测：拆掉懒加载测试仍绿）。
+    const proj = join(sandbox, 'gate-lockonly');
+    await fs.mkdir(join(proj, '.brain'), { recursive: true });
+    const p = join(brainOf(proj), 'index.md');
+    await fs.writeFile(p, '# 🗂 Graph Index\n\n## Sources\n- [[a]] — ok\n', 'utf8');
+    const script = `
+      const { editFile } = await import(${JSON.stringify(new URL('../../code/lock.js', import.meta.url).href)});
+      try {
+        await editFile(${JSON.stringify(p)}, (c) => ({ text: c + '\\n裸散文段落\\n' }));
+        console.log('WROTE');
+      } catch (e) { console.log('REJECTED'); }
+    `;
+    const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '-e', script]);
+    assert.match(stdout, /REJECTED/, `未注册闸门时受管文件也不能被写脏（输出: ${stdout}）`);
+    const after = await fs.readFile(p, 'utf8');
+    assert.ok(!after.includes('裸散文段落'), `文件不该被改: ${after}`);
+    assert.ok(after.includes('- [[a]] — ok'), '原内容不该被动');
+  });
+
+  test('log.md 里的裸散文被拒（不只管 `## ` 行）', async () => {
+    const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+    const clean = ['# 🗒 Activity Log', '', '## Log', '', '## [2026-10-18 10:00] [[fc]] note | 一条', ''].join('\n');
+    const bad = clean + '\n这是一段没有条目标签的裸散文\n';
+    assert.throws(() => enforceBrainFormat(bad, { h1: '# 🗒 Activity Log', order: [] }, clean), /格式不合规/);
+  });
+
+  test('log.md 正常条目照常写入', async () => {
+    await cmdLog({ dir: projectA, title: '正常条目' });
+    const t = await fs.readFile(join(brainOf(projectA), 'log.md'), 'utf8');
+    assert.match(t, /^## \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]/m, t);
+  });
+
+  test('init 建的三个文件也过闸门（不再是直写盘）', async () => {
+    const proj = join(sandbox, 'gate-init');
+    await fs.mkdir(proj, { recursive: true });
+    await cmdInit({ dir: proj });
+    for (const f of ['index.md', 'log.md', 'todo.md']) {
+      const t = await fs.readFile(join(proj, '.brain', f), 'utf8');
+      assert.ok(t.trim().length > 0, `${f} 应非空`);
+    }
+  });
+});
+
+// ---------- 主子都是任务：子任务未完成不许 done（2026-10-18 用户定）----------
+// 规则：主任务与子任务处理方式一样，子任务也是任务。
+// 只有主任务和子任务都完成，主任务才能经 done。
+// 历史：前四版都错（随父进 Done=被折叠吞掉 / 升格=用户否 / 占位任务=无中生有 /
+// 原地不管=无主杂行被清掉），正确的做法是不替用户决定。
+describe('子任务未完成时拒绝 done', () => {
+  test('拒绝：有未勾子任务时不能 done，且文件一字不动', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LZ-1', note: '主任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LZ-1', note: '子任务甲' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LZ-1', note: '子任务乙' });
+    const before = await readTodo(projectA);
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LZ-1' }),
+      /子任务未完成/,
+      '有未勾子任务时必须拒绝',
+    );
+    const after = await readTodo(projectA);
+    assert.equal(after, before, `拒绝时文件不该有任何改动:\n${after}`);
+  });
+
+  test('报错要点名是哪几条没完成', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LZ-2', note: '主任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LZ-2', note: '还没做的事A' });
+    await assert.rejects(
+      () => cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LZ-2' }),
+      /还没做的事A/,
+      '报错里要能看见具体是哪条',
+    );
+  });
+
+  test('子任务全勾后才能 done，且进 Done 后子任务缩进保留', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LZ-3', note: '主任务' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LZ-3', note: '子任务一' });
+    await cmdTask({ dir: projectA, action: 'note', id: 'LZ-3', note: '子任务二' });
+    await cmdTask({ dir: projectA, action: 'child-done', id: 'LZ-3', n: 1 });
+    await cmdTask({ dir: projectA, action: 'child-done', id: 'LZ-3', n: 2 });
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LZ-3' });
+    assert.match(r, /已完成/, r);
+    const t = await readTodo(projectA);
+    assert.match(t, /- \[x\].*\[LZ-3\]/, `主任务应是已完成行:\n${t}`);
+    // 子任务仍缩进挂在主任务下（层级不丢）
+    const kids = t.split('\n').filter((l) => /^\s+- \[x\]/.test(l));
+    assert.equal(kids.length, 2, `两条子任务都要缩进保留:\n${t}`);
+    assert.ok(kids.every((k) => k.startsWith('  - [x] ')), `必须是 2 空格缩进: ${JSON.stringify(kids)}`);
+  });
+
+  test('没有子任务时照常 done（不误拦）', async () => {
+    await cmdTask({ dir: projectA, action: 'start', id: 'LZ-4', note: '干净任务' });
+    const r = await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LZ-4' });
+    assert.match(r, /已完成/, r);
+  });
+});
+
+// ---------- index 摘要 / log 正文的块级结构（2026-10-18 审查修复）----------
+// index 是表，摘要是一列纯文本；摘要写成列表/围栏/表格会把表结构搞坏。
+// 审查修复（2026-10-18）：摘要位置在 `- [[页名]] — ` 之后，是一行中间，
+// `+ ` / `* ` / `> ` / `1. ` 在这里不会真渲染成块级结构，都是人话开头。
+// 原判据把它们一起拒了（实测「+ 一点补充」被误拒）。
+describe('index 摘要：只拦真会破坏解析的结构符', () => {
+  const shape = async (d) => {
+    const { checkFileShape } = await import('../../code/todo/index.js');
+    return checkFileShape('index.md', ['# 🗂 Graph Index', '', '## Sources', `- [[a]] — ${d}`, ''].join('\n'));
+  };
+  for (const d of ['+ 一点补充', '* 星号开头', '> 引用样式', '1. 第一步', '- 是减号还是列表，这里算文字？']) {
+    test(`放行：${d}`, async () => {
+      const bad = await shape(d);
+      if (d.startsWith('-')) {
+        // 以 `- ` 开头同形另一条条目开头，仍要拒（防粘条目）
+        assert.ok(bad.length > 0, `以 "- " 开头应拒: ${d}`);
+      } else {
+        assert.equal(bad.length, 0, `不该误拒: ${d} => ${JSON.stringify(bad)}`);
+      }
+    });
+  }
+  for (const d of ['- 列表项', '```js', '| a | b |', '## 标题']) {
+    test(`拒绝：${d}`, async () => {
+      const bad = await shape(d);
+      assert.ok(bad.length > 0, `应拒: ${d}`);
+    });
+  }
+});
+
+describe('index 摘要禁止携带块级 Markdown 结构', () => {
+  const spec = { h1: '# 🗂 Graph Index', order: ['## Sources'] };
+  const clean = '# 🗂 Graph Index\n\n## Sources\n- [[a]] — ok\n';
+  const bads = [
+    ['列表项', '- 列表项'],
+    ['代码围栏', '```js'],
+    ['表格', '| a | b |'],
+    ['标题', '## 标题'],
+    ['行中含围栏', '一句话 ```js'],
+  ];
+  for (const [name, d] of bads) {
+    test(`拒绝摘要里的${name}`, async () => {
+      const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+      const bad = clean.replace('- [[a]] — ok', `- [[a]] — ok\n- [[b]] — ${d}`);
+      assert.throws(() => enforceBrainFormat(bad, spec, clean), /格式不合规/);
+    });
+  }
+
+  test('放行：含行内代码的正常摘要', async () => {
+    const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+    const good = clean.replace('- [[a]] — ok', '- [[a]] — ok\n- [[b]] — 一句正常话，含 `行内代码` 与数字 42');
+    assert.doesNotThrow(() => enforceBrainFormat(good, spec, clean));
+  });
+});
+
+describe('log 正文禁止代码围栏', () => {
+  test('含 ``` 的条目被拒', async () => {
+    const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+    const spec2 = { h1: '# 🗒 Activity Log', order: [] };
+    const clean = '# 🗒 Activity Log\n\n## Log\n\n## [2026-10-18 10:00] [[fc]] note | 正常\n';
+    const bad = clean + '\n## [2026-10-18 11:00] [[fc]] note | 带围栏 ```js\n';
+    assert.throws(() => enforceBrainFormat(bad, spec2, clean), /格式不合规/);
+  });
+});
+
+// 闸门返回 null = "这个文件不归我管"，editFile 应原样放行（`?? write` 兜底）。
+// 这条守住"闸门只对 index/log/todo 生效，不误伤 concepts/ 等自由页"。
+describe('闸门对非受管文件放行', () => {
+  test('concepts/ 下的自由页不受三文件格式约束', async () => {
+    const proj = join(sandbox, 'gate-free');
+    await fs.mkdir(join(proj, '.brain', 'concepts'), { recursive: true });
+    const p = join(proj, '.brain', 'concepts', 'free.md');
+    // 故意写成 index 会拒绝的形态（散文段落、代码围栏）
+    const body = '---\ntags: [concept]\n---\n\n# 自由页\n\n这是散文段落。\n\n```js\nconst a = 1;\n```\n';
+    await assert.doesNotReject(
+      () => editFile(p, () => ({ text: body })),
+      '自由页不该被三文件的格式闸门拦',
+    );
+    assert.equal(await fs.readFile(p, 'utf8'), body);
+  });
+});
+
+// ---------- 孤儿缩进（2026-10-18 实测）----------
+// 手动清理 Done 区时只删了父任务行、留下它的 `  - [x] 子项`，看板上出现
+// 一条"没有主项的子项" —— 而 checkFileShape 报 0 违规、lint 说健康。
+// 子任务靠缩进表达归属，离开父任务就没意义，属硬错。
+describe('孤儿子任务必须被检出', () => {
+  const shape = async (t) => (await import('../../code/todo/index.js')).checkFileShape('todo.md', t).map((x) => x.code);
+
+  test('检出：缩进的子项上方没有任务行', async () => {
+    const t = ['# 📋 Todo Board', '', '## Todo', '', '## Done', '', '### 2026-10-18',
+      '  - [x] 孤儿', '- [x] 正常 【落地】 (完成 2026-10-18)', ''].join('\n');
+    assert.ok((await shape(t)).includes('TODO-ORPHAN-CHILD'), `应检出孤儿: ${JSON.stringify(await shape(t))}`);
+  });
+
+  test('不误报：子项挂在顶层主任务下', async () => {
+    const t = ['# 📋 Todo Board', '', '## Todo', '- [ ] [进行中] P1 [[fc]] — 主',
+      '  - [ ] 子一', '  - [ ] 子二', '', '## Done', ''].join('\n');
+    assert.ok(!(await shape(t)).includes('TODO-ORPHAN-CHILD'), `不该误报: ${JSON.stringify(await shape(t))}`);
+  });
+
+  test('旧格式 ↳ 任务行迁移后能被当成子项（不报孤儿）', async () => {
+    // 2026-10-20：旧写法不再被当成任务行，但存量会被 migrateLegacyChild 迁成
+    // 标准缩进子项，挂到所属主任务下 —— 因此不该再报孤儿。
+    // （迁移后它就是一条普通子项，没有父任务当然还是会报 —— 那是正确行为。）
+    const t = ['# 📋 Todo Board', '', '## Todo',
+      '- [ ] [进行中] P1 [[fc]] — 主任务',
+      '  ↳ 断点: 做到一半的记录', '  - [ ] 已有的子项', '', '## Done', ''].join('\n');
+    const parsed = normalizeTodo(t);
+    assert.match(parsed, /^ {2}- \[ \] (?:[^\n]*?)做到一半的记录/m, `应迁成缩进子项: ${parsed}`);
+    assert.match(parsed, /^ {2}- \[ \] (?:[^\n]*?)做到一半的记录/m, `应迁成缩进子项: ${parsed}`);
+    assert.ok(!(await shape(parsed)).includes('TODO-ORPHAN-CHILD'), `迁移后不应报孤儿: ${JSON.stringify(await shape(parsed))}`);
+  });
+
+  test('不误报：空行分隔不影响判定', async () => {
+    const t = ['# 📋 Todo Board', '', '## Todo', '- [ ] [进行中] P1 [[fc]] — 主', '',
+      '  - [ ] 隔了个空行的子项', '', '## Done', ''].join('\n');
+    assert.ok(!(await shape(t)).includes('TODO-ORPHAN-CHILD'), `上溯跳过空行: ${JSON.stringify(await shape(t))}`);
+  });
+});
+
+// 孤儿行不吃存量豁免（2026-10-18 用户要求）：
+// 超长断点放行存量是因为没有安全自动修法；孤儿行是确定性的坏数据，
+// 放行等于让损坏持续 —— 宁可写不进去让人看见。
+describe('孤儿子任务不吃存量豁免', () => {
+  test('写入前就存在的孤儿子项，仍会阻止写入', async () => {
+    const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+    const spec = { h1: '# 📋 Todo Board', order: ['## Todo', '## Done'] };
+    const dirty = ['# 📋 Todo Board', '', '## Todo', '', '## Done', '', '### 2026-10-18',
+      '  - [x] 早就存在的孤儿', '- [x] 正常 【落地】 (完成 2026-10-18)', ''].join('\n');
+    // current = 同一份脏内容 → prevSig 会包含那行，但孤儿仍要拒
+    assert.throws(() => enforceBrainFormat(dirty, spec, dirty), /孤儿子任务/);
+  });
+
+  test('修好之后（把子项挂回主任务）就能写', async () => {
+    const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+    const spec = { h1: '# 📋 Todo Board', order: ['## Todo', '## Done'] };
+    const ok = ['# 📋 Todo Board', '', '## Todo', '', '## Done', '', '### 2026-10-18',
+      '- [x] 主任务 【落地】 (完成 2026-10-18)', '  - [x] 子项', ''].join('\n');
+    assert.doesNotThrow(() => enforceBrainFormat(ok, spec, ok));
+  });
+});
+
+// ---------- load 不吞格式错误（2026-10-18 审查修复）----------
+// checkBrainShape 原来对 enforceBrainFormat 的拒绝 .catch(() => {}) 吞掉，
+// 于是含孤儿行的库跑 load 时退出码 0、无任何提示，文件也没动 ——
+// 开机第一入口沉默，用户以为库是健康的。
+describe('load 遇到无法自动归一的文件要报出来', () => {
+  test('含孤儿子任务的 todo.md：load 警告里点名具体问题行', async () => {
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo', '', '## Done', '', '### 2026-10-18',
+        '  - [x] 没有主项的子项', ''].join('\n'), 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.match(out, /未能自动归一/, `load 应报出归一失败:\n${out}`);
+    assert.match(out, /孤儿子任务/, `要点名具体问题:\n${out}`);
+  });
+
+  test('正常库跑 load 不出现这条警告', async () => {
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'todo.md'),
+      ['# 📋 Todo Board', '', '## Todo', '- [ ] [进行中] P1 [[fc]] — 主', '  - [ ] 子', '', '## Done', ''].join('\n'), 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.ok(!out.includes('未能自动归一'), `正常库不该报:\n${out}`);
+  });
+
+  test('只有标题非标准时，才出现「无头文件不自动改」这句提示', async () => {
+    await fs.mkdir(join(projectA, '.brain'), { recursive: true });
+    await fs.writeFile(join(projectA, '.brain', 'index.md'), '随便一个标题\n\n## Concepts\n', 'utf8');
+    const out = await cmdLoad({ dir: projectA });
+    assert.match(out, /无头文件不自动改/, out);
+  });
+});
+
+// 回归（2026-11-05 实测踩到）：陈旧 `↳` 子项 + 报告体 → 整个项目的 abs load 崩掉。
+//
+// 病根：enforceBrainFormat 先把 `  ↳ 内容: …` 迁成 `  - [ ] …`，行签名随之变形；
+// 而 prevSig 取的是 prev 的**原始**签名，对不上迁移后的行 → 存量坏子项被判成
+// 「本次新引入」→ 写盘失败 → readTodo 的惰性迁移抛错 → abs load / abs todo 全废，
+// 且不会自愈（每次读都重走同一条路）。
+//
+// 实测样本：zj_shop 的 deploy-migration-009 下挂了一条 200+ 字、含 ①②③ 清单的
+// `  ↳ 内容:` 子项。修法：prev 也过同一次迁移再取签名。
+describe('陈旧 ↳ 子项 + 报告体：读取不能崩（2026-11-05）', () => {
+  test('readTodo: 历史 ↳ 报告体子项只是被迁移，不让整个读失败', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'legacy-'));
+    try {
+      await fs.mkdir(join(root, '.brain'), { recursive: true });
+      await fs.writeFile(join(root, '.brain', 'todo.md'), [
+        '# 📋 Todo Board',
+        '',
+        '## Todo',
+        '- [ ] [进行中] deploy-x [[fanchao]] — 待部署',
+        '  ↳ 内容: ①补 8 个会员等级节点(含 pid 回填自愈) ②插 2 条种子 ③清理旧口径行(安全阀: 只删特定行)',
+        '',
+        '## Done',
+        '',
+      ].join('\n'), 'utf8');
+      const text = await readTodo(root);
+      assert.ok(text.includes('deploy-x'), `必须读得到内容，实际抛错或为空: ${text}`);
+    assert.ok(/^ {2}- \[ \] (?:[^\n]*?)①补/m.test(text), `↳ 应被迁成缩进子项: ${text}`);
+    assert.ok(/^ {2}- \[ \] (?:[^\n]*?)①补/m.test(text), `↳ 应被迁成缩进子项: ${text}`);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('★ 破坏验证：把 prev 的迁移去掉，enforceBrainFormat 立刻拒写', async () => {
+    // 这两条钉住的是同一条契约：prev 必须先过 ↳ 迁移，签名才能和迁移后的文本对上。
+    // 上面那条测「现在能读」，这条测「为什么能读」—— 少了它就是会崩。
+    const { enforceBrainFormat } = await import('../../code/todo/structure.js');
+    const { BRAIN_SHAPE } = await import('../../code/brain/shape.js');
+    const spec = BRAIN_SHAPE['todo.md'];
+    const prev = [
+      '# 📋 Todo Board', '', '## Todo',
+      '- [ ] [进行中] deploy-x [[fanchao]] — 待部署',
+      '  ↳ 内容: ①补 8 个节点 ②插 2 条种子 ③清理旧行',
+      '', '## Done', '',
+    ].join('\n');
+    // 写入内容 = 同一个库（闸门内部会把 ↳ 迁成缩进子项），应通过
+    assert.doesNotThrow(
+      () => enforceBrainFormat(prev, spec, prev),
+      '存量坏子项只该被迁移，不该拒绝写入',
+    );
+  });
+});
+
+// 删除任务（2026-11-05 用户报「每次删除任务可烦人了」——
+// 原来只有 state=搁置，而搁置是「先不做，还留在看板上」，不是删除）。
+describe('todo remove — 删除任务', () => {
+  test('连子项一起删，且不误删别的任务', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'rm-'));
+    try {
+      await cmdInit({ dir: root });
+      // cmdTask 层只认 start/done/... 这些内部动作；'add' 是 CLI 的别名（bin/abs.js 里转成 start）
+      await cmdTask({ dir: root, action: 'start', id: 'DEL', note: '要删的' });
+      await cmdTask({ dir: root, action: 'note', id: 'DEL', note: '子项一' });
+      await cmdTask({ dir: root, action: 'note', id: 'DEL', note: '子项二' });
+      await cmdTask({ dir: root, action: 'start', id: 'KEEP', note: '要保留的' });
+
+      const out = await cmdTask({ dir: root, action: 'remove', id: 'DEL' });
+      assert.match(out, /已删除任务 DEL/);
+      assert.match(out, /连同 2 条子项/, `要报告删了几条子项: ${out}`);
+
+      const md = await fs.readFile(join(root, '.brain', 'todo.md'), 'utf8');
+      assert.ok(!md.includes('DEL'), `任务行该消失:\n${md}`);
+      assert.ok(!md.includes('子项一') && !md.includes('子项二'), `子项也该消失:\n${md}`);
+      assert.ok(md.includes('KEEP'), `不该误删别的任务:\n${md}`);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('不存在的 id 明确报 NO_MATCH，不静默成功', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'rm-'));
+    try {
+      await cmdInit({ dir: root });
+      const out = await cmdTask({ dir: root, action: 'remove', id: 'NOT-EXIST' });
+      assert.match(out, /NO_MATCH/);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('Done 区的任务删不掉（历史不许篡改）', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'rm-'));
+    try {
+      await cmdInit({ dir: root });
+      await cmdTask({ dir: root, action: 'start', id: 'DONE1', note: '做完了' });
+      await cmdTask({ dir: root, action: 'done', id: 'DONE1', as: '落地' });
+      const out = await cmdTask({ dir: root, action: 'remove', id: 'DONE1' });
+      assert.match(out, /NO_MATCH/, `Done 区的条目不该被删: ${out}`);
+      const md = await fs.readFile(join(root, '.brain', 'todo.md'), 'utf8');
+      assert.ok(md.includes('DONE1'), `Done 记录必须还在:\n${md}`);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // 2026-11-12 事故后加的代码兜底：done 必须自己往 log.md 落一条。
+  // 背景：日志曾经只靠模型记得跑 `abs log`，11-06 SKILL 删了那句要求后
+  // 跨项目日产量从 16 条掉到 3 条。这组用例钉住「不靠模型也写」。
+  test('done 成功后自动在 log.md 落一条（任务 id + 结语）', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'autolog-'));
+    try {
+      await cmdInit({ dir: root });
+      const out = await cmdTask({ dir: root, action: 'start', id: 'AUTO1', note: '测试自动写日志' });
+      assert.match(out, /AUTO1/);
+      const res = await cmdTask({ dir: root, action: 'done', id: 'AUTO1', as: '落地', note: '验证用结语' });
+      assert.match(res, /已完成/, `done 应成功: ${res}`);
+      assert.match(res, /log →/, `done 的输出应告知写了 log: ${res}`);
+      const log = await fs.readFile(join(root, '.brain', 'log.md'), 'utf8');
+      assert.match(log, /^## \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] \[[^\]]*AUTO1[^\]]*\]/m, `log.md 里应有这一条:\n${log}`);
+
+      assert.ok(!/\[\[落地\]\]/.test(log), '结语已取消，不该出现【落地】');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('done 没命中任务时不留 log 流水', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'autolog2-'));
+    try {
+      await cmdInit({ dir: root });
+      const res = await cmdTask({ dir: root, action: 'done', id: 'NOPE', note: '不存在的任务' });
+      assert.match(res, /NO_MATCH/, `应报未找到: ${res}`);
+      const log = await fs.readFile(join(root, '.brain', 'log.md'), 'utf8');
+      assert.ok(!log.includes('NOPE'), `未命中也写了 log:\n${log}`);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});

@@ -3,7 +3,7 @@
 // 为何需要：JS 没有编译步骤，一个手滑的括号错要到运行时才炸 —— 而运行时可能
 // 是用户敲 `abs` 的那一刻。提交前把所有会被加载的文件过一遍，成本几百毫秒。
 //
-// 为何不用 `node --check` 逐个跑：那要起 N 个进程（我们 src+bin+hooks 有 20+ 个
+// 为何不用 `node --check` 逐个跑：那要起 N 个进程（我们 code+agents+bin 有 30+ 个
 // 文件）。用 vm.Script 在当前进程里逐个编译，快一个量级。
 //
 // 只检查 .js 与 .ts；.ts 用「剥类型」的思路 —— 但 Node 的 vm 不认 TS 语法，
@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import vm from 'node:vm';
 
 const ROOT = new URL('..', import.meta.url).pathname;
-const DIRS = ['src', 'bin', 'hooks', 'scripts'];
+const DIRS = ['code', 'bin', 'agents', 'scripts'];
 const SKIP = new Set(['node_modules', '.git', '.brain']);
 
 function walk(dir, out = []) {
@@ -49,15 +49,19 @@ for (const f of files) {
   }
 }
 
-// .ts 另走 esbuild（Node 的 vm 不认类型标注）
-const tsFiles = [];
-for (const d of ['hooks', 'src', 'bin']) {
-  const dir = join(ROOT, d);
-  if (!existsSync(dir)) continue;
+// .ts 另走 esbuild（Node 的 vm 不认类型标注）。hook 与插件模板都在 agents/<宿主>/ 下，
+// 深度不再固定，所以递归扫。
+function walkTs(dir, out = []) {
+  if (!existsSync(dir)) return out;
   for (const e of readdirSync(dir, { withFileTypes: true })) {
-    if (e.isFile() && e.name.endsWith('.ts') && !e.name.includes('.test.')) tsFiles.push(join(dir, e.name));
+    if (SKIP.has(e.name)) continue;
+    const full = join(dir, e.name);
+    if (e.isDirectory()) walkTs(full, out);
+    else if (e.name.endsWith('.ts') && !e.name.includes('.test.')) out.push(full);
   }
+  return out;
 }
+const tsFiles = ['agents', 'code', 'bin'].flatMap((d) => walkTs(join(ROOT, d)));
 if (tsFiles.length) {
   let esbuildOk = true;
   try {

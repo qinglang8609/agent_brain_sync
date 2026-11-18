@@ -11,8 +11,8 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findBrainRoot, absLogDir, AbsError } from '../src/index.js';
-import { cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdRule, cmdResolve, cmdSupersede } from '../src/store.js';
+import { findBrainRoot, absLogDir, AbsError } from '../code/index.js';
+import { cmdLoad, cmdStatus, cmdTask, cmdQuery, cmdLint, cmdNote, cmdConcept, cmdRule, cmdResolve, cmdSupersede } from '../code/store.js';
 
 // ---------- 技术日志: MCP 请求跟踪（调试用, 与图谱 log.md 完全分开） ----------
 // 落 ~/.abs/log/mcp.log: 每次工具调用一行 [时间] tool cwd 参数摘要 → 耗时/结果摘要。

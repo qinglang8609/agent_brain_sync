@@ -38,6 +38,7 @@ async function pageSlugs(root) {
 /** 找出 SKILL.md 里所有 `abs resolve <slug>` 引用。
  *  只认反引号包起来的那种（`abs resolve x`）—— 散文里顺口提到的页名不在此列，
  *  它由 .brain 内的双链 lint 负责。 */
+export const SKILL_SUBDIR = join('agents', 'shared', 'skills');
 export function extraResolveRefs(text) {
   const seen = new Set();
   const re = /`abs resolve ([A-Za-z0-9._-]+)`/g;
@@ -52,12 +53,12 @@ export async function checkSkillRefs(root) {
   const skillFiles = [];
   let dirs = [];
   try {
-    dirs = await fs.readdir(join(root, 'skill'));
+    dirs = await fs.readdir(join(root, SKILL_SUBDIR));
   } catch {
-    return { refs, missing: [], skillFiles }; // 没有 skill/ = 不是本仓库，跳过
+    return { refs, missing: [], skillFiles }; // 没有 skill 目录 = 不是本仓库，跳过
   }
   for (const d of dirs) {
-    const rel = `skill/${d}/SKILL.md`;
+    const rel = `${SKILL_SUBDIR}/${d}/SKILL.md`;
     let text = '';
     try {
       text = await fs.readFile(join(root, rel), 'utf8');

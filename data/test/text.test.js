@@ -1,0 +1,136 @@
+// test/text.test.js — 纯文本工具的边界（clip / slugOf）。
+//
+// 为何单独测：这两个是 log/note/concept 三条写入路径共用的收口函数，改坏了
+// 影响面很广，但原先只有「顺带被别的测试走到」——边界（空串、正好 n、全标点、
+// emoji）从没被直接钉过。
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { clip, slugOf } from '../../code/text.js';
+
+describe('clip — 语义边界收口', () => {
+  test('不超长时原样返回（不加省略号）', () => {
+    assert.equal(clip('短句', 10), '短句');
+    assert.equal(clip('正好九个字啊啊啊', 9), '正好九个字啊啊啊');  // 正好等于 n
+  });
+
+  test('超长时在标点处收口（不硬切在词中间）', () => {
+    // 这是它存在的理由：曾直接 slice 把 log.md 切断在词中间，load 读到半句
+    const s = '第一条线索很长很长很长，第二条线索也很长很长很长很长';
+    const r = clip(s, 15);
+    assert.ok(r.endsWith('…'), '应加省略号');
+    assert.ok(!/[,，、;；.。]\s*…$/.test(r), '不应留着标点再省略号');
+    assert.ok(r.length <= 16, `不该比 n 长太多: ${r.length}`);
+  });
+
+  test('长句无标点时硬切（宁可硬切也不留残破短头）', () => {
+    const s = '一二三四五六七八九十一二三四五六七八九十';
+    const r = clip(s, 10);
+    assert.equal(r.length, 11, `应为 10 + 省略号: ${r}`);
+  });
+
+  test('空/undefined 返回空串（不抛）', () => {
+    assert.equal(clip('', 5), '');
+    assert.equal(clip(undefined, 5), '');
+    assert.equal(clip(null, 5), '');
+  });
+
+  test('n=0 不炸', () => {
+    assert.doesNotThrow(() => clip('abc', 0));
+  });
+});
+
+describe('slugOf — 文件名 slug', () => {
+  test('中文转小写连字符形式，保留可读性', () => {
+    assert.equal(slugOf('修复插件加载失败'), '修复插件加载失败');
+  });
+
+  test('英文/空格转连字符，全小写', () => {
+    assert.equal(slugOf('Fix Plugin Load'), 'fix-plugin-load');
+  });
+
+  test('特殊字符折叠为单个连字符，首尾不留', () => {
+    const r = slugOf('  a///b  c  ');
+    assert.ok(!/^-|-$/.test(r), `首尾不该有连字符: ${r}`);
+    assert.ok(!/--/.test(r), `不该有连续连字符: ${r}`);
+  });
+
+  test('超长在标点边界收口（不切出残字）', () => {
+    // 坑源：曾出现 `...-硬切-不` 这种残尾
+    const r = slugOf('这是一个非常长的标题，后面还有很多内容需要被截断掉', 12);
+    assert.ok(!/-$/.test(r), `不该以连字符结尾: ${r}`);
+  });
+
+  test('空输入返回空串（调用方据此跳过）', () => {
+    assert.equal(slugOf(''), '');
+    assert.equal(slugOf('   '), '');
+    assert.equal(slugOf('！！！'), '');   // 全标点 → 折叠后为空
+  });
+
+  // 2026-11-08 用户实测：按长度窗口切必然切在半句上。
+  // 三条真实生成过的坏名（都在 index 与双链里到处可见）就是这三条回归的源。
+  test('不切半句：名字停在第一个句读处，介词/动词不再当尾巴', () => {
+    assert.equal(
+      slugOf('abs sleep 离线整理方案在 docs/sleep-design.md（仅方案未实现）：夜里补空/压缩会话页/提炼概念'),
+      'abs-sleep-离线整理方案在-docs-sleep-design-md',
+    );
+    assert.equal(
+      slugOf('检索有效不等于记忆被用：主动取靠「触发规则写进 skill 开场」而非「工具更聪明」。实测'),
+      '检索有效不等于记忆被用',
+    );
+    assert.equal(
+      slugOf('发版 1.28.5 时 npm i -g . 会把全局包装成指向仓库的符号链接（依赖从仓库 node_modules 解析），要真实安装'),
+      '发版-1-28-5-时-npm-i-g-会把全局包装成指向仓库的符号链接',
+    );
+  });
+
+  test('英文句末的点算句读，版本号与稀有 token 里的点不算', () => {
+    assert.equal(slugOf('Fix Plugin Load. Then the config must be reloaded.'), 'fix-plugin-load');
+    // `1.28.5` 与孤立的 `-g .`：点后不是空格/点前是空格 → 不当句读，句子照旧
+    assert.ok(slugOf('升到 1.28.9 之后').includes('1-28-9'), '版本号不能被点切断');
+    assert.equal(slugOf('npm i -g .'), 'npm-i-g');
+  });
+
+  test('逗号也是短语边界（比整句短，仍读得通）', () => {
+    assert.equal(slugOf('甲说了什么，乙说了什么'), '甲说了什么');
+  });
+
+  test('整句无句读且超长 → 退到窗口内最后一个空格（罕见路径）', () => {
+    const r = slugOf('word '.repeat(30), 20);
+    assert.ok(r.length <= 20, `应剪到上限内: ${r.length} ${r}`);
+    assert.ok(!r.endsWith('-'), '不该以连字符结尾');
+  });
+});
+
+// 回归（2026-10-19）：clip/slugOf 原先用 s.slice(n) 按 UTF-16 code unit 切，
+// emoji（星平面字符，占两个 code unit）会被拦腰切开，写出半个代理对 → 文件里是乱码。
+describe('clip / slugOf — emoji 不被拦腰切开', () => {
+  // 半个代理对的正则：高代理后面没跟低代理，或低代理前面没有高代理
+  const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+
+  test('clip 在任意 n 下都不产生半个代理对', () => {
+    const s = '😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀';
+    for (const n of [1, 3, 5, 7, 13]) {
+      const r = clip(s, n);
+      assert.ok(!LONE_SURROGATE.test(r), `n=${n} 产生了半个代理对: ${JSON.stringify(r)}`);
+    }
+  });
+
+  test('clip 混排（中英 + emoji）也不切坏', () => {
+    for (const n of [1, 3, 5, 7]) {
+      const r = clip('ab😀cd😀ef😀gh', n);
+      assert.ok(!LONE_SURROGATE.test(r), `n=${n}: ${JSON.stringify(r)}`);
+    }
+  });
+
+  test('slugOf 也不切坏 emoji', () => {
+    const r = slugOf('😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀');
+    assert.ok(!LONE_SURROGATE.test(r), `产生了半个代理对: ${JSON.stringify(r)}`);
+  });
+
+  test('中文按字符数计长（未因改码点切而变成 double）', () => {
+    // 回归：改成按码点切后，n 的语义必须是「双字」，不能变成字节或 code unit
+    assert.equal(clip('一二三四五', 5), '一二三四五');
+    const r = clip('这是一句比较长的中文句子，用来验证在标点处断开的行为是否正确。后面还有。', 20);
+    assert.ok(r.endsWith('…') && r.length <= 21, `应收口在 20 字内: ${JSON.stringify(r)}`);
+  });
+});

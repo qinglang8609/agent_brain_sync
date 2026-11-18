@@ -3,30 +3,30 @@
 // abs <cmd> [args]
 // 命令: init / board / status / load / task / install / uninstall / help
 // ── 命令按需加载（2026-11-16）───────────────────────────────────────────────
-// 以前这里一行 import 从 src/store.js 拉进全部模块（todo/log/note/query/install/hosts…），
+// 以前这里一行 import 从 code/store.js 拉进全部模块（todo/log/note/query/install/hosts…），
 // 于是连 `abs --version` 也付一遍加载成本（实测 ~30ms）。现在只在实际执行某个命令时
 // 才 import 它所在的那个模块 —— `abs load` 不再加载 lint/install/hosts 等。
 const CMD_MODULE = {
-  cmdInit: '../src/brain/init.js',
-  cmdRepair: '../src/brain/init.js',
-  cmdLoad: '../src/brain/load.js',
-  cmdStatus: '../src/brain/load.js',
-  cmdShow: '../src/brain/load.js',
-  cmdWrapup: '../src/brain/maintain.js',
-  cmdTeardownCheck: '../src/brain/maintain.js',
-  cmdCapture: '../src/brain/capture.js',
-  cmdIngest: '../src/brain/ingest.js',
-  cmdSummon: '../src/brain/summon-cmd.js',
-  cmdRule: '../src/brain/rules.js',
-  cmdTask: '../src/todo/task-cmd.js',
-  cmdLog: '../src/note.js',
-  cmdNote: '../src/note.js',
-  cmdConcept: '../src/note.js',
-  cmdQuery: '../src/query.js',
-  cmdLint: '../src/lint.js',
-  cmdResolve: '../src/page.js',
-  cmdSupersede: '../src/page.js',
-  cmdReview: '../src/page.js',
+  cmdInit: '../code/brain/init.js',
+  cmdRepair: '../code/brain/init.js',
+  cmdLoad: '../code/brain/load.js',
+  cmdStatus: '../code/brain/load.js',
+  cmdShow: '../code/brain/load.js',
+  cmdWrapup: '../code/brain/maintain.js',
+  cmdTeardownCheck: '../code/brain/maintain.js',
+  cmdCapture: '../code/brain/capture.js',
+  cmdIngest: '../code/brain/ingest.js',
+  cmdSummon: '../code/brain/summon-cmd.js',
+  cmdRule: '../code/brain/rules.js',
+  cmdTask: '../code/todo/task-cmd.js',
+  cmdLog: '../code/note.js',
+  cmdNote: '../code/note.js',
+  cmdConcept: '../code/note.js',
+  cmdQuery: '../code/query.js',
+  cmdLint: '../code/lint.js',
+  cmdResolve: '../code/page.js',
+  cmdSupersede: '../code/page.js',
+  cmdReview: '../code/page.js',
 };
 
 /** 惰性取命令实现：只用得到哪个就加载哪个模块。缺映射直接报错（不静默降级）。 */
@@ -38,9 +38,9 @@ async function cmdOf(name) {
   if (typeof fn !== 'function') throw new Error(`✗ 内部错误：${path} 未导出 ${name}`);
   return fn;
 }
-import { findBrainRoot } from '../src/index.js';
-import { setUser, getUser, userConfigPath } from '../src/userconfig.js';
-import { runInstall, runUninstall } from '../src/install.js';
+import { findBrainRoot } from '../code/index.js';
+import { setUser, getUser, userConfigPath } from '../code/userconfig.js';
+import { runInstall, runUninstall } from '../code/install/index.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -146,19 +146,16 @@ async function cmdUpdate({ yes }) {
  */
 async function refreshHosts(yes) {
   const freshEntry = await freshInstallEntry();
-  console.log('\n刷新四宿主 hook/skill（hook 脚本烧的是绝对路径 + 模板快照，升级后必须重装）…');
+  console.log('\n刷新 pi 的 hook/skill（hook 脚本烧的是绝对路径 + 模板快照，升级后必须重装）…');
   if (!freshEntry) {
     console.log('  ⚠ 未定位到新安装的副本，用当前进程刷新（可能仍是旧模板）');
     await runInstall({ agent: undefined, mcp: true, skill: true, yes: yes !== false });
-    console.log('\n完成。重启宿主（pi / omp / opencode / claude-code / codex）后新 hook 生效。');
+    console.log('\n完成。重启 pi 后新 hook 生效。');
     return;
   }
   if (freshEntry !== resolveBinPath()) console.log(`  用新装的副本执行: ${freshEntry}`);
-  // 宿主选择交给新副本的交互菜单：**默认勾 pi，其余多选**（2026-11-07 用户定）。
-  //   不传 --yes —— 传了等于「不问、只装 pi」，另装过 omp / Claude Code 的机器
-  //   那几个宿主升级后永远不刷新（实报）。
-  //   也不用 --all —— 那会往没在用的宿主配置里写条目，与「默认只装 pi、
-  //   其余 opt-in」的既定策略相反。
+  // 现在只有 pi 一个宿主，交给新副本自己跑 install 即可。
+  //   仍不硬塞 --all：将来恢复其它宿主时，那会往没在用的宿主配置里写条目。
   const args = ['install'];
   // 已是非交互场景（update --yes、脚本、CI）时不模拟菜单，交给 pickAgents 走默认 pi。
   if (yes) args.push('--yes');
@@ -167,7 +164,7 @@ async function refreshHosts(yes) {
     console.error(`\n✗ 刷新宿主失败（退出码 ${code}）。手动重跑：node ${freshEntry} install`);
     process.exit(1);
   }
-  console.log('\n完成。重启宿主（pi / omp / opencode / claude-code / codex）后新 hook 生效。');
+  console.log('\n完成。重启 pi 后新 hook 生效。');
 }
 
 /** 本进程正在跑的那个 bin/abs.js 的绝对路径（用于判断是否需要转交）。 */
@@ -440,9 +437,8 @@ const subUsage = {
     '  abs install [--agent <宿主>] [--yes] [--no-mcp] [--no-skill]',
     '',
     '参数:',
-    '  --agent <宿主>   只装一个宿主: claude-code | codex | opencode | pi | omp',
-    '                   (不传则在 TTY 下交互多选; 非 TTY / --yes 时只装默认的 pi)',
-    '  --yes            不交互（只装默认的 pi；要装全部用 --all）',
+    '  --agent <宿主>   目前只支持 pi（不传时也是装 pi）',
+    '  --yes            不交互（现在等于直接装 pi）',
     '  --no-mcp         不注册 MCP server',
     '  --no-skill       不装 skill',
     '',
@@ -452,10 +448,8 @@ const subUsage = {
     '  • 安装前会备份原配置（同日多份保留最近 5 份）',
     '',
     '例:',
-    '  abs install                    交互选择',
-    '  abs install --all              全部宿主',
-    '  abs install --yes              不问，只装 pi',
-    '  abs install --agent pi --yes   只装 pi',
+    '  abs install                    装 pi',
+    '  abs install --yes              不交互，装 pi',
   ].join('\n'),
   uninstall: [
     'abs uninstall — 从 AI 编码宿主移除 abs 的 MCP / hook / skill',
@@ -464,7 +458,7 @@ const subUsage = {
     '  abs uninstall [--agent <宿主>] [--yes]',
     '',
     '参数:',
-    '  --agent <宿主>   只卸一个宿主: claude-code | codex | opencode | pi | omp（不传=全部）',
+    '  --agent <宿主>   只卸一个宿主: pi（不传=全部）',
     '  --yes            不交互',
     '',
     '说明:',
@@ -582,8 +576,8 @@ async function cmdConfig({ sub, value }) {
     // 没 .brain/ 就跳过 —— 全局配置不该强绑某个项目。
     let extra = '';
     try {
-      const { requireBrain } = await import('../src/index.js');
-      const { ensurePersonPage } = await import('../src/store.js');
+      const { requireBrain } = await import('../code/index.js');
+      const { ensurePersonPage } = await import('../code/store.js');
       const root = await requireBrain(process.cwd());
       const r = await ensurePersonPage(root, u);
       if (r === 'created') extra = `\n  人页: .brain/entities/${u}.md (已登记 index)`;
@@ -648,7 +642,7 @@ async function main() {
           rejectExtra(rest2, 'abs todo restore [--dry-run]');
           const root = await findBrainRoot(opts.dir);
           if (!root) throw new Error('✗ 未找到 .brain/ 图谱。先在项目根运行: abs init');
-          const { restoreArchivedTasks } = await import('../src/todo/restore.js');
+          const { restoreArchivedTasks } = await import('../code/todo/restore.js');
           const r = await restoreArchivedTasks(root, { dryRun: !!opts.dryRun });
           if (!r.scanned && !r.added) {
             console.log(`（sessions/ 无可回捞的归档任务）`);
@@ -741,7 +735,7 @@ async function main() {
         if (cmd === 'install') {
           await runInstall({ agent: opts.agent, all: !!opts.all, mcp: opts.mcp !== false, skill: opts.skill !== false, yes: opts.yes });
         } else {
-          await runUninstall({ agent: opts.agent, yes: opts.yes });
+          await runUninstall({ agent: opts.agent });
         }
         break;
       }

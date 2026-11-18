@@ -1,0 +1,1345 @@
+// test/plugin-behavior.test.js — 插件**行为级**测试(非字符串断言)。
+//
+// 为什么单独一层: install.test.js 只做源码字符串断言, 而 op​encode 插件曾连中两坑
+//   (① event 回调签名 ({name}) 错 ② export const 命名导出被加载器忽略) —— 两次字符串断言都过,
+//   插件却从未触发。教训: "装上了" ≠ "加载了" ≠ "触发了", 必须真 import 生成的产物并驱动它。
+//
+// 本层直接 import 生成后的真实 .ts (Node 24 原生剥类型), 驱动真实事件序列, 断言:
+//   1. 导出契约可被宿主加载 (pi: default 是函数; opencode: default.setup 是函数, v2 契约)
+//   2. 注入条件正确 (只读不注入 / 写后注入一次 / 节流 / 今日已收尾不注入 / 无图谱不注入)
+//   3. 技术日志有真实落痕 (证伪"静默失效"的唯一硬证据)
+import { test, describe, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const CLI = join(REPO, 'bin', 'abs.js');
+
+let sandbox;
+let HOME;
+let CODEX_CFG;
+
+function sbEnv(extra = {}) {
+  return {
+    ...process.env,
+    HOME,
+    ABS_USER: 'tester', // 写操作现要求设置姓名；指向沙箱避开真实配置
+    ABS_CONFIG_DIR: join(sandbox, 'abs-cfg'),
+    CLAUDE_CONFIG_DIR: join(sandbox, 'claude'),
+    CODEX_HOME: CODEX_CFG,
+    ABS_OPENCODE_HOME: join(sandbox, 'opencode'),
+    ABS_PI_HOME: join(sandbox, 'pi'),
+    ...extra,
+  };
+}
+
+function run(args) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [CLI, ...args], { cwd: sandbox, env: sbEnv() });
+    let out = '', err = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (err += d));
+    child.on('close', (code) => resolve({ code, stdout: out, stderr: err }));
+  });
+}
+
+beforeEach(async () => {
+  sandbox = await fs.mkdtemp(join(tmpdir(), 'abs-plugin-'));
+  HOME = join(sandbox, 'home');
+  CODEX_CFG = join(sandbox, 'codex');
+  await fs.mkdir(HOME, { recursive: true });
+});
+
+afterEach(async () => {
+  // 清理偶发 ENOTEMPTY（实测：并行全量时约几十次一遇，单跑 3 次都不复现）。
+  // 原因：本文件会 spawn bin/abs.js 子进程，子进程收尾写盘（hooks.log / mark 之类）
+  //   可能恰好与 rm -r 重叠 —— 目录“刚腾空又被写入”。
+  // 这不是产品 bug，但会让 pre-push 全量测试偶发变红、拦住正常推送。
+  // 退避重试即可：rm 本身是幂等的，第二遍就能清干净。
+  for (let i = 0; i < 3; i++) {
+    try {
+      await fs.rm(sandbox, { recursive: true, force: true });
+      return;
+    } catch (e) {
+      if (e.code !== 'ENOTEMPTY' && e.code !== 'EBUSY') throw e;
+      await new Promise((r) => setTimeout(r, 50 * (i + 1)));
+    }
+  }
+});
+
+/** 造一个有 .brain 的项目; logHasToday=false 时 log.md 只有旧日期。 */
+async function makeProject(name, logHasToday = false) {
+  const proj = join(sandbox, name);
+  await fs.mkdir(join(proj, '.brain'), { recursive: true });
+  const d = new Date(), pad = (n) => String(n).padStart(2, '0');
+  const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const line = logHasToday ? `## [${today} 10:00] dev | 已收尾\n` : '## [2020-01-01 00:00] dev | 旧\n';
+  await fs.writeFile(join(proj, '.brain', 'log.md'), '# Activity Log\n' + line, 'utf8');
+  return proj;
+}
+
+/** 导入生成的 .ts(靠 Node 原生类型剥离)。 */
+async function importTs(path) {
+  return import(pathToFileURL(path).href + `?t=${Date.now()}-${Math.random()}`);
+}
+
+/** 设 ABS_LOG_DIR 后导入(插件在调用时读该 env, 但显式在 import 前设定更稳)。 */
+async function importTsWithLog(path, logDir) {
+  process.env.ABS_LOG_DIR = logDir;
+  return importTs(path);
+}
+
+/** 读技术日志。参数是 ABS_LOG_DIR 本身(即 .../log), 不是沙盒根。 */
+function hooksLog(logDir) {
+  return fs.readFile(join(logDir, 'hooks.log'), 'utf8').catch(() => '');
+}
+
+// ============================ pi ============================
+// 装在文件作用域：pi 的两个 describe 都要用（关会话落页是另一组，不该复制一份）。
+async function loadPi(logDir) {
+  await run(['install', '--agent', 'pi', '--yes']);
+  const p = join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts');
+  return importTsWithLog(p, logDir);
+}
+
+function harness(absPiHook) {
+  const handlers = {}, injected = [];
+  absPiHook({ on: (e, f) => { handlers[e] = f }, sendUserMessage: (text, opts) => injected.push({ text, opts }) });
+  return { handlers, injected };
+}
+
+describe('pi 扩展 行为级 (agent_end 收尾注入)', () => {
+
+  test('导出契约: default 是函数, 且注册了 agent_end', async () => {
+    const mod = await loadPi(join(sandbox, 'log'));
+    assert.equal(typeof mod.default, 'function', 'pi 扩展必须 default 导出函数');
+    const { handlers } = harness(mod.default);
+    assert.ok(handlers.agent_end, '必须注册 agent_end');
+    assert.ok(handlers.session_start, '必须注册 session_start');
+  });
+
+  test('只读会话不注入; bash 只读命令也不注入', async () => {
+    const mod = await loadPi(join(sandbox, 'log'));
+    const { handlers, injected } = harness(mod.default);
+    const proj = await makeProject('pi-read');
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'read' }] }, { cwd: proj });
+    assert.equal(injected.length, 0, '只读 read 不应注入');
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'bash', input: { command: 'git status' } }] }, { cwd: proj });
+    assert.equal(injected.length, 0, 'bash 只读命令不应注入');
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'grep' }] }, { cwd: proj });
+    assert.equal(injected.length, 0, 'grep 不应注入');
+  });
+
+  // 2026-09-18: 收尾注入已停用 —— deliverAs:"followUp" 每轮 agent_end 抢一个 follow-up
+  // turn, 用户实报「干到一半任务被打断」。埋点保留(证伪静默失效)。
+  test('真改过文件 → 不再注入; 日志仍落痕; 节流状态不变', async () => {
+    const logDir = join(sandbox, 'log');
+    const mod = await loadPi(logDir);
+    const { handlers, injected } = harness(mod.default);
+    const proj = await makeProject('pi-write');
+    const msgs = [
+      { role: 'user', content: 'x' },
+      { role: 'assistant', content: [] },
+      { role: 'toolResult', toolName: 'read' },
+      { role: 'toolResult', toolName: 'edit' },
+    ];
+    await handlers.agent_end({ messages: msgs }, { cwd: proj });
+    assert.equal(injected.length, 0, '不得再往对话里注入 follow-up 打断用户');
+    const log = await hooksLog(logDir);
+    assert.match(log, /pi:agent_end:seen/, '运维埋点须保留(区分事件没触发/被守卫拦下)');
+    // 再触发仍不得注入
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'write' }] }, { cwd: proj });
+    assert.equal(injected.length, 0, '任何轮次都不得注入');
+  });
+
+  // ---- 以下一批用例(节流重置/并发竞态/多实例/素材拼装/note-vs-dev 判据)都在测
+  // 「何时注入」。注入已停用(2026-09-18), 这些用例失去对象 → 整体删除, 不留
+  // 无法失败的断言充数。守卫函数本身仍被 seen 埋点用例覆盖。
+
+  test('今日已收尾的项目不注入', async () => {
+    const mod = await loadPi(join(sandbox, 'log'));
+    const { handlers, injected } = harness(mod.default);
+    const proj = await makeProject('pi-done', true);
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
+    assert.equal(injected.length, 0, 'log.md 有今日 dev 记录则不再打扰');
+  });
+
+  // 可观测性: 无 seen 痕就无法区分「事件没触发」与「触发了但被守卫拦下」——
+  // 本次排查时正因为只有 nudge 痕, 分不清 agent_end 到底有没有跑。
+  test('首次 agent_end 无条件留 seen 痕 (可观测性: 区分未触发/被拦下)', async () => {
+    const logDir = join(sandbox, 'log');
+    const mod = await loadPi(logDir);
+    const { handlers } = harness(mod.default);
+    const proj = await makeProject('pi-seen', true); // 今日已收尾 → 不会 nudge
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
+    const log = await hooksLog(logDir);
+    assert.match(log, /pi:agent_end:seen/, '即使被守卫拦下, 也必须有 seen 痕');
+    assert.ok(!/teardown-nudge/.test(log), '被拦下时不应有 nudge 痕');
+    // 只记一次, 不刷屏
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
+    const log2 = await hooksLog(logDir);
+    assert.equal((log2.match(/agent_end:seen/g) || []).length, 1, 'seen 只记一次');
+  });
+
+  test('无 .brain 的项目不注入', async () => {
+    const mod = await loadPi(join(sandbox, 'log'));
+    const { handlers, injected } = harness(mod.default);
+    const proj = join(sandbox, 'pi-nobrain');
+    await fs.mkdir(proj, { recursive: true });
+    await handlers.agent_end({ messages: [{ role: 'toolResult', toolName: 'edit' }] }, { cwd: proj });
+    assert.equal(injected.length, 0, '无图谱不打扰');
+  });
+
+  // ---- 开局 load 段「没走完就补」（2026-10-06 方案 A）----
+  // 病根：标记原本在 before_agent_start 里就置了，而那个时点对话还没发出去。
+  // 被 ESC/中断的那轮会把一次性标记烧掉且不回滚 → 之后永远 skip。
+  // 判据：注入出的 [开工] 段（不是日志文本 —— 那只能证「代码跑过」，证不了「注入到了」）。
+  describe('开局 load 段 送达确认', () => {
+    /** 新会话 + 有图谱的项目，返回可驱动 before_agent_start 的上下文。
+     *  每个用例独立 import 一次（模块级 flag 不跨 import 共享），避免用例间串状态。 */
+    async function setupLoad(name, logDir) {
+      const mod = await loadPi(logDir);
+      const { handlers } = harness(mod.default);
+      const proj = await makeProject(name);
+      // 真实 .brain/todo.md，让 load 子进程有东西可读
+      await fs.writeFile(join(proj, '.brain', 'todo.md'),
+        '# Todo\n\n## Todo\n- [ ] t1 [[tester]] — 一条任务\n', 'utf8');
+      const ctx = { cwd: proj };
+      // session_start 重置 flag（真实宿主也会先发这个事件）
+      await handlers.session_start({ reason: 'startup' }, { ...ctx, hasUI: false });
+      // 驱动一轮 before_agent_start，返回本轮 [开工] 段推入与否。
+      // dir 可覆盖 cwd —— 一个 pi 会话里 cwd 会随项目目录变（本插件的第二个坑）。
+      const fireRound = async (dir = proj) => {
+        const options = { promptGuidelines: [] };
+        await handlers.before_agent_start({ prompt: 'hi', systemPromptOptions: options }, { cwd: dir });
+        return options.promptGuidelines.filter((g) => g.startsWith('[开工] ')).length;
+      };
+      // 造第二个有图谱的项目（用于切目录用例）
+      const makeOther = async (otherName) => {
+        const other = await makeProject(otherName);
+        await fs.writeFile(join(other, '.brain', 'todo.md'),
+          '# Todo\n\n## Todo\n- [ ] t2 — 另一个项目的任务\n', 'utf8');
+        return other;
+      };
+      return { handlers, fireRound, ctx, makeOther };
+    }
+
+    test('正常跑完一轮 → 注入一次，后续轮次不再注入', async () => {
+      const { handlers, fireRound, ctx } = await setupLoad('pi-load-ok', join(sandbox, 'log'));
+      assert.equal(await fireRound(), 1, '第一轮必须注入 [开工] 段');
+      await handlers.agent_end({ messages: [] }, ctx); // 这轮真跑完 → 送达确认
+      assert.equal(await fireRound(), 0, '已送达后不该重复注入');
+    });
+
+    test('★ 第一轮被中断(无 agent_end) → 第二轮必须补注入（本次回归点）', async () => {
+      const logDir = join(sandbox, 'log-load-abort');
+      const { fireRound, ctx } = await setupLoad('pi-load-abort', logDir);
+      assert.equal(await fireRound(), 1, '第一轮注入');
+      // 不调 agent_end —— 模拟 ESC / 中断掉的那轮
+      assert.equal(await fireRound(), 1, '中断后必须补注入（改前这里是 0：标记已烧且不回滚）');
+      const log = await hooksLog(logDir);
+      assert.ok(!/load_delivered/.test(log), '没走完就不该有送达痕');
+    });
+
+    test('补注入的这轮跑完 → 之后才真正停', async () => {
+      const logDir = join(sandbox, 'log-load-late');
+      const { handlers, fireRound, ctx } = await setupLoad('pi-load-late', logDir);
+      await fireRound();                 // 第一轮（将被中断）
+      assert.equal(await fireRound(), 1, '补注入');
+      await handlers.agent_end({ messages: [] }, ctx); // 这轮跑完了
+      assert.equal(await fireRound(), 0, '送达后停');
+      assert.match(await hooksLog(logDir), /load_delivered/, '送达必须有痕（可观测）');
+    });
+
+    test('边界: 新会话不得继承上一会话的已送达状态', async () => {
+      const { handlers, fireRound, ctx } = await setupLoad('pi-load-sess', join(sandbox, 'log'));
+      await fireRound();
+      await handlers.agent_end({ messages: [] }, ctx); // 本会话送达
+      assert.equal(await fireRound(), 0, '同会话内已停');
+      await handlers.session_start({ reason: 'new' }, { ...ctx, hasUI: false }); // 开新会话
+      assert.equal(await fireRound(), 1, '新会话必须重新摆一次开局状态');
+    });
+
+    // ★ 第三个 bug（2026-11-06 用户实报）：「用 new 开新会话，只有当我输入 abs 的时候
+    //   铁律和知识才加载进来」。根因是去重 key 只有 cwd，而**一个会话可能持续好几天、
+    //   期间 new 出来的新会话不一定重发带 ctx 的 session_start** —— 于是某个目录只要
+    //   注入过一次，此后整个进程生命周期永远 skip。
+    //   日志实证：agent_brain_sync 当天 4 次全 skip，一次 on 都没有。
+    //   修复：key 加会话 id。这条用例模拟「没有 session_start 的第二个会话」。
+    test('★ 第二个会话即使没有 session_start，也必须重新注入（按会话 id 去重）', async () => {
+      const { handlers, fireRound, ctx } = await setupLoad('pi-load-newsess', join(sandbox, 'log'));
+      // 会话 A：注入 + 送达
+      await handlers.session_start({ reason: 'startup' }, { ...ctx, sessionManager: { getSessionId: () => 'sess-A' }, hasUI: false });
+      assert.equal(await fireRound(), 1);
+      await handlers.agent_end({ messages: [] }, ctx);
+      assert.equal(await fireRound(), 0, '同会话内已停');
+
+      // 会话 B：**故意不调 session_start** —— 模拟 new 在同一进程里换 sid
+      // 但宿主没重发该事件。修复前这里会是 0（永远 skip）。
+      const ctxB = { ...ctx, sessionManager: { getSessionId: () => 'sess-B' } };
+      const options = { promptGuidelines: [] };
+      await handlers.before_agent_start({ prompt: 'hi', systemPromptOptions: options }, ctxB);
+      const injected = options.promptGuidelines.filter((g) => g.startsWith('[开工] ')).length;
+      assert.equal(injected, 1, '换会话了就必须重新摆开局状态（改前这里是 0，复现了用户报的 bug）');
+    });
+
+    // ★ 第二个 bug（2026-10-06 用户实报）：标记原是【会话级单值】，但 load 内容取自
+    //   cwd/.brain/ —— 每个目录不同。任一目录拿到 load 后，其它目录全被永久跳过。
+    //   日志干净复现：07:40:10 on@~/.agents → 07:40:17 delivered → 07:40:43 skip@agent_brain_sync
+    test('★ 切目录必须重新注入（load 是按目录的，不能被别的目录烧掉标记）', async () => {
+      const { handlers, fireRound, ctx, makeOther } = await setupLoad('pi-load-a', join(sandbox, 'log-cwd'));
+      const other = await makeOther('pi-load-b');
+      assert.equal(await fireRound(), 1, 'A 目录首轮注入');
+      await handlers.agent_end({ messages: [] }, ctx); // A 送达
+      assert.equal(await fireRound(), 0, 'A 目录已送达 → 同目录不再重复');
+      // 切到 B 目录：改前这里是 0（B 看不到自己的 load），改后必须 1
+      assert.equal(await fireRound(other), 1, '★ B 目录必须能拿到自己的 load（改前被 A 烧掉标记 → 0）');
+      // 回 A：已达送 → 不再重复（证明“按目录”而非“一律重注”）
+      assert.equal(await fireRound(), 0, '回到 A 不重复（避免每轮切来切去都重注）');
+    });
+
+    test('切目录后中断 → 那个目录仍要补注入（两条语义叠加）', async () => {
+      const { handlers, fireRound, ctx, makeOther } = await setupLoad('pi-load-c', join(sandbox, 'log-cwd2'));
+      const other = await makeOther('pi-load-d');
+      await fireRound();
+      await handlers.agent_end({ messages: [] }, ctx);   // A 送达
+      assert.equal(await fireRound(other), 1, 'B 首轮注入');
+      // 不调 agent_end —— B 这轮被 ESC/中断
+      assert.equal(await fireRound(other), 1, 'B 没走完 → 下轮仍补（不得因“注入过”就当送达）');
+      await handlers.agent_end({ messages: [] }, { cwd: other }); // B 这轮跑完
+      assert.equal(await fireRound(other), 0, 'B 送达后才停');
+    });
+  });
+
+  // ---- 首轮硬规则（方案 B，2026-10-06）----
+  // 用户拍板：「开一个 pi 的第一次会话」除了 load，还要把 skill 里管「登记」的 3 条硬规则送一次。
+  // 与常驻 6 条的区别：那 6 条每轮都在（已麻木），这 3 条只首轮出现一次。
+  describe('首轮硬规则', () => {
+    async function setup(name, logDir) {
+      const mod = await loadPi(logDir);
+      const { handlers } = harness(mod.default);
+      const proj = await makeProject(name);
+      const ctx = { cwd: proj };
+      await handlers.session_start({ reason: 'startup' }, { ...ctx, hasUI: false });
+      const fire = async () => {
+        const options = { promptGuidelines: [] };
+        await handlers.before_agent_start({ prompt: '帮我看看 git 历史', systemPromptOptions: options }, ctx);
+        return options.promptGuidelines.filter((g) => g.startsWith('[开工规则] '));
+      };
+      return { handlers, fire, ctx };
+    }
+
+    test('★ 首轮送 3 条硬规则（含“先登记再动手”）', async () => {
+      const { fire } = await setup('pi-rules-1', join(sandbox, 'log-rules'));
+      const got = await fire();
+      assert.equal(got.length, 1, '首轮必须送 [开工规则] 段');
+      const text = got[0];
+      // 三条都得在：① 先登记 ② 名字说清在干什么 ③ 不攒/超两轮即失控
+      assert.match(text, /register it first/i, '① 先登记再动手');
+      assert.match(text, /Before you touch any file/i, '① 必须早于碰文件');
+      assert.match(text, /do not copy the user/i, '② 名字不抄原话');
+      assert.match(text, /do not batch/i, '③ 不攒');
+    });
+
+    test('★ 只首轮送一次：送达后不再送（否则就变成噪音）', async () => {
+      const { handlers, fire, ctx } = await setup('pi-rules-2', join(sandbox, 'log-rules'));
+      assert.equal((await fire()).length, 1, '首轮送');
+      await handlers.agent_end({ messages: [] }, ctx); // 送达
+      assert.equal((await fire()).length, 0, '已达送 → 不再送（一次强提示，非常驻）');
+    });
+
+    test('中断那轮则下轮重送（与 load 同一机会）', async () => {
+      const { fire } = await setup('pi-rules-3', join(sandbox, 'log-rules'));
+      await fire(); // 被中断（无 agent_end）
+      assert.equal((await fire()).length, 1, '没走完 → 下轮仍送');
+    });
+
+    test('开关：ABS_OPENING_RULES=0 可关掉', async () => {
+      const prev = process.env.ABS_OPENING_RULES;
+      process.env.ABS_OPENING_RULES = '0';
+      try {
+        const { fire } = await setup('pi-rules-4', join(sandbox, 'log-rules'));
+        assert.equal((await fire()).length, 0, '关掉后不送');
+      } finally {
+        if (prev === undefined) delete process.env.ABS_OPENING_RULES; else process.env.ABS_OPENING_RULES = prev;
+      }
+    });
+  });
+
+  // ── hooks.log 轮转（2026-10-07）────────────────────────────
+  //
+  // 为何单独立一组：轮转逻辑原先只写在 hooks/event.sh 里（CC/Codex 那条路），
+  // pi 这条路的 logHook 只 append、**没有轮转** —— 实测已攼到 1.22MB 而无人发觉。
+  // 「靠一个副本里的逻辑保护另一条路径」是本项目反复踩的坑类。
+  //
+  // 这些用例驱动**真实插件代码**（写日志走真实的 logHook），不看源码字符串。
+  //
+  // ⚠ 隔离：不能先写好日志再调 loadPi —— loadPi 内部会跑 `abs install`，
+  //   而 install 会重设 ABS_LOG_DIR，导致写入跑到别处（实测踩过：
+  //   .1 里成了新日志、旧内容不变），看着像轮转 bug，实为测试环境串了。
+  //   故改为：装一次插件拿 factory，每个用例自己建环境、自定 ABS_LOG_DIR。
+  describe('hooks.log 轮转', () => {
+    const cleanEnv = () => { delete process.env.ABS_LOG_MAX_BYTES; };
+
+    /** 装一次 pi 插件（拿真实 factory），由各用例自己指定日志目录。 */
+    async function piFactory() {
+      await run(['install', '--agent', 'pi', '--yes']);
+      const p = join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts');
+      return (await importTs(p)).default;
+    }
+
+    /** 在指定日志目录跑一次 session_start（触发真实 logHook）。 */
+    async function fireWithLogDir(factory, logDir) {
+      const prev = process.env.ABS_LOG_DIR;
+      process.env.ABS_LOG_DIR = logDir;
+      try {
+        const handlers = {};
+        factory({ on: (e, f) => { handlers[e] = f }, sendUserMessage: () => {} });
+        await handlers.session_start({}, { cwd: sandbox });
+        // logHook 是 fire-and-forget，等它落盘
+        await new Promise((r) => setTimeout(r, 300));
+      } finally {
+        if (prev === undefined) delete process.env.ABS_LOG_DIR; else process.env.ABS_LOG_DIR = prev;
+      }
+    }
+
+    test('超限 → 轮转成 .1，并重新开始写', async () => {
+      const factory = await piFactory();
+      const logDir = join(sandbox, 'log-rotate-1');
+      await fs.mkdir(logDir, { recursive: true });
+      const big = 1048576 + 100; // 略高于默认 1 MiB
+      await fs.writeFile(join(logDir, 'hooks.log'), 'x'.repeat(big));
+
+      await fireWithLogDir(factory, logDir);
+
+      const rolled = await fs.readFile(join(logDir, 'hooks.log.1'), 'utf8').catch(() => null);
+      assert.ok(rolled, '应生成 hooks.log.1');
+      assert.equal(rolled.length, big, '.1 应原样保留旧内容（不是被截断/覆盖）');
+      assert.ok(rolled.startsWith('xxxx'), '.1 应是那份旧日志（全是 x）');
+
+      const now = await hooksLog(logDir);
+      assert.ok(now.length < 4096, `新日志应重新开始（实际 ${now.length} 字节）`);
+      assert.match(now, /session_start/, '轮转后仍要写本轮日志');
+      cleanEnv();
+    });
+
+    test('未超限 → 不轮转，内容追加', async () => {
+      const factory = await piFactory();
+      const logDir = join(sandbox, 'log-rotate-2');
+      await fs.mkdir(logDir, { recursive: true });
+      await fs.writeFile(join(logDir, 'hooks.log'), '[old] 上次的行\n');
+
+      await fireWithLogDir(factory, logDir);
+
+      assert.equal(await fs.readFile(join(logDir, 'hooks.log.1'), 'utf8').catch(() => null), null, '不应轮转');
+      const now = await hooksLog(logDir);
+      assert.match(now, /上次的行/, '旧内容应保留（append 而非覆盖）');
+      assert.match(now, /session_start/, '新行应追加');
+      cleanEnv();
+    });
+
+    test('ABS_LOG_MAX_BYTES 可覆盖阈值', async () => {
+      const factory = await piFactory();
+      const logDir = join(sandbox, 'log-rotate-3');
+      await fs.mkdir(logDir, { recursive: true });
+      await fs.writeFile(join(logDir, 'hooks.log'), 'y'.repeat(2048));
+
+      process.env.ABS_LOG_MAX_BYTES = '1024'; // 调小，2048 字节就超了
+      try {
+        await fireWithLogDir(factory, logDir);
+        assert.ok(
+          await fs.readFile(join(logDir, 'hooks.log.1'), 'utf8').catch(() => null),
+          '调小阈值后 2048 字节应触发轮转'
+        );
+      } finally {
+        cleanEnv();
+      }
+    });
+
+    test('并发写入不丢旧日志（跨 await 竞态的回归）', async () => {
+      // 为何单独立这条（2026-10-07）：去除串行队列时，上面三个用例仍然全绿 ——
+      //   竞态是时序敏感的，单次触发不一定撞上（破坏验证实测：并发竞态没被抳住）。
+      //   而它的后果是**静默丢历史**：A 刚 rename 完，B 把小文件又移成 .1，
+      //   盖掉真正的 1MiB 旧日志。故这里用并发触发把它确定性撞出来。
+      const factory = await piFactory();
+      const logDir = join(sandbox, 'log-rotate-4');
+      await fs.mkdir(logDir, { recursive: true });
+      const big = 1048576 + 5000;
+      await fs.writeFile(join(logDir, 'hooks.log'), 'x'.repeat(big));
+
+      const prev = process.env.ABS_LOG_DIR;
+      process.env.ABS_LOG_DIR = logDir;
+      try {
+        const handlers = {};
+        factory({ on: (e, f) => { handlers[e] = f }, sendUserMessage: () => {} });
+        // 并发触发多次（不等前一个完成）—— 真实场景下 logHook 就是 fire-and-forget
+        await Promise.all(
+          Array.from({ length: 5 }, () => handlers.session_start({}, { cwd: sandbox }))
+        );
+        await new Promise((r) => setTimeout(r, 500));
+      } finally {
+        if (prev === undefined) delete process.env.ABS_LOG_DIR; else process.env.ABS_LOG_DIR = prev;
+      }
+
+      const rolled = await fs.readFile(join(logDir, 'hooks.log.1'), 'utf8').catch(() => null);
+      assert.ok(rolled, '并发下仍应生成 .1');
+      assert.equal(rolled.length, big, '并发下 .1 必须仍是被替换的那份旧日志（不能被后续写覆盖）');
+      assert.ok(rolled.startsWith('xxxx'), '.1 应是旧内容（全是 x）');
+      cleanEnv();
+    });
+  });
+});
+
+// ============================ op​encode ============================
+
+// ============================ CC/Co​dex Stop 收尾注入 ============================
+// ============================ 零宽字符守卫 ============================
+// 本仓库高发坑: 'op​encode' 一词在源码里带 ZWSP(U+200B)。在**标识符**或**路径/参数**里
+// 混入 ZWSP 会直接语法错、或让 CLI 认不出 agent 名。此处钉死"不带 ZWSP 的 agent 名必须可用",
+// 防止再次出现 'op<ZWSP>encode' 这种认不出的写法。
+describe('零宽字符守卫 (ZWSP)', () => {
+  const ZWSP = String.fromCharCode(0x200b);
+
+  test('CLI 识别宿主名 pi', async () => {
+    const r = await run(['install', '--agent', 'pi', '--yes']);
+    assert.equal(r.code, 0, `agent "pi" 应被识别: ${r.stderr}`);
+    assert.ok(!r.stderr.includes('未知 agent'), `agent "pi" 不应是未知: ${r.stderr}`);
+  });
+
+  test('生成的插件产物里, 标识符与路径参数不含 ZWSP', async () => {
+    await run(['install', '--agent', 'pi', '--yes']);
+    const pi = await fs.readFile(join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts'), 'utf8');
+    for (const [name, src] of [['pi', pi]]) {
+      // 标识符/关键字/字符串字面量里不得有 ZWSP; 注释里的 ZWSP 无害(与仓库既有风格一致)
+      const codeOnly = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+      assert.ok(!codeOnly.includes(ZWSP), `${name} 代码行(非注释)不应含 ZWSP`);
+    }
+  });
+
+  // 坑(2026-09-16 审计#3): 上两条只护输入侧与产物, 漏了「打印给用户」的字符串。
+  // help 文本里的 op​encode/cl​aude-code 曾带 ZWSP → 用户复制到终端, CLI 报「未知 agent」。
+  // 守卫靶子扩到输出侧: bin/abs.js 所有 console.* 行不得含真实 ZWSP 字节。
+  test('用户可见输出(console.*)不含 ZWSP —— 复制不坏', async () => {
+    const src = await fs.readFile(join(REPO, 'bin', 'abs.js'), 'utf8');
+    const bad = src.split('\n')
+      .map((l, i) => [i + 1, l])
+      .filter(([, l]) => /console\.(log|error|warn)/.test(l) && l.includes(ZWSP))
+      .map(([n]) => n);
+    assert.deepEqual(bad, [], `console 输出行含 ZWSP(复制即坏): 行 ${bad.join(', ')}`);
+  });
+
+  // 端到端: 帮助文本里列出的每个宿主名, 用户原样复制去 --agent 必须能被识别。
+  // 这正是 ZWSP 坑的真实受害路径: 复制 help 里的 cl​aude-code → 「未知 agent」。
+  test('帮助里的宿主名可复制直接使用 (end-to-end)', async () => {
+    const h = await run(['help']);
+    const line = h.stdout.split('\n').find((l) => l.includes('install') && l.includes('agent'));
+    assert.ok(line, 'help 应有 install 行');
+    // 新版帮助宿主名在 subUsage 里: abs install --help 的 --agent 行
+    const sub = await run(['install', '--help']);
+    assert.ok(sub.stdout.includes('--agent'), `install --help 应有 --agent 行: ${sub.stdout.slice(0, 200)}`);
+    // 帮助里点到的宿主名，原样复制去 --agent 必须能被识别 —— 这正是 ZWSP 坑的受害路径。
+    const list = ['pi'].filter((n) => sub.stdout.includes(n));
+    assert.deepEqual(list, ['pi'], `install --help 应列出 pi: ${sub.stdout.slice(0, 200)}`);
+    for (const a of list) {
+      assert.ok(!a.includes(ZWSP), `宿主名 "${a}" 含 ZWSP, 用户复制必坏`);
+      const r = await run(['install', '--agent', a, '--no-mcp', '--no-skill', '--yes']);
+      assert.equal(r.code, 0, `帮助里的 "${a}" 应可直接使用: ${r.stderr}`);
+    }
+  });
+});
+
+// ---------- 插件模板源文件守卫 ----------
+// 为什么需要: 模板原本是嵌在 install.js 里的模板字符串(671 行)，测试只能读"生成产物"
+// 间接断言，模板本身写坏要在安装后才暴露。外置成真文件后可直测源文件，
+// 且 @@占位符@@ 未替换会直接产出坏 TS（静默失效的一种），故在源头钉死。
+describe('插件模板源文件 (agents/<宿主>/hook/*.ts)', () => {
+  const TPL = {
+    'abs.pi.ts': { dir: ['pi', 'hook'], need: ['@@ABS_BIN@@', '@@MARK@@'], forbid: [] },
+  };
+
+  for (const [name, spec] of Object.entries(TPL)) {
+    test(`${name} 存在且占位符齐备`, async () => {
+      const p = join(REPO, 'agents', ...spec.dir, name);
+      const src = await fs.readFile(p, 'utf8');
+      for (const k of spec.need) assert.ok(src.includes(k), `${name} 缺占位符 ${k}`);
+      for (const k of spec.forbid) assert.ok(!src.includes(k), `${name} 不会用到 ${k}，不应出现`);
+    });
+
+    // 两个宿主模板都必须接上会话页落盘（2026-11-05）：
+    // 只在 pi 接、omp 不接，意味着换宿主后这个机制静默消失 ——
+    // 而它不会报错，只是「会话关了但没落页」。
+    test(`${name} 接上了会话页落盘`, async () => {
+      // 只在 pi 接、omp 不接，意味着换宿主后这个机制静默消失 ——
+      // 它不会报错，只是「会话关了但没落页」。
+      const p = join(REPO, 'agents', ...spec.dir, name);
+      const src = await fs.readFile(p, 'utf8');
+      assert.match(src, /function snapshotSessionPage\(/, `${name} 缺 snapshotSessionPage`);
+      assert.match(src, /"ingest",\s*"--auto"|'ingest',\s*'--auto'/, `${name} 没调 ingest --auto`);
+      // 传 id 才不落错页；用正则找「调用点」，不靠 indexOf 切全文
+      // 参数里有 process.cwd() 这种嵌套括号，所以不能用 [^)]* ——
+      // 改成「调用点开头到行尾之间出现 sessionIdFor」
+      assert.match(src, /snapshotSessionPage\(.*sessionIdFor\(/,
+        `${name} 应传会话 id（--last 在多会话时会落错）`);
+    });
+
+    test(`${name} 占位符替换后语法可解析 (node --check)`, async () => {
+      const p = join(REPO, 'agents', ...spec.dir, name);
+      const src = await fs.readFile(p, 'utf8');
+      // 替换为合法值后语法检查 —— 占位符位残不符时会在这里炸出
+      const filled = src
+        .replace(/@@ABS_BIN@@/g, '/tmp/abs.js')
+        .replace(/@@MARK@@/g, '// abs-managed');
+      const tmp = join(sandbox, `chk-${name.replace(/[^\w.]/g, '_')}.mts`);
+      await fs.writeFile(tmp, filled, 'utf8');
+      const r = spawnSync(process.execPath, ['--check', tmp], { encoding: 'utf8' });
+      assert.equal(r.status, 0, `${name} 替换后语法错误:\n${r.stderr}`);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// todo 面板（2026-10-03）：解析 + 渲染。
+// 这一层是纯函数测试 —— 面板的 bug 都在“解析/截断/结构符”里，不需要驱 UI。
+// 下列用例都是审查时真实发现的缺陷，锁住它们（不是为盖率而写）。
+describe('pi 扩展 todo 面板 解析与渲染', () => {
+  /** 面板插件（agents/pi/plugins/todo-panel）—— parseOpenTasks / renderPanelLines / 昵称 / 档位色。 */
+  async function loadPanelFns() {
+    await run(['install', '--agent', 'pi', '--yes']);
+    const p = join(sandbox, 'pi', 'agent', 'extensions', 'todo-panel', 'index.ts');
+    return importTsWithLog(p, join(sandbox, 'log'));
+  }
+  /** 主扩展（abs 会话 hook）—— boardGuideline / injectSessionGuideline 这些不走面板。 */
+  async function loadHookFns() {
+    await run(['install', '--agent', 'pi', '--yes']);
+    const p = join(sandbox, 'pi', 'agent', 'extensions', 'abs.ts');
+    return importTsWithLog(p, join(sandbox, 'log'));
+  }
+
+  // ===== 会话 id 注入（2026-10-09）=====
+  // 为何要测：todo 行尾的 `(认领 日期 <sid>)` 要 LLM 自己填，
+  // 而它填的值来自这里注入的 sid（用户原话：「sid 让 llm 自己给答案吧」）。
+  // 注入断了 = LLM 根本不知道自己的 sid = 功能静默失效。
+  test('★ 注入本会话 sid（LLM 登记时要拿这个值）', async () => {
+    const { injectSessionGuideline, SESSION_MARK } = await loadHookFns();
+    const opts = {};
+    assert.equal(injectSessionGuideline(opts, '01a11eae'), true);
+    const line = opts.promptGuidelines.find((g) => g.startsWith(SESSION_MARK));
+    assert.ok(line, '必须注入');
+    assert.ok(line.includes('01a11eae'), '必须含真实 sid');
+  });
+
+  test('★ 取不到 sid 时不注入（不写空值、不伪造）', async () => {
+    const { injectSessionGuideline, SESSION_MARK } = await loadHookFns();
+    const opts = {};
+    assert.equal(injectSessionGuideline(opts, ''), false);
+    assert.equal(opts.promptGuidelines.filter((g) => g.startsWith(SESSION_MARK)).length, 0);
+  });
+
+  test('★ 每轮替换不叠加（与看板段同构）', async () => {
+    const { injectSessionGuideline, SESSION_MARK } = await loadHookFns();
+    const opts = {};
+    injectSessionGuideline(opts, 'aaa');
+    injectSessionGuideline(opts, 'bbb');
+    const hits = opts.promptGuidelines.filter((g) => g.startsWith(SESSION_MARK));
+    assert.equal(hits.length, 1, '应替换而非堆叠');
+    assert.ok(hits[0].includes('bbb'));
+  });
+
+  // 看板解析必须能吃下带 sid 的 `(认领 日期 sid)` ——
+  // 原正则写死了 \d{4}-\d{2}-\d{2}，多一个 sid 就整个不匹配，desc 会带上整段。
+  test('★ 带 sid 的认领段必须被剥干净（desc 不留残渣）', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] T1 [[fanchao]] — 描述 (认领 2026-10-09 01a11eae)',
+      '- [ ] T2 [[fanchao]] — 无会话描述 (认领 2026-10-09)',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    assert.equal(r.rows[0].desc, '描述', `带 sid 时 desc 应干净: ${JSON.stringify(r.rows[0].desc)}`);
+    assert.equal(r.rows[1].desc, '无会话描述', '无 sid 时 desc 同样干净');
+  });
+
+  // ★ 看板必须显示会话归属（2026-10-09 实测发现的真缺口）——
+  //   写进 todo 的 sid 若不在看板上露出来，LLM 就分不清「哪条是自己的」，
+  //   功能实际是断的（原实现把整个 (认领 …) 连 sid 一起剥掉了）。
+  test('★ 看板标出会话归属：本会话 / 别的会话 / 公海', async () => {
+    const { boardGuideline } = await loadHookFns();
+    const md = [
+      '## Todo',
+      '- [ ] mine [[fanchao]] — 我的 (认领 2026-10-09 01a11ea9)',
+      '- [ ] other [[fanchao]] — 别人的 (认领 2026-10-09 01a11f2a)',
+      '- [ ] free [[fanchao]] — 公海的 (认领 2026-10-09)',
+    ].join('\n');
+    const g = boardGuideline(md, 'fanchao', [], '01a11ea9');
+    assert.ok(g.includes('[本会话]'), `自己的要标本会话: ${g}`);
+    assert.ok(g.includes('[会话 01a11f2a]'), `别人的要标出 sid: ${g}`);
+    const freeLine = g.split('\n').find((l) => l.includes('free'));
+    assert.ok(!freeLine.includes('[会话'), `公海的不该带会话标: ${freeLine}`);
+  });
+
+  test('★ 没有 mySid（降级）时不标「本会话」，但别人的仍标出 sid', async () => {
+    const { boardGuideline } = await loadHookFns();
+    const md = ['## Todo', '- [ ] other [[fanchao]] — 别人的 (认领 2026-10-09 01a11f2a)'].join('\n');
+    const g = boardGuideline(md, 'fanchao', [], '');
+    assert.ok(!g.includes('[本会话]'), `无 mySid 不该认领: ${g}`);
+    assert.ok(g.includes('[会话 01a11f2a]'), '别人的 sid 仍要露出来');
+  });
+
+  // 2026-11-16 用户定：面板列 todo.md 里**所有未完成**任务，不再按作者过滤。
+  test('不过滤作者：所有人的未完成任务都回显', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] mine [[fanchao]] — 我的',
+      '- [ ] other [[bob]] — 别人的',
+      '- [ ] bare — 没标作者',
+      '## Done',
+      '- [x] finished [[fanchao]] — 已完成不计',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    const ids = r.rows.map((t) => t.id);
+    assert.deepEqual(ids, ['mine', 'other', 'bare'], `所有未完成都要显示: ${JSON.stringify(ids)}`);
+  });
+
+  test('默认不截断：20 条未完成全都在（ABS_TODO_PANEL_MAX 才限行）', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = Array.from({ length: 20 }, (_, i) => `- [ ] [2026-11-16 10:00] [t${i} 任务${i}] [[fanchao]]`).join('\n');
+    const r = parseOpenTasks(md);
+    assert.equal(r.total, 20, String(r.total));
+    assert.equal(r.rows.length, 20, `默认应全显示，实际 ${r.rows.length}`);
+    assert.equal(r.hidden, 0);
+  });
+
+  // 审查发现的真 bug：原先边解析边过滤，被滤掉的条目下方的断点会挂到它上面那条。
+  test('断点不串台：别人的断点不挂到我的任务下', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] mine-a [[fanchao]] — 我的任务A',
+      '- [ ] other-b [[bob]] — 别人的任务',
+      '  ↳ 断点: 这是别人的断点',
+      '- [ ] mine-c [[fanchao]] — 我的任务C',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    const a = r.rows.find((t) => t.id === 'mine-a');
+    assert.equal(a.kids.length, 0, `mine-a 不该拿到别人的子项: ${JSON.stringify(a.kids)}`);
+  });
+
+  test('自己的子项正确归到自己名下', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] mine-a [[fanchao]] — 我的',
+      '  - [ ] 改到 hooks/abs.pi.ts:120',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    assert.match(r.rows[0].kids[0].text, /hooks\/abs\.pi\.ts:120/);
+  });
+
+  test('断点行不单独计为一条任务', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = ['## Todo', '- [ ] a', '  - [ ] x', '- [ ] b'].join('\n');
+    assert.equal(parseOpenTasks(md, 10, '').total, 2);
+  });
+
+  // ★ 断点任务（2026-10-16 用户报）：`  ↳ [ ] xxxxx` 是**一等任务** ——
+  //   可显示、可 done。原实现里它落进静默死区：写入闸门放行（isChildLine 认 `↳`）、
+  //   lint 不报，但面板不显示、done 也找不到它。
+  //   与上面的 `↳ 断点:`（冒号形态）有意区别：那个仍是附属行、不算任务（用户明确保留）。
+  test('★ 标准 md 子项显示在面板上（可带勾选状态）', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] parent [[fanchao]] — 主任务',
+      '  - [ ] 还没做的子项',
+      '  - [x] 已完成的子项',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    assert.equal(r.total, 1, `只应含 parent: ${JSON.stringify(r.rows)}`);
+    assert.equal(r.rows[0].kids.length, 2, `两条子项都应挂上: ${JSON.stringify(r.rows[0].kids)}`);
+    assert.equal(r.rows[0].kids[0].done, false);
+    assert.equal(r.rows[0].kids[1].done, true);
+  });
+
+  // 2026-10-20：旧箭头写法已彻底废弃 —— 面板不再解析它。
+  // 存量由 CLI 侧 migrateLegacyChild 在读写时迁移，面板拿到的应该已是新格式。
+  test('★ 旧箭头写法不再被面板解析（已废弃）', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] a [[fanchao]] — 甲',
+      '  ↳ 断点: 旧写法',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    assert.equal(r.rows.length, 1, `只应有 a: ${JSON.stringify(r.rows)}`);
+    assert.equal(r.rows[0].kids.length, 0, `旧写法不该再挂成子项: ${JSON.stringify(r.rows[0].kids)}`);
+  });
+
+  // ★ 对齐（用户 2026-10-05 定）：注入给 LLM 的看板 与 面板显示 必须一致。
+  //   两者都走 parseOpenTasks（同源），但渲染不同 —— 这条钉住「渲染别漏东西」。
+  //   实测踩过：首版 guidelines 漏了断点（对齐了也接不上），且 desc 空时拖个空破折号。
+  test('guidelines 与面板对齐：任务/状态/子项三项都在', async () => {
+    const { boardGuideline } = await loadHookFns();
+    // 2026-11-16：todo.md 没有分区，状态写在复选框里
+    const md = [
+      '- [ ] t1 [[fanchao]] — 第一件事',
+      '  - [ ] 改到 src/x.js',
+      '- [+] t2 [[fanchao]]',
+    ].join('\n');
+    const g = boardGuideline(md, 'fanchao');
+    assert.ok(g, '看板非空时应返回内容');
+    for (const frag of ['t1', '进行中', '第一件事', 'src/x.js', 't2', '讨论中']) {
+      assert.ok(g.includes(frag), `guidelines 应含 ${frag}:\n${g}`);
+    }
+    // desc 为空时不拖空破折号（MCP 只给 id 时常见）
+    assert.ok(!/t2 —\s*$/m.test(g), `t2 无描述时不该拖空破折号:\n${g}`);
+  });
+
+  // ★ 2026-10-06 改契约：看板空曾经 return null（不注入）。现已改为**摆出「（空）」这个事实**——
+  //   原因：开工那一刻（用户说第一句话、filesSeen 还空）恰是看板空的时候，=那正是最该对齐的时刻
+  //   却什么都不注入。日志 todo_guide=on 掩盖了它（那个 on 只表示六条常驻指引装了）。
+  test('看板空仍摆出「（空）」这个事实（不是提醒，只是别让开工那刻没东西可看）', async () => {
+    const { boardGuideline } = await loadHookFns();
+    const g = boardGuideline('## Todo\n## Done\n', 'fanchao');
+    assert.ok(g, '看板空也该输出（「空」是事实）');
+    assert.ok(g.includes('（空'), `空看板应标明（空）:\n${g}`);
+    // 2026-10-06：空看板要说完整（有图谱但零任务）—— 只摆「（空）」会被读成「一切正常」，
+    // 用户实报就是因此动手没登记。降级成旧的裸「（空）」该被这条拦住。
+    assert.ok(/本目录有.*图谱/.test(g) && /一条未完成任务都没有/.test(g),
+      `空看板应说清「有图谱、零任务」而不是只摆「（空）」:\n${g}`);
+    // 纯事实：不得夹带劝告/催促（那是被删过三次的「提醒」路线）。
+    // 2026-10-06 实测踩过：曾写「若本次要改这个项目，先把它登成一条任务」—— 就是劝告。
+    assert.ok(!/记得|别忘了|请登记|应该登记|先把它登成/.test(g), `不得夹带劝告:\n${g}`);
+  });
+
+  // 作者过滤（另一件事，与本页改动无关）：别人的任务不算我的 → 不注入。
+  // 单独立一条，别被上面「空看板」的改动顺手带走。
+  test('别人的任务也算（不再按作者过滤）', async () => {
+    const { boardGuideline } = await loadHookFns();
+    const g = boardGuideline('- [ ] [2026-11-16 10:00] [x 任务] [[fanchao]]', 'bob');
+    assert.ok(g && g.includes('x'), `别人的任务也要摆出来: ${g}`);
+  });
+
+  // ★ 反复对齐（用户 2026-10-05 定）：「对齐永远是反反复复的，不厌其烦」。
+  //   但反复注入不能堆叠，且看板变了要换、空了要清 —— 否则对齐撒谎。
+  test('反复对齐：不堆叠 / 变了就换 / 空了清干净', async () => {
+    const { boardGuideline, injectTodoGuidelines } = await loadHookFns();
+    const mk = (md) => boardGuideline(md, 'fanchao');
+    const boards = (o) => o.promptGuidelines.filter((g) => g.startsWith('[看板] '));
+    const opts = { promptGuidelines: [] };
+
+    // ① 同一轮/相邻轮反复注入：只保留一份（反复是工作方式，不是堆叠）
+    injectTodoGuidelines(opts, mk('## Todo\n- [ ] [进行中] t1 [[fanchao]] — 干活\n'));
+    injectTodoGuidelines(opts, mk('## Todo\n- [ ] [进行中] t1 [[fanchao]] — 干活\n'));
+    assert.equal(boards(opts).length, 1, `反复注入应只留一份:\n${JSON.stringify(boards(opts))}`);
+
+    // ② 看板变了：旧快照必须换掉（换而不是追加）
+    injectTodoGuidelines(opts, mk('## Todo\n- [ ] [进行中] t2 [[fanchao]] — 新活\n'));
+    assert.ok(boards(opts)[0].includes('t2') && !boards(opts)[0].includes('t1'),
+      `应换成新看板:\n${boards(opts)[0]}`);
+
+    // ③ 看板空了：旧快照必须清掉（曾只清非空分支 → 残留旧任务，对齐撒谎）
+    injectTodoGuidelines(opts, null);
+    assert.equal(boards(opts).length, 0, '看板空后不该残留旧看板');
+
+    // ④ 再次有活：能重新注入
+    injectTodoGuidelines(opts, mk('## Todo\n- [ ] [进行中] t3 [[fanchao]] — 又来\n'));
+    assert.equal(boards(opts).length, 1);
+    assert.ok(boards(opts)[0].includes('t3'));
+
+    // 静态 11 条始终在（不被看板挤掉；2026-10-22 文档精简：6→7；2026-11-03 有疑惑先查：7→8；
+    // 2026-11-09 abs_task 参数规矩：8→9；2026-11-12 完成即落 log：9→10；
+    // 2026-11-13 abs 单字先判意图：10→11）
+    assert.equal(opts.promptGuidelines.length - boards(opts).length, 11,
+      '静态指引条数应恒为 11');
+  });
+
+  // 2026-11-09 用户要求：闸门拦得住，但规矩得**提前**告诉模型。
+  // 起因：另一个 pi 会话（pi-capsule-tools）连撞两次 —— 没传 cwd；把整句话当 id。
+  test('★ 常驻指引提前写清 abs_task 的参数规矩（cwd / id 一个词 / note / n / as）', async () => {
+    const { injectTodoGuidelines } = await loadHookFns();
+    const opts = {};
+    injectTodoGuidelines(opts);
+    const all = (opts.promptGuidelines || []).join('\n');
+    for (const frag of ['`cwd`', '.brain/', 'ONE word', 'no spaces', '`note`', '`n`', '`as`']) {
+      assert.ok(all.includes(frag), `指引应含 ${frag}:\n${all}`);
+    }
+    // 已被删除的命令不许再出现在规矩里 —— 模型照做只会白撞一次
+    assert.ok(!all.includes('abs recall'), `不该再提已删的 abs recall:\n${all}`);
+  });
+
+  test('宽度截断：CJK 按 2 列，永不溢出且尾部有省略号', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => `\x1b[2m${s}\x1b[0m`;
+    const data = {
+      total: 2,
+      rows: [
+        { state: '进行中', id: 'a', desc: '中文描述测试', kids: [] },
+        { state: '进行中', id: 'b', desc: 'x'.repeat(200), note: '很长的断点内容'.repeat(10) },
+      ],
+      hidden: 0,
+    };
+    const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+    const dw = (s) => {
+      let w = 0;
+      for (const ch of strip(s)) {
+        const cp = ch.codePointAt(0) || 0;
+        const wide = (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0x1f300 && cp <= 0x1f64f);
+        w += wide ? 2 : 1;
+      }
+      return w;
+    };
+    for (const width of [40, 80, 120]) {
+      const lines = renderPanelLines(data, 'me', width, fg);
+      for (const l of lines) {
+        assert.ok(dw(l) <= width, `width=${width} 溢出(${dw(l)}): ${strip(l)}`);
+      }
+    }
+  });
+
+  // 审查发现的视觉 bug：末条带断点时原本全篇没有 └─ 收尾，看着像被截断。
+  test('结构符：末条永远用 └─（即使它带断点），其他用 ├─', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const data = {
+      total: 2,
+      rows: [
+        { state: '进行中', id: 'a', desc: 'A', kids: [] },
+        { state: '进行中', id: 'b', desc: 'B', kids: [{ done: false, text: 'B 的断点' }] },
+      ],
+      hidden: 0,
+    };
+    const lines = renderPanelLines(data, 'me', 80, fg).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
+    const taskLines = lines.filter((l) => l.includes('进行中'));
+    assert.ok(taskLines[0].trimStart().startsWith('├─'), `首条应 ├─: ${taskLines[0]}`);
+    assert.ok(taskLines[1].trimStart().startsWith('└─'), `末条（带断点）应 └─: ${taskLines[1]}`);
+  });
+
+  // 回归（2026-11-16 真机实测）：已完成任务的子项被挂到了上一条未完成任务下 ——
+  // 面板把一串 [x] 子项画成了别人的子项。
+  test('★ 已完成任务的子项不上板（不挂到上一条未完成任务下）', async () => {
+    const { parseOpenTasks } = await loadPanelFns();
+    const md = [
+      '- [ ] 在做的 [[fanchao]] — A',
+      '  - [ ] A 的子项',
+      '- [x] 已完成的 [[fanchao]] — B 【落地】 (完成 2026-11-15)',
+      '  - [x] B 的子项',
+      '  - [ ] 没做完却被一起 done 的子项',
+    ].join('\n');
+    const r = parseOpenTasks(md, 10, 'fanchao');
+    assert.equal(r.rows.length, 1, `只该有 A 一条未完成: ${JSON.stringify(r.rows)}`);
+    assert.deepEqual(r.rows[0].kids.map((k) => k.text), ['A 的子项'], 'B 的子项不得挂到 A 下');
+  });
+
+  // ★ 2026-10-16 用户要求：面板是 todo.md 的只读视图 ——
+  //   任务行带 `[ ]`，子项（标准 md 嵌套）画成树线并带自己的 `[ ]`/`[x]`。
+  test('★ 任务行带 [ ]；子项画树线且带自己的复选框', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const data = {
+      total: 2,
+      rows: [
+        { state: '进行中', id: 'a', desc: 'A', kids: [{ done: true, text: 'A 的子项一' }, { done: false, text: 'A 的子项二' }] },
+        { state: '滞留中', id: 'b', desc: 'B', kids: [] },
+      ],
+      hidden: 0,
+    };
+    const lines = renderPanelLines(data, 'me', 80, fg).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
+    const taskLines = lines.filter((l) => l.includes('进行中') || l.includes('滞留中'));
+    assert.equal(taskLines.length, 2);
+    // 2026-11-16 用户定：行首画文件里那个记号，后面跟状态名（两者都要有）
+    assert.ok(taskLines[0].includes('[ ]') && taskLines[0].includes('[进行中]'), `进行中的行: ${JSON.stringify(taskLines[0])}`);
+    assert.ok(taskLines[1].includes('[-]') && taskLines[1].includes('[滞留中]'), `滞留中的行应画 [-] + 状态名: ${JSON.stringify(taskLines[1])}`);
+    // 两条子项都渲染，且带树线 ├─ / └─ 与各自的复选框
+    const kid1 = lines.find((l) => l.includes('A 的子项一'));
+    const kid2 = lines.find((l) => l.includes('A 的子项二'));
+    assert.ok(kid1 && kid2, `两条子项都要渲染:\n${lines.join('\n')}`);
+    assert.ok(kid1.includes('[x]'), `已完成的子项应显 [x]: ${JSON.stringify(kid1)}`);
+    assert.ok(kid2.includes('[ ]'), `未完成的子项应显 [ ]: ${JSON.stringify(kid2)}`);
+    assert.ok(kid1.includes('├─'), `多条子项的第一条用 ├─: ${JSON.stringify(kid1)}`);
+    assert.ok(kid2.includes('└─'), `最后一条子项用 └─: ${JSON.stringify(kid2)}`);
+    // 子项缩进在父任务下（父任务是 ├─，故子项行以 '│ ' 起）
+    assert.ok(kid1.trimStart().startsWith('│ '), `子项应缩进在父任务下: ${JSON.stringify(kid1)}`);
+  });
+
+  // 2026-11-09 用户要求：子项也要能标四态 —— 解析要拆出标记与状态，面板先画记号再画状态名。
+  test('★ 子项带四态标记：解析拆出 state，面板画 [状态]', async () => {
+    const { parseOpenTasks, renderPanelLines } = await loadPanelFns();
+    const md = [
+      '## Todo',
+      '- [ ] [进行中] cs [[fanchao]] — 主任务',
+      '  - [ ] [滞留中] 子项一',
+      '  - [x] 子项二',
+    ].join('\n');
+    const r = parseOpenTasks(md, 20, 'fanchao');
+    assert.equal(r.rows[0].kids[0].state, '滞留中', `应拆出状态: ${JSON.stringify(r.rows[0].kids)}`);
+    assert.equal(r.rows[0].kids[0].text, '子项一', '状态标记不该留在正文里');
+    assert.equal(r.rows[0].kids[1].state, null, '没标的子项 state 应为 null');
+
+    const fg = (c, s) => s;
+    const lines = renderPanelLines({
+      total: 1,
+      rows: [{ state: '进行中', id: 'cs', desc: '主任务', kids: [
+        { done: false, text: '子项一', state: '滞留中' },
+        { done: false, text: '子项二', state: null },
+      ] }],
+      hidden: 0,
+    }, 'me', 120, fg, '', 'high');
+    const all = lines.join('\n');
+    assert.ok(all.includes('[滞留中]'), `带状态子项应画状态标签:\n${all}`);
+    // 滞留中用陈色（与父任务同一套状态色）——颜色错了不报错，只能盯色码
+    assert.ok(all.includes('\x1b[38;2;139;92;246m[滞留中]'), `滞留中应用陈色:\n${JSON.stringify(lines)}`);
+    const kid2 = lines.find((l) => l.includes('子项二'));
+    assert.ok(kid2.includes('[ ]'), `无状态子项仍是 [ ]: ${JSON.stringify(kid2)}`);
+    const kid1 = lines.find((l) => l.includes('子项一'));
+    assert.ok(kid1.includes('[-]') && kid1.includes('[滞留中]'), `有状态子项应画 [-] + 状态名: ${JSON.stringify(kid1)}`);
+  });
+
+  // 2026-11-04 用户要求「去掉上边框」：首行直接是标题，不再有 `─` 描边线。
+  test('无上边框：首行是标题，且不含描边线', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', kids: [] }], hidden: 0 };
+    for (const w of [40, 80, 120]) {
+      const lines = renderPanelLines(data, 'me', w, fg);
+      assert.ok(lines[0].includes('Todo ('), `首行应是标题: ${JSON.stringify(lines[0])}`);
+      assert.ok(!lines.some((l) => /─{5,}/.test(l)), `不得有描边线:\n${lines.join('\n')}`);
+    }
+  });
+
+  // ★ 2026-10-06 用户要求反转了旧行为：「即便 todo 没有列表，也要在 pi 上显示」。
+  //   旧行为（空→不渲染任何行→面板自动隐藏）已作废。
+  //   理由：一进 pi 就看不见面板 = 不知道 abs 活着没（跟「看不到 load」同一类问题）。
+  // 2026-11-04 用户要求：没任务时不显示「（无未完成任务）」，只留标题一行。
+  // ★ 2026-11-06 用户要求：「当没有任务的时候 就别显示 todo 面板了」。
+  //   推翻了 2026-10-06「空看板也要显示」的旧决定 —— 空看板现在由 refreshTodoPanel
+  //   直接 hidePanel，根本不会进渲染层。这里只验渲染层不因空输入而抛。
+  test('空任务列表：不抛异常（隐藏由 refreshTodoPanel 做，不在渲染层）', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const lines = renderPanelLines({ total: 0, rows: [], hidden: 0 }, 'me', 80, (c, s) => s);
+    assert.ok(Array.isArray(lines), '必须返回数组，不得抛');
+  });
+
+  // 2026-11-04 用户要求：有任务时标题与任务行都顶最左（不缩进）。
+  test('★ 有任务时标题与任务行都顶最左', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const strip = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '');
+    const lead = (s) => strip(s).length - strip(s).trimStart().length;
+
+    const withTask = renderPanelLines(
+      { total: 1, rows: [{ state: '进行中', id: 'x', desc: 'd', kids: [{ done: false, text: '子项' }] }], hidden: 0 },
+      'me', 80, fg,
+    );
+    const title = withTask.find((l) => strip(l).includes('Todo ('));
+    const taskRow = withTask.find((l) => strip(l).includes('x — d'));
+    assert.equal(lead(title), 0, `有任务时标题不该缩进: ${JSON.stringify(title)}`);
+    assert.equal(lead(taskRow), 0, `有任务时任务行不该缩进: ${JSON.stringify(taskRow)}`);
+  });
+
+  // 2026-11-08 用户定：「这个动画没啥用」—— 面板里彻底不再有 spinner。
+  // 这条反向钉住：进行中的行也不该再出现任何动画符。
+  test('★ 面板不再有动画符（进行中也不显示）', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const data = {
+      total: 2,
+      rows: [
+        { state: '进行中', id: 'doing', desc: '干活', kids: [] },
+        { state: '滞留中', id: 'wait', desc: '等着', kids: [] },
+      ],
+      hidden: 0,
+    };
+    const lines = renderPanelLines(data, 'me', 80, fg);
+    assert.ok(!/[◐◓◑◒⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(lines.join('\n')),
+      `面板里不该再有任何动画符: ${lines.join(' | ')}`);
+  });
+
+  // ===== 推理强度变色（2026-11-06 用户需求）=====
+  // 为何要测：颜色错了不报错，只是看着不对 —— 没有断言就没人能发现它回归了。
+  // 测法：fg 返回真 ANSI 序列（带 token 名做标记），再抽 `\x1b[<n>m[token]` 看谁被包住。
+  // ★ 必须用真 ANSI，不能用 `[token]文本` 冒充：后者是**可见字符**，会把行宽顶爆、
+  //   触发 clipToWidth 截断，测出来的是宽度 bug 而非颜色 bug（已踩一次）。
+  const tok = (c) => `\x1b[38;5;${c}m`
+  const TOKEN_CODE = {
+    accent: 98, dim: 97, muted: 96, text: 95,
+  }
+  const tagFg = (c, s) => `${tok(TOKEN_CODE[c] ?? 90)}${s}\x1b[0m`
+  const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '')
+  test('★ 面板配色：大标题搁置橙，任务名与其余文字跟档位色，状态标签各自语义色', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const data = {
+      total: 2,
+      rows: [
+        { state: '搁置', id: 'a', desc: '描述甲', kids: [] },
+        { state: '进行中', id: 'b', desc: '描述乙', kids: [{ done: false, text: '子项' }] },
+      ],
+      hidden: 0,
+    };
+    const all = renderPanelLines(data, 'me', 120, tagFg, '', '38;2;151;118;229').join('\n');
+    const plain = stripAnsi(all)
+    // 2026-11-09 用户定：四个状态标签各自语义色；面板大标题擱置橙（试过灰白，又要回橙）；
+    // 其余（任务 id/描述/树线/复选框/子项）跟档位色。
+    const effortC = '\x1b[38;2;151;118;229m'
+    const doingC = '\x1b[38;2;16;185;129m'
+    const holdC = '\x1b[38;2;245;158;11m'
+    const titleC = '\x1b[38;2;245;158;11m'
+    assert.ok(all.includes(`${titleC}Todo (2)`), `大标题应用擱置橙:\n${all}`);
+    assert.ok(!all.includes(`${effortC}Todo (2)`), `大标题不该用档位色:\n${all}`);
+    // 任务名（id + 描述）跟档位色，不是灰白
+    assert.ok(all.includes(`${effortC}a`) || all.includes(`${effortC}b`), `任务 id 应用档位色:\n${all}`);
+    assert.ok(all.includes(`${effortC}— 描述甲`), `任务描述应用档位色:\n${all}`);
+    assert.ok(all.includes(`${effortC}├─`) && all.includes(`${effortC}└─`), `树线应用档位色:\n${all}`);
+    assert.ok(all.includes(`${effortC}├─`), `树线应用档位色:\n${all}`);
+    assert.ok(all.includes(`${effortC}子项`), `子项文字应用档位色:\n${all}`);
+    // 状态标签保留各自的语义色（不跟档位走）
+    assert.ok(all.includes(`${holdC}[搁置]`), `搁置应用琥珀:\n${all}`);
+    assert.ok(all.includes(`${doingC}[进行中]`), `进行中应用翠绿:\n${all}`);
+    assert.ok(plain.includes('[ ]') || plain.includes('[待办]'), `应有复选框:\n${all}`);
+  });
+
+  // 2026-11-09 用户要求：面板主色跟 pi 输入框一致 —— 也就是主题里那七档 thinking 色。
+  // 所以这里测的是「档位 → 主题 token → 取出色码」这条链，不再自己拄色值。
+  test('★ thinkingAnsiOf：档位映射到主题 thinking token，取不出时返回空串', async () => {
+    const { thinkingAnsiOf } = await loadPanelFns();
+    const seen = [];
+    const fakeTheme = {
+      getFgAnsi(token) {
+        seen.push(token);
+        if (token === 'thinkingBad') throw new Error('Unknown theme color: ' + token);
+        return '\x1b[38;2;9;9;9m';
+      },
+    };
+    // 七档 → thinkingOff/thinkingMinimal/…/thinkingMax（首字母大写）
+    const want = { off: 'thinkingOff', minimal: 'thinkingMinimal', low: 'thinkingLow', medium: 'thinkingMedium', high: 'thinkingHigh', xhigh: 'thinkingXhigh', max: 'thinkingMax' };
+    for (const [level, token] of Object.entries(want)) {
+      assert.equal(thinkingAnsiOf(fakeTheme, level), '38;2;9;9;9', `${level} 应取到色码`);
+      assert.equal(seen.at(-1), token, `${level} 应问主题要 ${token}`);
+    }
+    assert.equal(thinkingAnsiOf(fakeTheme, 'HIGH'), '38;2;9;9;9', '大小写不该影响');
+    // 取不到就不能编造颜色：调用处会回落到 C.desc
+    assert.equal(thinkingAnsiOf(fakeTheme, ''), '', '空档位应返回空串');
+    assert.equal(thinkingAnsiOf(fakeTheme, undefined), '', '未传应返回空串');
+    assert.equal(thinkingAnsiOf(fakeTheme, 'bad'), '', '主题不认这个 token 时应返回空串');
+    assert.equal(thinkingAnsiOf(null, 'high'), '', '没有主题时应返回空串');
+  });
+
+  test('★ 不传档位色 → 回落描述色（面板不因拼不出色而空白）', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const data = {
+      total: 1,
+      rows: [{ state: '进行中', id: 'x', desc: '描述', kids: [] }],
+      hidden: 0,
+    };
+    const all = renderPanelLines(data, 'me', 120, tagFg).join('\n');
+    assert.ok(all.includes('\x1b[38;2;148;163;184m└─'), `未传档位色时树线应回落 C.desc:\n${all}`);
+    assert.ok(all.includes('\x1b[38;2;148;163;184mx'), `未传档位色时任务 id 也应回落 C.desc:\n${all}`);
+  });
+
+  test('★ 256 色终端也能取到色（主题自己退档，不由本扩展管）', async () => {
+    const { thinkingAnsiOf } = await loadPanelFns();
+    // 主题在 256 色模式下给的是 38;5;N；本函数只负责把参数段里那段抓出来。
+    const t256 = { getFgAnsi: () => '\x1b[38;5;110m' };
+    assert.equal(thinkingAnsiOf(t256, 'high'), '38;5;110');
+  });
+
+  // 昵称（2026-10-03 用户需求）：用户给定的俏皮话池里随机抽，附在作者名后。
+  test('昵称：随机抽取且确定性可测（注入 rnd）', async () => {
+    const { pickNickname } = await loadPanelFns();
+    const first = pickNickname(() => 0);
+    const last = pickNickname(() => 0.999999);
+    assert.ok(first.length > 0 && last.length > 0, '应都抽到非空');
+    assert.notEqual(first, last, '边界应取到不同条目');
+    assert.equal(pickNickname(() => 0.5), pickNickname(() => 0.5), '同一 rnd 应得同一结果（确定性）');
+    for (let i = 0; i < 200; i++) {
+      const n = pickNickname();
+      assert.ok(typeof n === 'string' && n.length > 0, `第 ${i} 次抽到空值`);
+    }
+  });
+
+  // 审查发现（2026-10-03）：原池子正文长 9-15 字，标题会被窄终端截断。
+  // 用户定下 4-8 字，并把池子扩到 50+ 条。
+  // 2026-11-04 用户要求标题不带表情 → pickNickname 剥掉开头的 emoji，只返回正文。
+  test('昵称池：返回纯正文（无 emoji），4-8 字，总条数 50+', async () => {
+    const { pickNickname } = await loadPanelFns();
+    const seen = new Set();
+    for (let i = 0; i < 500; i++) seen.add(pickNickname());
+    assert.ok(seen.size >= 50, `池子应有 50+ 条: ${seen.size}`);
+    // 标题不得带表情（emoji 已剥离）
+    const badEmoji = [...seen].filter((s) => /^\p{Extended_Pictographic}/u.test(s));
+    assert.equal(badEmoji.length, 0, `以下条目仍带 emoji: ${badEmoji.join(' | ')}`);
+    const badLen = [...seen].filter((s) => {
+      const n = [...s.trim()].length;
+      return n < 4 || n > 8;
+    });
+    assert.equal(badLen.length, 0, `以下条目正文不在 4-8 字: ${badLen.join(' | ')}`);
+  });
+
+  test('昵称：ABS_TODO_NICK=0 时关掉', async () => {
+    const { pickNickname } = await loadPanelFns();
+    const old = process.env.ABS_TODO_NICK;
+    process.env.ABS_TODO_NICK = '0';
+    try {
+      assert.equal(pickNickname(), '', '开关开时应返回空串');
+    } finally {
+      if (old === undefined) delete process.env.ABS_TODO_NICK;
+      else process.env.ABS_TODO_NICK = old;
+    }
+  });
+
+  // ★ 2026-11-07 用户要求还原：作者名与昵称搬回面板标题（曾搬到输入框左下角，
+  //   用户实测「在输入框这里很难看」，又搬回来 —— 前因：9d628ba 那次搬出去，本次搬回来）。
+  test('★ 面板标题带作者名与昵称（2026-11-07 还原）', async () => {
+    const { renderPanelLines } = await loadPanelFns();
+    const fg = (c, s) => s;
+    const data = { total: 1, rows: [{ state: '进行中', id: 'x', desc: '', kids: [] }], hidden: 0 };
+    const nick = '📞 听到电话铃响就窒息的接听恐惧症';
+    const wide = renderPanelLines(data, 'fanchao', 200, fg, nick)[0];
+    assert.ok(wide.includes('Todo (1)'), `应含计数: ${wide}`);
+    assert.ok(wide.includes('fanchao'), `标题应含作者名: ${wide}`);
+    assert.ok(wide.includes('接听恐惧症'), `标题应含昵称: ${wide}`);
+    assert.ok(wide.includes('·'), `应有分隔符: ${wide}`);
+  });
+});
+
+// ============================ pi 扩展: 面板生命周期 ============================
+// 注: 本组原为「hook 侧自动登记」的测试，该功能已于 v1.15.2 整体移除
+//   （用户实报"卡顿 + 看板冒出大量 auto-TBD-xxx 待命名"：agent_end 每轮 spawn
+//   一个 node 进程、占位条目直接写看板）。设计教训见 concept
+//   auto-todo-register-design 的"为什么最后删掉自动登记"。
+//   此处只保留仍然有效的【面板重绘】修复。
+describe('pi 扩展 面板重绘', () => {
+  /** 造一个项目并装扩展。 */
+  async function setupPanel() {
+    const proj = join(sandbox, 'panel-proj');
+    await fs.rm(proj, { recursive: true, force: true });
+    await fs.mkdir(join(proj, '.brain'), { recursive: true });
+    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
+    const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    await fs.writeFile(join(proj, '.brain', 'index.md'), '# idx\n', 'utf8');
+    await fs.writeFile(join(proj, '.brain', 'log.md'), `# log\n\n## [${day} 00:00] dev | x\n`, 'utf8');
+    await fs.writeFile(join(proj, '.brain', 'todo.md'), '# todo\n\n## Todo\n\n## Done\n', 'utf8');
+    await run(['install', '--agent', 'pi', '--yes']);
+    // 面板现在由独立插件画（agents/pi/plugins/todo-panel），主扩展只管会话 hook。
+    const mod = await importTsWithLog(
+      join(sandbox, 'pi', 'agent', 'extensions', 'todo-panel', 'index.ts'), join(sandbox, 'log'));
+    const handlers = {};
+    mod.default({ on: (e, f) => { (handlers[e] ||= []).push(f) }, getActiveTools: () => [] });
+    return { proj, handlers, ctx: { cwd: proj, sessionManager: { getSessionId: () => 'p1' } } };
+  }
+
+  test('任务全完成后面板消失，且主动请求重绘（否则屏幕冻结在旧帧）', async () => {
+    // 实报坑(2026-10-05): 任务标完后面板仍显示"进行中", 按 ESC/重启才正常。
+    // 根因: 唯一重绘入口是动画定时器; "全部完成"→ needAnim=false → stopAnimTimer()
+    //   → 从此无人请求重绘 → 数据清了但屏幕没刷。消失路径必须自己 requestRender。
+    // 面板按作者过滤（currentUser 读 ABS_USER / 配置）—— 定住它，否则面板被滤空。
+    process.env.ABS_USER = 'tester';
+    const { proj, handlers, ctx } = await setupPanel();
+    await fs.writeFile(join(proj, '.brain', 'todo.md'),
+      '# todo\n\n## Todo\n- [ ] [进行中] t1 [[tester]] — 干点活\n\n## Done\n', 'utf8');
+
+    let renders = 0, widget = 'unset';
+    // 模拟真实 pi：setWidget 传 factory 时宿主会调它（tui 引用由此进入扩展）。
+    const ui = {
+      setWidget: (k, v) => {
+        widget = v === undefined ? 'hidden' : 'shown';
+        if (typeof v === 'function') v({ requestRender: () => { renders++; } }, { fg: (c, s) => s });
+      },
+    };
+    const c = { ...ctx, ui };
+    await handlers['turn_end'][0]({}, c);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(widget, 'shown', '有任务时面板应显示');
+
+    await fs.writeFile(join(proj, '.brain', 'todo.md'),
+      '# todo\n\n## Todo\n\n## Done\n### 2026-10-05\n- [x] t1 【落地】\n', 'utf8');
+    const before = renders;
+    await handlers['turn_end'][0]({}, c);
+    await new Promise((r) => setTimeout(r, 800));
+    // ★ 2026-11-06 用户要求：「当没有任务的时候 就别显示 todo 面板了」。
+    //   推翻了 2026-10-06「任务清空后面板仍要显示」。
+    assert.equal(widget, 'hidden', '任务清空后面板应隐藏（2026-11-06 改；推翻 10-06 的旧行为）');
+    // 重绘仍然必须发生 —— 否则数据清了、屏幕还留着旧帧（2026-10-05 那个坑）。
+    assert.ok(renders > before, `重绘仍必须发生（否则屏幕不刷）: ${before} → ${renders}`);
+  });
+
+  // 2026-11-09 用户要求：面板主色跟 pi 输入框一致。
+  // 这条测的是**接线**：工厂拿到的 theme 要真的被用来取档位色（取不到就回落），
+  // 光测 thinkingAnsiOf 函数本身盖不住「忘了传 / 传错参数」这类静默失效。
+  test('★ 档位色接线实测：主题的 thinking 色落到树线上，取不到就回落', async () => {
+    process.env.ABS_USER = 'tester';
+    const { proj, handlers, ctx } = await setupPanel();
+    await fs.writeFile(join(proj, '.brain', 'todo.md'),
+      '# todo\n\n## Todo\n- [ ] [进行中] t1 [[tester]] — 干点活\n\n## Done\n', 'utf8');
+
+    let factory = null;
+    const ui = {
+      setWidget: (k, v) => { if (typeof v === 'function') factory = v; },
+    };
+    const c = { ...ctx, ui, thinkingLevel: 'high' };
+    // session_start 会把档位存进模块级变量，面板建的时候读它
+    await handlers.session_start[0]({ reason: 'startup' }, c);
+    await handlers.turn_end[0]({}, c);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.ok(typeof factory === 'function', '应该有面板 factory');
+
+    const asked = [];
+    const theme = { getFgAnsi: (t) => { asked.push(t); return '\x1b[38;2;151;118;229m'; } };
+    const lines = factory({ requestRender() {} }, theme).render(120).join('\n');
+    assert.ok(asked.includes('thinkingHigh'), `应向主题要 thinkingHigh，实际问了 ${JSON.stringify(asked)}`);
+    assert.ok(lines.includes('\x1b[38;2;151;118;229m└─'), `树线应用主题那档色:\n${lines}`);
+    assert.ok(lines.includes('\x1b[38;2;151;118;229mt1'), `任务 id 应用主题那档色:\n${lines}`);
+    assert.ok(lines.includes('\x1b[38;2;226;232;240mt1') === false, `任务 id 不是灰白了:\n${lines}`);
+    assert.ok(lines.includes('\x1b[38;2;245;158;11mTodo (1)'), `大标题应是擱置橙:\n${lines}`);
+
+    // 主题取不到该 token（旧主题/自定义主题）→ 回落 C.desc，不能崩也不能空白
+    const badTheme = { getFgAnsi: () => { throw new Error('Unknown theme color: thinkingHigh'); } };
+    const lines2 = factory({ requestRender() {} }, badTheme).render(120).join('\n');
+    assert.ok(lines2.includes('\x1b[38;2;148;163;184m└─'), `取不到时应回落描述色:\n${lines2}`);
+  });
+});
+
+
+describe('pi 扩展 会话关闭时会话落页（2026-11-05）', () => {
+  // 病根：会话内容原来只能靠 agent 主动跑 abs ingest 才落盘，而「靠提醒让 LLM 养成习惯」
+  // 已被本仓两次实测证伪（concept remind-vs-gate）。故改成机械触发：关会话时 hook 自己起进程。
+  test('注册了 session_shutdown，且关会话时会起 ingest 进程', async () => {
+    const logDir = join(sandbox, 'log');
+    // 用一个假的 abs 入口替换真 CLI，只记录它被以什么参数调用 ——
+    // 断言「起了什么进程」而不是「进程输了什么」，这样测的是触发本身，不测 CLI 内部。
+    const fakeBin = join(sandbox, 'fake-abs.js');
+    await fs.writeFile(fakeBin, `
+      import { appendFileSync } from 'node:fs';
+      appendFileSync(${JSON.stringify(join(sandbox, 'calls.log'))}, process.argv.slice(2).join(' ') + '\\n');
+    `, 'utf8');
+    process.env.ABS_BIN_PATH = fakeBin;
+    try {
+      const mod = await loadPi(logDir);
+      const { handlers } = harness(mod.default);
+      assert.ok(handlers.session_shutdown, '必须注册 session_shutdown');
+      const proj = await makeProject('pi-close', true);
+      // 宿主会通过 sessionManager.getSessionId() 提供本会话 id —— 必须模拟，
+      // 否则测的是「拿不到 id 时退回 --last」那条兜底路径，测不到真正的修复。
+      const ctx = { cwd: proj, sessionManager: { getSessionId: () => 'aaaa1111-1111-2222-3333-444455556666' } };
+      await handlers.session_shutdown({}, ctx);
+      // 子进程是 detached fire-and-forget，等它落一行
+      let calls = '';
+      for (let i = 0; i < 40; i++) {
+        calls = await fs.readFile(join(sandbox, 'calls.log'), 'utf8').catch(() => '');
+        if (calls.includes('ingest')) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      // 有 sid 时必须传 --session，不能只传 --last（多会话时会落错页）
+      assert.match(calls, /ingest --auto --session \S+/, `关会话要传本会话 id，实际调用:\n${calls}`);
+      assert.ok(!/ingest --auto --last|ingest --last --auto/.test(calls),
+        `拿到 sid 时不该用 --last 猜（会落错会话）:\n${calls}`);
+      assert.match(calls, /wrapup/, '原有 wrapup 仍要跑');
+    } finally {
+      delete process.env.ABS_BIN_PATH;
+    }
+  });
+});

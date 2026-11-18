@@ -1,0 +1,127 @@
+// test/lock.test.js — 并发写冲突保护：多进程/多并发下无丢失更新。
+import { test, describe, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
+import { cmdInit, cmdTask, cmdLog } from '../../code/store.js';
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const CLI = join(REPO, 'bin', 'abs.js');
+
+let sandbox;
+let project;
+
+beforeEach(async () => {
+  sandbox = await fs.mkdtemp(join(tmpdir(), 'abs-lock-test-'));
+  project = join(sandbox, 'proj');
+  process.env.ABS_USER = 'tester'; // 写操作现要求设置姓名
+  process.env.ABS_CONFIG_DIR = join(sandbox, 'abs-cfg');
+  await cmdInit({ dir: project });
+});
+
+afterEach(async () => {
+  await fs.rm(sandbox, { recursive: true, force: true });
+});
+
+describe('并发写保护', () => {
+  test('并发的 task start 登记不同 id 全部保留（无覆盖丢失）', async () => {
+    const ids = Array.from({ length: 20 }, (_, i) => `TASK-CONC-${i}`);
+    await Promise.all(ids.map((id) => cmdTask({ dir: project, action: 'start', id, note: `任务${id}` })));
+    const todo = await fs.readFile(join(project, '.brain', 'todo.md'), 'utf8');
+    for (const id of ids) assert.ok(todo.includes(id), `丢失了 ${id}`);
+  });
+
+  test('并发的 cmdLog 多条全部落到 log.md（倒序不互相覆盖）', async () => {
+    const n = 15;
+    await Promise.all(Array.from({ length: n }, (_, i) => cmdLog({ dir: project, title: `log-${i}`, kind: 'dev' })));
+    const log = await fs.readFile(join(project, '.brain', 'log.md'), 'utf8');
+    for (let i = 0; i < n; i++) assert.ok(log.includes(`log-${i}`), `丢失了 log-${i}`);
+  });
+
+  test('task start 同 id 幂等，并发下也不重复登记', async () => {
+    await Promise.all(Array.from({ length: 10 }, () => cmdTask({ dir: project, action: 'start', id: 'TASK-IDEMP', note: '描述x' })));
+    const todo = await fs.readFile(join(project, '.brain', 'todo.md'), 'utf8');
+    const count = todo.split('\n').filter((l) => l.startsWith('- [ ]') && l.includes('TASK-IDEMP')).length;
+    assert.equal(count, 1);
+  });
+
+  test('无残留 .lock 文件', async () => {
+    const brain = join(project, '.brain');
+    const todo = join(brain, 'todo.md');
+    const log = join(brain, 'log.md');
+    await Promise.all([
+      cmdTask({ dir: project, action: 'start', id: 'T-A', note: '描述a' }),
+      cmdLog({ dir: project, title: 'hello', kind: 'dev' }),
+    ]);
+    for (const f of [todo, log]) {
+      const lock = join(brain, `.${f.split('/').pop()}.lock`);
+      await assert.rejects(() => fs.access(lock));
+    }
+  });
+
+  test('原子写：落盘后无 tmp 残留，文件结构完整', async () => {
+    const brain = join(project, '.brain');
+    await cmdTask({ dir: project, action: 'start', id: 'ATOMIC-1', note: '描述x' });
+    const files = await fs.readdir(brain);
+    const tmps = files.filter((f) => f.includes('.tmp-'));
+    assert.equal(tmps.length, 0, `不该留 tmp: ${tmps}`);
+    const text = await fs.readFile(join(brain, 'todo.md'), 'utf8');
+    assert.ok(text.includes('ATOMIC-1'), '内容应在');
+    assert.ok(text.startsWith('# 📋 Todo Board'), '应是完整结构不是半截');
+  });
+
+  test('死进程的残锁会被摘掉（不等 60s）', async () => {
+    const brain = join(project, '.brain');
+    const lock = join(brain, '.todo.md.lock');
+    // 造一个已退出进程的 PID → editFile 应立刻摘锁写入，不等 STALE_MS
+    const deadPid = await new Promise((res) => {
+      const c = spawn(process.execPath, ['-e', 'process.exit(0)']);
+      c.on('close', () => res(c.pid));
+    });
+    await fs.writeFile(lock, String(deadPid), 'utf8');
+    await cmdTask({ dir: project, action: 'start', id: 'STEAL-DEAD', note: '描述x' });
+    const todo = await fs.readFile(join(brain, 'todo.md'), 'utf8');
+    assert.ok(todo.includes('STEAL-DEAD'), '死 PID 残锁应被摘除后写入');
+    await assert.rejects(() => fs.access(lock), '写完不应留锁');
+  });
+
+  test('并发的 cmdNote 不同文本各自成文件且 index 全登记（无互相覆盖）', async () => {
+    const { cmdNote } = await import('../../code/store.js');
+    const texts = Array.from({ length: 10 }, (_, i) => `并发经验记录 ${i} 号-特定内容`);
+    await Promise.all(texts.map((t) => cmdNote({ dir: project, text: t })));
+    const srcDir = join(project, '.brain', 'sources');
+    const files = (await fs.readdir(srcDir)).filter((f) => f.endsWith('.md') && !f.includes('.tmp-'));
+    assert.ok(files.length >= texts.length, `应有 ${texts.length} 个 source 页, 实际 ${files.length}`);
+    // 每段文本在某个源文件里都能被找到（无丢失）
+    const allBodies = await Promise.all(files.map((f) => fs.readFile(join(srcDir, f), 'utf8')));
+    for (const t of texts) {
+      assert.ok(allBodies.some((b) => b.includes(t)), `内容丢失: ${t}`);
+    }
+    // index Sources 区登记了全部
+    const index = await fs.readFile(join(project, '.brain', 'index.md'), 'utf8');
+    for (const f of files) assert.ok(index.includes(`[[${f.replace(/\.md$/, '')}]]`), `index 漏登记 ${f}`);
+    // 无残留 tmp 文件
+    const leftovers = (await fs.readdir(srcDir)).filter((f) => f.includes('.tmp-'));
+    assert.equal(leftovers.length, 0);
+  });
+
+  // 回归: 真实多进程 CLI 并发写, 不应因排队等锁 LockTimeout 饿死而丢(见 acquireLock 预算)。
+  // N=6 = 真实使用典型上限(CLI/MCP/hook 极少同时 >6 打同一文件); 稳定。
+  // 注: N>=8 极端同刻有已知边缘 read-modify-write 竞态偶发丢, 独立于排队预算, 待专项排查, 故不在本测试放大。
+  test('多进程 CLI 并发 task start 不丢(排队等锁不饿死)', async () => {
+    const N = 6;
+    const runs = await Promise.all(Array.from({ length: N }, (_, i) => new Promise((resolve) => {
+      const c = spawn(process.execPath, [CLI, 'todo', 'add', `MPCLI-${i}`, '--note', `x${i}`, '--dir', project],
+        { env: { ...process.env, ABS_USER: 'tester', ABS_CONFIG_DIR: join(sandbox, 'abs-cfg') } });
+      c.on('close', (code) => resolve(code));
+    })));
+    for (const code of runs) assert.equal(code, 0, `某进程退出码非 0 (LockTimeout 饿死): ${runs.filter((x) => x !== 0).join(',')}`);
+    const todo = await fs.readFile(join(project, '.brain', 'todo.md'), 'utf8');
+    for (let i = 0; i < N; i++) assert.ok(todo.includes(`MPCLI-${i}`), `丢失了 MPCLI-${i}(排队等锁被饿死)`);
+    const locks = (await fs.readdir(join(project, '.brain'))).filter((f) => f.endsWith('.lock'));
+    assert.equal(locks.length, 0, `残留 .lock: ${locks.join(',')}`);
+  });
+});

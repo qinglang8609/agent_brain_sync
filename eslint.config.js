@@ -46,12 +46,12 @@ export default [
   {
     // store.js 的「先 import 再 export」重导出模式：import 的符号确实在文件内没用到，
     // 但必须 import 才能在作用域里转发出去（文件里有注释说明踩过的坑）。
-    files: ['src/store.js'],
+    files: ['code/store.js'],
     rules: { 'no-unused-vars': ['error', { argsIgnorePattern: '^_', caughtErrors: 'none', varsIgnorePattern: '^(cmdLog|cmdNote|cmdConcept|cmdResolve|cmdSupersede|cmdReview|registerInIndex|ensurePersonPage|PAGE_DIRS|idOfPage|backfillPageId|statusOfPage|supersededByOf|resolvePage|collapseIndex|slugOf|PAGE_STATUS|hasTail|foldSameKind|listPages)$' }] },
   },
   {
     // 测试里大量刻意构造的坏输入（零宽字符、控制符、未用变量）是 fixture，不是缺陷。
-    files: ['test/**/*.js'],
+    files: ['data/test/**/*.js'],
     rules: {
       'no-unused-vars': ['error', { argsIgnorePattern: '^_', caughtErrors: 'none', varsIgnorePattern: '^(ctx|logDir|lines|l|out|dir)$' }],
       'no-irregular-whitespace': 'off',
