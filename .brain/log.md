@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-11-18 13:25] [发版 2.0.0 并两台机器重装] [[fanchao]] git 三次提交（目录重构+只留 pi、三插件+文档、图谱移植）；npm publish 卡 staged 2FA（首发返回 202，重发 409），确认 registry 已上 2.0.0 后 npm view 仍是旧值——是本地缓存，cache clean 才装得上。本机从 symlink 改为真实 npm 包；fxh-mb 卸 1.32.6 装 2.0.0，旧目录 abs-rounded-editor 被 RENAMED_PLUGINS 清掉。验证：两台 abs 2.0.0、lint 0、fxh-mb 上 init+todo add 冒烟通过
 ## [2026-11-18 13:17] [project-audit] [[fanchao]]
 ## [2026-11-18 13:17] [项目审查（改结构后）] [[fanchao]] 删 10 个死符号（layers 的 resolveLayer/anchorsOf/layerConflict/isUnfilledDigest/LAYER_IDS/PLACEHOLDER/isPlaceholderShape、relevant.recentFiles、store.pageDirs、line.NEW_RE、abs.ts 的 thinkingAnsiOf）+ 死字段 hosts.events + 死参数 runUninstall(yes)。修 3 个 bug：①todo start/add 不带描述仍能写入，与 SKILL「无 note 应拒」矛盾且被自己的 lint 判 NO-DESC；②CLI 闸门 4 字与 lint 判据不一致（带会话 3 字被误拒）；③重跑 start 时回显用传参重画，显示「描述没了」而文件里还在。验证：693 测试全过、fuzz 300 轮零问题、check 0 error、命令耗时 25-60ms
 ## [2026-11-18 12:57] [docs 按项目口径对齐] [[fanchao]] 三层表改成 code/multi-agent 是全局功能、agents/pi 是 pi 宿主实现，并写明唯一判据「换个宿主还能用吗」；SKILL.md 位置从 agents/shared/skills 改回 agents/pi/skills。docs/pi-agents 现有 7 份，docs/README 分成「规范四份 / 材料三份（最初方案+两份调研）」，并注明二者冲突以规范为准。顺手修了 architecture.md 里坏掉的代码块标记。验证：docs 内 12 个链接零死链
