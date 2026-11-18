@@ -1,7 +1,7 @@
 /**
  * 圆角输入框的纯格式化函数（无宿主依赖，可单测）。
  *
- * 单独成文件的原因：hooks/abs-rounded-editor/index.ts 要 import `@earendil-works/pi-coding-agent`，
+ * 单独成文件的原因：agents/pi/plugins/rounded-editor/index.ts 要 import `@earendil-works/pi-coding-agent`，
  * 测试进程里没有这个包；把纯函数抽出来才能直接 import 断言。
  */
 
@@ -114,7 +114,7 @@ function dropCols(s: string, n: number): string {
  * 对深色背景（#0D1117）对比度 11.84/9.22/7.72/6.53/5.42/4.51。
  *
  * ★ 同一份逻辑在 hooks/abs.pi.ts 里也有一份（`effortAnsi`）。不抽公共模块是故意的：
- *   安装后 `abs.ts` 与 `abs-rounded-editor/` 是两个可独立删除的扩展，抽成共享文件会让
+ *   安装后 `abs.ts` 与 `rounded-editor/` 是两个可独立删除的扩展，抽成共享文件会让
  *   「删掉输入框样式目录」连带把 todo 面板搞崩。改色值时要两边一起改。
  */
 export const EFFORT_COLOR: Record<string, { rgb: string; ansi256: number }> = {
