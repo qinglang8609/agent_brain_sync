@@ -228,7 +228,6 @@ agent_brain_sync/
 ├── bin/mcp.js               MCP server (stdio)
 ├── scripts/                 构建期脚本（语法检查、SKILL 引用门禁、fuzz）
 ├── docs/                    长文档（索引见 docs/README.md，不进 npm 包）
-│   └── pi-agents/           多 agent 系统的架构与规则
 └── .githooks/               pre-commit（语法+图谱 lint）/ pre-push（全量测试）
 ```
 
