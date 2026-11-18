@@ -1,5 +1,11 @@
 # 📋 Todo Board
 
+- [x] [2026-11-18 12:58] [project-audit] [[fanchao]] 全项目审查：清死代码与文件、整逻辑、修 bug [01a1ec8f-af4f-77]
+  - [x] [2026-11-18 12:58] [先跑死代码/死导出/垃圾文件扫描，出报告再动手] [[fanchao]] [01a1ec8f-af4f-77]
+- [x] [2026-11-18 11:39] [capsule-into-abs] [[fanchao]] 把 capsule-tools 插件从 pi-agents 移到 abs 的 agents/pi/plugins，图谱一并并入 [01a1ec8f-af4f-77]
+- [x] [2026-11-18 11:33] [rounded-readme] [[fanchao]] 给 abs-rounded-editor 插件补 README.md [01a1ec8f-af4f-77]
+- [x] [2026-11-18 11:19] [drop-hosts] [[fanchao]] 去掉 claude-code/codex/opencode/omp 四个宿主，暂时只支持 pi [01a1ec8f-af4f-77]
+- [x] [2026-11-18 10:58] [restructure-layout] [[fanchao]] 规划并按 code/agents/data 三层重构项目目录结构 [01a1ec8f-af4f-77]
 - [x] [2026-11-16 11:34] [发布 1.32.0 并升级本地] [[fanchao]] 先把 60 多条旧格式测试断言改绿，再 git 提交、npm 发版、本地全局升级与宿主重装 [01a1e1c1-8258-77]
 - [x] [2026-11-16 10:33] [补 lint 判据] [[fanchao]] 任务行判据还停在旧格式（- [ ] id — 描述），新格式会被误报；同时把缺时间/缺作者的检查加进去 [01a1e1c1-8258-77]
 - [x] [2026-11-16] [todo.md 的 Archived] [[fanchao]] 段不再折叠压缩、不按日期分组，且不写入 ## Sessions 段 — todo.md 改为 H1 + 单列表（复选框记号表达五态：空格=进行中 -=滞留中 +=讨论中 ~=搁置 x=已完成），按时间倒序；Done 不再分组/归档（删 abs todo archive），新增 abs todo restore 从 log 页回捞历史任务；index.md 的 ## Sessions 段作废并自动删除；pi/omp 面板与 guidelines 改画「记号+状态名」；778 测试全绿、npm run check 通过 [01a1e1c1-8258-77]

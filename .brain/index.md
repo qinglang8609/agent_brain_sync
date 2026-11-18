@@ -102,6 +102,17 @@
 - [[abs-skill-flow]] — abs 流程：会话落页 / 提炼 / 收尾 / 维护
 - [[no-graph-db]] — 不建图数据库：写侧在跑、读侧没人用，整套拆掉
 - [[behavior-rule-must-stay-resident]] — 行为纪律的触发条件不能离开常驻上下文
+- [[pi-tool-renderer-override]] — pi 扩展接管内置工具渲染的正确姿势
+- [[pi-tool-renderer-animation]] — 给工具行加转轮/失败变红：`lastComponent` 按行分开、导出会漏定时器
+- [[tui-line-width-limit]] — pi TUI 渲染行超宽会抛异常
+- [[pi-call-result-double-row]] — renderCall 和 renderResult 各画一次 = 每行重复
+- [[test-handmade-data-hides-key-mismatch]] — 手造测试数据会让实现与测试一起猜错键名
+- [[publish-pi-package-to-npm]] — 把 pi 扩展发成标准 npm 包
+- [[git-proxy-troubleshooting]] — git push 走代理失败的三种情形与排查顺序
+- [[installed-pi-package-check]] — 已装 pi 扩展的体检方法与 node 24 调试限制
+- [[tui-spinner-glyph-compat]] — fullscreen 卡顿先压测组件，再查动画字符字体
+- [[capsule-hot-path-perf]] — 胶囊热路径：别每帧 split 大入参、折叠早退、展开 Capsule 复用
+- [[npm-publish-staged-2fa-traps]] — npm 发布返回 202 卡 staged 2FA、pi install 装到缓存旧包这两个静默坑
 
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
