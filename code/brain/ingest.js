@@ -428,7 +428,8 @@ export async function cmdIngest({ dir, file, force = false, mark = false, last =
     // `rec.md5 === md5` 判重 —— 空串永不等于真 md5。后果是 size/mtime 一变、
     // 且当天没有快照时，内容一字未改的会话会被报成「有更新（需补充）」。
     // 实测复现：删掉快照后 summon 输出 `有更新 1 ↳ md5 与账本不符`。
-    const md5 = await md5Of(join(sessDir, hit));
+    // md5 取 digestSession 同一次读取算出的值，别为它重读整个会话文件。
+    const md5 = digest && digest.md5 ? digest.md5 : await md5Of(join(sessDir, hit));
     // 用 updateLedger 而不是「读 → 改 → 写」三连（2026-11-05 实测）：
     //   两个会话同时关闭时，两个进程各自读到同一份旧账本、各自加一条，
     //   后写的盖掉先写的 —— 先写那条静默消失，下轮 summon 又把它当「未落页」催。

@@ -98,7 +98,23 @@ export function pickRelevant(pages, kws, n = 3) {
  *   查"发布流程"时页名是 npm-publish-flow，全部匹配不上。
  *   用户看到"无命中"会以为图谱里没这条经验（静默失效）。
  */
-export function matchPage(body, pageName, queryWords) {
+/**
+ * 把「查询词侧的 2-gram」提前算一次（2026-11-20 性能审查）。
+ *
+ * 原来每个页面都重算一遍同样的查询 gram：92 页 × 若干词，纯重复劳动。
+ * CPU profile 里 query 的 ngrams 占 15%。这里算一次、往下传。
+ */
+export function prepareQuery(queryWords) {
+  const qGrams = new Set(queryWords.flatMap((w) => ngrams(String(w).toLowerCase())));
+  const fuzzyWords = queryWords.filter(hasCJK);
+  const fuzzyQGramCount = new Set(fuzzyWords.flatMap((w) => ngrams(String(w).toLowerCase()))).size;
+  // 模糊兜底只对 CJK 查询词生效（rankPage 里 fuzzyWords 为空就直接不走）。
+  // 查询全是 ASCII 时页侧 gram 算了也用不上 —— 省掉整页 4000 字的 2-gram 计算。
+  const needGrams = fuzzyWords.length > 0;
+  return { qGrams, fuzzyQGramCount, needGrams };
+}
+
+export function matchPage(body, pageName, queryWords, prepared) {
   const text = String(body).toLowerCase();
   const name = String(pageName).toLowerCase();
   const exact = [];
@@ -110,7 +126,8 @@ export function matchPage(body, pageName, queryWords) {
   // 坑(2026-09-16 实测): 曾用 overlap/qGrams.size >= 0.5 —— 太松。
   //   查"zzzz不存在"时 qGrams={zz,不存,存在}, 页里恰好有"存在" → ratio=0.5 误命中。
   //   两个修正: (1) 重复字符的 gram 不算(zz 去重); (2) 至少得命中 2 个不同 gram。
-  const qGrams = new Set(queryWords.flatMap((w) => ngrams(String(w).toLowerCase())));
+  if (prepared && !prepared.needGrams) return { exact, overlap: 0, ratio: 0 };
+  const qGrams = prepared?.qGrams ?? new Set(queryWords.flatMap((w) => ngrams(String(w).toLowerCase())));
   const pGrams = pageGrams(text, name);
   let overlap = 0;
   for (const g of qGrams) if (pGrams.has(g)) overlap++;
@@ -217,8 +234,8 @@ export function tagsOf(body) {
  *   "双副本"、"陈旧路径"），而 firstHitLine 一直把 tags 行当噪音跳过 ——
  *   等于把最准的检索信号丢掉了。
  */
-export function rankPage(body, pageName, queryWords) {
-  const { exact, overlap, ratio } = matchPage(body, pageName, queryWords);
+export function rankPage(body, pageName, queryWords, prepared) {
+  const { exact, overlap, ratio } = matchPage(body, pageName, queryWords, prepared);
   if (exact.length) {
     const tags = tagsOf(body).map((t) => t.toLowerCase());
     const name = String(pageName).toLowerCase();
@@ -238,7 +255,8 @@ export function rankPage(body, pageName, queryWords) {
     return { kind: 'exact', matched: exact, score, overlap, ratio, via };
   }
   const fuzzyWords = queryWords.filter(hasCJK);
-  const qGramCount = new Set(fuzzyWords.flatMap((w) => ngrams(String(w).toLowerCase()))).size;
+  const qGramCount = prepared?.fuzzyQGramCount
+    ?? new Set(fuzzyWords.flatMap((w) => ngrams(String(w).toLowerCase()))).size;
   if (fuzzyWords.length && qGramCount >= FUZZY_MIN_GRAMS && ratio >= FUZZY_MIN)
     return { kind: 'fuzzy', matched: [], score: ratio * 10, overlap, ratio, via: { tag: [], title: [], body: [] } };
   return null;
@@ -266,8 +284,10 @@ export function topicStrength(pages, words) {
   const out = new Map();
   for (const w of words) {
     let n = 0;
+    // 同一个词的 gram 只算一次，喂给全部页面（原来每页都重算）。
+    const prepared = prepareQuery([w]);
     for (const p of pages) {
-      const r = rankPage(p.body, p.name, [w]);
+      const r = rankPage(p.body, p.name, [w], prepared);
       if (r && (r.via.tag.length || r.via.title.length)) n++;
     }
     out.set(w, n);

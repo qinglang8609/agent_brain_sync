@@ -2,7 +2,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { requireBrain, brainPath } from './index.js';
-import { rankPage } from './relevant.js';
+import { rankPage, prepareQuery } from './relevant.js';
 import { statusOfPage, idOfPage, supersededByOf, clip } from './store.js';
 import { DIR_LAYER, decayOf } from './brain/layers.js';
 
@@ -25,6 +25,7 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
   } catch {
     return `未找到 .brain/ 图谱（无记忆可查）。先在项目根运行: abs init`;
   }
+  const prepared = prepareQuery(words);
   const hits = [];
   const dirs = ['concepts', 'entities', 'sources', 'syntheses', 'sessions'];
   for (const d of dirs) {
@@ -35,12 +36,19 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
     } catch {
       continue;
     }
-    for (const f of files) {
-      if (!f.endsWith('.md') || f.startsWith('_')) continue;
+    // 并发读目录内的页（2026-11-20 性能审查）：原来在 for 里逐个 await readFile，
+    // 92 张页时 query 的 32ms 工作里大半是串行等 I/O。按目录分批并发，
+    // 目录内的页数就是天然的批次大小，不会一次性开几百个 fd。
+    const targets = files.filter((f) => f.endsWith('.md') && !f.startsWith('_'));
+    const bodies = await Promise.all(
+      targets.map((f) => fs.readFile(join(p, f), 'utf8').catch(() => '')),
+    );
+    for (let i = 0; i < targets.length; i++) {
+      const f = targets[i];
       const full = join(p, f);
-      const body = await fs.readFile(full, 'utf8').catch(() => '');
+      const body = bodies[i];
       const slug = f.replace(/\.md$/, '');
-      const rank = rankPage(body, slug, words);
+      const rank = rankPage(body, slug, words, prepared);
       if (rank) {
         // 作者从本页 frontmatter 读（权威来源）。不在 index 行里重复 ——
         // index 行是覆盖式更新的，作者会从"创建者"漂成"最后改的人"。
