@@ -4,6 +4,8 @@ id: validation-gate-on-shared-write-path
 author: fanchao
 updated: 2026-10-05
 status: active
+layer: 4
+anchors: [gate-needs-outlet-not-just-block, remind-vs-gate, file-shape-check-on-load, silent-data-loss-diagnosis, read-side-output-must-not-scale]
 ---
 
 # 概念：给共享写入路径加校验：闸门自身会引入的新失效

@@ -2,6 +2,8 @@
 tags: [entity, project]
 updated: 2026-10-05
 status: active
+layer: 4
+anchors: [todo-rewrite-not-map, hook-sh-not-bash, validation-gate-on-shared-write-path, fanchao, read-side-output-must-not-scale]
 ---
 
 # AgentBrainSync (abs)

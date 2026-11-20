@@ -5,6 +5,8 @@ author: fanchao
 updated: 2026-09-17
 status: active
 kind: gotcha
+layer: 4
+anchors: [self-authored-evidence, symbol-reference-needs-real-run]
 ---
 
 # 空测试：恒真断言，破坏代码也全绿

@@ -3,6 +3,8 @@ tags: [concept, 图谱纪律]
 author: fanchao
 updated: 2026-09-12
 status: active
+layer: 4
+anchors: [summary-truncation-hidden-cause, symbol-reference-needs-real-run, todo-rewrite-not-map]
 ---
 
 # index 行不承载"谁写的"

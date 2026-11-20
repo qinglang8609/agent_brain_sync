@@ -3,6 +3,8 @@ tags: [concept, 方法论, 图谱, 进化]
 author: fanchao
 updated: 2026-10-07
 status: active
+layer: 4
+anchors: [self-authored-evidence, silent-data-loss-diagnosis, read-side-output-must-not-scale, abs-install-layout, naming-contract-and-judge-precision, 2026-11-03-检索有效不等于记忆被用, teardown-automation, AgentBrainSync]
 ---
 
 # 规律进化的三个环节：采集 / 消化 / 生效

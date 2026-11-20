@@ -4,6 +4,7 @@ author: fanchao
 updated: 2026-09-13
 status: active
 layer: 3
+anchors: [agents-skills-not-ownerless, deploy-artifact-copies, abs-install-layout, AgentBrainSync, mcp-json-migrated-to-adapter, 2026-11-03-herdr-里跑-pi-ssh]
 ---
 
 # MCP 陈旧路径：只改自己写的那个文件不够

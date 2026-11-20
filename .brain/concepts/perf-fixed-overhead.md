@@ -2,6 +2,8 @@
 tags: [concept, 性能, 开销分解, 决策, daemon, 缓存]
 updated: 2026-10-07
 status: active
+layer: 4
+anchors: [file-write-locking, deploy-artifact-copies, silent-data-loss-diagnosis, guard-check-then-set-across-await, AgentBrainSync]
 ---
 
 # 性能优化：先分解固定开销，再决定优化哪一段

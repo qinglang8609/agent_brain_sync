@@ -6,6 +6,7 @@ updated: 2026-11-01
 status: active
 layer: 4
 kind: gotcha
+anchors: [todo-rewrite-not-map, naming-contract-and-judge-precision]
 ---
 
 # 缩进子项同时满足两个判据

@@ -3,6 +3,8 @@ tags: [concept, skill, 部署, 所有权, install]
 author: fanchao
 updated: 2026-09-13
 status: active
+layer: 4
+anchors: [deploy-artifact-copies, skill-rewrite-residual-old-methods, abs-install-layout, mcp-stale-paths-multi-store, AgentBrainSync]
 ---
 
 # 别写 ~/.agents/skills/：它不是无主目录，是 skills CLI 的规范存储

@@ -3,6 +3,8 @@ tags: [concept, 上下文纪律]
 author: fanchao
 updated: 2026-09-12
 status: active
+layer: 4
+anchors: [summary-truncation-hidden-cause, perf-fixed-overhead, index-row-not-attribution, AgentBrainSync, tool-empty-vs-no-output, borrowed-protocol-designs]
 ---
 
 # 读取侧输出不得随规模增长

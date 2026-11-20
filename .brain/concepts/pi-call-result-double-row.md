@@ -4,6 +4,8 @@ id: pi-call-result-double-row
 author: fanchao
 updated: 2026-10-09
 status: active
+layer: 4
+anchors: [pi-tool-renderer-override, tui-line-width-limit]
 ---
 
 # 概念：renderCall 和 renderResult 各画一次 = 每行重复

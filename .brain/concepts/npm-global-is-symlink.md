@@ -6,6 +6,7 @@ updated: 2026-11-05
 status: active
 layer: 3
 kind: gotcha
+anchors: [mcp-stale-paths-multi-store, deploy-artifact-copies, abs-install-layout, detached-子进程的可验证性]
 ---
 
 # npm install -g . 建的是软链，但 hook 模板是拷贝

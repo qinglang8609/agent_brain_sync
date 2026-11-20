@@ -5,6 +5,7 @@ author: fanchao
 updated: 2026-11-01
 status: active
 layer: 4
+anchors: [remind-vs-gate, gate-needs-outlet-not-just-block, feature-delete-not-patch]
 ---
 
 # 状态不完整时不替用户决定

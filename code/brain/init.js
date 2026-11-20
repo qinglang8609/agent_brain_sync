@@ -6,6 +6,9 @@ import { getUser } from '../userconfig.js';
 import { editFile, SKIP } from '../lock.js';
 import { todoTemplate, rebuildStructure } from '../todo/index.js';
 
+/** 知识页所在的目录（与 lint 的 PAGE_DIRS 同源；这里只用于补元数据）。 */
+const PAGE_DIRS_META = ['concepts', 'entities', 'sources', 'syntheses', 'sessions'];
+
 const BRAIN_DIRS = ['entities', 'concepts', 'sources', 'syntheses', 'sessions'];
 const BRAIN_FILES = ['index.md', 'log.md', 'todo.md'];
 
@@ -64,6 +67,34 @@ export async function reportBrain({ dir }) {
   return { ok: problems.length === 0, problems, brain };
 }
 
+/** 给存量知识页补 frontmatter 的 layer / anchors（只补缺，不覆盖已有值）。
+ *
+ * 为何放在 --repair 里（2026-11-20）：repair 的语义就是「只补缺、不覆盖」，
+ *   与这里完全一致；另起一个命令只会多一个记不住的名字。
+ * 返回改了几页、各补了什么，好让调用方能报出来。 */
+export async function backfillPageMeta(brain) {
+  const { ensurePageMeta } = await import('./page-meta.js');
+  const fixed = [];
+  for (const d of PAGE_DIRS_META) {
+    const dp = join(brain, d);
+    let files;
+    try { files = await fs.readdir(dp); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.md') || f.startsWith('_')) continue;
+      const full = join(dp, f);
+      const body = await fs.readFile(full, 'utf8').catch(() => null);
+      if (body === null) continue;
+      const slug = f.replace(/\.md$/, '');
+      const au = (body.match(/^author:\s*(.+)$/m) || [])[1];
+      const res = ensurePageMeta(body, { dir: d, self: slug, author: (au || '').trim() });
+      if (!res.added.length || res.text === body) continue;
+      await fs.writeFile(full, res.text, 'utf8');
+      fixed.push(`${d}/${f}（+${res.added.join('+')}）`);
+    }
+  }
+  return fixed;
+}
+
 /** init --repair: 只补缺失骨架，绝不覆盖已有文件。 */
 export async function cmdRepair({ dir }) {
   const root = resolveProjectDir(dir);
@@ -96,8 +127,13 @@ export async function cmdRepair({ dir }) {
       fixed.push(f);
     }
   }
-  if (!fixed.length) return `✓ 结构完整，无需修复: ${brain}`;
-  return `✓ 已补齐 ${fixed.join(', ')} → ${brain}\n  (已有文件一律不覆盖)`;
+  // 存量页补 layer / anchors（2026-11-20）
+  const pageFixed = await backfillPageMeta(brain);
+  if (!fixed.length && !pageFixed.length) return `✓ 结构完整，无需修复: ${brain}`;
+  const pageLine = pageFixed.length
+    ? `\n  页面元数据补了 ${pageFixed.length} 张: ${pageFixed.slice(0, 5).join('、')}${pageFixed.length > 5 ? ' …' : ''}`
+    : '';
+  return `✓ 已补齐 ${[...fixed, ...(pageFixed.length ? ['页面元数据'] : [])].join(', ')} → ${brain}${pageLine}\n  (已有文件一律不覆盖)`;
 }
 
 function resolveProjectDir(dir) {

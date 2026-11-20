@@ -4,6 +4,8 @@ id: git-proxy-troubleshooting
 author: fanchao
 updated: 2026-10-19
 status: active
+layer: 4
+anchors: [publish-pi-package-to-npm]
 ---
 
 # 概念：git push 走代理失败的排查顺序

@@ -4,6 +4,8 @@ id: pi-tool-renderer-override
 author: fanchao
 updated: 2026-10-09
 status: active
+layer: 4
+anchors: [tui-line-width-limit, pi-call-result-double-row, test-handmade-data-hides-key-mismatch, publish-pi-package-to-npm]
 ---
 
 # 概念：pi 扩展接管内置工具渲染的正确姿势

@@ -4,6 +4,8 @@ id: npm-publish-staged-2fa-traps
 author: fanchao
 updated: 2026-11-18
 status: active
+layer: 4
+anchors: [publish-pi-package-to-npm, installed-pi-package-check, git-proxy-troubleshooting]
 ---
 
 # 概念：npm 发布的两个静默坑 —— staged publishing 与缓存旧包

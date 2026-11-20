@@ -10,6 +10,7 @@ import { requireUser, atTag } from './userconfig.js';
 import { today, localStamp, shortTitle } from './todo/index.js';
 import { editFile, SKIP } from './lock.js';
 import { impactOf } from './codegraph.js';
+import { DIR_LAYER } from './brain/layers.js';
 import { clip, slugOf } from './text.js';
 import { summonTail } from './brain/summon.js';
 
@@ -139,6 +140,10 @@ export async function cmdConcept({ dir, slug, title, tags, desc }) {
     '---',
     `tags: [${tagList.join(', ')}]`,
     `id: ${name}`,
+    // 七层归属与断点词（2026-11-20）：concepts/ 默认 L4 认知；新页还没有双链词，
+    // anchors 留空数组 —— 「这页暂无断点」，等挂了 [[双链]] 再用 init --repair 补。
+    `layer: ${DIR_LAYER.concepts}`,
+    'anchors: []',
     `author: ${who}`,
     `updated: ${today()}`,
     'status: draft',

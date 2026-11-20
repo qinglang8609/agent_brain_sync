@@ -6,6 +6,7 @@ updated: 2026-11-01
 status: superseded
 layer: 3
 superseded-by: no-graph-db
+anchors: [memory-box-seven-layers, sqlite-vs-graph-db, search-relevance-pitfalls]
 ---
 
 # 中文全文检索必须自切 2-gram

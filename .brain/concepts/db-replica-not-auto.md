@@ -6,6 +6,7 @@ updated: 2026-11-02
 status: superseded
 layer: 4
 superseded-by: no-graph-db
+anchors: [silent-data-loss-diagnosis]
 ---
 
 # 主从数据库的边界

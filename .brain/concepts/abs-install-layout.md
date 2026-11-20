@@ -3,6 +3,7 @@ tags: [concept, install]
 updated: 2026-09-09
 status: active
 layer: 3
+anchors: [npm-publish-flow, AgentBrainSync, agents-skills-not-ownerless, mcp-stale-paths-multi-store, silent-data-loss-diagnosis]
 ---
 
 # 概念：abs 全局安装形态 = npm link 单一真源

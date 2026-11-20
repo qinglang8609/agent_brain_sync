@@ -3,6 +3,8 @@ tags: [concept, 验证, 等价判断, 重构, 坑]
 updated: 2026-09-12
 status: active
 kind: gotcha
+layer: 4
+anchors: [host-plugin-silent-failure, silent-data-loss-diagnosis, self-triggering-hook-loop, AgentBrainSync]
 ---
 
 # 引用新符号 / 判等价前，必须真跑到那条分支

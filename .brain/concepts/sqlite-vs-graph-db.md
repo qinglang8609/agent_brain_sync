@@ -6,6 +6,7 @@ updated: 2026-11-01
 status: superseded
 layer: 3
 superseded-by: no-graph-db
+anchors: [memory-box-seven-layers, chinese-fts-two-gram]
 ---
 
 # 图查询选 SQLite 而不是 Neo4j 的判据

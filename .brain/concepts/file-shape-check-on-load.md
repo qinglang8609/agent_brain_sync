@@ -3,6 +3,8 @@ tags: [concept, 图谱纪律]
 author: fanchao
 updated: 2026-09-13
 status: active
+layer: 4
+anchors: [guard-blocks-noninteractive-callers, read-side-output-must-not-scale, todo-rewrite-not-map, index-row-not-attribution, validation-gate-on-shared-write-path, normalize-branch-forgot-empty]
 ---
 
 # 文件形状核对（load 顺手做）

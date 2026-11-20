@@ -5,6 +5,7 @@ author: fanchao
 updated: 2026-11-02
 status: active
 layer: 3
+anchors: [silent-data-loss-diagnosis]
 ---
 
 # 微信小程序审核的两个高频拒绝原因

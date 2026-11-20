@@ -5,6 +5,7 @@ kind: gotcha
 author: fanchao
 updated: 2026-11-03
 status: active
+anchors: [mcp-stale-paths-multi-store]
 ---
 
 # 工具：herdr 里跑 pi（SSH 远程）时复制失效：pi 全屏模式强开鼠标跟踪截走拖选事件。解法 tuiMode 改 regular。根因是…

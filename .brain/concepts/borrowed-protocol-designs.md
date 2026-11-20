@@ -3,6 +3,8 @@ tags: [concept, 协议设计, 借鉴, 选型]
 author: fanchao
 updated: 2026-09-15
 status: active
+layer: 4
+anchors: [feature-delete-not-patch, read-side-output-must-not-scale, index-row-not-attribution, npm-publish-flow, AgentBrainSync]
 ---
 
 # 别人三个协议设计值得抄：manifest 分层 / fallback 自救 / id 抗改名

@@ -3,6 +3,8 @@ tags: [concept, 坑, 静默失效, 参数传递]
 updated: 2026-10-05
 status: active
 kind: gotcha
+layer: 4
+anchors: [falsy-or-eats-zero, host-plugin-silent-failure, validation-gate-on-shared-write-path]
 ---
 
 # 同一参数有两个调用点，只改一处：命令说成功、磁盘没变

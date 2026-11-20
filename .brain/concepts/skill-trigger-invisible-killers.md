@@ -3,6 +3,8 @@ tags: [concept, skill, 触发, symlink, 坑]
 updated: 2026-10-05
 status: active
 kind: gotcha
+layer: 4
+anchors: [host-plugin-silent-failure, deploy-artifact-copies, agents-skills-not-ownerless]
 ---
 
 # skill 自动触发的两个隐形杀手：描述没写触发词 + symlink 指向陈旧副本

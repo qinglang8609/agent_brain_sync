@@ -4,6 +4,8 @@ id: tui-spinner-glyph-compat
 author: fanchao
 updated: 2026-11-08
 status: active
+layer: 4
+anchors: [pi-tool-renderer-animation, tui-line-width-limit, installed-pi-package-check, capsule-hot-path-perf]
 ---
 
 # 概念：fullscreen 卡顿排查：先压测组件，再查动画字符字体

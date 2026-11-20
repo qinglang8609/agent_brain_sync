@@ -4,6 +4,8 @@ id: remind-vs-gate
 author: fanchao
 updated: 2026-10-07
 status: active
+layer: 4
+anchors: [auto-todo-register-design, mechanism-visible-vs-effective, gate-exit-code-not-piped, skill-trigger-invisible-killers, vacuous-test-passes-on-broken-code]
 ---
 
 # 概念：todo 对齐机制 —— 对齐是必须的，门禁是兜底

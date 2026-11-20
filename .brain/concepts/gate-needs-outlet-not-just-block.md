@@ -4,6 +4,8 @@ id: gate-needs-outlet-not-just-block
 author: fanchao
 updated: 2026-10-11
 status: active
+layer: 4
+anchors: [validation-gate-on-shared-write-path, 迁移路径绕过存量宽容, remind-vs-gate, feature-delete-not-patch, incomplete-state-no-auto-decide]
 ---
 
 # 概念：加闸门必须同时给出路，否则污染会换形态复发

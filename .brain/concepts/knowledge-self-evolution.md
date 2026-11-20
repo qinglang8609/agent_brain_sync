@@ -6,6 +6,7 @@ updated: 2026-11-02
 status: superseded
 layer: 4
 superseded-by: no-graph-db
+anchors: [todo, search-relevance-pitfalls, memory-box-seven-layers, feature-delete-not-patch]
 ---
 
 # 知识自我进化

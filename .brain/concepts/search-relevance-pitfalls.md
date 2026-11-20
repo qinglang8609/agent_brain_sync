@@ -7,6 +7,7 @@ status: superseded
 layer: 3
 kind: gotcha
 superseded-by: no-graph-db
+anchors: [chinese-fts-two-gram, sqlite-vs-graph-db, memory-box-seven-layers, knowledge-self-evolution]
 ---
 
 # 中文全文检索的四个实测坑

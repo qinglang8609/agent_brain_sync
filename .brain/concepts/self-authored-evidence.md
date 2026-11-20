@@ -5,6 +5,8 @@ author: fanchao
 updated: 2026-10-07
 status: active
 kind: gotcha
+layer: 4
+anchors: [symbol-reference-needs-real-run, dead-code-vs-over-export, silent-data-loss-diagnosis, audit-claims-verify-before-fix, self-reported-reasoning-is-post-hoc]
 ---
 
 # 自造证据：单假设会逼你造假，多假设 + 反证条件才治得住

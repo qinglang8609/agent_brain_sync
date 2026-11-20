@@ -3,6 +3,8 @@ tags: [concept, 命名契约, lint判据, 数据迁移]
 author: fanchao
 updated: 2026-11-08
 status: active
+layer: 4
+anchors: [feature-delete-not-patch, learning-loop-collect-distill-deliver, abs-install-layout, silent-data-loss-diagnosis, audit-claims-verify-before-fix, AgentBrainSync]
 ---
 
 # 目录契约与判据精度：结构与命名都要「一天一文件」

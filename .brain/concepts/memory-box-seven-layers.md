@@ -4,6 +4,8 @@ tags: [concept, 记忆, 分层, 图谱]
 author: fanchao
 updated: 2026-11-08
 status: active
+layer: 4
+anchors: [no-graph-db, session-digest-design, learning-loop-collect-distill-deliver]
 ---
 
 # 七层分层：层规格与判层判据

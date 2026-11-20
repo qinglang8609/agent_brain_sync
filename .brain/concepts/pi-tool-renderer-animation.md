@@ -4,6 +4,8 @@ id: pi-tool-renderer-animation
 author: fanchao
 updated: 2026-10-10
 status: active
+layer: 4
+anchors: [tui-spinner-glyph-compat, pi-tool-renderer-override, pi-call-result-double-row, publish-pi-package-to-npm, test-handmade-data-hides-key-mismatch, tui-line-width-limit, capsule-hot-path-perf]
 ---
 
 # 概念：给 pi 工具渲染器加动效（转轮 / 失败变色）

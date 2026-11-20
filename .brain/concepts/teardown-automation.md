@@ -2,6 +2,8 @@
 tags: [concept, hook, 自动化, 宿主插件]
 updated: 2026-09-10
 status: active
+layer: 4
+anchors: [opencode-inject-channel-verdict, self-triggering-hook-loop, host-plugin-silent-failure, hook-throttle-alignment, abs-install-layout, hook-sh-not-bash, learning-loop-collect-distill-deliver, resource-default-let-os-assign, AgentBrainSync, agent-end-is-not-session-end]
 ---
 
 # 收尾自动化：hook 必须主动推，不能只被动记日志

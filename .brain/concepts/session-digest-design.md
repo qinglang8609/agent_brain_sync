@@ -5,6 +5,8 @@ author: fanchao
 updated: 2026-11-08
 status: active
 kind: decision
+layer: 4
+anchors: [naming-contract-and-judge-precision, memory-box-seven-layers, knowledge-self-evolution, gate-needs-outlet-not-just-block]
 ---
 
 # 会话页：把整场会话变成知识的落点

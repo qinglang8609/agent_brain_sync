@@ -4,6 +4,8 @@ tags: [concept, abs, 操作手册]
 status: active
 author: fanchao
 updated: 2026-11-13
+layer: 4
+anchors: [no-graph-db, abs-skill-structure, session-digest-design]
 ---
 
 # abs 流程

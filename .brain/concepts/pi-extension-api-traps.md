@@ -6,6 +6,7 @@ updated: 2026-10-05
 status: active
 layer: 3
 kind: gotcha
+anchors: [validation-gate-on-shared-write-path, silent-data-loss-diagnosis]
 ---
 
 # 概念：pi 扩展开发：API 语义与加载坑

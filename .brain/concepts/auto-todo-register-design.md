@@ -2,6 +2,8 @@
 tags: [concept, todo, 自动化, 设计, 失败复盘]
 updated: 2026-10-05
 status: active
+layer: 4
+anchors: [opencode-inject-channel-verdict, hook-code-in-wrong-branch, cleanup-kills-own-refresh, host-plugin-silent-failure, read-side-output-must-not-scale, remind-vs-gate, register-needs-description]
 ---
 
 # 自动登记 todo 的失败复盘：三次迭代后整体移除

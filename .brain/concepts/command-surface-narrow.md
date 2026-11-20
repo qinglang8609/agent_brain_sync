@@ -5,6 +5,8 @@ author: fanchao
 updated: 2026-11-05
 status: active
 kind: decision
+layer: 4
+anchors: [feature-delete-not-patch, read-side-output-must-not-scale, session-digest-design]
 ---
 
 # 命令面要窄：两个入口做同一件事时删一个

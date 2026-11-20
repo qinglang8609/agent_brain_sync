@@ -6,6 +6,7 @@ updated: 2026-11-01
 status: active
 layer: 4
 kind: gotcha
+anchors: [incomplete-state-no-auto-decide, remind-vs-gate]
 ---
 
 # 登记任务必须带描述

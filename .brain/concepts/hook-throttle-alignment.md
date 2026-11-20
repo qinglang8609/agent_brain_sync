@@ -4,6 +4,7 @@ tags: [坑, hook, 静默失效]
 created: 2026-09-13
 layer: 3
 kind: gotcha
+anchors: [guard-check-then-set-across-await, self-triggering-hook-loop, teardown-automation, AgentBrainSync]
 ---
 
 # hook 节流：三种静默失效

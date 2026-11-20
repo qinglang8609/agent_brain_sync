@@ -5,6 +5,8 @@ author: fanchao
 updated: 2026-10-06
 status: active
 kind: gotcha
+layer: 4
+anchors: [validation-gate-on-shared-write-path, file-shape-check-on-load, todo-rewrite-not-map, symbol-reference-needs-real-run]
 ---
 
 # 概念：排版归一只测了「有内容」分支：空分区的接缝被吃掉

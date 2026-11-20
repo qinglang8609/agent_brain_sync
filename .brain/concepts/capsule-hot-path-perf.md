@@ -4,6 +4,8 @@ id: capsule-hot-path-perf
 author: fanchao
 updated: 2026-11-08
 status: active
+layer: 4
+anchors: [tui-line-width-limit, pi-tool-renderer-animation, tui-spinner-glyph-compat, installed-pi-package-check]
 ---
 
 # 概念：pi 工具胶囊热路径：别每帧碰大入参

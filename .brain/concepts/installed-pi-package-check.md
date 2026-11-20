@@ -4,6 +4,8 @@ id: installed-pi-package-check
 author: fanchao
 updated: 2026-11-08
 status: active
+layer: 4
+anchors: [pi-tool-renderer-animation, publish-pi-package-to-npm, tui-line-width-limit, tui-spinner-glyph-compat]
 ---
 
 # 概念：已装 pi 扩展的体检方法与 node 24 调试限制

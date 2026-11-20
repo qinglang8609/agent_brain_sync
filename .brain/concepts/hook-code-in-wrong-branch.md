@@ -4,6 +4,7 @@ updated: 2026-10-05
 status: active
 layer: 3
 kind: gotcha
+anchors: [host-plugin-silent-failure, skill-trigger-invisible-killers, self-triggering-hook-loop]
 ---
 
 # 加了 hook 却不生效：先确认「代码在哪条分支里」，别猜环境

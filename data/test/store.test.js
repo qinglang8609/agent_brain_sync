@@ -1556,7 +1556,10 @@ describe('cmdShow (todo/index/log 查看)', () => {
 });
 
 describe('cmdLint', () => {
-  const PAGE = (body) => `---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\n---\n${body}`;
+  // 2026-11-20 起 lint 要求每页都有 layer / anchors（七层归属 + 断点词），
+  // 这个夹具跟着补上，否则「健康图谱 0 问题」会因为这些元数据缺失而红。
+  const PAGE = (body) =>
+    `---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\nlayer: 4\nanchors: []\n---\n${body}`;
 
   // 回归（2026-10-05 实测）：体检输出被同类问题淹没 —— abs 自带的 log.md 有 102 条
   // 历史行缺 [[作者]]，102 条 LOG-ENTRY 遮住了其它 12 条真问题（DRAFT-STALE/DEAD-LINK）。

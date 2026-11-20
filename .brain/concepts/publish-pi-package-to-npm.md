@@ -4,6 +4,8 @@ id: publish-pi-package-to-npm
 author: fanchao
 updated: 2026-11-18
 status: active
+layer: 4
+anchors: [installed-pi-package-check, npm-publish-staged-2fa-traps, pi-tool-renderer-override, git-proxy-troubleshooting, test-handmade-data-hides-key-mismatch]
 ---
 
 # 概念：把 pi 扩展发成标准 npm 包

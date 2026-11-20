@@ -6,6 +6,7 @@ updated: 2026-11-01
 status: active
 layer: 3
 kind: gotcha
+anchors: [global-config-contaminates-projects, resource-default-let-os-assign]
 ---
 
 # os.homedir() 不受 HOME 影响

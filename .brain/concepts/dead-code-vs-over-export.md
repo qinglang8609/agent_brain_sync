@@ -4,6 +4,8 @@ id: dead-code-vs-over-export
 author: fanchao
 updated: 2026-10-09
 status: active
+layer: 4
+anchors: [2026-10-09-死代码与拆分实测, reuse-existing-field-over-new-one, guard-check-then-set-across-await, self-authored-evidence, perf-fixed-overhead]
 ---
 
 # 概念：死代码、多导出、模块拆分 —— 三种「看着像问题」要分开判

@@ -4,6 +4,7 @@ author: fanchao
 updated: 2026-10-18
 status: active
 layer: 3
+anchors: [host-plugin-silent-failure, teardown-automation, self-triggering-hook-loop, symbol-reference-needs-real-run, AgentBrainSync]
 ---
 
 # 加前置守卫前，先问「谁在非交互地调我」

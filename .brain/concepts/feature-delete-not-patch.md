@@ -3,6 +3,8 @@ tags: [concept, 功能设计, yagni, 触发频率]
 author: fanchao
 updated: 2026-09-15
 status: active
+layer: 4
+anchors: [learning-loop-collect-distill-deliver, teardown-automation, silent-data-loss-diagnosis, read-side-output-must-not-scale, command-surface-narrow, self-reported-reasoning-is-post-hoc, AgentBrainSync, abs-origin-problem]
 ---
 
 # 功能该删不该补：触发频率是设计错误，不是实现错误

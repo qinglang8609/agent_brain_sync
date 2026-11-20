@@ -5,6 +5,8 @@ author: fanchao
 updated: 2026-10-05
 status: active
 kind: gotcha
+layer: 4
+anchors: [validation-gate-on-shared-write-path, AgentBrainSync, homedir-ignores-home-env]
 ---
 
 # 概念：全局单值配置会污染所有项目

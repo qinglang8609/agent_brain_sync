@@ -3,6 +3,7 @@ tags: [concept, hook, 死循环, stop_hook_active, 守卫]
 updated: 2026-09-10
 status: active
 layer: 3
+anchors: [teardown-automation, guard-check-then-set-across-await, host-plugin-silent-failure, opencode-inject-channel-verdict, AgentBrainSync]
 ---
 
 # 自触发型 hook 的死循环：主动推必须自带防重入

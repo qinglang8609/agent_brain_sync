@@ -5,6 +5,8 @@ author: fanchao
 updated: 2026-09-16
 status: active
 kind: gotcha
+layer: 4
+anchors: [self-authored-evidence, symbol-reference-needs-real-run, deploy-artifact-copies]
 ---
 
 # 审计清单也是待证证据：逐条最小探针确证后再改

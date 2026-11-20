@@ -4,6 +4,8 @@ tags: [concept, abs, 操作手册]
 status: active
 author: fanchao
 updated: 2026-11-06
+layer: 4
+anchors: [abs-skill-flow, memory-box-seven-layers, behavior-rule-must-stay-resident]
 ---
 
 # abs 结构与写作规范

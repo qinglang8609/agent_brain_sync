@@ -4,6 +4,8 @@ id: mechanism-visible-vs-effective
 author: fanchao
 updated: 2026-10-07
 status: active
+layer: 4
+anchors: [remind-vs-gate, host-plugin-silent-failure, vacuous-test-passes-on-broken-code, deploy-artifact-copies]
 ---
 
 # 概念：机制的「跑了」不等于「起作用了」

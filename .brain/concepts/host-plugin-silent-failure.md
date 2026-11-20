@@ -3,6 +3,8 @@ tags: [concept, 宿主插件, 坑, 可观测性, 宿主适配]
 updated: 2026-10-16
 status: active
 kind: gotcha
+layer: 4
+anchors: [deploy-artifact-copies, teardown-automation, abs-install-layout, skill-trigger-invisible-killers, falsy-or-eats-zero, hook-code-in-wrong-branch, auto-todo-register-design]
 ---
 
 # 宿主插件"静默失效"三坑（装上了≠加载了≠触发了）

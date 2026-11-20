@@ -2,6 +2,8 @@
 tags: [concept, node]
 updated: 2026-10-18
 status: active
+layer: 4
+anchors: [AgentBrainSync, subitem-satisfies-two-predicates]
 ---
 
 # 概念：todo 行操作必须整文件重写保序

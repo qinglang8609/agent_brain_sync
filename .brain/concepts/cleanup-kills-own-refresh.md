@@ -3,6 +3,8 @@ tags: [concept, tui, 重绘, 坑, 自相矛盾]
 updated: 2026-10-05
 status: active
 kind: gotcha
+layer: 4
+anchors: [hook-code-in-wrong-branch, host-plugin-silent-failure, read-side-output-must-not-scale]
 ---
 
 # 消失了却不重绘：清理动作把自己的刷新通道一起关掉

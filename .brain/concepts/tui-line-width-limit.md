@@ -4,6 +4,8 @@ id: tui-line-width-limit
 author: fanchao
 updated: 2026-11-08
 status: active
+layer: 4
+anchors: [installed-pi-package-check, pi-call-result-double-row, pi-tool-renderer-animation, tui-spinner-glyph-compat, capsule-hot-path-perf]
 ---
 
 # 概念：pi TUI 渲染行超宽会抛异常

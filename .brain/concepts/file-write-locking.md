@@ -1,6 +1,8 @@
 ---
 tags: [concept, concurrency, arch]
 updated: 2026-09-08
+layer: 4
+anchors: [silent-data-loss-diagnosis, deploy-artifact-copies, todo-rewrite-not-map, abs-install-layout]
 ---
 
 # Markdown 并发写保护 (file-write-locking)

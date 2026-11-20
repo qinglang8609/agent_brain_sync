@@ -3,6 +3,8 @@ tags: [concept, javascript, 坑, 静默失效, 参数校验]
 updated: 2026-10-05
 status: active
 kind: gotcha
+layer: 4
+anchors: [host-plugin-silent-failure, param-added-at-one-callsite-only, guard-blocks-noninteractive-callers, read-side-output-must-not-scale]
 ---
 
 # `x || 默认值` 吃掉合法零值：JS falsy 陷阱

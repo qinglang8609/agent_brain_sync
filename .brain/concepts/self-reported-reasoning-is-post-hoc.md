@@ -5,6 +5,8 @@ author: fanchao
 updated: 2026-09-16
 status: active
 kind: gotcha
+layer: 4
+anchors: [feature-delete-not-patch, self-authored-evidence, skill-rewrite-residual-old-methods]
 ---
 
 # 让模型自述思考层 ≠ 真思考：实测是「知答案后编陪跑」

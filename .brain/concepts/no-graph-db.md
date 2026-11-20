@@ -5,6 +5,7 @@ kind: decision
 author: fanchao
 updated: 2026-11-08
 status: active
+anchors: [feature-delete-not-patch, 入口出口同一判据, read-side-output-must-not-scale, learning-loop-collect-distill-deliver]
 ---
 
 # 不建图数据库：写侧在跑、读侧没人用，整套拆掉

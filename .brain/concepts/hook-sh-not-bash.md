@@ -3,6 +3,7 @@ tags: [concept, shell]
 updated: 2026-10-18
 status: active
 layer: 3
+anchors: [AgentBrainSync]
 ---
 
 # 概念：hook 脚本 shebang 与语法必须同方言

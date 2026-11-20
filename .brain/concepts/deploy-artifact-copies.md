@@ -2,6 +2,8 @@
 tags: [concept, 部署, 插件, hook, 双副本, 重启]
 updated: 2026-10-07
 status: active
+layer: 4
+anchors: [host-plugin-silent-failure, silent-data-loss-diagnosis, abs-install-layout, agents-skills-not-ownerless, mcp-stale-paths-multi-store, npm-global-is-symlink, opencode-inject-channel-verdict, AgentBrainSync]
 ---
 
 # hook/插件的部署产物：有三份，改一份不算改

@@ -5,6 +5,7 @@ author: fanchao
 updated: 2026-11-01
 status: active
 layer: 4
+anchors: [feature-delete-not-patch, read-side-output-must-not-scale, memory-box-seven-layers]
 ---
 
 # abs 要解决的问题

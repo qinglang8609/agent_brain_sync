@@ -33,6 +33,7 @@ import { today } from '../todo/index.js';
 import { clip } from '../text.js';
 import { editFile, SKIP } from '../lock.js';
 import { DIR_LAYER } from './layers.js';
+import { anchorsOf } from './page-meta.js';
 import { digestSession, sessionsRoot, projectDirName, updateLedger, markSummarized, ledgerPath, md5Of } from './summon.js';
 
 /** 会话页的三种形状。形状由「改了什么东西」机械判定，不让模型猜。 */
@@ -176,6 +177,7 @@ export function renderDayPage({ ids, who, section }) {
     '---',
     'tags: [session-log, session-digest, 会话]',
     `layer: ${DIR_LAYER.sessions}`,
+    'anchors: []',
     'kind: session-digest',
     `author: ${who}`,
     `updated: ${day}`,
@@ -207,6 +209,7 @@ export function ensureDigestFrontmatter(body) {
   const add = [];
   if (!/^kind:\s/m.test(fm)) add.push('kind: session-digest');
   if (!/^layer:\s/m.test(fm)) add.push(`layer: ${DIR_LAYER.sessions}`);
+  if (!/^anchors:\s/m.test(fm)) add.push(`anchors: [${anchorsOf(t.slice(end), { author: '' }).join(', ')}]`);
   if (!add.length) return t;
   return `---\n${fm.replace(/\s*$/, '')}\n${add.join('\n')}${t.slice(end)}`;
 }

@@ -4,6 +4,8 @@ id: behavior-rule-must-stay-resident
 author: fanchao
 updated: 2026-11-13
 status: active
+layer: 4
+anchors: [abs-skill-flow, incomplete-state-no-auto-decide]
 ---
 
 # 概念：行为纪律的触发条件不能离开常驻上下文

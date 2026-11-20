@@ -6,6 +6,7 @@ updated: 2026-11-05
 status: active
 layer: 3
 kind: gotcha
+anchors: [npm-global-is-symlink, 读改写要加锁, 别用猜的用已有的标识, host-plugin-silent-failure]
 ---
 
 # detached 子进程要单独验：路径能调不等于会话关时会落

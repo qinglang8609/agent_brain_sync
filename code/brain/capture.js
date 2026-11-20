@@ -18,6 +18,7 @@ import { registerInIndex } from '../note.js';
 import { cmdLog } from '../note.js';
 import { clip, slugOf } from '../text.js';
 import { LAYERS, layerOf, DEFAULT_LAYER } from './layers.js';
+import { anchorsOf } from './page-meta.js';
 import { summonTail } from './summon.js';
 
 /** 层 → 落点目录。L1/L6 不立页，由下面的分支单独处理。 */
@@ -160,6 +161,8 @@ export async function cmdCapture({ dir, text, layer, tags, title, kind }) {
     '---',
     `tags: [${['concept', ...tagList].join(', ')}]`,
     `layer: ${L}`,
+    // 断点词 = 正文里的 [[双链]]（L6 的定义），落盘时抽一次，检索端不必每次重扫。
+    `anchors: [${anchorsOf(clean, { author: who }).join(', ')}]`,
     ...(kindArg ? [`kind: ${kindArg}`] : []),
     `author: ${who}`,
     `updated: ${today()}`,

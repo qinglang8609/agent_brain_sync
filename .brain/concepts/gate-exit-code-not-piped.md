@@ -5,6 +5,8 @@ author: fanchao
 updated: 2026-10-07
 status: active
 kind: gotcha
+layer: 4
+anchors: [hook-sh-not-bash, vacuous-test-passes-on-broken-code, remind-vs-gate]
 ---
 
 # 概念：门禁静默放行 —— 退出码被管道吞掉

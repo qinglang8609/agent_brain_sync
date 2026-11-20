@@ -3,6 +3,8 @@ tags: [entity, person]
 author: fanchao
 updated: 2026-11-18
 status: active
+layer: 4
+anchors: [publish-pi-package-to-npm, summary-truncation-hidden-cause, silent-data-loss-diagnosis, symbol-reference-needs-real-run, pi-tool-renderer-override, pi-tool-renderer-animation, tui-line-width-limit, pi-call-result-double-row, test-handmade-data-hides-key-mismatch, git-proxy-troubleshooting, installed-pi-package-check, tui-spinner-glyph-compat]
 ---
 
 # fanchao

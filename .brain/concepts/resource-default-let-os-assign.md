@@ -5,6 +5,8 @@ author: fanchao
 updated: 2026-09-16
 status: active
 kind: gotcha
+layer: 4
+anchors: [self-authored-evidence, perf-fixed-overhead]
 ---
 
 # 稀缺全局资源的默认值：让 OS 分配，不写死

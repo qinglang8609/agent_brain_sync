@@ -4,6 +4,8 @@ id: tool-empty-vs-no-output
 author: fanchao
 updated: 2026-10-07
 status: active
+layer: 4
+anchors: [summary-truncation-hidden-cause, read-side-output-must-not-scale, self-authored-evidence]
 ---
 
 # 概念：工具的「空结果」不等于「没有输出」

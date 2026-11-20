@@ -6,6 +6,7 @@ updated: 2026-11-01
 status: active
 layer: 3
 kind: gotcha
+anchors: [teardown-automation, feature-delete-not-patch, self-triggering-hook-loop]
 ---
 
 # agent_end 不是会话结尾

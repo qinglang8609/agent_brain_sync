@@ -4,6 +4,8 @@ id: test-handmade-data-hides-key-mismatch
 author: fanchao
 updated: 2026-10-09
 status: active
+layer: 4
+anchors: [pi-tool-renderer-override]
 ---
 
 # 概念：手造测试数据会让实现与测试一起猜错键名

@@ -7,6 +7,7 @@ import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
 import { readRules, idOfPage, statusOfPage, supersededByOf, clip, RULE_BODY_MAX } from './store.js';
 import { checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo/index.js';
 import { isAllowedTodoLine, parseChild, migrateLegacyChild } from './todo/common.js';
+import { declaredLayer, declaredAnchors } from './brain/page-meta.js';
 
 // ---------- 图谱遍历 ----------
 
@@ -122,7 +123,10 @@ export async function listPages(vault) {
         frontmatter: fm ? fm[1] : '',
         hasFrontmatter: body.startsWith('---\n'),
         links,
-        lines: body.split('\n').length,
+        // 只数正文：frontmatter 是元数据（layer / anchors 等），不参与「页越写越长」的判据。
+        // 2026-11-20：七层与断点成为每页必备字段后，两行元数据把两张 150 行整的页顶到 152，
+        // 触发 OVER-SIZE —— 那是把元数据当正文算了。容量上限约束的是正文。
+        lines: body.replace(/^---\n[\s\S]*?\n---\n/, '').split('\n').length,
         bytes: Buffer.byteLength(body, 'utf8'),
         indexed: indexText.includes(`[[${f.replace(/\.md$/, '')}]]`),
         status: statusOfPage(body, fm ? fm[1] : ''),
@@ -238,6 +242,17 @@ async function checkRootFiles(vault) {
 function checkPage(pg, names, linkedNames, inbound) {
   const issues = [];
   if (!pg.hasFrontmatter) issues.push(`NO-FRONTMATTER: ${pg.rel}`);
+  // 七层归属与断点词（2026-11-20 用户要求：每个页面都要有）：
+  // 层决定检索权重（decay），缺了就按目录兜底猜 —— 猜的和写下来的会漂，所以必须显式。
+  // 断点（L6）是词索引，缺了这页在「命中一个词就激活整页」那条路上就没了入口。
+  if (pg.hasFrontmatter) {
+    if (declaredLayer(pg.frontmatter) === null) {
+      issues.push(`NO-LAYER: ${pg.rel}（缺 layer，跑 abs init --repair 补）`);
+    }
+    if (declaredAnchors(pg.frontmatter) === null) {
+      issues.push(`NO-ANCHORS: ${pg.rel}（缺 anchors，跑 abs init --repair 补）`);
+    }
+  }
   // ID-DRIFT: 页面写了 id 但已跟文件名(slug)不一致 = 改过名或改过 id。
   if (pg.hasFrontmatter) {
     const id = idOfPage(pg.body, pg.slug);

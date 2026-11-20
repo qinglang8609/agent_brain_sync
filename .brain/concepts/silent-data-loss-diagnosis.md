@@ -2,6 +2,8 @@
 tags: [concept, 排查, 方法论, 丢数据, 并发]
 updated: 2026-09-10
 status: active
+layer: 4
+anchors: [file-write-locking, file-shape-check-on-load, host-plugin-silent-failure, self-triggering-hook-loop, self-authored-evidence, pi-extension-api-traps, global-config-contaminates-projects, AgentBrainSync, wechat-miniprogram-review-traps, db-replica-not-auto]
 ---
 
 # 静默丢数据的排查顺序：先拿证据，再谈机制

@@ -4,6 +4,8 @@ id: reuse-existing-field-over-new-one
 author: fanchao
 updated: 2026-10-09
 status: active
+layer: 4
+anchors: [dead-code-vs-over-export, guard-check-then-set-across-await]
 ---
 
 # 概念：能塞进已有字段，就别新增字段
