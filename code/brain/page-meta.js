@@ -67,21 +67,25 @@ export function anchorIndex(pages) {
   return new Map(shared);
 }
 
-/** index.md 里断点段的行（含段标题）。 */
-export function renderAnchorSection(index, { pagesPerWord = 3 } = {}) {
+/**
+ * index.md 里断点段的行（含段标题）。
+ *
+ * 2026-11-20 用户定：**只列词，不挂页**。
+ *   原来写成「- 词 — [[页1]] [[页2]] …共 N 页」，页一变就得重建，维护成本太高；
+ *   而断点本来就是「关键词清单」，看的是有哪些词、不是每个词指向谁
+ *   （谁用了这个词，grep 一下或看各页 frontmatter 的 anchors 就行）。
+ * 词按共享页数降序、同数按名字 —— 看得见的顺序稳定，重建结果才不会抖。
+ */
+export function renderAnchorSection(index) {
   const lines = [
-    '## 断点',
-    '<!-- 关键词索引：一个词指向用到它的页（横跨多页才算断点）。由 abs init --repair 重建。 -->',
+    ANCHOR_SECTION,
+    '<!-- 跨页关键词（一个词出现在 ≥2 个页面里）。由 abs init --repair 重建，别手写。 -->',
   ];
   if (!index.size) {
     lines.push('（暂无跨页断点词）');
     return lines;
   }
-  for (const [word, pages] of index) {
-    const shown = pages.slice(0, pagesPerWord).map((s) => `[[${s}]]`).join(' ');
-    const more = pages.length > pagesPerWord ? ` …共 ${pages.length} 页` : '';
-    lines.push(`- ${word} — ${shown}${more}`);
-  }
+  for (const word of index.keys()) lines.push(`- ${word}`);
   return lines;
 }
 
@@ -104,11 +108,12 @@ export function anchorSectionOf(indexText) {
 }
 
 /**
- * 重建 index.md 的断点段（2026-11-20 用户要求：断点写进 index.md）。
+ * 重建 index.md 的断点段。
  *
- * 为什么是「重建」而不是「追加」：断点随页面改而变，追加只会越滚越脏。
+ * 为什么是「重建」而不是「追加」：词表随页面变，追加只会越滚越脏。
  *   每次从全部页面的 anchors 现算，整体替换那一段 —— 幂等、可反复跑。
- * 段放在 index.md 末尾；已有段就地替换；没有就追加。
+ * 只刷新**已存在**的段；凭空补段要显式 append（abs init --repair --anchors），
+ *   因为 repair 的契约是「只补缺骨架、绝不改已有文件」。
  */
 export async function rebuildAnchorIndex(brain, { append = false } = {}) {
   const fs = (await import('node:fs')).promises;
@@ -135,8 +140,6 @@ export async function rebuildAnchorIndex(brain, { append = false } = {}) {
   const start = lines.findIndex((l) => l.trim() === ANCHOR_SECTION);
   let next = lines;
   if (start < 0) {
-    // 手写的 index.md 不擅自加段（repair 的契约是「只补缺骨架、绝不改已有文件」）。
-    // 要凭空补这一段得显式要求：abs init --repair --anchors。
     if (!append) return { words: index.size, changed: false };
     const tail = lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
     next = [...tail, '', ...section, ''];

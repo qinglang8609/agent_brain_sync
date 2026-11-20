@@ -126,71 +126,71 @@
 ## Syntheses
 
 ## 断点
-<!-- 关键词索引：一个词指向用到它的页（横跨多页才算断点）。由 abs init --repair 重建。 -->
-- AgentBrainSync — [[abs-install-layout]] [[agents-skills-not-ownerless]] [[borrowed-protocol-designs]] …共 22 页
-- silent-data-loss-diagnosis — [[读改写要加锁]] [[迁移路径绕过存量宽容]] [[abs-install-layout]] …共 17 页
-- host-plugin-silent-failure — [[auto-todo-register-design]] [[cleanup-kills-own-refresh]] [[deploy-artifact-copies]] …共 16 页
-- deploy-artifact-copies — [[2026-11-03-定义了判据却没接到使用侧-比没判据更常见]] [[agents-skills-not-ownerless]] [[audit-claims-verify-before-fix]] …共 13 页
-- read-side-output-must-not-scale — [[abs-origin-problem]] [[AgentBrainSync]] [[auto-todo-register-design]] …共 13 页
-- abs-install-layout — [[agents-skills-not-ownerless]] [[deploy-artifact-copies]] [[file-write-locking]] …共 10 页
-- feature-delete-not-patch — [[abs-origin-problem]] [[agent-end-is-not-session-end]] [[borrowed-protocol-designs]] …共 10 页
-- self-authored-evidence — [[2026-10-09-死代码与拆分实测]] [[audit-claims-verify-before-fix]] [[dead-code-vs-over-export]] …共 9 页
-- teardown-automation — [[agent-end-is-not-session-end]] [[feature-delete-not-patch]] [[guard-blocks-noninteractive-callers]] …共 9 页
-- memory-box-seven-layers — [[入口出口同一判据]] [[abs-origin-problem]] [[abs-skill-structure]] …共 8 页
-- self-triggering-hook-loop — [[agent-end-is-not-session-end]] [[guard-blocks-noninteractive-callers]] [[guard-check-then-set-across-await]] …共 8 页
-- remind-vs-gate — [[auto-todo-register-design]] [[gate-exit-code-not-piped]] [[gate-needs-outlet-not-just-block]] …共 7 页
-- symbol-reference-needs-real-run — [[audit-claims-verify-before-fix]] [[fanchao]] [[guard-blocks-noninteractive-callers]] …共 7 页
-- tui-line-width-limit — [[capsule-hot-path-perf]] [[fanchao]] [[installed-pi-package-check]] …共 7 页
-- validation-gate-on-shared-write-path — [[AgentBrainSync]] [[file-shape-check-on-load]] [[gate-needs-outlet-not-just-block]] …共 7 页
-- installed-pi-package-check — [[capsule-hot-path-perf]] [[fanchao]] [[npm-publish-staged-2fa-traps]] …共 6 页
-- learning-loop-collect-distill-deliver — [[2026-11-03-检索有效不等于记忆被用]] [[feature-delete-not-patch]] [[memory-box-seven-layers]] …共 6 页
-- mcp-stale-paths-multi-store — [[2026-11-03-herdr-里跑-pi-ssh]] [[abs-install-layout]] [[agents-skills-not-ownerless]] …共 6 页
-- publish-pi-package-to-npm — [[fanchao]] [[git-proxy-troubleshooting]] [[installed-pi-package-check]] …共 6 页
-- todo-rewrite-not-map — [[AgentBrainSync]] [[file-shape-check-on-load]] [[file-write-locking]] …共 6 页
-- guard-check-then-set-across-await — [[dead-code-vs-over-export]] [[hook-throttle-alignment]] [[perf-fixed-overhead]] …共 5 页
-- pi-tool-renderer-animation — [[capsule-hot-path-perf]] [[fanchao]] [[installed-pi-package-check]] …共 5 页
-- pi-tool-renderer-override — [[fanchao]] [[pi-call-result-double-row]] [[pi-tool-renderer-animation]] …共 5 页
-- session-digest-design — [[别用猜的用已有的标识]] [[新机制要重判旧判据]] [[abs-skill-flow]] …共 5 页
-- tui-spinner-glyph-compat — [[capsule-hot-path-perf]] [[fanchao]] [[installed-pi-package-check]] …共 5 页
-- 入口出口同一判据 — [[别用猜的用已有的标识]] [[读改写要加锁]] [[新机制要重判旧判据]] …共 4 页
-- agents-skills-not-ownerless — [[abs-install-layout]] [[deploy-artifact-copies]] [[mcp-stale-paths-multi-store]] …共 4 页
-- gate-needs-outlet-not-just-block — [[迁移路径绕过存量宽容]] [[incomplete-state-no-auto-decide]] [[session-digest-design]] …共 4 页
-- opencode-inject-channel-verdict — [[auto-todo-register-design]] [[deploy-artifact-copies]] [[self-triggering-hook-loop]] …共 4 页
-- pi-call-result-double-row — [[fanchao]] [[pi-tool-renderer-animation]] [[pi-tool-renderer-override]] …共 4 页
-- summary-truncation-hidden-cause — [[fanchao]] [[index-row-not-attribution]] [[read-side-output-must-not-scale]] …共 4 页
-- test-handmade-data-hides-key-mismatch — [[fanchao]] [[pi-tool-renderer-animation]] [[pi-tool-renderer-override]] …共 4 页
-- vacuous-test-passes-on-broken-code — [[gate-exit-code-not-piped]] [[guard-check-then-set-across-await]] [[mechanism-visible-vs-effective]] …共 4 页
-- 迁移路径绕过存量宽容 — [[入口出口同一判据]] [[新机制要重判旧判据]] [[gate-needs-outlet-not-just-block]]
-- capsule-hot-path-perf — [[pi-tool-renderer-animation]] [[tui-line-width-limit]] [[tui-spinner-glyph-compat]]
-- dead-code-vs-over-export — [[2026-10-09-死代码与拆分实测]] [[reuse-existing-field-over-new-one]] [[self-authored-evidence]]
-- file-shape-check-on-load — [[normalize-branch-forgot-empty]] [[silent-data-loss-diagnosis]] [[validation-gate-on-shared-write-path]]
-- git-proxy-troubleshooting — [[fanchao]] [[npm-publish-staged-2fa-traps]] [[publish-pi-package-to-npm]]
-- hook-code-in-wrong-branch — [[auto-todo-register-design]] [[cleanup-kills-own-refresh]] [[host-plugin-silent-failure]]
-- hook-sh-not-bash — [[AgentBrainSync]] [[gate-exit-code-not-piped]] [[teardown-automation]]
-- incomplete-state-no-auto-decide — [[behavior-rule-must-stay-resident]] [[gate-needs-outlet-not-just-block]] [[register-needs-description]]
-- index-row-not-attribution — [[borrowed-protocol-designs]] [[file-shape-check-on-load]] [[read-side-output-must-not-scale]]
-- naming-contract-and-judge-precision — [[learning-loop-collect-distill-deliver]] [[session-digest-design]] [[subitem-satisfies-two-predicates]]
-- npm-global-is-symlink — [[迁移路径绕过存量宽容]] [[deploy-artifact-copies]] [[detached-子进程的可验证性]]
-- perf-fixed-overhead — [[dead-code-vs-over-export]] [[read-side-output-must-not-scale]] [[resource-default-let-os-assign]]
-- search-relevance-pitfalls — [[入口出口同一判据]] [[chinese-fts-two-gram]] [[knowledge-self-evolution]]
-- skill-trigger-invisible-killers — [[hook-code-in-wrong-branch]] [[host-plugin-silent-failure]] [[remind-vs-gate]]
-- 2026-11-03-检索有效不等于记忆被用 — [[2026-11-03-定义了判据却没接到使用侧-比没判据更常见]] [[learning-loop-collect-distill-deliver]]
-- 别用猜的用已有的标识 — [[新机制要重判旧判据]] [[detached-子进程的可验证性]]
-- 新机制要重判旧判据 — [[别用猜的用已有的标识]] [[入口出口同一判据]]
-- abs-skill-flow — [[abs-skill-structure]] [[behavior-rule-must-stay-resident]]
-- audit-claims-verify-before-fix — [[naming-contract-and-judge-precision]] [[self-authored-evidence]]
-- auto-todo-register-design — [[host-plugin-silent-failure]] [[remind-vs-gate]]
-- chinese-fts-two-gram — [[search-relevance-pitfalls]] [[sqlite-vs-graph-db]]
-- detached-子进程的可验证性 — [[读改写要加锁]] [[npm-global-is-symlink]]
-- falsy-or-eats-zero — [[host-plugin-silent-failure]] [[param-added-at-one-callsite-only]]
-- file-write-locking — [[perf-fixed-overhead]] [[silent-data-loss-diagnosis]]
-- global-config-contaminates-projects — [[homedir-ignores-home-env]] [[silent-data-loss-diagnosis]]
-- guard-blocks-noninteractive-callers — [[falsy-or-eats-zero]] [[file-shape-check-on-load]]
-- hook-throttle-alignment — [[guard-check-then-set-across-await]] [[teardown-automation]]
-- knowledge-self-evolution — [[search-relevance-pitfalls]] [[session-digest-design]]
-- no-graph-db — [[abs-skill-flow]] [[memory-box-seven-layers]]
-- npm-publish-flow — [[abs-install-layout]] [[borrowed-protocol-designs]]
-- resource-default-let-os-assign — [[homedir-ignores-home-env]] [[teardown-automation]]
-- self-reported-reasoning-is-post-hoc — [[feature-delete-not-patch]] [[self-authored-evidence]]
-- skill-rewrite-residual-old-methods — [[agents-skills-not-ownerless]] [[self-reported-reasoning-is-post-hoc]]
-- sqlite-vs-graph-db — [[chinese-fts-two-gram]] [[search-relevance-pitfalls]]
+<!-- 跨页关键词（一个词出现在 ≥2 个页面里）。由 abs init --repair 重建，别手写。 -->
+- AgentBrainSync
+- silent-data-loss-diagnosis
+- host-plugin-silent-failure
+- deploy-artifact-copies
+- read-side-output-must-not-scale
+- abs-install-layout
+- feature-delete-not-patch
+- self-authored-evidence
+- teardown-automation
+- memory-box-seven-layers
+- self-triggering-hook-loop
+- remind-vs-gate
+- symbol-reference-needs-real-run
+- tui-line-width-limit
+- validation-gate-on-shared-write-path
+- installed-pi-package-check
+- learning-loop-collect-distill-deliver
+- mcp-stale-paths-multi-store
+- publish-pi-package-to-npm
+- todo-rewrite-not-map
+- guard-check-then-set-across-await
+- pi-tool-renderer-animation
+- pi-tool-renderer-override
+- session-digest-design
+- tui-spinner-glyph-compat
+- 入口出口同一判据
+- agents-skills-not-ownerless
+- gate-needs-outlet-not-just-block
+- opencode-inject-channel-verdict
+- pi-call-result-double-row
+- summary-truncation-hidden-cause
+- test-handmade-data-hides-key-mismatch
+- vacuous-test-passes-on-broken-code
+- 迁移路径绕过存量宽容
+- capsule-hot-path-perf
+- dead-code-vs-over-export
+- file-shape-check-on-load
+- git-proxy-troubleshooting
+- hook-code-in-wrong-branch
+- hook-sh-not-bash
+- incomplete-state-no-auto-decide
+- index-row-not-attribution
+- naming-contract-and-judge-precision
+- npm-global-is-symlink
+- perf-fixed-overhead
+- search-relevance-pitfalls
+- skill-trigger-invisible-killers
+- 2026-11-03-检索有效不等于记忆被用
+- 别用猜的用已有的标识
+- 新机制要重判旧判据
+- abs-skill-flow
+- audit-claims-verify-before-fix
+- auto-todo-register-design
+- chinese-fts-two-gram
+- detached-子进程的可验证性
+- falsy-or-eats-zero
+- file-write-locking
+- global-config-contaminates-projects
+- guard-blocks-noninteractive-callers
+- hook-throttle-alignment
+- knowledge-self-evolution
+- no-graph-db
+- npm-publish-flow
+- resource-default-let-os-assign
+- self-reported-reasoning-is-post-hoc
+- skill-rewrite-residual-old-methods
+- sqlite-vs-graph-db

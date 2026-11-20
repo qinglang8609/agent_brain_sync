@@ -161,13 +161,13 @@ describe('断点索引（写进 index.md）', () => {
     assert.deepEqual(idx.get('多'), ['a-page', 'b-page'], '页名排序');
   });
 
-  test('渲染：每词最多 3 页，其余折成「…共 N 页」', () => {
-    const pages = ['p1', 'p2', 'p3', 'p4', 'p5'].map((slug) => ({ slug, anchors: ['w'] }));
+  // 2026-11-20 用户定：只列词、不挂页（挂页的话页一变就得跟着重建，维护成本太高）。
+  test('渲染：每行只有一个词，不带页名', () => {
+    const pages = ['p1', 'p2', 'p3'].map((slug) => ({ slug, anchors: ['w'] }));
     const lines = renderAnchorSection(anchorIndex(pages));
-    const row = lines.find((l) => l.startsWith('- w'));
-    assert.match(row, /\[\[p1\]\] \[\[p2\]\] \[\[p3\]\]/, row);
-    assert.match(row, /…共 5 页/, row);
-    assert.ok(!row.includes('p4'), '第 4 页起不列出来');
+    const rows = lines.filter((l) => l.startsWith('- '));
+    assert.deepEqual(rows, ['- w'], JSON.stringify(rows));
+    assert.ok(!lines.join('\n').includes('[['), '不该出现页链接');
   });
 
   test('空索引给出占位行（新库刚建好也不会被 lint 判过期）', () => {
@@ -193,8 +193,9 @@ describe('rebuildAnchorIndex — 生成与「不擅自改手写 index」', () =>
     assert.equal(r.changed, true);
     assert.equal(r.words, 1);
     const out = await fs.readFile(join(brain, 'index.md'), 'utf8');
-    assert.ok(out.includes('- w — [[a]] [[b]]'), out);
+    assert.ok(out.includes('- w'), out);
     assert.ok(!out.includes('[[x]]'), '旧内容必须被替换');
+    assert.ok(!out.includes('[['), '断点段只列词，不挂页');
   });
 
   test('没有断点段时默认不擅自加（手写 index 不动）', async () => {
@@ -209,6 +210,6 @@ describe('rebuildAnchorIndex — 生成与「不擅自改手写 index」', () =>
     const r = await rebuildAnchorIndex(brain, { append: true });
     assert.equal(r.changed, true);
     const out = await fs.readFile(join(brain, 'index.md'), 'utf8');
-    assert.ok(out.includes('## 断点') && out.includes('- w — [[a]] [[b]]'), out);
+    assert.ok(out.includes('## 断点') && out.includes('- w'), out);
   });
 });
