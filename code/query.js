@@ -4,10 +4,18 @@ import { join } from 'node:path';
 import { requireBrain, brainPath } from './index.js';
 import { rankPage, prepareQuery } from './relevant.js';
 import { statusOfPage, idOfPage, supersededByOf, clip } from './store.js';
+import { declaredLayer } from './brain/page-meta.js';
 import { DIR_LAYER, decayOf } from './brain/layers.js';
 
 // ---------- query: 检索知识图谱（多词 OR，扫全 .md 页） ----------
 const KNOWN_SLUG_HINT = /模板残留|\[\[slug\]\]/;
+
+/** 页面 frontmatter 里声明的断点词（L6）。缺失返回空数组。 */
+function anchorsOfPage(body) {
+  const m = String(body || '').match(/^anchors:\s*\[(.*)\]\s*$/m);
+  if (!m) return [];
+  return m[1].split(',').map((x) => x.trim()).filter(Boolean);
+}
 
 export async function cmdQuery({ dir, terms, includeSuperseded }) {
   // 每个 term 内部再按空白拆 —— 让 `abs query "发布 流程"` 与 `abs query 发布 流程` 等价。
@@ -77,8 +85,15 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
           hits.push({ hidden: 'draft', slug });
           continue;
         }
+        // 断点（anchors）命中：查的词恰好是这页的断点词之一 —— L6 的「激活」。
+        const pageAnchors = anchorsOfPage(body);
+        const anchorHit = pageAnchors.filter((a) => words.some((w) => w.toLowerCase() === a.toLowerCase()));
         hits.push({
           full, slug, dir: d, matched: rank.matched, kind: rank.kind, fuzzyScore: rank.score, via: rank.via,
+          // 七层：优先用页面自己声明的层（capture --layer 可以写在 concepts/ 里），
+          // 没声明才按目录兜底 —— 2026-11-20，之前只看目录，声明的层形同摆设。
+          layer: declaredLayer(body.match(/^---\n([\s\S]*?)\n---/)?.[1] || '') ?? (DIR_LAYER[d] ?? 4),
+          anchorHit,
           author: au ? au[1].trim() : '',
           id: idOfPage(body, slug),
           status: st,
@@ -103,8 +118,11 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
   // 这里复用同一套 DIR_LAYER + decayOf，与 db search 对齐，不再用笼统的「降 20 分」
   // （那个修法在命中分数接近时失效，实测「长期记忆 提炼 主动回忆」前 10 仍混 3 个 log 页）。
   // 权重 = 1 - decay（与 db.js 的 layerWeight 同口径）。
-  const layerWeight = (h) => Math.max(0.05, 1 - decayOf(DIR_LAYER[h.dir] ?? 4));
-  const rankBy = (h) => h.fuzzyScore * layerWeight(h);
+  const layerWeight = (h) => Math.max(0.05, 1 - decayOf(h.layer ?? DIR_LAYER[h.dir] ?? 4));
+  // 断点命中额外加权（2026-11-20）：anchors 就是为了「命中一个词就激活整页」，
+  // 不给权重它就只是写在页里的死数据（本仓踩过「定义了判据没接到使用侧」）。
+  const ANCHOR_BOOST = 1.5;
+  const rankBy = (h) => h.fuzzyScore * layerWeight(h) * (h.anchorHit?.length ? ANCHOR_BOOST : 1);
   const exactHits = hits.filter((h) => !h.hidden && h.kind === 'exact')
     .map((h) => ({ ...h, score: rankBy(h) }))
     .sort((a, b) => b.score - a.score);
@@ -137,7 +155,9 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
     const hitTxt = h.matched.length ? h.matched.join(', ') : '(无字面命中)';
     // 命中渠道：tag 最有价值（人工提炼的关键词），显式标出便于判断可信度
     const viaTag = h.via && h.via.tag.length ? `  [tag: ${h.via.tag.join(', ')}]` : '';
-    return `📄 ${h.slug}${by}${id}${st}${fuzzy}  (命中: ${hitTxt}${full})${viaTag}\n    ${h.snippet}`;
+    // 断点命中单独标：这是「关键词激活」而不是字面/语义命中，可信度判断要用到。
+    const viaAnchor = h.anchorHit && h.anchorHit.length ? `  [断点: ${h.anchorHit.join(', ')}]` : '';
+    return `📄 ${h.slug}${by}${id}${st}${fuzzy}  (命中: ${hitTxt}${full})${viaTag}${viaAnchor}\n    ${h.snippet}`;
   });
   // 多词且无全命中时告知降级了 —— 不静默给一堆弱相关结果。
   const anyFull = displayed.some((h) => h.kind === 'exact' && h.matched.length === words.length);

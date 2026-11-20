@@ -8,6 +8,7 @@ import { readRules, idOfPage, statusOfPage, supersededByOf, clip, RULE_BODY_MAX 
 import { checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo/index.js';
 import { isAllowedTodoLine, parseChild, migrateLegacyChild } from './todo/common.js';
 import { declaredLayer, declaredAnchors, anchorSectionOf, anchorIndex, renderAnchorSection, ANCHOR_SECTION } from './brain/page-meta.js';
+import { DIR_LAYER } from './brain/layers.js';
 
 // ---------- 图谱遍历 ----------
 
@@ -294,6 +295,20 @@ function checkPage(pg, names, linkedNames, inbound) {
     }
     if (declaredAnchors(pg.frontmatter) === null) {
       issues.push(`NO-ANCHORS: ${pg.rel}（缺 anchors，跑 abs init --repair 补）`);
+    }
+    // 七层与物理位置必须对得上（2026-11-20）：
+    //   sources/ 是 L7 混沌层（未分辨的暂存），decay 0.95、检索里压到底；
+    //   把它标成别的层，等于让未核实的东西冒充可信知识。反向也一样：L7 只能待在 sources/。
+    const declared = declaredLayer(pg.frontmatter);
+    if (declared !== null) {
+      const expect = DIR_LAYER[pg.dir];
+      if (pg.dir === 'sources' && declared !== expect) {
+        issues.push(`L7-NOT-CHAOS: ${pg.rel}（sources/ 的页必须是 layer: ${expect}（混沌层），现在是 ${declared}）`);
+      } else if (pg.dir !== 'sources' && declared === 7) {
+        issues.push(`LAYER-MISMATCH: ${pg.rel}（L7 混沌层只属于 sources/）`);
+      } else if (pg.dir === 'sessions' && declared !== expect) {
+        issues.push(`LAYER-MISMATCH: ${pg.rel}（sessions/ 的页必须是 layer: ${expect}（会话层），现在是 ${declared}）`);
+      }
     }
   }
   // ID-DRIFT: 页面写了 id 但已跟文件名(slug)不一致 = 改过名或改过 id。

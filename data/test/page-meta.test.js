@@ -213,3 +213,24 @@ describe('rebuildAnchorIndex — 生成与「不擅自改手写 index」', () =>
     assert.ok(out.includes('## 断点') && out.includes('- w'), out);
   });
 });
+
+describe('L7 混沌层与断点在检索侧的作用（2026-11-20）', () => {
+  // L7 = 未分辨的暂存（sources/），decay 0.95 → 检索权重 0.05，压到底。
+  test('abs note 落的 sources 页必须带 layer 7 与 anchors', async () => {
+    const { cmdNote } = await import('../../code/note.js');
+    const root = join(sandbox, 'proj');
+    await fs.mkdir(root, { recursive: true });
+    await fs.mkdir(join(root, '.brain', 'sources'), { recursive: true });
+    await fs.mkdir(join(root, '.brain', 'sessions'), { recursive: true });
+    await fs.mkdir(join(root, '.brain', 'entities'), { recursive: true });
+    for (const d of ['concepts', 'syntheses']) await fs.mkdir(join(root, '.brain', d), { recursive: true });
+    await fs.writeFile(join(root, '.brain', 'index.md'), '# idx\n', 'utf8');
+    await fs.writeFile(join(root, '.brain', 'log.md'), '# log\n', 'utf8');
+    await fs.writeFile(join(root, '.brain', 'todo.md'), '# todo\n', 'utf8');
+    await cmdNote({ dir: root, text: '暂存：[[pi-tui]] 与 [[truncateToWidth]] 有关' });
+    const files = await fs.readdir(join(root, '.brain', 'sources'));
+    const body = await fs.readFile(join(root, '.brain', 'sources', files[0]), 'utf8');
+    assert.match(body, /^layer: 7$/m, body);
+    assert.match(body, /^anchors: \[pi-tui, truncateToWidth\]$/m, body);
+  });
+});

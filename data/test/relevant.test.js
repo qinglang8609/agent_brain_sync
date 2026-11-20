@@ -235,3 +235,29 @@ test("端到端: 关键词从'正在干的活'推出该读哪页", () => {
   assert.ok(picked.length >= 1, "应命中至少一页");
   assert.equal(picked[0].name, "file-write-locking", "应优先命中并发写那页");
 });
+
+// 断点（anchors）命中要真的影响排序（2026-11-20）：锚点写进页里但不给权重，
+// 就只是死数据 —— 本仓踩过「定义了判据却没接到使用侧」。
+test('断点命中加权：anchors 命中与字面命中同分时，断点命中排前面', async () => {
+    const { promises: fs } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const { cmdQuery } = await import('../../code/query.js');
+    const dir = await fs.mkdtemp(join(tmpdir(), 'abs-anchor-'));
+    const brain = join(dir, '.brain');
+    for (const d of ['concepts', 'entities', 'sources', 'syntheses', 'sessions']) {
+      await fs.mkdir(join(brain, d), { recursive: true });
+    }
+    await fs.writeFile(join(brain, 'index.md'), '# idx\n', 'utf8');
+    // 两页正文完全相同（字面命中一样），只有 anchors 不同 —— 差别只应来自断点加权。
+    const page = (id, anchors) => `---\ntags: [concept]\nid: ${id}\nlayer: 4\nanchors: [${anchors}]\nstatus: active\n---\n\n# 页 ${id}\n\nwidget 相关内容\n\n## 验证\n看输出\n`;
+    await fs.writeFile(join(brain, 'concepts', 'a-anchor.md'), page('a-anchor', 'widget'), 'utf8');
+    await fs.writeFile(join(brain, 'concepts', 'b-plain.md'), page('b-plain', '别的词'), 'utf8');
+    const out = await cmdQuery({ dir, terms: ['widget'] });
+    const aIdx = out.indexOf('a-anchor');
+    const bIdx = out.indexOf('b-plain');
+    assert.ok(aIdx >= 0 && bIdx >= 0, out);
+    assert.ok(aIdx < bIdx, `断点命中应排前面:\n${out}`);
+    assert.ok(/\[断点: widget\]/.test(out), `命中渠道要标出来:\n${out}`);
+    await fs.rm(dir, { recursive: true, force: true });
+});

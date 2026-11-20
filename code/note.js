@@ -11,6 +11,7 @@ import { today, localStamp, shortTitle } from './todo/index.js';
 import { editFile, SKIP } from './lock.js';
 import { impactOf } from './codegraph.js';
 import { DIR_LAYER } from './brain/layers.js';
+import { anchorsOf } from './brain/page-meta.js';
 import { clip, slugOf } from './text.js';
 import { summonTail } from './brain/summon.js';
 
@@ -64,6 +65,10 @@ export async function cmdNote({ dir, text, tags, when, impact, type }) {
     '---',
     `tags: [${fmTags}]`,
     `id: ${file.replace(/\.md$/, '')}`,
+    // 七层 + 断点（2026-11-20 用户要求：新增页面一律带这两项）。
+    // sources/ 是 L7 混沌层（decay 0.95，检索里压到底）——暂存的未分辨信息就该这样。
+    `layer: ${DIR_LAYER.sources}`,
+    `anchors: [${anchorsOf(clean, { author: who }).join(', ')}]`,
     `author: ${who}`,
     `updated: ${today()}`,
     'status: draft',
