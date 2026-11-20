@@ -1,6 +1,6 @@
 # 📋 Todo Board
 
-- [ ] [2026-11-20 10:25] [page-7layer] [[fanchao]] 读 /Users/fanchao/Code/abs 学 7 层结构与断点机制，给每个知识页加上 7 层思考与断点 [01a1f2aa-1783-73]
+- [x] [2026-11-20 10:25] [page-7layer] [[fanchao]] 读 /Users/fanchao/Code/abs 学 7 层结构与断点机制，给每个知识页加上 7 层思考与断点 [01a1f2aa-1783-73]
 - [x] [2026-11-18 12:58] [project-audit] [[fanchao]] 全项目审查：清死代码与文件、整逻辑、修 bug [01a1ec8f-af4f-77]
   - [x] [2026-11-18 12:58] [先跑死代码/死导出/垃圾文件扫描，出报告再动手] [[fanchao]] [01a1ec8f-af4f-77]
 - [x] [2026-11-18 11:39] [capsule-into-abs] [[fanchao]] 把 capsule-tools 插件从 pi-agents 移到 abs 的 agents/pi/plugins，图谱一并并入 [01a1ec8f-af4f-77]

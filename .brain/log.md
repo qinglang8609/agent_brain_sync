@@ -1,4 +1,6 @@
 # 🗒 Activity Log
+## [2026-11-20 15:48] [七层与断点收尾：99 页 layer+anchors] [[fanchao]] 全量迁移、断点进 index.md（67 个跨页词，只列词）、query 断点加权 ×1.5、L7 判据入 lint（sources 必须 7 / 非 sources 不得 7 / sessions 必须 5）、note 落盘补两字段；随 2.1.0 发布并本机升级，abs lint 0 问题
+## [2026-11-20 15:48] [page-7layer] [[fanchao]]
 ## [2026-11-20 14:54] [发版 2.1.0 并本机升级] [[fanchao]] 七层归属与断点词落到 99 个知识页（layer+anchors 全量迁移）、断点写进 index.md 且接进 query 加权（×1.5，输出标 [断点: 词]）、L7 混沌层新增 lint 判据（sources 必须 7、非 sources 不得 7、sessions 必须 5）、abs note 落盘补 layer/anchors；性能三处修复（ingest --list -19%、query -8%、纯英文查询 -27%）。发布后 registry 延迟约 20s 才可见，cache clean 后全局装 2.1.0，abs install 刷新 hook/插件/skill，lint 0
 ## [2026-11-18 13:25] [发版 2.0.0 并两台机器重装] [[fanchao]] git 三次提交（目录重构+只留 pi、三插件+文档、图谱移植）；npm publish 卡 staged 2FA（首发返回 202，重发 409），确认 registry 已上 2.0.0 后 npm view 仍是旧值——是本地缓存，cache clean 才装得上。本机从 symlink 改为真实 npm 包；fxh-mb 卸 1.32.6 装 2.0.0，旧目录 abs-rounded-editor 被 RENAMED_PLUGINS 清掉。验证：两台 abs 2.0.0、lint 0、fxh-mb 上 init+todo add 冒烟通过
 ## [2026-11-18 13:17] [project-audit] [[fanchao]]
