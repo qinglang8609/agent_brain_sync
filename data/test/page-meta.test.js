@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   anchorsOf, linksOf, layerForDir, declaredLayer, declaredAnchors, ensurePageMeta, ANCHORS_MAX,
+  anchorIndex, renderAnchorSection, rebuildAnchorIndex, ANCHOR_SECTION,
 } from '../../code/brain/page-meta.js';
 import { backfillPageMeta } from '../../code/brain/init.js';
 
@@ -133,5 +134,81 @@ describe('init --repair 的存量补齐（集成）', () => {
     const brain = join(sandbox, '.brain');
     await fs.mkdir(join(brain, 'concepts'), { recursive: true });
     assert.deepEqual(await backfillPageMeta(brain), []);
+  });
+});
+
+describe('断点索引（写进 index.md）', () => {
+  test('只收跨页词：单词独有的不进索引', () => {
+    const idx = anchorIndex([
+      { slug: 'a', anchors: ['共享', '独有-a'] },
+      { slug: 'b', anchors: ['共享', '独有-b'] },
+    ]);
+    assert.deepEqual([...idx.keys()], ['共享'], `只该有跨页词: ${[...idx.keys()]}`);
+  });
+
+  test('同一页重复写同一个词只算一次', () => {
+    const idx = anchorIndex([{ slug: 'a', anchors: ['w', 'w'] }, { slug: 'b', anchors: ['w'] }]);
+    assert.deepEqual(idx.get('w'), ['a', 'b']);
+  });
+
+  test('页按名字排序、词按共享页数降序（生成方与校验方顺序必须一致）', () => {
+    const idx = anchorIndex([
+      { slug: 'z-page', anchors: ['少'] },
+      { slug: 'b-page', anchors: ['多', '少'] },
+      { slug: 'a-page', anchors: ['多'] },
+    ]);
+    assert.deepEqual([...idx.keys()], ['多', '少'], '同数量时按词名');
+    assert.deepEqual(idx.get('多'), ['a-page', 'b-page'], '页名排序');
+  });
+
+  test('渲染：每词最多 3 页，其余折成「…共 N 页」', () => {
+    const pages = ['p1', 'p2', 'p3', 'p4', 'p5'].map((slug) => ({ slug, anchors: ['w'] }));
+    const lines = renderAnchorSection(anchorIndex(pages));
+    const row = lines.find((l) => l.startsWith('- w'));
+    assert.match(row, /\[\[p1\]\] \[\[p2\]\] \[\[p3\]\]/, row);
+    assert.match(row, /…共 5 页/, row);
+    assert.ok(!row.includes('p4'), '第 4 页起不列出来');
+  });
+
+  test('空索引给出占位行（新库刚建好也不会被 lint 判过期）', () => {
+    const lines = renderAnchorSection(new Map());
+    assert.equal(lines[0], ANCHOR_SECTION);
+    assert.match(lines.join('\n'), /暂无跨页断点词/);
+  });
+});
+
+describe('rebuildAnchorIndex — 生成与「不擅自改手写 index」', () => {
+  const seed = async (indexBody) => {
+    const brain = join(sandbox, '.brain');
+    await fs.mkdir(join(brain, 'concepts'), { recursive: true });
+    await fs.writeFile(join(brain, 'concepts', 'a.md'), '---\nanchors: [w]\n---\n', 'utf8');
+    await fs.writeFile(join(brain, 'concepts', 'b.md'), '---\nanchors: [w]\n---\n', 'utf8');
+    await fs.writeFile(join(brain, 'index.md'), indexBody, 'utf8');
+    return brain;
+  };
+
+  test('已有序段会被刷新', async () => {
+    const brain = await seed('# 索引\n\n## 断点\n- 旧的 — [[x]]\n');
+    const r = await rebuildAnchorIndex(brain);
+    assert.equal(r.changed, true);
+    assert.equal(r.words, 1);
+    const out = await fs.readFile(join(brain, 'index.md'), 'utf8');
+    assert.ok(out.includes('- w — [[a]] [[b]]'), out);
+    assert.ok(!out.includes('[[x]]'), '旧内容必须被替换');
+  });
+
+  test('没有断点段时默认不擅自加（手写 index 不动）', async () => {
+    const brain = await seed('# 我的索引\n');
+    const r = await rebuildAnchorIndex(brain);
+    assert.equal(r.changed, false);
+    assert.equal(await fs.readFile(join(brain, 'index.md'), 'utf8'), '# 我的索引\n');
+  });
+
+  test('显式 append 才凭空加段（abs init --repair --anchors）', async () => {
+    const brain = await seed('# 我的索引\n');
+    const r = await rebuildAnchorIndex(brain, { append: true });
+    assert.equal(r.changed, true);
+    const out = await fs.readFile(join(brain, 'index.md'), 'utf8');
+    assert.ok(out.includes('## 断点') && out.includes('- w — [[a]] [[b]]'), out);
   });
 });

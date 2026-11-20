@@ -36,6 +36,121 @@ export function anchorsOf(text, { self = '', author = '' } = {}) {
     .slice(0, ANCHORS_MAX);
 }
 
+/**
+ * 断点索引：词 → 用到它的页（2026-11-20 用户要求写进 index.md）。
+ *
+ * 为什么断点要进 index.md：断点是**交叉的** —— 同一个关键词在 a 页和 b 页都可能出现，
+ *   一页也有多个断点。只把 anchors 留在各页 frontmatter 里，就看不到「这个词横跨哪些页」；
+ *   写进 index.md 才能一眼看出交叉关系（L6 的原定义就是「词的索引，不占页面」）。
+ *
+ * 只收**被 ≥2 页共享**的词：单页独有的词在那一页里已经写着，进索引只会把 index.md 撑爆
+ *   （实测 94 个词里 27 个只属于一页）。
+ * 每词最多列 PAGES_PER_WORD 个页，其余折成「…共 N 页」—— 一个词横跨 22 页时不能占满一行。
+ *
+ * @param {{slug: string, anchors: string[]}[]} pages
+ * @returns {Map<string, string[]>} 词 → 页 slug（按共享页数降序，同数按名字）
+ */
+export function anchorIndex(pages) {
+  const byWord = new Map();
+  for (const pg of pages) {
+    for (const a of pg.anchors || []) {
+      if (!byWord.has(a)) byWord.set(a, []);
+      const list = byWord.get(a);
+      if (!list.includes(pg.slug)) list.push(pg.slug);
+    }
+  }
+  // 每个词下的页按名字排序：否则「谁先被读到」会决定索引里的顺序，
+  // 生成方（rebuild）与校验方（lint）扫描顺序不同就会互相当成「过期」。
+  for (const list of byWord.values()) list.sort((a, b) => a.localeCompare(b));
+  const shared = [...byWord.entries()].filter(([, list]) => list.length >= 2);
+  shared.sort((x, y) => y[1].length - x[1].length || x[0].localeCompare(y[0]));
+  return new Map(shared);
+}
+
+/** index.md 里断点段的行（含段标题）。 */
+export function renderAnchorSection(index, { pagesPerWord = 3 } = {}) {
+  const lines = [
+    '## 断点',
+    '<!-- 关键词索引：一个词指向用到它的页（横跨多页才算断点）。由 abs init --repair 重建。 -->',
+  ];
+  if (!index.size) {
+    lines.push('（暂无跨页断点词）');
+    return lines;
+  }
+  for (const [word, pages] of index) {
+    const shown = pages.slice(0, pagesPerWord).map((s) => `[[${s}]]`).join(' ');
+    const more = pages.length > pagesPerWord ? ` …共 ${pages.length} 页` : '';
+    lines.push(`- ${word} — ${shown}${more}`);
+  }
+  return lines;
+}
+
+/** 断点段在 index.md 里的标题（重建与 lint 共用同一个判据）。 */
+export const ANCHOR_SECTION = '## 断点';
+
+/** 从 index.md 全文里取出断点段的行（找不到返回 null）。 */
+export function anchorSectionOf(indexText) {
+  const lines = String(indexText || '').split('\n');
+  const start = lines.findIndex((l) => l.trim() === ANCHOR_SECTION);
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i])) { end = i; break; }
+  }
+  const sec = lines.slice(start, end);
+  // 去掉段尾的空行：文件末尾的空行不该让「内容一致」判成「过期」。
+  while (sec.length && sec[sec.length - 1].trim() === '') sec.pop();
+  return sec;
+}
+
+/**
+ * 重建 index.md 的断点段（2026-11-20 用户要求：断点写进 index.md）。
+ *
+ * 为什么是「重建」而不是「追加」：断点随页面改而变，追加只会越滚越脏。
+ *   每次从全部页面的 anchors 现算，整体替换那一段 —— 幂等、可反复跑。
+ * 段放在 index.md 末尾；已有段就地替换；没有就追加。
+ */
+export async function rebuildAnchorIndex(brain, { append = false } = {}) {
+  const fs = (await import('node:fs')).promises;
+  const pages = [];
+  for (const d of ['concepts', 'entities', 'sources', 'syntheses', 'sessions']) {
+    let files;
+    try { files = await fs.readdir(`${brain}/${d}`); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.md') || f.startsWith('_')) continue;
+      const body = await fs.readFile(`${brain}/${d}/${f}`, 'utf8').catch(() => '');
+      const m = body.match(/^anchors:\s*\[(.*)\]\s*$/m);
+      pages.push({
+        slug: f.replace(/\.md$/, ''),
+        anchors: m ? m[1].split(',').map((x) => x.trim()).filter(Boolean) : [],
+      });
+    }
+  }
+  const index = anchorIndex(pages);
+  const section = renderAnchorSection(index);
+  const indexPath = `${brain}/index.md`;
+  const cur = await fs.readFile(indexPath, 'utf8').catch(() => null);
+  if (cur === null) return { words: index.size, changed: false };
+  const lines = cur.split('\n');
+  const start = lines.findIndex((l) => l.trim() === ANCHOR_SECTION);
+  let next = lines;
+  if (start < 0) {
+    // 手写的 index.md 不擅自加段（repair 的契约是「只补缺骨架、绝不改已有文件」）。
+    // 要凭空补这一段得显式要求：abs init --repair --anchors。
+    if (!append) return { words: index.size, changed: false };
+    const tail = lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
+    next = [...tail, '', ...section, ''];
+  } else {
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i++) if (/^##\s/.test(lines[i])) { end = i; break; }
+    next = [...lines.slice(0, start), ...section, ...(end < lines.length ? ['', ...lines.slice(end)] : [''])];
+  }
+  const out = next.join('\n');
+  if (out === cur) return { words: index.size, changed: false };
+  await fs.writeFile(indexPath, out, 'utf8');
+  return { words: index.size, changed: true };
+}
+
 /** 目录名 → 层 id。认不得的目录按默认层（4 认知）。 */
 export function layerForDir(dirName) {
   return DIR_LAYER[dirName] ?? DEFAULT_LAYER;

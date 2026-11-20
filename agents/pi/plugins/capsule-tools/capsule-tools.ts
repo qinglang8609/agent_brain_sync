@@ -105,10 +105,7 @@ export class Capsule implements Component {
 
 	render(width: number): string[] {
 		if (this.cachedLines && this.cachedWidth === width) return [...this.cachedLines];
-		// self 模式下 pi 不代劳缩进，自己补一格，跟消息块对齐。
-		const indent = width > 2 ? " " : "";
-		const room = width - indent.length;
-		const head = keepBackground(capsuleHead(this.head, this.meta, room), this.bgAnsi);
+		const head = keepBackground(capsuleHead(this.head, this.meta, width), this.bgAnsi);
 		// The body never changes after construction, so its wrapping is computed
 		// once per width instead of on every redraw — a large expanded output is
 		// re-wrapped by Text on every render otherwise.
@@ -116,11 +113,10 @@ export class Capsule implements Component {
 		const body =
 			this.body === undefined
 				? []
-				: (this.cachedBody ??= new Text(this.body, 0, 0).render(room).map((l) =>
+				: (this.cachedBody ??= new Text(this.body, 0, 0).render(width).map((l) =>
 						keepBackground(l, this.bgAnsi),
 					));
-		// head 为空的是展开后的正文行 —— 它不该再占一行（那行原本是 pi 的底色给的）。
-		const lines = head === "" ? body.map((l) => indent + l) : [indent + head, ...body.map((l) => indent + l)];
+		const lines = [head, ...body];
 		this.cachedWidth = width;
 		this.cachedLines = lines;
 		// A copy: pi (or any caller) mutating the returned array would poison the cache.
@@ -633,14 +629,15 @@ export default function (pi: ExtensionAPI) {
 		// falls through to the next resolver.
 		if (!known) return next();
 		return {
-			// 2026-11-20 用户要求「去掉工具调用（bash/write 等）的绿色背景」：
-			// pi 的默认外壳就是一个铺满整行 toolSuccessBg/toolErrorBg 的 Box ——
-			// 想不要底色只能走 self。self 模式下 pi 不再代劳左右缩进，render 自己补一格。
-			renderShell: "self" as const,
+			// Default shell on purpose: pi wraps the whole tool row in a Box that
+			// fills it with toolSuccessBg/toolErrorBg. `renderShell: "self"` skips
+			// that wrapper and the capsule loses its green background.
+			renderShell: "default" as const,
 			renderCall(args: any, theme: any, ctx: any) {
 				const { command, reason } = known(args, undefined, "call", ctx);
 				// Pi's execution timer only exists once the tool has finished.
 				const meta = formatDuration(ctx?.durationMs);
+				const bg = blockBg(theme, ctx);
 				const makeLine = (frame: string, tone: Tone) =>
 					capsuleLine(theme, frame, toolName, command, reason, tone, meta);
 
@@ -653,12 +650,14 @@ export default function (pi: ExtensionAPI) {
 				const previous = ctx?.lastComponent;
 				if (previous instanceof RunningCapsule) {
 					previous.update(makeLine, ctx);
+					previous.bgAnsi = bg;
 					return previous;
 				}
 
 				// HTML export passes a no-op invalidate; the result row stops the timer
 				// either way (see renderResult).
 				const row = new RunningCapsule(makeLine, () => ctx?.invalidate?.());
+				row.bgAnsi = bg;
 				if (ctx?.state) ctx.state.capsule = row;
 				return row;
 			},
@@ -687,6 +686,7 @@ export default function (pi: ExtensionAPI) {
 					isPartial ? "partial" : undefined,
 					ctx.isError,
 				);
+				if (row instanceof Capsule) row.bgAnsi = blockBg(theme, ctx);
 				// The call row owns the spinner; the result row ends it. HTML export
 				// always reports isPartial:false, so this also stops the export's timer
 				// — an unstopped one would spin forever with nothing left to render.

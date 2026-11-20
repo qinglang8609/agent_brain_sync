@@ -18,7 +18,7 @@ import { registerInIndex } from '../note.js';
 import { cmdLog } from '../note.js';
 import { clip, slugOf } from '../text.js';
 import { LAYERS, layerOf, DEFAULT_LAYER } from './layers.js';
-import { anchorsOf } from './page-meta.js';
+import { anchorsOf, rebuildAnchorIndex } from './page-meta.js';
 import { summonTail } from './summon.js';
 
 /** 层 → 落点目录。L1/L6 不立页，由下面的分支单独处理。 */
@@ -199,6 +199,8 @@ export async function cmdCapture({ dir, text, layer, tags, title, kind }) {
   if (dirName !== 'sessions') {
     await registerInIndex(root, dirName === 'concepts' ? 'Concepts' : 'Sources', slug, head);
   }
+  // 新页可能让某个断点词变成「跨页」——顺手重建 index.md 的断点索引（2026-11-20）。
+  await rebuildAnchorIndex(brainPath(root)).catch(() => {});
   await cmdLog({ dir: root, title: clean, kind: 'note', summon: false });
 
   // 每次总结都顺手查一遍会话历史，避免漏下没总结的会话（2026-11-02 用户要求）。

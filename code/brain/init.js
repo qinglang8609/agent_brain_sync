@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { getUser } from '../userconfig.js';
 import { editFile, SKIP } from '../lock.js';
+import { rebuildAnchorIndex, renderAnchorSection } from './page-meta.js';
 import { todoTemplate, rebuildStructure } from '../todo/index.js';
 
 /** 知识页所在的目录（与 lint 的 PAGE_DIRS 同源；这里只用于补元数据）。 */
@@ -96,7 +97,7 @@ export async function backfillPageMeta(brain) {
 }
 
 /** init --repair: 只补缺失骨架，绝不覆盖已有文件。 */
-export async function cmdRepair({ dir }) {
+export async function cmdRepair({ dir, anchors = false } = {}) {
   const root = resolveProjectDir(dir);
   const brain = join(root, '.brain');
   try {
@@ -127,13 +128,17 @@ export async function cmdRepair({ dir }) {
       fixed.push(f);
     }
   }
-  // 存量页补 layer / anchors（2026-11-20）
+  // 存量页补 layer / anchors，再按新 anchors 重建 index.md 的断点段（2026-11-20）
   const pageFixed = await backfillPageMeta(brain);
-  if (!fixed.length && !pageFixed.length) return `✓ 结构完整，无需修复: ${brain}`;
+  const anchor = await rebuildAnchorIndex(brain, { append: anchors });
+
+  const anchorNote = anchor.changed ? `断点索引 ${anchor.words} 词` : '';
   const pageLine = pageFixed.length
     ? `\n  页面元数据补了 ${pageFixed.length} 张: ${pageFixed.slice(0, 5).join('、')}${pageFixed.length > 5 ? ' …' : ''}`
     : '';
-  return `✓ 已补齐 ${[...fixed, ...(pageFixed.length ? ['页面元数据'] : [])].join(', ')} → ${brain}${pageLine}\n  (已有文件一律不覆盖)`;
+  const touched = [...fixed, ...(pageFixed.length ? ['页面元数据'] : []), ...(anchorNote ? [anchorNote] : [])];
+  if (!touched.length) return `✓ 结构完整，无需修复: ${brain}`;
+  return `✓ 已补齐 ${touched.join(', ')} → ${brain}${pageLine}\n  (已有文件一律不覆盖)`;
 }
 
 function resolveProjectDir(dir) {
@@ -150,12 +155,16 @@ export function indexTemplate() {
   return rebuildStructure(
     ['# 🗂 Graph Index', '',
       '本文件唯一入口。每新建/大改一页，同步在此分类下加一行 [[页面名]] — 一句话。', '',
-      '## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses'].join('\n'),
+      '## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses',
+      // `## 断点` 是生成的跨页关键词索引（2026-11-20）。
+      // 用 renderAnchorSection 生成空态占位 —— 与重建方同源，模板不会与重建结果漂开
+      // （否则新库刚建好 lint 就报 ANCHOR-INDEX-STALE）。
+      ...renderAnchorSection(new Map())].join('\n'),
     {
       h1: '# 🗂 Graph Index',
       // 无 `## Roadmap`：它是 AI 自己写的方向总结，会被 load 反复读到并带偏后续会话
       // （“看似是总结指引，其实是 AI 的总结指引” —— 2026-09-13 用户决策删除）。
-      order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses'],
+      order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## 断点'],
     },
   ).text;
 }

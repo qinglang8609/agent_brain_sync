@@ -35,7 +35,9 @@ export const TODO_SECTIONS = [];
 // 注意 Rules 区是例外：它放的是**规矩短句**（「写代码前先读 docs/STRUCTURE.md」），
 // 不是页链接 —— 实测 13 条规则全是这个形态。不能拿 [[页名]] 去卡它。
 
-export const INDEX_SECTIONS = ['Rules', 'Concepts', 'Entities', 'Sources', 'Syntheses'];
+// `断点` 是 2026-11-20 加的（用户要求断点写进 index.md）：它是**生成的**关键词索引，
+// 由 page-meta.js 的 rebuildAnchorIndex 整体重建，人不手写。
+export const INDEX_SECTIONS = ['Rules', 'Concepts', 'Entities', 'Sources', 'Syntheses', '断点'];
 /** 需要 `- [[页名]] …` 形状的区（Rules 除外）。
  *
  * `Sessions` 已废（2026-11-16 用户定）：会话页与归档页的清单不再登记进 index ——

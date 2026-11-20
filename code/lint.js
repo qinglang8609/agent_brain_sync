@@ -7,7 +7,7 @@ import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
 import { readRules, idOfPage, statusOfPage, supersededByOf, clip, RULE_BODY_MAX } from './store.js';
 import { checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo/index.js';
 import { isAllowedTodoLine, parseChild, migrateLegacyChild } from './todo/common.js';
-import { declaredLayer, declaredAnchors } from './brain/page-meta.js';
+import { declaredLayer, declaredAnchors, anchorSectionOf, anchorIndex, renderAnchorSection, ANCHOR_SECTION } from './brain/page-meta.js';
 
 // ---------- 图谱遍历 ----------
 
@@ -134,6 +134,7 @@ export async function listPages(vault) {
         // kind 与 status 同源，都在 frontmatter。
         // 尾巴规则要按它分档（见 checkPage 的 NO-TAIL）。
         kind: ((fm ? fm[1] : '').match(/^kind:\s*(.+)$/m) || [])[1]?.trim() || '',
+        anchors: declaredAnchors(fm ? fm[1] : '') || [],
       });
     }
   }
@@ -164,7 +165,24 @@ async function checkRootFiles(vault) {
     // todo.md 的体积约束只看 Todo 区：Done 区不再压缩（2026-11-16），注定越来越长，
     // 拿总行数卡它等于每天报一条无解的违规。
     // 已完成的行不计数：2026-11-16 起全量留在 todo.md（不归档），拿总行数卡它无解。
-    const counted = file === 'todo.md' ? lines.filter((l) => !/^- \[x\]/.test(l)) : lines;
+    // index.md 的断点段是**生成**的关键词索引（abs init --repair 重建），
+    // 不该占「只做索引、别塞正文」的行数预算 —— 否则词一多就把 index 顶爆。
+    const stripAnchor = (ls) => {
+      if (file !== 'index.md') return ls;
+      const sec = anchorSectionOf(ls.join('\n'));
+      if (!sec) return ls;
+      const out = [];
+      let skip = false;
+      for (const l of ls) {
+        if (l.trim() === ANCHOR_SECTION) { skip = true; continue; }
+        if (skip && /^##\s/.test(l)) skip = false;
+        if (!skip) out.push(l);
+      }
+      return out;
+    };
+    const counted = file === 'todo.md'
+      ? lines.filter((l) => !/^- \[x\]/.test(l))
+      : stripAnchor(lines);
     if (counted.length > maxLines) {
       issues.push(`ROOT-OVER-SIZE: ${BRAIN_DIR}/${file} (${counted.length}L > ${maxLines}L; ${hint})`);
     }
@@ -239,6 +257,31 @@ async function checkRootFiles(vault) {
 // ---------- 页级检查 ----------
 
 /** 单页检查：frontmatter / 链接 / 容量 / 尾巴 / index 登记。 */
+/**
+ * index.md 的断点段是否与各页 anchors 一致（2026-11-20）。
+ *
+ * 为什么要这条：断点段是**生成物**，页面改了 anchors 而没重建，索引就会指向错的页 ——
+ *   这种过期不会有任何报错，只是「命中一个词却找不到那页」。所以让 lint 抓它。
+ */
+async function checkAnchorIndex(vault, pages) {
+  let indexText = '';
+  try {
+    indexText = await fs.readFile(join(vault, 'index.md'), 'utf8');
+  } catch {
+    return []; // 没有 index.md 由别的规则报
+  }
+  const want = renderAnchorSection(anchorIndex(pages));
+  const got = anchorSectionOf(indexText);
+  // 没有断点段不算问题（老图谱还没跑过 repair）；有但与页面不一致才算过期 ——
+  // 这条只负责抓「改了 anchors 忘了重建」，不强制每个图谱都必须有这一段。
+  if (!got) return [];
+  const norm = (ls) => ls.map((l) => l.trimEnd());
+  if (norm(want).join('\n') !== norm(got).join('\n')) {
+    return [`ANCHOR-INDEX-STALE: ${BRAIN_DIR}/index.md 的断点段与页面 anchors 不一致（跑 abs init --repair 重建）`];
+  }
+  return [];
+}
+
 function checkPage(pg, names, linkedNames, inbound) {
   const issues = [];
   if (!pg.hasFrontmatter) issues.push(`NO-FRONTMATTER: ${pg.rel}`);
@@ -564,6 +607,7 @@ export async function cmdLint({ dir, all = false }) {
   issues.push(...await checkGraph(root, pages));
   issues.push(...await checkFiles(vault, pages, indexLinks));
   issues.push(...await checkRootFiles(vault));
+  issues.push(...await checkAnchorIndex(vault, pages));
   issues.push(...await checkGeneratedFileLinks(vault));
 
   const n = issues.length;
