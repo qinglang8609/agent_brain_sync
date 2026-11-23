@@ -1,5 +1,6 @@
 # 📋 Todo Board
 
+- [ ] [2026-11-23 20:23] [release-2.1.1] [[fanchao]] 发 2.1.1 到 npm、升级本机全局包并跑 abs install 刷新 hook/插件/skill [01a207b4-40ba-71]
 - [x] [2026-11-23 17:29] [fix-anchors] [[fanchao]] 按 P1-P5 修复断点机制：落页重建断点段、snippet 跳 frontmatter、断点包含匹配、anchors 与正文同步判据、自动带出接回 load [01a207b4-40ba-71]
 - [x] [2026-11-23 17:20] [check-anchors] [[fanchao]] 检查断点词（anchors）机制在自动搜索关联、query 检索、新建知识页等环节是否生效、是否完善 [01a207b4-40ba-71]
 - [x] [2026-11-20 10:25] [page-7layer] [[fanchao]] 读 /Users/fanchao/Code/abs 学 7 层结构与断点机制，给每个知识页加上 7 层思考与断点 [01a1f2aa-1783-73]
