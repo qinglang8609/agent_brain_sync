@@ -1,4 +1,6 @@
 # 🗒 Activity Log
+## [2026-11-23 17:40] [fix-anchors] [[fanchao]]
+## [2026-11-23 17:40] [断点机制补齐：note/concept/ingest 落页后重建] [[fanchao]] index 断点段；新增 lint 判据 ANCHORS-DRIFT（anchors 与正文双链比对）+ init --repair --anchors 用正文重算已有 anchors；query 断点命中改双向包含、snippet 跳 anchors 行；清掉 relevant.js 自动带出死代码。验证：npm test 708 全绿、abs lint 0 问题、临时图谱端到端走通（改正文→lint 报 drift→repair --anchors→anchors 更新→lint 0→幂等无变化）、真实图谱 query 入口出口 打出 [断点: 入口出口同一判据]
 ## [2026-11-23 17:27] [check-anchors] [[fanchao]]
 ## [2026-11-23 17:26] [查断点机制三个环节（query/自动带出/新建）] [[fanchao]] query 整词命中才加权且 snippet 会显示 anchors 行；note/concept/ingest 落页不重建 index 断点段（lint 报 ANCHOR-INDEX-STALE）；init --repair 不刷新已有 anchors（实测加双链后仍为 []）；load 的自动带出链路在 2.0.0 已移除，relevant.js 的 pickRelevant/scorePage/renderRelevant/topicStrength 无生产调用者。未改代码。
 ## [2026-11-20 15:48] [七层与断点收尾：99 页 layer+anchors] [[fanchao]] 全量迁移、断点进 index.md（67 个跨页词，只列词）、query 断点加权 ×1.5、L7 判据入 lint（sources 必须 7 / 非 sources 不得 7 / sessions 必须 5）、note 落盘补两字段；随 2.1.0 发布并本机升级，abs lint 0 问题
