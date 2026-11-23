@@ -1558,8 +1558,9 @@ describe('cmdShow (todo/index/log 查看)', () => {
 describe('cmdLint', () => {
   // 2026-11-20 起 lint 要求每页都有 layer / anchors（七层归属 + 断点词），
   // 这个夹具跟着补上，否则「健康图谱 0 问题」会因为这些元数据缺失而红。
-  const PAGE = (body) =>
-    `---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\nlayer: 4\nanchors: []\n---\n${body}`;
+  // 2026-11-23 起 anchors 要和正文双链一致（ANCHORS-DRIFT），带链的页得把词传进来。
+  const PAGE = (body, anchors = '') =>
+    `---\ntags: [concept]\nupdated: 2026-09-08\nstatus: draft\nlayer: 4\nanchors: [${anchors}]\n---\n${body}`;
 
   // 回归（2026-10-05 实测）：体检输出被同类问题淹没 —— abs 自带的 log.md 有 102 条
   // 历史行缺 [[作者]]，102 条 LOG-ENTRY 遮住了其它 12 条真问题（DRAFT-STALE/DEAD-LINK）。
@@ -1813,12 +1814,12 @@ describe('cmdLint', () => {
     // 一个只有头没有尾的页不算「健康」（判据见 cmdLint 里 NO-TAIL 的注释）。
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'good.md'),
-      PAGE('# 概念：好页\n[[good-2]]\n\n## 验证命令\n跑 `npm test`\n'),
+      PAGE('# 概念：好页\n[[good-2]]\n\n## 验证命令\n跑 `npm test`\n', 'good-2'),
       'utf8'
     );
     await fs.writeFile(
       join(projectA, '.brain', 'concepts', 'good-2.md'),
-      PAGE('# 概念：好页二\n关联 [[good]]\n\n## 验证命令\n看 `abs lint` 输出\n'),
+      PAGE('# 概念：好页二\n关联 [[good]]\n\n## 验证命令\n看 `abs lint` 输出\n', 'good'),
       'utf8'
     );
     let index = await fs.readFile(join(projectA, '.brain', 'index.md'), 'utf8');

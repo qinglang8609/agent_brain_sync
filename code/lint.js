@@ -7,7 +7,7 @@ import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
 import { readRules, idOfPage, statusOfPage, supersededByOf, clip, RULE_BODY_MAX } from './store.js';
 import { checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo/index.js';
 import { isAllowedTodoLine, parseChild, migrateLegacyChild } from './todo/common.js';
-import { declaredLayer, declaredAnchors, anchorSectionOf, anchorIndex, renderAnchorSection, ANCHOR_SECTION } from './brain/page-meta.js';
+import { declaredLayer, declaredAnchors, anchorsOf, anchorSectionOf, anchorIndex, renderAnchorSection, ANCHOR_SECTION } from './brain/page-meta.js';
 import { DIR_LAYER } from './brain/layers.js';
 
 // ---------- 图谱遍历 ----------
@@ -295,6 +295,24 @@ function checkPage(pg, names, linkedNames, inbound) {
     }
     if (declaredAnchors(pg.frontmatter) === null) {
       issues.push(`NO-ANCHORS: ${pg.rel}（缺 anchors，跑 abs init --repair 补）`);
+    }
+    // ANCHORS-DRIFT（2026-11-23）：anchors 是正文 [[双链]] 的快照，页面改了双链没重算，
+    //   断点就静默指向旧词 —— 「命中一个词激活整页」那条路会逐个页面失效，且没有任何报错。
+    //   index 的断点段与 anchors 一致不代表 anchors 与正文一致（那是两件事），所以要单独一条。
+    const declaredA = declaredAnchors(pg.frontmatter);
+    if (declaredA !== null) {
+      const pageBody = String(pg.body || '').replace(/^---\n[\s\S]*?\n---\n?/, '');
+      const au = String(pg.frontmatter || '').match(/^author:\s*(.+)$/m);
+      const want = anchorsOf(pageBody, { self: pg.slug, author: (au ? au[1] : '').trim() });
+      const miss = want.filter((w) => !declaredA.includes(w));
+      const extra = declaredA.filter((w) => !want.includes(w));
+      if (miss.length || extra.length) {
+        const detail = [
+          miss.length ? `正文有双链未进 anchors: ${miss.join(', ')}` : '',
+          extra.length ? `anchors 有但正文无此双链: ${extra.join(', ')}` : '',
+        ].filter(Boolean).join('；');
+        issues.push(`ANCHORS-DRIFT: ${pg.rel}（${detail}；跑 abs init --repair --anchors 重算）`);
+      }
     }
     // 七层与物理位置必须对得上（2026-11-20）：
     //   sources/ 是 L7 混沌层（未分辨的暂存），decay 0.95、检索里压到底；

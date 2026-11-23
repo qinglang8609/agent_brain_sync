@@ -70,10 +70,10 @@ export async function reportBrain({ dir }) {
 
 /** 给存量知识页补 frontmatter 的 layer / anchors（只补缺，不覆盖已有值）。
  *
- * 为何放在 --repair 里（2026-11-20）：repair 的语义就是「只补缺、不覆盖」，
- *   与这里完全一致；另起一个命令只会多一个记不住的名字。
+ * refresh=true 时额外用正文 `[[双链]]` 重算已存在的 anchors（2026-11-23）——
+ *   只有 `abs init --repair --anchors` 会传 true，平时 repair 仍只补缺。
  * 返回改了几页、各补了什么，好让调用方能报出来。 */
-export async function backfillPageMeta(brain) {
+export async function backfillPageMeta(brain, { refresh = false } = {}) {
   const { ensurePageMeta } = await import('./page-meta.js');
   const fixed = [];
   for (const d of PAGE_DIRS_META) {
@@ -87,7 +87,7 @@ export async function backfillPageMeta(brain) {
       if (body === null) continue;
       const slug = f.replace(/\.md$/, '');
       const au = (body.match(/^author:\s*(.+)$/m) || [])[1];
-      const res = ensurePageMeta(body, { dir: d, self: slug, author: (au || '').trim() });
+      const res = ensurePageMeta(body, { dir: d, self: slug, author: (au || '').trim(), refresh });
       if (!res.added.length || res.text === body) continue;
       await fs.writeFile(full, res.text, 'utf8');
       fixed.push(`${d}/${f}（+${res.added.join('+')}）`);
@@ -129,7 +129,8 @@ export async function cmdRepair({ dir, anchors = false } = {}) {
     }
   }
   // 存量页补 layer / anchors，再按新 anchors 重建 index.md 的断点段（2026-11-20）
-  const pageFixed = await backfillPageMeta(brain);
+  // --anchors 多管两件事（2026-11-23）：凭空补出断点段 + 用正文双链刷新已有的 anchors。
+  const pageFixed = await backfillPageMeta(brain, { refresh: anchors });
   const anchor = await rebuildAnchorIndex(brain, { append: anchors });
 
   const anchorNote = anchor.changed ? `断点索引 ${anchor.words} 词` : '';

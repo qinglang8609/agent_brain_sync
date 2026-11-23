@@ -1,94 +1,13 @@
 /**
- * 相关页推荐：按"当前在干什么"挑出该读的知识页。
+ * 检索打分：把一组查询词打成一页的分数（query.js 用它排序）。
  *
- * 为何需要它（2026-09-16 实测）：
- *   MCP 日志里 abs_task 234 / abs_note 54 / abs_load 53，而 abs_query 只有 2 次。
- *   写入 288 : 检索 2 = 144:1。经验写进去了，几乎从没被读回来。
+ * 2026-11-23 清掉死代码：「相关页自动带出」（scorePage / pickRelevant / renderRelevant /
+ *   topicStrength / keywords / digest）已无任何生产调用者 —— 2.0.0 重构把 load 里的
+ *   自动带出拿掉了，而 2026-11-08 用户已定「load 只留三样，查询提示撤出首屏」。
+ *   留着只会让人误以为断点和相关页有人自动推。要恢复先确认 load 首屏预算。
  *
- * 根因不是"忘了查"，是【给人看目录，人不会去翻书】：
- *   load 只给 index 的一句话清单 → 模型觉得"我记过了" → 开工 → 真需要时靠印象。
- *   模型不知道自己不知道什么，所以永远不会主动 query。
+ * 断点（anchors）在这条路上的位置：query.js 用页面声明的 anchors 给命中页额外加权。
  *
- * 解法：不依赖主动查询 —— load 时【被动带出】相关页正文。
- *   匹配依据是"当前在干什么"，不是"主题词"：
- *     · 最近改过的源文件名      → 我现在在动哪个模块
- *     · todo 里活跃任务         → 我现在在做什么事
- *
- * 为何不用 git：本项目 store.js 是纯文件操作，引 git 要处理
- *   “没装 git / 不是 repo / 子进程 27ms”三种情况，为取几个文件名不值。
- *   改用 mtime 扫最近改动 —— 信息量相同，零依赖。
- *
- * 与 query 的区别：
- *   query 需要用户/模型先想到一个词；本模块不需要 —— 输入是环境事实。
- */
-
-/** 中文/英文都按"够长才算有效词"处理，避免 the/的/了 这类噪音。 */
-const STOP = new Set([
-  'the', 'and', 'for', 'with', 'this', 'that', 'from', 'into', 'when', 'then',
-  'abs', 'src', 'test', 'js', 'ts', 'md', 'json', 'node',
-  '的', '了', '是', '在', '和', '与', '或', '把', '被', '给', '对', '从',
-]);
-
-/** 从任意文本抽关键词：英文词(>=3) + 中文 2-gram。 */
-export function keywords(text) {
-  const out = new Set();
-  const s = String(text || '');
-  // 英文/数字/下划线词
-  for (const m of s.matchAll(/[A-Za-z][A-Za-z0-9_-]{2,}/g)) {
-    const w = m[0].toLowerCase();
-    if (!STOP.has(w)) out.add(w);
-  }
-  // 中文串 → 2-gram（中文没有词边界，2-gram 是最省事的可匹配单位）
-  for (const m of s.matchAll(/[\u4e00-\u9fa5]{2,}/g)) {
-    const seg = m[0];
-    for (let i = 0; i + 2 <= seg.length; i++) {
-      const g = seg.slice(i, i + 2);
-      if (!STOP.has(g)) out.add(g);
-    }
-  }
-  return [...out];
-}
-
-/**
- * 给一页打分：命中多少关键词（标题权重 3，正文权重 1）。
- * 不做 TF-IDF —— 图谱就 30 页，朴素加权够用，也更好解释。
- */
-export function scorePage(body, pageName, kws) {
-  const title = String(pageName).toLowerCase();
-  const text = String(body).toLowerCase();
-  let score = 0;
-  const hit = [];
-  for (const k of kws) {
-    const inTitle = title.includes(k);
-    const n = text.split(k).length - 1;
-    if (!inTitle && !n) continue;
-    score += (inTitle ? 3 : 0) + Math.min(n, 3);
-    hit.push(k);
-  }
-  return { score, hit };
-}
-
-/**
- * 挑出 top-N 相关页。
- * @param {{name:string,body:string}[]} pages
- * @param {string[]} kws
- * @param {number} n
- */
-export function pickRelevant(pages, kws, n = 3) {
-  if (!kws.length) return [];
-  return pages
-    .map((p) => {
-      const { score, hit } = scorePage(p.body, p.name, kws);
-      return { ...p, score, hit };
-    })
-    .filter((p) => p.score > 0)
-    // 同分时按名字排，保证输出稳定（否则测试会抖）
-    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-    .slice(0, n);
-}
-
-
-/**
  * 两级匹配：
  *   exact  = 查询词直接出现（子串）
  *   fuzzy  = 查询词的 2-gram 有重叠（如查 "并发写" 能中写"互斥/锁"的页）
@@ -260,65 +179,4 @@ export function rankPage(body, pageName, queryWords, prepared) {
   if (fuzzyWords.length && qGramCount >= FUZZY_MIN_GRAMS && ratio >= FUZZY_MIN)
     return { kind: 'fuzzy', matched: [], score: ratio * 10, overlap, ratio, via: { tag: [], title: [], body: [] } };
   return null;
-}
-
-/**
- * 给候选词按「主题级强度」打分，供 hint 挑词用。
- *
- * 为何需要（2026-09-17 实测）：hint 原取词是 `keywords()` 保序 + `slice(0,2)` ——
- * 拿的是**最前面**的两个词，没有任何质量信号。而 todo 行以
- * `- [ ] [进行中] <任务id> [[作者]] — 描述` 开头，于是任务 id 和作者名
- * 稳定占据前两位，提示语变成 `abs query queryhint-noise tester 进行`。
- * 实测这三个词的强度全为 0~1（noise 0 命中 / 进行 1 命中），等于没提示。
- *
- * 尺子 = tag / 页名级命中数（rankPage 的 via.tag / via.title）。
- * 为何不用「正文命中数」：正文子串命中在 44 页图谱上随口一词就有十几页
- * （实测 store 16、覆盖 18），不区分好坏；tag/页名是人工提炼的主题信号。
- * 实测分离度：hook 6 / todo 4 / lock 2  vs  queryhint-noise 0 / 进行 0。
- *
- * @param {{name:string,body:string}[]} pages
- * @param {string[]} words
- * @returns {Map<string, number>} 词 → 主题级命中数
- */
-export function topicStrength(pages, words) {
-  const out = new Map();
-  for (const w of words) {
-    let n = 0;
-    // 同一个词的 gram 只算一次，喂给全部页面（原来每页都重算）。
-    const prepared = prepareQuery([w]);
-    for (const p of pages) {
-      const r = rankPage(p.body, p.name, [w], prepared);
-      if (r && (r.via.tag.length || r.via.title.length)) n++;
-    }
-    out.set(w, n);
-  }
-  return out;
-}
-
-/** 取页正文的摘要：优先 frontmatter 的 description，退化到首个非标题行。 */
-export function digest(body, maxLen = 200) {
-  const lines = String(body || '').split('\n');
-  const fmEnd = lines[0] === '---' ? lines.indexOf('---', 1) : -1;
-  if (fmEnd > 0) {
-    const d = lines.slice(1, fmEnd).find((l) => /^description\s*:/.test(l));
-    if (d) return d.replace(/^description\s*:\s*/, '').trim().slice(0, maxLen);
-  }
-  // 无 description 时跳过整个 frontmatter 区 —— 否则会把 'title: X' 当正文。
-  const start = fmEnd > 0 ? fmEnd + 1 : 0;
-  const first = lines
-    .slice(start)
-    .find((l) => l.trim() && !l.startsWith('#') && !l.startsWith('---'));
-  return (first || '').trim().slice(0, maxLen);
-}
-
-/** 渲染"该读的页"段。无命中返回空串（不占 load 体积）。 */
-export function renderRelevant(picked, why = '') {
-  if (!picked.length) return '';
-  const out = [`--- 相关页（据当前改动/任务自动带出）${why ? ` [${why}]` : ''} ---`];
-  for (const p of picked) {
-    out.push(`[[${p.name}]] (${p.score}) — ${digest(p.body)}`);
-    out.push(`  命中: ${p.hit.slice(0, 8).join(' ')}`);
-  }
-  out.push('（这些页与你当前在做的事相关；不必再 query）');
-  return out.join('\n');
 }

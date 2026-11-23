@@ -179,11 +179,17 @@ export function declaredAnchors(frontmatter) {
 /**
  * 给一页补 `layer:` 与 `anchors:`（只补缺，不覆盖已有值）。
  *
+ * refresh=true 时**重算已存在的 anchors**（2026-11-23）：断点词是正文 `[[双链]]` 的
+ *   快照，抽一次就不动的话，页面后来加了双链、anchors 仍停在创建那一刻 ——
+ *   断点静默漂移，跨页关系也跟着错。默认 false 保住「repair 绝不改已有文件」的契约，
+ *   只有 `abs init --repair --anchors` 显式要求刷新时才动。
+ * `layer:` 即使 refresh 也不动（层是人工判断，不能从正文推）。
+ *
  * @param {string} text 整页 markdown
- * @param {{dir?: string, self?: string, author?: string}} opts
+ * @param {{dir?: string, self?: string, author?: string, refresh?: boolean}} opts
  * @returns {{ text: string, added: string[] }} added = 这次新加了哪些字段
  */
-export function ensurePageMeta(text, { dir = '', self = '', author = '' } = {}) {
+export function ensurePageMeta(text, { dir = '', self = '', author = '', refresh = false } = {}) {
   const src = String(text || '');
   const added = [];
   const fmMatch = src.match(/^---\n([\s\S]*?)\n---\n?/);
@@ -191,7 +197,7 @@ export function ensurePageMeta(text, { dir = '', self = '', author = '' } = {}) 
   const fmText = fmMatch ? fmMatch[1] : '';
 
   const needLayer = declaredLayer(fmText) === null;
-  const needAnchors = declaredAnchors(fmText) === null;
+  const needAnchors = declaredAnchors(fmText) === null || refresh;
   if (!needLayer && !needAnchors) return { text: src, added };
 
   const au = fmText.match(/^author:\s*(.+)$/m);
@@ -204,8 +210,18 @@ export function ensurePageMeta(text, { dir = '', self = '', author = '' } = {}) 
   }
   if (needAnchors) {
     const anchors = anchorsOf(body, { self, author: authorName });
-    lines.push(`anchors: [${anchors.join(', ')}]`);
-    added.push('anchors');
+    const line = `anchors: [${anchors.join(', ')}]`;
+    // 刷新时替换原行，不能 push —— 否则一页里会出现两条 anchors（解析只取第一条）。
+    const at = lines.findIndex((l) => /^anchors:\s*\[.*\]\s*$/.test(l));
+    if (at >= 0) {
+      if (lines[at].trim() !== line) {
+        lines[at] = line;
+        added.push('anchors(刷新)');
+      }
+    } else {
+      lines.push(line);
+      added.push('anchors');
+    }
   }
 
   // 没有 frontmatter 的页（老页/手写页）就地补一个在最前面。

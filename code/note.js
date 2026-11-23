@@ -11,7 +11,7 @@ import { today, localStamp, shortTitle } from './todo/index.js';
 import { editFile, SKIP } from './lock.js';
 import { impactOf } from './codegraph.js';
 import { DIR_LAYER } from './brain/layers.js';
-import { anchorsOf } from './brain/page-meta.js';
+import { anchorsOf, rebuildAnchorIndex } from './brain/page-meta.js';
 import { clip, slugOf } from './text.js';
 import { summonTail } from './brain/summon.js';
 
@@ -98,6 +98,8 @@ export async function cmdNote({ dir, text, tags, when, impact, type }) {
   // index Sources 区登记（锁内幂等：别页已登记则跳过，防并发重复） + log 一行
   const slug = file.replace(/\.md$/, '');
   await registerInIndex(root, 'Sources', slug, heading);
+  // 新页可能让某个断点词变成「跨页」—— 顺手重建 index.md 的断点段（2026-11-23）
+  await rebuildAnchorIndex(brainPath(root)).catch(() => {});
   await cmdLog({ dir: root, title: clean, kind: 'note', summon: false });
   return `✓ 经验暂存 → sources/${file}\n  ${clean} ${atTag(who)}`;
 }
@@ -186,6 +188,8 @@ export async function cmdConcept({ dir, slug, title, tags, desc }) {
   }
   const oneLine = String(desc || '').trim() || clip(head, 60);
   await registerInIndex(root, 'Concepts', name, oneLine);
+  // 新页可能让某个断点词变成「跨页」—— 顺手重建 index.md 的断点段（2026-11-23）
+  await rebuildAnchorIndex(brainPath(root)).catch(() => {});
   // 不写 log.md（2026-10-05 用户定）：`新建概念页 x` 是**命令的副作用**不是成果 ——
   // 38 字符、零信息量，且「该页存在」已由 registerInIndex 落在 index.md 的 Concepts 区
   // （那是 index 的职责）。同件事落两处，且建 10 个页 = 10 行流水噪声自动重现，

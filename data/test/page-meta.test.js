@@ -112,6 +112,32 @@ describe('ensurePageMeta — 只补缺、不覆盖', () => {
   });
 });
 
+describe('ensurePageMeta — refresh 重算 anchors（2026-11-23）', () => {
+  // 背景：anchors 是正文 [[双链]] 的快照，抽一次就不动的话，页面后来加的双链
+  //   永远进不了断点 —— 跨页关系静默失效。refresh 只给 `init --repair --anchors` 用。
+  test('refresh=true: 按正文双链重算，且不出现两条 anchors 行', () => {
+    const page = '---\nlayer: 3\nanchors: []\n---\n\n正文挂了 [[共享词]] 与 [[另一词]]\n';
+    const r = ensurePageMeta(page, { dir: 'concepts', self: 'x', refresh: true });
+    assert.match(r.text, /^anchors: \[共享词, 另一词\]$/m);
+    assert.equal(r.text.match(/^anchors:/gm).length, 1, '一页只能有一条 anchors');
+    assert.match(r.text, /^layer: 3$/m, '层是人工判断，refresh 不碰');
+    assert.deepEqual(r.added, ['anchors(刷新)']);
+  });
+
+  test('refresh=true 但 anchors 没变: added 为空（不白写盘）', () => {
+    const page = '---\nlayer: 4\nanchors: [共享词]\n---\n\n挂了 [[共享词]]\n';
+    const r = ensurePageMeta(page, { dir: 'concepts', refresh: true });
+    assert.deepEqual(r.added, []);
+  });
+
+  test('refresh 缺省=false: 正文改了双链也不动 anchors（repair 只补缺的契约）', () => {
+    const page = '---\nlayer: 4\nanchors: [旧词]\n---\n\n现在是 [[新词]]\n';
+    const r = ensurePageMeta(page, { dir: 'concepts' });
+    assert.deepEqual(r.added, []);
+    assert.match(r.text, /^anchors: \[旧词\]$/m);
+  });
+});
+
 describe('init --repair 的存量补齐（集成）', () => {
   test('给缺字段的页补上，已合规的页不碰', async () => {
     const brain = join(sandbox, '.brain');

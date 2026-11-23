@@ -33,7 +33,7 @@ import { today } from '../todo/index.js';
 import { clip } from '../text.js';
 import { editFile, SKIP } from '../lock.js';
 import { DIR_LAYER } from './layers.js';
-import { anchorsOf } from './page-meta.js';
+import { anchorsOf, rebuildAnchorIndex } from './page-meta.js';
 import { digestSession, sessionsRoot, projectDirName, updateLedger, markSummarized, ledgerPath, md5Of } from './summon.js';
 
 /** 会话页的三种形状。形状由「改了什么东西」机械判定，不让模型猜。 */
@@ -400,6 +400,10 @@ export async function cmdIngest({ dir, file, force = false, mark = false, last =
       '  只想要素材、保留结论 → 直接读那一段；确定要重填再用 --force。',
     ].join('\n');
   }
+
+  // 新会话页可能让某个断点词变成「跨页」—— 顺手重建 index.md 的断点段（2026-11-23）。
+  // 原来只更新了页面自己的 anchors，段不动 → lint 报 ANCHOR-INDEX-STALE。
+  await rebuildAnchorIndex(brainPath(root)).catch(() => {});
 
   // 骨架段里的 <!-- 提示 --> 占位**故意保留**：它告诉填页的人每段该写什么。
   // 它不会干扰「填没填」的判定 —— load 的 digestFilled 与 lint 的 hasTail

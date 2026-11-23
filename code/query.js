@@ -85,9 +85,18 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
           hits.push({ hidden: 'draft', slug });
           continue;
         }
-        // 断点（anchors）命中：查的词恰好是这页的断点词之一 —— L6 的「激活」。
+        // 断点（anchors）命中：查的词与这页的断点词对得上 —— L6 的「激活」。
+        // 2026-11-23 改成双向包含：原来只认整词相等，查「入口出口」激活不了
+        //   「入口出口同一判据」—— 断点词是短语，只认整词等于要求用户逐字背下来。
+        //   与 tag 命中同口径（relevant.js 的 via.tag 就是 includes 对 includes）。
         const pageAnchors = anchorsOfPage(body);
-        const anchorHit = pageAnchors.filter((a) => words.some((w) => w.toLowerCase() === a.toLowerCase()));
+        const anchorHit = pageAnchors.filter((a) => {
+          const t = a.toLowerCase();
+          return words.some((w) => {
+            const q = w.toLowerCase();
+            return t === q || t.includes(q) || q.includes(t);
+          });
+        });
         hits.push({
           full, slug, dir: d, matched: rank.matched, kind: rank.kind, fuzzyScore: rank.score, via: rank.via,
           // 七层：优先用页面自己声明的层（capture --layer 可以写在 concepts/ 里），
@@ -195,7 +204,10 @@ function firstHitLine(body, words) {
     if (!words.some((w) => l.includes(w.toLowerCase()))) continue;
     if (KNOWN_SLUG_HINT.test(t)) continue;
     // 非内容行：frontmatter 的键值对（tags:/id:/status:/updated:/author:/superseded-by:）
-    if (/^(tags|id|status|updated|author|superseded-by|superseded|aliases)\s*:/.test(t)) continue;
+    // anchors / layer / kind / type / description 也是元数据（2026-11-23 补）：
+    //   漏在名单外时，断点词只出现在 anchors 行 → 片段把索引行当答案展示，
+    //   实测 abs query 入口出口 返回的第一行就是 `anchors: [...]`。
+    if (/^(tags|id|status|updated|author|superseded-by|superseded|aliases|layer|anchors|kind|type|description)\s*:/.test(t)) continue;
     candidates.push({ line: t, inAnswer: ANSWER_SECTION_RE.test(section) });
   }
   if (!candidates.length) return '';

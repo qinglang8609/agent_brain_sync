@@ -397,7 +397,7 @@ const usage = `abs — 跨会话记忆（.brain/ 图谱）
   abs review                待确认的 draft 页（升 active 或否决）
   abs supersede <页> --by <新页>   标经验已失效（不删文件）
   abs show index|log|status 看完整索引 / 流水 / 概要
-  abs init [--repair]       建图谱（--anchors 一并补 index 的断点段）
+  abs init [--repair]       建图谱（--anchors 补断点段并用正文双链重算 anchors）
 
 【其它】
   abs install|uninstall [--agent <宿主>] [--no-mcp] [--no-skill]
@@ -429,6 +429,8 @@ const subUsage = {
     '',
     '说明:',
     '  • 结构不完整时报明细；--repair 只补缺不覆盖，已有内容一律不动',
+    '  • --anchors 多管两件事：在 index.md 里凭空补出断点段，并用正文 [[双链]] 重算已有页的 anchors',
+    '    （页面加了双链没重算 anchors 时，lint 会报 ANCHORS-DRIFT 提醒跑这个）',
   ].join('\n'),
   install: [
     'abs install — 把 MCP + hook + skill 安装到 AI 编码宿主',
@@ -598,8 +600,8 @@ async function main() {
       switch (cmd) {
       case 'init': {
         rejectExtra(opts._, 'abs init [--repair] [--anchors]');
-        // --anchors：允许在 index.md 里「凭空补出」断点段（平时 repair 只刷新已有的段，
-        // 免得擅自改手写的 index.md）。2026-11-20 用户要求断点写进 index.md。
+        // --anchors：在 index.md 里「凭空补出」断点段（平时 repair 只刷新已有的段，
+        // 免得擅自改手写的 index.md），并用正文双链重算已存在的 anchors（2026-11-23）。
         const msg = opts.repair
           ? await (await cmdOf('cmdRepair'))({ dir: opts.dir, anchors: !!opts.anchors })
           : await (await cmdOf('cmdInit'))({ dir: opts.dir });

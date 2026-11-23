@@ -1,31 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { keywords, scorePage, pickRelevant, digest, renderRelevant, rankPage, matchPage, tagsOf, hasCJK, topicStrength } from "../../code/relevant.js";
+import { rankPage, matchPage, tagsOf, hasCJK } from "../../code/relevant.js";
 
-test("topicStrength: 只数 tag/页名级命中，正文子串不计", () => {
-  // 实测动机: hint 原取词拿词表前几个（无质量信号）→ 提示语变成废词。
-  const pages = [
-    { name: "hook-throttle", body: "---\ntags: [concept, hook]\n---\n正文" },
-    { name: "other-page", body: "正文里提到 hook 但不在 tags/页名" },
-    { name: "noise-page", body: "正文什么都不提" },
-  ];
-  const s = topicStrength(pages, ["hook", "nevermentioned"]);
-  assert.equal(s.get("hook"), 1, "只有 tags/页名命中才算主题级（正文子串不算）");
-  assert.equal(s.get("nevermentioned"), 0, "无命中应为 0（调用方据此剔除）");
-});
 
-test("topicStrength: 分离度可辨识 —— 好词高分、废词 0 分", () => {
-  // 尺子实测（44 页图谱）: hook 6 / todo 4 / lock 2  vs  queryhint-noise 0 / 进行 0
-  const pages = [
-    { name: "a", body: "---\ntags: [hook]\n---\n" },
-    { name: "b", body: "---\ntags: [hook, todo]\n---\n" },
-    { name: "c", body: "---\ntags: [todo]\n---\n" },
-  ];
-  const s = topicStrength(pages, ["hook", "todo", "进行", "queryhint-noise"]);
-  assert.ok(s.get("hook") > s.get("进行"), "好词强度应高于废词");
-  assert.equal(s.get("进行"), 0);
-  assert.equal(s.get("queryhint-noise"), 0);
-});
 
 test("tagsOf: 解析 frontmatter tags", () => {
   const body = "---\ntags: [concept, 部署, hook]\nid: x\n---\n正文";
@@ -61,7 +38,7 @@ test("rankPage: 无关短词不产生模糊假阳性", () => {
 
 // ── 页 gram 缓存（2026-10-07 为修 load 慢而加）───────────────
 //
-// 背景：queryHint 走 topicStrength → 每个词 × 每一页 调 rankPage，
+// 背景：query 对每个词 × 每一页 调 rankPage（原 queryHint 已随自动带出移除），
 //   而每次都对同一页重算整页 n-gram。实测 17 词 × 63 页 = 156ms，
 //   CPU profile 显示 matchPage/ngrams 占 load 总耗时 82%。
 //   加缓存后同样规模 23ms，load 端到端 191ms → 80ms。
@@ -151,90 +128,17 @@ test("rankPage: 英文词不走 2-gram 模糊兜底（实测：ratio 恒为 1）
   assert.ok(hasCJK("并发写") && !hasCJK("relevant"));
 });
 
-test("keywords: 英文词 + 中文 2-gram, 去停用词", () => {
-  const k = keywords("修复 cache 的失效逻辑");
-  assert.ok(k.includes("cache"), "英文词应保留");
-  assert.ok(!k.includes("abs") && !k.includes("the"), "停用词应去掉");
-  assert.ok(k.some((x) => x.includes("失效")), "中文应切出 2-gram");
-});
 
-test("keywords: 太短的英文词丢掉 (避免噪音)", () => {
-  const k = keywords("a b cd efg");
-  assert.ok(!k.includes("a") && !k.includes("b") && !k.includes("cd"));
-  assert.ok(k.includes("efg"));
-});
 
-test("scorePage: 标题命中权重高于正文", () => {
-  const kws = ["cache"];
-  const inTitle = scorePage("正文里也有 cache", "cache-design", kws);
-  const inBody = scorePage("正文里也有 cache", "other-page", kws);
-  assert.ok(inTitle.score > inBody.score, `标题命中应更高: ${inTitle.score} vs ${inBody.score}`);
-});
 
-test("scorePage: 同一关键词在正文出现多次有上限 (防长页霸榜)", () => {
-  const kws = ["xword"];
-  const many = scorePage("xword ".repeat(50), "p", kws);
-  const few = scorePage("xword", "p", kws);
-  assert.ok(many.score <= few.score + 2, `重复应封顶: ${many.score} vs ${few.score}`);
-});
 
-test("pickRelevant: 无关键词返回空 (不硬凑)", () => {
-  const pages = [{ name: "a", body: "任意内容" }];
-  assert.deepEqual(pickRelevant(pages, [], 3), []);
-});
 
-test("pickRelevant: 同分时按名字排序 (输出稳定)", () => {
-  const pages = [
-    { name: "zebra", body: "cache" },
-    { name: "apple", body: "cache" },
-  ];
-  const r = pickRelevant(pages, ["cache"], 3);
-  assert.deepEqual(r.map((p) => p.name), ["apple", "zebra"]);
-});
 
-test("pickRelevant: 只返回有命中的, 且受 top-N 限制", () => {
-  const pages = [
-    { name: "a", body: "cache" },
-    { name: "b", body: "cache" },
-    { name: "c", body: "cache" },
-    { name: "d", body: "无关" },
-  ];
-  const r = pickRelevant(pages, ["cache"], 2);
-  assert.equal(r.length, 2);
-  assert.ok(!r.some((p) => p.name === "d"), "无命中不应返回");
-});
 
-test("digest: 优先 frontmatter description", () => {
-  const body = "---\ntitle: X\ndescription: 这是描述\n---\n# 标题\n正文";
-  assert.equal(digest(body), "这是描述");
-});
 
-test("digest: 无 frontmatter → 首个非标题行", () => {
-  const body = "---\ntitle: X\n---\n# 标题\n\n第一段正文";
-  assert.equal(digest(body), "第一段正文");
-});
 
-test("renderRelevant: 空结果不占体积", () => {
-  assert.equal(renderRelevant([]), "");
-});
 
-test("renderRelevant: 含页名与摘要", () => {
-  const out = renderRelevant([{ name: "foo", body: "第一行", score: 5, hit: ["a"] }]);
-  assert.match(out, /\[\[foo\]\]/);
-  assert.match(out, /第一行/);
-});
 
-test("端到端: 关键词从'正在干的活'推出该读哪页", () => {
-  const pages = [
-    { name: "file-write-locking", body: "---\ndescription: 并发写锁\n---\nabs 所有 md 都是读-改-写回" },
-    { name: "npm-publish-flow", body: "---\ndescription: 发布流程\n---\n版本号与测试" },
-  ];
-  // 输入模拟"最近改的文件名 + 活跃任务"
-  const kws = keywords("store.js 并发写 丢更新");
-  const picked = pickRelevant(pages, kws, 2);
-  assert.ok(picked.length >= 1, "应命中至少一页");
-  assert.equal(picked[0].name, "file-write-locking", "应优先命中并发写那页");
-});
 
 // 断点（anchors）命中要真的影响排序（2026-11-20）：锚点写进页里但不给权重，
 // 就只是死数据 —— 本仓踩过「定义了判据却没接到使用侧」。
@@ -260,4 +164,28 @@ test('断点命中加权：anchors 命中与字面命中同分时，断点命中
     assert.ok(aIdx < bIdx, `断点命中应排前面:\n${out}`);
     assert.ok(/\[断点: widget\]/.test(out), `命中渠道要标出来:\n${out}`);
     await fs.rm(dir, { recursive: true, force: true });
+});
+
+// 断点词是短语，查询词往往只是它的一部分（2026-11-23）：
+//   原来只认整词相等，查「入口出口」激活不了断点「入口出口同一判据」——
+//   等于要求用户把断点词逐字背下来。改成双向包含，与 tag 命中同口径。
+test('断点命中：查询词是断点词的一部分也算激活', async () => {
+  const { promises: fs } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { cmdQuery } = await import('../../code/query.js');
+  const dir = await fs.mkdtemp(join(tmpdir(), 'abs-anchor-part-'));
+  const brain = join(dir, '.brain');
+  for (const d of ['concepts', 'entities', 'sources', 'syntheses', 'sessions']) {
+    await fs.mkdir(join(brain, d), { recursive: true });
+  }
+  await fs.writeFile(join(brain, 'index.md'), '# idx\n', 'utf8');
+  const page = (id, anchors) =>
+    `---\ntags: [concept]\nid: ${id}\nlayer: 4\nanchors: [${anchors}]\nstatus: active\n---\n\n# 页 ${id}\n\n入口出口 保持一致\n\n## 验证\n看输出\n`;
+  await fs.writeFile(join(brain, 'concepts', 'a-part.md'), page('a-part', '入口出口同一判据'), 'utf8');
+  await fs.writeFile(join(brain, 'concepts', 'b-plain.md'), page('b-plain', '别的词'), 'utf8');
+  const out = await cmdQuery({ dir, terms: ['入口出口'] });
+  assert.ok(/\[断点: 入口出口同一判据\]/.test(out), `部分词也要激活断点:\n${out}`);
+  assert.ok(out.indexOf('a-part') < out.indexOf('b-plain'), `断点页应排前面:\n${out}`);
+  await fs.rm(dir, { recursive: true, force: true });
 });

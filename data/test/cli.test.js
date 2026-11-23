@@ -457,6 +457,14 @@ describe('cli: note (经验暂存)', () => {
     assert.equal(r.code, 0); // 空文本不抛, 回用法
     assert.ok(r.stdout.includes('用法'), r.stdout);
   });
+  // 2026-11-23：note 落页后要顺手重建 index 的断点段 —— 否则两个页共享的断点词
+  //   永远不在索引里，lint 直接报 ANCHOR-INDEX-STALE（原来只有 capture 重建）。
+  test('note 落页后重建 index 断点段（共享词立刻可见）', async () => {
+    await run(['note', '第一件事 提到 [[共享词]]']);
+    await run(['note', '第二件事 也提到 [[共享词]]']);
+    const idx = await fs.readFile(join(proj, '.brain', 'index.md'), 'utf8');
+    assert.match(idx, /^## 断点[\s\S]*- 共享词$/m, idx);
+  });
 });
 
 // ---------- query / lint ----------
