@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-11-26 07:42] [commit-git] [[fanchao]]
 ## [2026-11-23 20:34] [release-2.1.1] [[fanchao]]
 ## [2026-11-23 20:34] [发 2.1.1：npm publish 成功] [[fanchao]] （shasum 3e31961，与本地 npm pack 一致），registry 的 tarball 传播约 6 分钟后返回 200；全局已有 2.1.1（tarball 未同步期间用同 shasum 的本地包安装，等 registry 200 后确认一致）、abs install 已刷新 hook/插件/MCP/skill；abs lint 0 问题，query 入口出口 打出 [断点: 入口出口同一判据]
 ## [2026-11-23 17:40] [fix-anchors] [[fanchao]]
