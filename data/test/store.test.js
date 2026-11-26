@@ -2112,7 +2112,9 @@ describe('cmdWrapup + load 滞留 (A+B)', () => {
     await cmdTask({ dir: projectA, action: 'child-done', id: 'LA-1' });
     await cmdTask({ dir: projectA, action: 'done', note: '做完', id: 'LA-1' });
     const load2 = await cmdLoad({ dir: projectA });
-    assert.ok(!load2.includes('滞留任务'), `done 后原任务不应再报滞留:\n${load2}`);
+    // 不能再拿任务文字扫全文：done 现在会在 log.md 落一条带描述的流水，
+    // 「最近动作」里本来就会出现这句话。要判的是滞留区里还有没有它。
+    assert.ok(!load2.includes('上会话滞留'), `done 后不应再报滞留:\n${load2}`);
   });
 
   test('A: 无遗留子项时 done 后滞留完全消失', async () => {
@@ -3270,8 +3272,42 @@ describe('todo remove — 删除任务', () => {
       assert.match(res, /log →/, `done 的输出应告知写了 log: ${res}`);
       const log = await fs.readFile(join(root, '.brain', 'log.md'), 'utf8');
       assert.match(log, /^## \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] \[[^\]]*AUTO1[^\]]*\]/m, `log.md 里应有这一条:\n${log}`);
+      assert.match(log, /测试自动写日志/, `log 条目要带任务描述，不能只有 id:\n${log}`);
 
       assert.ok(!/\[\[落地\]\]/.test(log), '结语已取消，不该出现【落地】');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('todo note（子项）也当场落一条 log —— 过程里就有时序', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'autolog3-'));
+    try {
+      await cmdInit({ dir: root });
+      await cmdTask({ dir: root, action: 'start', id: 'PROG1', note: '过程日志用例' });
+      const res = await cmdTask({ dir: root, action: 'note', id: 'PROG1', note: '验证: node --test 全绿' });
+      assert.match(res, /子项已追加/);
+      assert.match(res, /log →/, `note 应告知写了 log: ${res}`);
+      const log = await fs.readFile(join(root, '.brain', 'log.md'), 'utf8');
+      assert.match(log, /PROG1/, `log.md 里应有这条进度:\n${log}`);
+      assert.match(log, /node --test 全绿/, `log 应带上进度原文:\n${log}`);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // 2026-11-26 用户实报：日志里出现了 `[commit-git]` 这种只有 id 的条目。
+  test('只有一个 id/命令名的 log 被打回，中文短句放行', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'barelog-'));
+    try {
+      await cmdInit({ dir: root });
+      await assert.rejects(
+        () => cmdLog({ dir: root, title: 'commit-git' }),
+        /只是一个 id/,
+        '只有 id 的标题应该被打回',
+      );
+      const ok = await cmdLog({ dir: root, title: '修账本并发丢数据' });
+      assert.match(ok, /log →/, `中文短句应能写: ${ok}`);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

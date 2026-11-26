@@ -268,7 +268,9 @@ const TODO_GUIDELINES = [
   // ⑩ 完成即落 log（用户 2026-11-12 提：新项目干了一整天，日志页只有模板头）。
   //   实测归因：不是写入坏了 —— `abs log` 本身正常；是模型把「看板已记」当成「记过了」，
   //   于是整场会话零次执行。看板的完成行会被归档移走，log.md 才是留下来的工作记录。
-  'When you mark a task done, also record one line with `abs log "what got done + how it was verified"`. The board is not a substitute: finished rows leave the board at archive time, so the log page is the only lasting record of the work. Do not skip it because "the board already tracks it" — that reasoning produced a project with 28 finished tasks and 0 log lines.',
+  //   2026-11-26 用户再提：只在 done 才记太晚 —— 过程里什么都看不到。
+  //   改成「一步一记」：每落下一件说清、验过的事就记，done 只是最后一条。
+  'Record a log line with `abs log "what just landed + how it was verified"` as each piece of work lands — not once at the end. A task can owe several lines; `abs todo note` already writes one, and `todo done` writes the closing one. Why it matters: the board only records that you started and finished, so a session that dies mid-way leaves the log page empty, and the board rows leave the board at archive time.',
   // ⑪ `abs` 单字先判意图（用户 2026-11-13 实报：活干完了输 abs，只拿到一份状态汇报）。
   //   为什么放常驻指引而不是只写 SKILL：SKILL 是**按需 read** 的（pi 只把 name+description
   //   放进 system prompt），而“该收尾”的时机恰恰是模型不会去想“要不要读个 skill”的时刻。

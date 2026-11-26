@@ -1,4 +1,11 @@
 # 🗒 Activity Log
+## [2026-11-26 09:19] [abs log 只写 id 会被打回（闸门加宽）] [[fanchao]] commit-git 这类标题原来照收，现在报错要求补一句发生了什么；内部调用 done/note/capture 传 allowBare 不受影响。验证：全量 710 通过，真机 abs log "commit-git" 被拒、中文短句放行
+## [2026-11-26 08:51] [log-entry-content done] [[fanchao]] 自动日志带上任务描述（不只是 id）
+## [2026-11-26 08:51] [登记 done 的 log 内容修复] [[fanchao]]
+## [2026-11-26 08:50] [done 自动写的 log 条目不再只有 id] [[fanchao]] 原来拿 parseTaskLine(l).id 比对，而它返回里没有 id 字段，永远命中不了；改用 findTaskLine 后带上任务描述。验证：全量 709 通过，真机 init→start→note→done 后 log 两行都带内容，重复 note 不重复落
+## [2026-11-26 08:45] [log-timeliness 调查日志只在 todo 完成后才追加的问题，改成过程即时记] [[fanchao]]
+## [2026-11-26 08:45] [日志不及时的病根是把它绑在 done 上] [[fanchao]] 过程动作（start/child-done/state）仍不写 log，note（子项，内容由模型当场写下）与 done 各写一条；别再退回 done-only，11-12 那次就是靠代码兜底才把日志救回来
+## [2026-11-26 08:45] [日志不再只挂在 done 上] [[fanchao]] todo note（子项）也当场落一条 log，常驻规则与 SKILL 改成「一步一记」；验证：store.test.js 新增用例 + 全量 709 通过，真机 init→start→note 后 log.md 立即有进度行，重复 note 不重复落
 ## [2026-11-26 07:42] [commit-git] [[fanchao]]
 ## [2026-11-23 20:34] [release-2.1.1] [[fanchao]]
 ## [2026-11-23 20:34] [发 2.1.1：npm publish 成功] [[fanchao]] （shasum 3e31961，与本地 npm pack 一致），registry 的 tarball 传播约 6 分钟后返回 200；全局已有 2.1.1（tarball 未同步期间用同 shasum 的本地包安装，等 registry 200 后确认一致）、abs install 已刷新 hook/插件/MCP/skill；abs lint 0 问题，query 入口出口 打出 [断点: 入口出口同一判据]

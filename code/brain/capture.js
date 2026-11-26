@@ -201,7 +201,7 @@ export async function cmdCapture({ dir, text, layer, tags, title, kind }) {
   }
   // 新页可能让某个断点词变成「跨页」——顺手重建 index.md 的断点索引（2026-11-20）。
   await rebuildAnchorIndex(brainPath(root)).catch(() => {});
-  await cmdLog({ dir: root, title: clean, kind: 'note', summon: false });
+  await cmdLog({ dir: root, title: clean, kind: 'note', summon: false, allowBare: true });
 
   // 每次总结都顺手查一遍会话历史，避免漏下没总结的会话（2026-11-02 用户要求）。
   // 只给线索不写盘 —— 落哪一条仍是人的判断。

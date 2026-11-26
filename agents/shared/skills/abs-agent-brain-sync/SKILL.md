@@ -27,7 +27,8 @@ unfinished ones get `abs todo note <id> --note "where it stopped"`.
 
 - `todo start/add` without `--note "what"` → rejected. One sentence, verb-first, ≤40 chars.
 - `todo done` without a conclusion → rejected. Every Done line must say what happened.
-- `abs log` without a one-line conclusion → rejected.
+- `abs log` without a one-line conclusion → rejected, and so is a bare id/command name
+  (`commit-git`, `fix-anchors`): a line that says nothing is the same as no line.
 - index rows without a real description (date-template only) → rejected by lint.
 - Sub-items are one sentence each. Reports go to `abs log` / `sources/`, not the board.
 
@@ -75,10 +76,11 @@ abs todo restore [--dry-run]             # one-off: pull tasks archived into ses
 - Board layout (since 2026-11-16): one flat list sorted newest-first, no `## Todo`/`## Done`
   sections. State lives in the checkbox: `[-]` 滞留中, `[+]` 讨论中, `[~]` 搁置,
   `[ ]` 进行中, `[x]` done. Children use the same markers. Finished rows stay on the board; nothing is archived away.
-- Every `done` gets one `abs log "what got done + how it was verified"`. The board is
-  not a substitute — it folds finished rows into a count and is easy to lose track of,
-  so `log.md` is the only lasting record. "The board already tracks it" is exactly the reasoning that leaves a
-  project with 28 finished tasks and 0 log lines.
+- Write `abs log "what just landed + how it was verified"` as each piece of work lands, not once
+  at the end (user, 2026-11-26: logging only at `done` is too late — the middle of the work is blank).
+  Each `todo note` writes one line already, and `todo done` writes the closing one; add more whenever
+  you finished and verified something worth one sentence. The board only says started ↔ finished,
+  so `log.md` stays the only record of how it got there.
 - `memo` for extra notes; it does not occupy the board.
 
 ## Triggers are intent, not keywords

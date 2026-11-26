@@ -100,7 +100,7 @@ export async function cmdNote({ dir, text, tags, when, impact, type }) {
   await registerInIndex(root, 'Sources', slug, heading);
   // 新页可能让某个断点词变成「跨页」—— 顺手重建 index.md 的断点段（2026-11-23）
   await rebuildAnchorIndex(brainPath(root)).catch(() => {});
-  await cmdLog({ dir: root, title: clean, kind: 'note', summon: false });
+  await cmdLog({ dir: root, title: clean, kind: 'note', summon: false, allowBare: true });
   return `✓ 经验暂存 → sources/${file}\n  ${clean} ${atTag(who)}`;
 }
 
@@ -261,17 +261,27 @@ export async function registerInIndex(root, section, slug, desc) {
   });
 }
 // ---------- log: 追加工作成果沉淀摘要（用户/AI 主动 abs log "..." 记, 不收工具动作流水） ----------
-export async function cmdLog({ dir, title, subtitle, kind: _kind = 'dev', summon = true }) {
+export async function cmdLog({ dir, title, subtitle, kind: _kind = 'dev', summon = true, allowBare = false }) {
   const root = await requireBrain(dir || process.cwd());
   const who = await requireUser(); // 写操作守卫
-  // 2026-11-16 用户定：log 行与 todo 行同构，kind 字段取消 ——
+  // 2026-11-16 用户定：log 行与 todo 行同构 ——
   //   `## [标题] [YYYY-MM-DD HH:MM] [[作者]] [会话id]`
   // 传了 kind 也照收（老调用点还在传），但不再落盘。
   // 格式闸（2026-11-08 用户定）：空标题打回 —— 只有时间没有内容的流水等于没记。
-  if (!String(title || '').trim()) {
+  // 2026-11-26 加宽：只有一个 id/命令名（`commit-git`、`fix-anchors`）与空标题等价，
+  //   同样打回 —— 用户实报「日志里只有标题、没有实际内容」，源头就是这里什么都收。
+  //   allowBare 给内部调用（done/note/capture）用：它们的标题由代码拼，内容已经写在那里。
+  const rawTitle = String(title || '').trim();
+  if (!rawTitle) {
     throw new Error(
       `✗ log 必须有一句话结论 —— 空标题打回。\n` +
       `  用法: abs log "做完什么 + 怎么验证的"`,
+    );
+  }
+  if (!allowBare && /^[A-Za-z0-9._/-]+$/.test(rawTitle)) {
+    throw new Error(
+      `✗ 「${clip(rawTitle, 40)}」只是一个 id/命令名，等于没记内容 —— 打回。\n` +
+      `  补一句发生了什么、怎么验证的: abs log "${clip(rawTitle, 40)}：改了什么，跑过什么"`,
     );
   }
   await ensurePersonPage(root, who); // 首次写操作即建人页（已存在不动）

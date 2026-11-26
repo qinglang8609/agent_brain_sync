@@ -36,9 +36,10 @@ describe('并发写保护', () => {
 
   test('并发的 cmdLog 多条全部落到 log.md（倒序不互相覆盖）', async () => {
     const n = 15;
-    await Promise.all(Array.from({ length: n }, (_, i) => cmdLog({ dir: project, title: `log-${i}`, kind: 'dev' })));
+    // 标题用中文：`abs log` 会把只有 id/命令名的标题打回，这些用例测的是锁不是内容。
+    await Promise.all(Array.from({ length: n }, (_, i) => cmdLog({ dir: project, title: `并发流水第 ${i} 条`, kind: 'dev' })));
     const log = await fs.readFile(join(project, '.brain', 'log.md'), 'utf8');
-    for (let i = 0; i < n; i++) assert.ok(log.includes(`log-${i}`), `丢失了 log-${i}`);
+    for (let i = 0; i < n; i++) assert.ok(log.includes(`并发流水第 ${i} 条`), `丢失了第 ${i} 条`);
   });
 
   test('task start 同 id 幂等，并发下也不重复登记', async () => {
@@ -54,7 +55,7 @@ describe('并发写保护', () => {
     const log = join(brain, 'log.md');
     await Promise.all([
       cmdTask({ dir: project, action: 'start', id: 'T-A', note: '描述a' }),
-      cmdLog({ dir: project, title: 'hello', kind: 'dev' }),
+      cmdLog({ dir: project, title: '锁探针流水一句', kind: 'dev' }),
     ]);
     for (const f of [todo, log]) {
       const lock = join(brain, `.${f.split('/').pop()}.lock`);

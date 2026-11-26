@@ -9,7 +9,8 @@ import { localStamp, sortTodoLines, shortTitle, upsertTask, findTaskLine, setBre
 import { ensurePersonPage, cmdLog } from '../note.js';
 import { readTodo } from './tasks.js';
 
-// 纪律: task 过程动作(start/note/blocked/state/remove)只改 todo.md, 不写 log.md。
+// 纪律: task 过程动作(start/child-done/blocked/state/remove)只改 todo.md, 不写 log.md；
+// 例外：note（子项）与 done 会各落一条 log —— 这两处的内容是模型当场写下的进度/结论，不是工具动作。
 // ★ 唯一例外: **done 要写**（2026-11-12 用户定）。
 //   旧纪律是「task 动作全不写 log」，结果整件事只剩模型自觉：11-06 SKILL 精简删掉
 //   「收尾循环」后，跨项目日志日产量从 16 条掉到 3 条（实测），而 pi 侧的收尾提醒
@@ -255,7 +256,14 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
   if (action === 'note') {
     if (!note) return '用法: abs todo note <id> --note "进度"\n  建议前缀（load 会把它们单独抽出来，让人一眼看到）:\n    验证: <跑过的命令/结果>\n    边界: <这方案治不了什么>\n    阻塞: <在等什么，卡在哪>';
     const r = await setBreakpoint(root, { id, text: note });
-    return r.msg;
+    if (!r.ok) return r.msg;
+    // 2026-11-26 用户实报：log 只在 done 之后才有，过程里一片空白，不够及时。
+    // 子项是模型当场写的「走到哪一步」，它已有内容、不用再猜 —— 就在这里顺手落一条 log，
+    // 别等到任务结束（会话断了/进程没了，log 里也得留得下痕）。
+    const logged = await cmdLog({ dir: root, title: `${id} ${note}`, kind: 'dev', summon: false, allowBare: true }).catch(
+      (e) => `⚠ 子项已追加，但写 log 失败: ${e?.message || e}\n  （todo.md 已更新，log.md 缺这一条）`,
+    );
+    return `${r.msg}\n${logged}`;
   }
   // 勾/取消勾子项：子项也是待办，做完要勾。
   // 单独两个子命令而不是 `--done true/false` —— 勾与取消是两件事，各自一个动词更顺手。
@@ -285,13 +293,23 @@ export async function cmdTask({ dir, action, id, section, note, as, session, n }
     let logTitle = String(id);
     {
       const cur = await readTodo(root).catch(() => '');
-      const t = cur.split('\n').map((l) => parseTaskLine(l)).find((x) => x && x.id === String(id));
-      if (t) logTitle = [t.id, t.title].filter(Boolean).join(' ');
+      // 行定位交给 findTaskLine（markDone 用的就是它）：
+      // 之前拿 `parseTaskLine(l).id` 比对，而 parseTaskLine 的返回里根本没有 id 字段 ——
+      // 永远命中不了，done 的 log 于是只剩一个 id（2026-11-26 用户实报）。
+      const lines = cur.split('\n');
+      const at = findTaskLine(lines, String(id));
+      const t = at >= 0 ? parseTaskLine(lines[at]) : null;
+      if (t) {
+        // 2026-11-26 用户实报：log 里只剩一个 id（`[log-timeliness]`）—— 等于没记。
+        // 新格式的标题就是 id，能读懂的描述在 detail 里，两者都得带上。
+        const parts = [t.id, t.title, t.detail].filter(Boolean);
+        logTitle = [...new Set(parts)].join(' ');
+      }
     }
     const { ok, msg } = await markDone(brainPath(root, 'todo.md'), id);
     if (!ok) return msg + await candidatesHint(root, id);
     // 完成即落一条 log（2026-11-12 起的规矩）：log 是任务行之外唯一的长期记录。
-    const logged = await cmdLog({ dir: root, title: logTitle, kind: 'dev', summon: false }).catch(
+    const logged = await cmdLog({ dir: root, title: logTitle, kind: 'dev', summon: false, allowBare: true }).catch(
       // 写 log 失败不能把已经成功的 done 变成报错（todo.md 已落盘），
       // 但也不能静默吞 —— 降级成一行显式警告，把「哪一半成功了」写清楚。
       (e) => `⚠ 已完成，但写 log 失败: ${e?.message || e}\n  （todo.md 已更新，log.md 缺这一条）`,
