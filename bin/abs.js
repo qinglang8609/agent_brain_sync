@@ -9,6 +9,7 @@
 const CMD_MODULE = {
   cmdInit: '../code/brain/init.js',
   cmdRepair: '../code/brain/init.js',
+  cmdRepairAll: '../code/brain/init.js',
   cmdLoad: '../code/brain/load.js',
   cmdStatus: '../code/brain/load.js',
   cmdShow: '../code/brain/load.js',
@@ -397,7 +398,7 @@ const usage = `abs — 跨会话记忆（.brain/ 图谱）
   abs review                待确认的 draft 页（升 active 或否决）
   abs supersede <页> --by <新页>   标经验已失效（不删文件）
   abs show index|log|status 看完整索引 / 流水 / 概要
-  abs init [--repair]       建图谱（--anchors 补断点段并用正文双链重算 anchors）
+  abs init [--repair] [--all]  建图谱（--anchors 补 Anchors 段并用正文双链重算 anchors；--all 批量修本机全部项目）
 
 【其它】
   abs install|uninstall [--agent <宿主>] [--no-mcp] [--no-skill]
@@ -429,7 +430,8 @@ const subUsage = {
     '',
     '说明:',
     '  • 结构不完整时报明细；--repair 只补缺不覆盖，已有内容一律不动',
-    '  • --anchors 多管两件事：在 index.md 里凭空补出断点段，并用正文 [[双链]] 重算已有页的 anchors',
+    '  • --anchors 多管两件事：在 index.md 里凭空补出 Anchors 段，并用正文 [[双链]] 重算已有页的 anchors',
+    '  • --all 扫描本机（$HOME 下 6 层内）所有 .brain 项目，逐个跑一次 --repair（修完报告每个项目的 lint 变化）',
     '    （页面加了双链没重算 anchors 时，lint 会报 ANCHORS-DRIFT 提醒跑这个）',
   ].join('\n'),
   install: [
@@ -599,8 +601,13 @@ async function main() {
     } else {
       switch (cmd) {
       case 'init': {
-        rejectExtra(opts._, 'abs init [--repair] [--anchors]');
-        // --anchors：在 index.md 里「凭空补出」断点段（平时 repair 只刷新已有的段，
+        rejectExtra(opts._, 'abs init [--repair] [--anchors] [--all]');
+        // --all：本机所有图谱逐个跑一次 repair（只补缺不覆盖），报告每个项目的 lint 变化。
+        if (opts.all) {
+          console.log(await (await cmdOf('cmdRepairAll'))({}));
+          break;
+        }
+        // --anchors：在 index.md 里「凭空补出」Anchors 段（平时 repair 只刷新已有的段，
         // 免得擅自改手写的 index.md），并用正文双链重算已存在的 anchors（2026-11-23）。
         const msg = opts.repair
           ? await (await cmdOf('cmdRepair'))({ dir: opts.dir, anchors: !!opts.anchors })

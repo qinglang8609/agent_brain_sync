@@ -2,6 +2,7 @@
 // 从 store.js 拆出（2026-11-01）：职责单一（只管骨架的生与补），与 load/task/rules 无关。
 import { promises as fs } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { getUser } from '../userconfig.js';
 import { editFile, SKIP } from '../lock.js';
 import { rebuildAnchorIndex, renderAnchorSection } from './page-meta.js';
@@ -128,18 +129,61 @@ export async function cmdRepair({ dir, anchors = false } = {}) {
       fixed.push(f);
     }
   }
-  // 存量页补 layer / anchors，再按新 anchors 重建 index.md 的断点段（2026-11-20）
-  // --anchors 多管两件事（2026-11-23）：凭空补出断点段 + 用正文双链刷新已有的 anchors。
+  // 存量页补 layer / anchors，再按新 anchors 重建 index.md 的 Anchors 段（2026-11-20）
+  // --anchors 多管两件事（2026-11-23）：凭空补出 Anchors 段 + 用正文双链刷新已有的 anchors。
   const pageFixed = await backfillPageMeta(brain, { refresh: anchors });
   const anchor = await rebuildAnchorIndex(brain, { append: anchors });
 
-  const anchorNote = anchor.changed ? `断点索引 ${anchor.words} 词` : '';
+  const anchorNote = anchor.changed ? `anchors 索引 ${anchor.words} 词` : '';
   const pageLine = pageFixed.length
     ? `\n  页面元数据补了 ${pageFixed.length} 张: ${pageFixed.slice(0, 5).join('、')}${pageFixed.length > 5 ? ' …' : ''}`
     : '';
   const touched = [...fixed, ...(pageFixed.length ? ['页面元数据'] : []), ...(anchorNote ? [anchorNote] : [])];
   if (!touched.length) return `✓ 结构完整，无需修复: ${brain}`;
   return `✓ 已补齐 ${touched.join(', ')} → ${brain}${pageLine}\n  (已有文件一律不覆盖)`;
+}
+
+/** 批量修本机所有图谱：扫 $HOME 下 6 层内的 .brain 目录，逐个跑一次 cmdRepair。
+ *
+ * 为何需要（2026-11-26 用户实报「本机很多项目都没更新」）：
+ *   `--repair --anchors` 只能对当前目录跑；机器上一堆项目各自是独立图谱，
+ *   没人会逐个 cd 进去跑，于是新加的 layer/anchors/Anchors 段永远缺。
+ * 只读目录不写代码；每个项目只跑「只补缺不覆盖」的 repair，不会改已有内容。
+ * 报告：每个项目 repair 说了什么 + lint 问题数（修前→修后）。 */
+export async function cmdRepairAll({ home = homedir(), depth = 6 } = {}) {
+  const found = [];
+  const walk = async (dir, level) => {
+    if (level > depth) return;
+    let entries = [];
+    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+    if (entries.some((e) => e.isDirectory() && e.name === '.brain')) found.push(dir);
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      // 不钻进去的目录：依赖/版本库/缓存/隐藏目录（.brain 本身也已在上面的判断里用完）
+      if (['node_modules', '.git', 'Library', '.Trash', '.cache', 'dist', 'build'].includes(e.name)) continue;
+      if (e.name.startsWith('.') && e.name !== '.brain') continue;
+      await walk(join(dir, e.name), level + 1);
+    }
+  };
+  await walk(home, 1);
+  const out = [`扫描 ${home}（${depth} 层内）→ 找到 ${found.length} 个图谱`];
+  for (const root of found.sort()) {
+    const before = await lintCount(root).catch(() => null);
+    const msg = await cmdRepair({ dir: root, anchors: true }).catch((e) => `✗ 修复失败: ${e?.message || e}`);
+    const after = await lintCount(root).catch(() => null);
+    const delta = before === null || after === null ? '' : `  lint ${before} → ${after}`;
+    out.push(`\n● ${root}${delta}\n  ${msg.split('\n').join('\n  ')}`);
+  }
+  return out.join('\n');
+}
+
+/** 数一个项目图谱的 lint 问题条（只数，不打印）。 */
+async function lintCount(root) {
+  const { cmdLint } = await import('../lint.js');
+  const text = await cmdLint({ dir: root });
+  const m = String(text).match(/lint: (\d+) problem/);
+  if (m) return Number(m[1]);
+  return /✓/.test(text) ? 0 : null;
 }
 
 function resolveProjectDir(dir) {
@@ -165,7 +209,7 @@ export function indexTemplate() {
       h1: '# 🗂 Graph Index',
       // 无 `## Roadmap`：它是 AI 自己写的方向总结，会被 load 反复读到并带偏后续会话
       // （“看似是总结指引，其实是 AI 的总结指引” —— 2026-09-13 用户决策删除）。
-      order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## 断点'],
+      order: ['## Rules', '## Concepts', '## Entities', '## Sources', '## Syntheses', '## Anchors'],
     },
   ).text;
 }

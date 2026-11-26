@@ -13,7 +13,7 @@ import {
   anchorsOf, linksOf, layerForDir, declaredLayer, declaredAnchors, ensurePageMeta, ANCHORS_MAX,
   anchorIndex, renderAnchorSection, rebuildAnchorIndex, ANCHOR_SECTION,
 } from '../../code/brain/page-meta.js';
-import { backfillPageMeta } from '../../code/brain/init.js';
+import { backfillPageMeta, cmdRepairAll } from '../../code/brain/init.js';
 
 let sandbox;
 beforeEach(async () => { sandbox = await fs.mkdtemp(join(tmpdir(), 'abs-pagemeta-')); });
@@ -161,6 +161,23 @@ describe('init --repair 的存量补齐（集成）', () => {
     await fs.mkdir(join(brain, 'concepts'), { recursive: true });
     assert.deepEqual(await backfillPageMeta(brain), []);
   });
+
+  // --all（2026-11-26）：本机一堆项目各自是独立图谱，没人会逐个进去跑 repair ——
+  // 于是新加的 layer/anchors 永远缺。这条钉住「扫到的每一个都修」。
+  test('--all 扫到几个项目就修几个，没图谱的目录不报错', async () => {
+    const home = join(sandbox, 'home');
+    for (const name of ['proj-a', 'proj-b']) {
+      const brain = join(home, 'Code', name, '.brain');
+      await fs.mkdir(join(brain, 'concepts'), { recursive: true });
+      await fs.writeFile(join(brain, 'concepts', 'p.md'), '---\nauthor: me\n---\n\n# 页\n\n[[other]]\n');
+    }
+    await fs.mkdir(join(home, 'Code', 'no-brain'), { recursive: true });
+    const out = await cmdRepairAll({ home, depth: 4 });
+    assert.match(out, /找到 2 个图谱/, out);
+    assert.ok(out.includes('proj-a') && out.includes('proj-b'), out);
+    const page = await fs.readFile(join(home, 'Code', 'proj-a', '.brain', 'concepts', 'p.md'), 'utf8');
+    assert.match(page, /^layer:/m, `两个项目都要修到:\n${page}`);
+  });
 });
 
 describe('断点索引（写进 index.md）', () => {
@@ -199,7 +216,7 @@ describe('断点索引（写进 index.md）', () => {
   test('空索引给出占位行（新库刚建好也不会被 lint 判过期）', () => {
     const lines = renderAnchorSection(new Map());
     assert.equal(lines[0], ANCHOR_SECTION);
-    assert.match(lines.join('\n'), /暂无跨页断点词/);
+    assert.match(lines.join('\n'), /暂无跨页 anchors/);
   });
 });
 
@@ -214,7 +231,7 @@ describe('rebuildAnchorIndex — 生成与「不擅自改手写 index」', () =>
   };
 
   test('已有序段会被刷新', async () => {
-    const brain = await seed('# 索引\n\n## 断点\n- 旧的 — [[x]]\n');
+    const brain = await seed('# 索引\n\n## Anchors\n- 旧的 — [[x]]\n');
     const r = await rebuildAnchorIndex(brain);
     assert.equal(r.changed, true);
     assert.equal(r.words, 1);
@@ -222,6 +239,18 @@ describe('rebuildAnchorIndex — 生成与「不擅自改手写 index」', () =>
     assert.ok(out.includes('- w'), out);
     assert.ok(!out.includes('[[x]]'), '旧内容必须被替换');
     assert.ok(!out.includes('[['), '断点段只列词，不挂页');
+  });
+
+  // 2026-11-26 改名：段标题从「断点」→「Anchors」。旧名必须还认得，
+  // 否则存量图谱（如 herdr_app）重建时找不到段，会以为没有而重复追加一段。
+  test('旧标题 ## 断点 仍当 Anchors 段，重建时原地换成新名', async () => {
+    const brain = await seed('# 索引\n\n## 断点\n- 旧的 — [[x]]\n');
+    const r = await rebuildAnchorIndex(brain);
+    assert.equal(r.changed, true, '旧名段也要被认出来并重建');
+    const out = await fs.readFile(join(brain, 'index.md'), 'utf8');
+    assert.ok(out.includes('## Anchors'), `应换成新标题:\n${out}`);
+    assert.ok(!out.includes('## 断点'), `旧标题不该留:\n${out}`);
+    assert.equal((out.match(/^## /gm) || []).length, 1, `不能变成两段:\n${out}`);
   });
 
   test('没有断点段时默认不擅自加（手写 index 不动）', async () => {
@@ -236,7 +265,7 @@ describe('rebuildAnchorIndex — 生成与「不擅自改手写 index」', () =>
     const r = await rebuildAnchorIndex(brain, { append: true });
     assert.equal(r.changed, true);
     const out = await fs.readFile(join(brain, 'index.md'), 'utf8');
-    assert.ok(out.includes('## 断点') && out.includes('- w'), out);
+    assert.ok(out.includes('## Anchors') && out.includes('- w'), out);
   });
 });
 

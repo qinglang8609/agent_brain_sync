@@ -162,7 +162,7 @@ test('断点命中加权：anchors 命中与字面命中同分时，断点命中
     const bIdx = out.indexOf('b-plain');
     assert.ok(aIdx >= 0 && bIdx >= 0, out);
     assert.ok(aIdx < bIdx, `断点命中应排前面:\n${out}`);
-    assert.ok(/\[断点: widget\]/.test(out), `命中渠道要标出来:\n${out}`);
+    assert.ok(/\[anchors: widget\]/.test(out), `命中渠道要标出来:\n${out}`);
     await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -185,7 +185,7 @@ test('断点命中：查询词是断点词的一部分也算激活', async () =>
   await fs.writeFile(join(brain, 'concepts', 'a-part.md'), page('a-part', '入口出口同一判据'), 'utf8');
   await fs.writeFile(join(brain, 'concepts', 'b-plain.md'), page('b-plain', '别的词'), 'utf8');
   const out = await cmdQuery({ dir, terms: ['入口出口'] });
-  assert.ok(/\[断点: 入口出口同一判据\]/.test(out), `部分词也要激活断点:\n${out}`);
+  assert.ok(/\[anchors: 入口出口同一判据\]/.test(out), `部分词也要激活断点:\n${out}`);
   assert.ok(out.indexOf('a-part') < out.indexOf('b-plain'), `断点页应排前面:\n${out}`);
   await fs.rm(dir, { recursive: true, force: true });
 });

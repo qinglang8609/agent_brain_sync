@@ -165,7 +165,7 @@ export async function cmdQuery({ dir, terms, includeSuperseded }) {
     // 命中渠道：tag 最有价值（人工提炼的关键词），显式标出便于判断可信度
     const viaTag = h.via && h.via.tag.length ? `  [tag: ${h.via.tag.join(', ')}]` : '';
     // 断点命中单独标：这是「关键词激活」而不是字面/语义命中，可信度判断要用到。
-    const viaAnchor = h.anchorHit && h.anchorHit.length ? `  [断点: ${h.anchorHit.join(', ')}]` : '';
+    const viaAnchor = h.anchorHit && h.anchorHit.length ? `  [anchors: ${h.anchorHit.join(', ')}]` : '';
     return `📄 ${h.slug}${by}${id}${st}${fuzzy}  (命中: ${hitTxt}${full})${viaTag}${viaAnchor}\n    ${h.snippet}`;
   });
   // 多词且无全命中时告知降级了 —— 不静默给一堆弱相关结果。

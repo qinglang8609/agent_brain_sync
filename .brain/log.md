@@ -1,4 +1,6 @@
 # 🗒 Activity Log
+## [2026-11-26 17:30] [断点改英文名 anchors] [[fanchao]] 段标题 ## 断点 → ## Anchors（旧名仍认，重建时原地换名）、query 输出 [断点:] → [anchors:]，L6 层名与 help 同步。新增 abs init --repair --anchors --all：扫 $HOME 6 层内所有 .brain 逐个修并报 lint 前后。实测本机 10 个项目：/Users/fanchao 11→0、Code/abs 18→0、agent_brain_sync 1→0、faxuehui 14→2、zj_shop 16→0、Docker 14→6、herdr_app 1→0 等；测试 711 通过；已装到全局
+## [2026-11-26 17:22] [herdr_app 七层与断点修好] [[fanchao]] abs init --repair --anchors 补了 8 张页面的 layer/anchors 并在 index.md 凭空补出断点段，lint 从 12 问题降到 0；abs query herdr-app-async-deadlock 已验证输出带 [断点:] 并激活 3 页。备份在 /tmp/herdr-brain-before。剩余：12 个正式页只有 4 页正文写了双链，8 页 anchors 为空 —— 机制通了但内容还没连
 ## [2026-11-26 16:36] [查清今天下午那场活为什么只有收尾才落盘] [[fanchao]] 15:40~16:32 那 12 轮 before_agent_start 痕迹里一条 board= 都没有，说明那场会话跑的是重启前的旧扩展（扩展只在会话启动加载）。补两处：hook 痕迹加 reg=on/off（能看出登记提醒到底注没注入），文件头写明改完要 abs install 且已在跑的会话要 /reload。验证：npm test 710 通过，install 后 ~/.pi/agent/extensions/abs.ts 含 reg= 字段
 ## [2026-11-26 11:19] [实测每轮摆看板已生效] [[fanchao]] 本会话 11:13:50（首轮，load_guide=on）与 11:17:56（第二轮，load_guide=skip）两条痕迹都是 board=on，旧代码同目录 08:40~11:05 的痕迹没有 board= 字段；这一轮的 prompt 里看板段已经列出 11:14 才登记的 board-probe。另开临时项目跑 pi 子会话两轮：第一轮答出 probe-one，登记 probe-two 后第二轮答出两个 id，全程没读文件
 ## [2026-11-26 11:12] [board-align-every-turn] [[fanchao]] 恢复每轮摆看板（hook 变强）

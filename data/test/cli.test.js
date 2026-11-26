@@ -463,7 +463,7 @@ describe('cli: note (经验暂存)', () => {
     await run(['note', '第一件事 提到 [[共享词]]']);
     await run(['note', '第二件事 也提到 [[共享词]]']);
     const idx = await fs.readFile(join(proj, '.brain', 'index.md'), 'utf8');
-    assert.match(idx, /^## 断点[\s\S]*- 共享词$/m, idx);
+    assert.match(idx, /^## Anchors[\s\S]*- 共享词$/m, idx);
   });
 });
 

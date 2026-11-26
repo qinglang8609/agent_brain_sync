@@ -82,20 +82,31 @@ export function renderAnchorSection(index) {
     '<!-- 跨页关键词（一个词出现在 ≥2 个页面里）。由 abs init --repair 重建，别手写。 -->',
   ];
   if (!index.size) {
-    lines.push('（暂无跨页断点词）');
+    lines.push('（暂无跨页 anchors）');
     return lines;
   }
   for (const word of index.keys()) lines.push(`- ${word}`);
   return lines;
 }
 
-/** 断点段在 index.md 里的标题（重建与 lint 共用同一个判据）。 */
-export const ANCHOR_SECTION = '## 断点';
+/** anchors 段在 index.md 里的标题（重建与 lint 共用同一个判据）。 */
+export const ANCHOR_SECTION = '## Anchors';
 
-/** 从 index.md 全文里取出断点段的行（找不到返回 null）。 */
+/** 旧标题（2026-11-26 改英文前叫「断点」）—— 存量图谱要靠它才认得出已有段。
+ *  像这样兼容一个旧名，是为了让「改名」不用一次性迁移所有历史项目：
+ *  读到旧名也当 anchors 段，重建时原地换成新名。 */
+export const ANCHOR_SECTION_LEGACY = '## 断点';
+
+/** 这一行是不是 anchors 段标题（新旧名都算）。 */
+export function isAnchorSectionLine(line) {
+  const t = String(line ?? '').trim();
+  return t === ANCHOR_SECTION || t === ANCHOR_SECTION_LEGACY;
+}
+
+/** 从 index.md 全文里取出 anchors 段的行（找不到返回 null）。 */
 export function anchorSectionOf(indexText) {
   const lines = String(indexText || '').split('\n');
-  const start = lines.findIndex((l) => l.trim() === ANCHOR_SECTION);
+  const start = lines.findIndex((l) => isAnchorSectionLine(l));
   if (start < 0) return null;
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
@@ -137,7 +148,7 @@ export async function rebuildAnchorIndex(brain, { append = false } = {}) {
   const cur = await fs.readFile(indexPath, 'utf8').catch(() => null);
   if (cur === null) return { words: index.size, changed: false };
   const lines = cur.split('\n');
-  const start = lines.findIndex((l) => l.trim() === ANCHOR_SECTION);
+  const start = lines.findIndex((l) => isAnchorSectionLine(l));
   let next = lines;
   if (start < 0) {
     if (!append) return { words: index.size, changed: false };

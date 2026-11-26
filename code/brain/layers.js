@@ -24,7 +24,7 @@ export const LAYERS = [
   { id: 3, key: 'tool',   name: '工具', decay: 0.4,  note: '工具使用经验' },
   { id: 4, key: 'cognition', name: '认知', decay: 0.6, note: '踩坑、经验、重点事件（默认层）' },
   { id: 5, key: 'session', name: '会话', decay: 0.75, note: '会话内容、todo、任务总结' },
-  { id: 6, key: 'anchor', name: '断点', decay: 0.85, note: '双链词索引，不占页面' },
+  { id: 6, key: 'anchor', name: 'Anchors', decay: 0.85, note: '双链词索引，不占页面' },
   { id: 7, key: 'chaos',  name: '混沌', decay: 0.95, note: '未分辨的琐碎信息' },
 ];
 

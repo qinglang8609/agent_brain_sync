@@ -7,7 +7,7 @@ import { requireBrain, brainPath, BRAIN_DIR } from './index.js';
 import { readRules, idOfPage, statusOfPage, supersededByOf, clip, RULE_BODY_MAX } from './store.js';
 import { checkFileShape, TODO_MAX_LINES, LOG_MAX_LINES, INDEX_MAX_LINES } from './todo/index.js';
 import { isAllowedTodoLine, parseChild, migrateLegacyChild } from './todo/common.js';
-import { declaredLayer, declaredAnchors, anchorsOf, anchorSectionOf, anchorIndex, renderAnchorSection, ANCHOR_SECTION } from './brain/page-meta.js';
+import { declaredLayer, declaredAnchors, anchorsOf, anchorSectionOf, anchorIndex, renderAnchorSection, isAnchorSectionLine } from './brain/page-meta.js';
 import { DIR_LAYER } from './brain/layers.js';
 
 // ---------- 图谱遍历 ----------
@@ -175,7 +175,7 @@ async function checkRootFiles(vault) {
       const out = [];
       let skip = false;
       for (const l of ls) {
-        if (l.trim() === ANCHOR_SECTION) { skip = true; continue; }
+        if (isAnchorSectionLine(l)) { skip = true; continue; }
         if (skip && /^##\s/.test(l)) skip = false;
         if (!skip) out.push(l);
       }
@@ -278,7 +278,7 @@ async function checkAnchorIndex(vault, pages) {
   if (!got) return [];
   const norm = (ls) => ls.map((l) => l.trimEnd());
   if (norm(want).join('\n') !== norm(got).join('\n')) {
-    return [`ANCHOR-INDEX-STALE: ${BRAIN_DIR}/index.md 的断点段与页面 anchors 不一致（跑 abs init --repair 重建）`];
+    return [`ANCHOR-INDEX-STALE: ${BRAIN_DIR}/index.md 的 Anchors 段与页面 anchors 不一致（跑 abs init --repair 重建）`];
   }
   return [];
 }

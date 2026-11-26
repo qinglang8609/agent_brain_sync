@@ -39,7 +39,7 @@ export function layerGuide() {
     ['3', '工具', '某工具怎么用、有什么坑', 'abs capture --layer 3 "…"'],
     ['4', '认知', '踩坑的根因与解法（默认）', 'abs capture "…"'],
     ['5', '会话', '这次会话做了什么', 'abs log / abs ingest'],
-    ['6', '断点', '双链词，机器自动抽，不用手写', '（无）'],
+    ['6', 'Anchors', '双链词，机器自动抽，不用手写', '（无）'],
     ['7', '混沌', '还没想清的碎片', '用 abs note（同一个落点）'],
   ];
   return [
@@ -78,7 +78,7 @@ export async function cmdCapture({ dir, text, layer, tags, title, kind }) {
 
   // L6 是机器自动抽的双链词，不接受手动写入 —— 手写会让断点词表失真
   if (L === 6) {
-    return '✗ L6 断点层是机器从双链里自动抽的词，不接手写。\n  想加索引词：在页面正文写 [[词]]，abs db rebuild 时会自动收录。';
+    return '✗ L6 Anchors 层是机器从双链里自动抽的词，不接手写。\n  想加索引词：在页面正文写 [[词]]，abs db rebuild 时会自动收录。';
   }
 
   // L7 混沌层：`abs note` 与 `abs capture --layer 7` 是**同一个落点**
