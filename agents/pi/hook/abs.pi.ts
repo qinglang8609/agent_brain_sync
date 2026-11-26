@@ -1079,11 +1079,13 @@ export default function absPiHook(pi: ExtensionAPI): void {
           }
         }
         const sidNow = sessionIdFor(ctx)
-        // 首轮（同 cwd+会话）：摆看板；其余轮：不再每轮摆看板，只给「登记提醒」
-        // （2026-11-16 用户定：第一次输入 abs load，其它时候提醒任务登记）。
+        // 每轮都摆看板（2026-11-26 恢复）：11-16（d6f1d96）改成「只首轮摆看板，其余轮给一行登记提醒」，
+        // 结果就是用户实报的局面 —— 干了半天活，看板一条没登记，「hook 弱了」。
+        // concept remind-vs-gate 的铁律是「反复对齐，每轮都摆，别用节流/去重优化掉它」；
+        // 看板段自带行数上限（PANEL_MAX_ROWS），不会随图谱变大。首轮与否只留给 load 用。
         const firstTurn = !loadInjected.has(loadKeyOf(cwd, sidNow))
         const boardMd = await readFile(join(cwd, '.brain', 'todo.md'), 'utf8').catch(() => '')
-        const boardGuide = firstTurn ? boardGuideline(boardMd, await currentUser(), [...filesSeen], sidNow) : null
+        const boardGuide = boardGuideline(boardMd, await currentUser(), [...filesSeen], sidNow)
         const ok = injectTodoGuidelines(event?.systemPromptOptions, boardGuide)
         const needReg = !firstTurn && filesSeen.size > 0 && !boardHasMyTask(boardMd, sidNow)
         injectRegReminder(event?.systemPromptOptions, needReg, sidNow)
@@ -1111,7 +1113,9 @@ export default function absPiHook(pi: ExtensionAPI): void {
           }
           if (rulesOn) openingRulesLogged = true
         }
-        logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} load_guide=${loadState} opening_rules=${openingRulesLogged ? 'on' : 'skip'} cwd=${cwd}`).catch(() => {})
+        // board= 是本轮**到底摆没摆看板**：todo_guide=on 只表示那几条常驻指引装上了，
+        // 曾经因为这个字段让人误以为「对齐已生效」（见 concept mechanism-visible-vs-effective）。
+        logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} board=${boardGuide ? 'on' : 'off'} load_guide=${loadState} opening_rules=${openingRulesLogged ? 'on' : 'skip'} cwd=${cwd}`).catch(() => {})
 
         // 自动登记已整体移除（2026-10-05 用户实报两点）：
         //   ① 卡顿 —— agent_end 每轮 spawn 一个 node 进程

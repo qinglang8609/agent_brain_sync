@@ -1,4 +1,7 @@
 # 🗒 Activity Log
+## [2026-11-26 11:12] [hook 每轮重新摆看板] [[fanchao]] 11-16 的 d6f1d96 把「每轮摆」改成「只首轮摆 + 一行登记提醒」，与 concept remind-vs-gate 的铁律相反，导致干活半天看板没动。改回每轮摆，并给 hook 痕迹加 board=on/off，让「这轮到底摆没摆」可查。验证：npm test 710 通过、abs install 后 ~/.pi/agent/extensions/abs.ts:1088 已无条件摆看板
+## [2026-11-26 09:20] [bare-log-gate abs log 打回只有 id] [[fanchao]] 的标题
+## [2026-11-26 09:20] [提交 a7b529d] [[fanchao]] 日志跟着过程走（todo note 当场落一条、done 带上任务描述、abs log 打回只写 id 的标题）；验证：npm test 710 通过、abs lint 0 问题、pre-commit 通过
 ## [2026-11-26 09:19] [abs log 只写 id 会被打回（闸门加宽）] [[fanchao]] commit-git 这类标题原来照收，现在报错要求补一句发生了什么；内部调用 done/note/capture 传 allowBare 不受影响。验证：全量 710 通过，真机 abs log "commit-git" 被拒、中文短句放行
 ## [2026-11-26 08:51] [log-entry-content done] [[fanchao]] 自动日志带上任务描述（不只是 id）
 ## [2026-11-26 08:51] [登记 done 的 log 内容修复] [[fanchao]]
