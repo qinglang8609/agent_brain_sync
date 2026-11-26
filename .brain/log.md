@@ -1,4 +1,7 @@
 # 🗒 Activity Log
+## [2026-11-26 16:36] [查清今天下午那场活为什么只有收尾才落盘] [[fanchao]] 15:40~16:32 那 12 轮 before_agent_start 痕迹里一条 board= 都没有，说明那场会话跑的是重启前的旧扩展（扩展只在会话启动加载）。补两处：hook 痕迹加 reg=on/off（能看出登记提醒到底注没注入），文件头写明改完要 abs install 且已在跑的会话要 /reload。验证：npm test 710 通过，install 后 ~/.pi/agent/extensions/abs.ts 含 reg= 字段
+## [2026-11-26 11:19] [实测每轮摆看板已生效] [[fanchao]] 本会话 11:13:50（首轮，load_guide=on）与 11:17:56（第二轮，load_guide=skip）两条痕迹都是 board=on，旧代码同目录 08:40~11:05 的痕迹没有 board= 字段；这一轮的 prompt 里看板段已经列出 11:14 才登记的 board-probe。另开临时项目跑 pi 子会话两轮：第一轮答出 probe-one，登记 probe-two 后第二轮答出两个 id，全程没读文件
+## [2026-11-26 11:12] [board-align-every-turn] [[fanchao]] 恢复每轮摆看板（hook 变强）
 ## [2026-11-26 11:12] [hook 每轮重新摆看板] [[fanchao]] 11-16 的 d6f1d96 把「每轮摆」改成「只首轮摆 + 一行登记提醒」，与 concept remind-vs-gate 的铁律相反，导致干活半天看板没动。改回每轮摆，并给 hook 痕迹加 board=on/off，让「这轮到底摆没摆」可查。验证：npm test 710 通过、abs install 后 ~/.pi/agent/extensions/abs.ts:1088 已无条件摆看板
 ## [2026-11-26 09:20] [bare-log-gate abs log 打回只有 id] [[fanchao]] 的标题
 ## [2026-11-26 09:20] [提交 a7b529d] [[fanchao]] 日志跟着过程走（todo note 当场落一条、done 带上任务描述、abs log 打回只写 id 的标题）；验证：npm test 710 通过、abs lint 0 问题、pre-commit 通过

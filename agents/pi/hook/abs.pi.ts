@@ -17,6 +17,10 @@
  *   实报「每次干活干一会出来, 任务就中断了」。两次同一个根因：
  *   **往对话里插一句话本身就是设计错误，不是频率问题** —— 改守卫(每轮→每会话)治不了它。
  *   别再加回来（指 sendUserMessage 注入；静态 system prompt 内容不在此列，见下方 todo 指引）。
+ *
+ * ★ 改完本文件必须 `abs install --yes`，而且**已在跑的会话要 `/reload` 才生效**：
+ *   扩展在会话启动时加载。2026-11-26 就踩过这个：修了每轮摆看板，但干活那场会话
+ *   （15:40～16:32）还是旧扩展，痕迹里一条 `board=` 都没有 —— 改了不等于生效。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { appendFile, mkdir, readFile, rename, stat } from "node:fs/promises"
@@ -1115,7 +1119,7 @@ export default function absPiHook(pi: ExtensionAPI): void {
         }
         // board= 是本轮**到底摆没摆看板**：todo_guide=on 只表示那几条常驻指引装上了，
         // 曾经因为这个字段让人误以为「对齐已生效」（见 concept mechanism-visible-vs-effective）。
-        logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} board=${boardGuide ? 'on' : 'off'} load_guide=${loadState} opening_rules=${openingRulesLogged ? 'on' : 'skip'} cwd=${cwd}`).catch(() => {})
+        logHook(`before_agent_start todo_guide=${ok ? 'on' : 'off'} board=${boardGuide ? 'on' : 'off'} reg=${needReg ? 'on' : 'off'} load_guide=${loadState} opening_rules=${openingRulesLogged ? 'on' : 'skip'} cwd=${cwd}`).catch(() => {})
 
         // 自动登记已整体移除（2026-10-05 用户实报两点）：
         //   ① 卡顿 —— agent_end 每轮 spawn 一个 node 进程

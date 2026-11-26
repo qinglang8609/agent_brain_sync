@@ -1,6 +1,6 @@
 # 📋 Todo Board
 
-- [ ] [2026-11-26 11:12] [board-align-every-turn] [[fanchao]] 恢复每轮摆看板（hook 变强） [01a2154b-9c3e-77]
+- [x] [2026-11-26 11:12] [board-align-every-turn] [[fanchao]] 恢复每轮摆看板（hook 变强） [01a2154b-9c3e-77]
 - [x] [2026-11-26 09:20] [bare-log-gate] [[fanchao]] abs log 打回只有 id 的标题 [01a2154b-9c3e-77]
 - [x] [2026-11-26 08:51] [log-entry-content] [[fanchao]] done 自动日志带上任务描述（不只是 id） [01a2154b-9c3e-77]
 - [x] [2026-11-26 08:40] [log-timeliness] [[fanchao]] 调查日志只在 todo 完成后才追加的问题，改成过程即时记 [01a2154b-9c3e-77]
