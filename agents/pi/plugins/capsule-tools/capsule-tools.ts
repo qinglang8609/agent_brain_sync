@@ -418,9 +418,13 @@ export function isMcpTool(toolName: string): boolean {
 /**
  * context-mode 自己的 `ctx_*` 工具。它们不是 MCP 命名空间下的工具（名字里没有 `mcp__`），
  * 但同样会把参数和结果原文铺开，所以也折成胶囊。
+ *
+ * 2026-11-27：不只认开头 —— 同一个工具经网关/命名空间代理过来时名字会变成
+ * `mcp__context-mode__ctx_search`、`context-mode:ctx_search` 这类形态，
+ * 开头匹配会漏掉它们（漏了就是整行 JSON 铺开，用户得手动收）。
  */
 export function isCtxTool(toolName: string): boolean {
-	return toolName.startsWith("ctx_");
+	return /(^|[_:/])ctx_/.test(toolName);
 }
 
 /**
@@ -479,8 +483,10 @@ function ctxCommand(toolName: string, args: any): string | undefined {
 		return undefined;
 	};
 	// 每个工具按用途排序，第一个有值的胜出。
+	// `query`（单数）与 `queries`（数组）两种形态都存在：不同版本/经网关转发时名字不一样，
+	// 只认一个就会出现「胶囊里只有工具名、看不出搜了什么」。
 	const order: Record<string, string[]> = {
-		ctx_search: ["queries", "source", "scope"],
+		ctx_search: ["queries", "query", "source", "scope"],
 		ctx_batch: ["commands", "queries"],
 		ctx_index: ["path", "url", "source"],
 		ctx_resume: ["session"],
@@ -490,6 +496,13 @@ function ctxCommand(toolName: string, args: any): string | undefined {
 	for (const key of order[toolName] ?? []) {
 		const value = word(args?.[key]);
 		if (value) return value;
+	}
+	// 网关形态：内层参数在 `args` 里（`mcp` 工具带 {tool, args}），查一层。
+	if (args?.args && typeof args.args === "object") {
+		for (const key of order[toolName] ?? []) {
+			const value = word(args.args[key]);
+			if (value) return value;
+		}
 	}
 	// ctx_resume 的 seq 是数字，单独处理；ctx_purge 的 project 是布尔开关。
 	if (toolName === "ctx_resume" && typeof args?.seq === "number") return `#${args.seq}`;

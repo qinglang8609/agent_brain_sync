@@ -63,6 +63,9 @@ for (const name of [
 	"bash", "powershell", "read", "edit", "write", "grep", "find", "ls",
 	"ctx_execute", "ctx_search", "ctx_batch", "ctx_index", "ctx_resume", "ctx_purge", "ctx_upgrade",
 	"ctx_stats", "ctx_doctor", "mcp", "mcp__abs",
+	// 2026-11-27：同一批 ctx_* 经网关/命名空间代理过来时前缀会变 ——
+	// 只认开头就漏，漏了就是整行 JSON 铺开（用户实报「ctx_search 没有胶囊」）。
+	"mcp__context-mode__ctx_search", "context-mode:ctx_search",
 ]) {
 	const renderers = resolve(0, name) as any;
 	check(`${name}: capsule renderer wins`, typeof renderers?.renderCall === "function");
