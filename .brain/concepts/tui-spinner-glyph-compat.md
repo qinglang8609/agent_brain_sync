@@ -5,7 +5,7 @@ author: fanchao
 updated: 2026-11-08
 status: active
 layer: 4
-anchors: [pi-tool-renderer-animation, tui-line-width-limit, installed-pi-package-check, capsule-hot-path-perf]
+anchors: [pi-tool-renderer-animation, tui-line-width-limit, installed-pi-package-check, capsule-hot-path-perf, pi-input-color-needs-border]
 ---
 
 # 概念：fullscreen 卡顿排查：先压测组件，再查动画字符字体
@@ -62,3 +62,4 @@ const FRAMES = ["◐", "◓", "◑", "◒"];
 - [[installed-pi-package-check]] — 同一轮排查里「别按猜测归因」的另一个例子
 - [[capsule-hot-path-perf]] — 压测之后该看的实现热路径
 - [[fanchao]] — 本页沉淀者
+- [[pi-input-color-needs-border]] — 同一类「看着改了其实没改」：输入框只染文字，空框上看不出变化

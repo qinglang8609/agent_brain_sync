@@ -5,7 +5,7 @@ author: fanchao
 updated: 2026-11-18
 status: active
 layer: 4
-anchors: [installed-pi-package-check, npm-publish-staged-2fa-traps, pi-tool-renderer-override, git-proxy-troubleshooting, test-handmade-data-hides-key-mismatch]
+anchors: [installed-pi-package-check, npm-publish-staged-2fa-traps, pi-tool-renderer-override, git-proxy-troubleshooting, test-handmade-data-hides-key-mismatch, npm-i-g-local-package-becomes-symlink]
 ---
 
 # 概念：把 pi 扩展发成标准 npm 包
@@ -146,3 +146,4 @@ r.extensions.find(e => e.path.includes("capsule-tools"))   // 必须存在
 - [[test-handmade-data-hides-key-mismatch]] — 发布前的门禁测试别用手造数据
 - [[npm-publish-staged-2fa-traps]] — 发布返回 202 / 装到缓存旧包的两个静默坑
 - [[fanchao]] — 本页沉淀者
+- [[npm-i-g-local-package-becomes-symlink]] — 本机验证新包要真装副本：仓库里 npm i -g . 只会留下符号链接

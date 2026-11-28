@@ -113,15 +113,15 @@
 - [[tui-spinner-glyph-compat]] — fullscreen 卡顿先压测组件，再查动画字符字体
 - [[capsule-hot-path-perf]] — 胶囊热路径：别每帧 split 大入参、折叠早退、展开 Capsule 复用
 - [[npm-publish-staged-2fa-traps]] — npm 发布返回 202 卡 staged 2FA、pi install 装到缓存旧包这两个静默坑
+- [[npm-i-g-local-package-becomes-symlink]] — 在仓库里 npm i -g . 装的是指向仓库的符号链接，要真实安装先 npm pack
+- [[pi-input-color-needs-border]] — 染 pi 输入框要连边框一起染，只染文字在空框上看不出变化
+- [[abs-sleep-offline-consolidation]] — abs sleep 离线整理方案（仅方案未实现，卡在保留期档位没拍板）
 
 ## Entities
 - [[AgentBrainSync]] — 本项目实体页：三层架构、代码入口、开发命令
 - [[fanchao]] — 使用者；技术栈 / 特点·工作习惯 / 名下踩过的坑
 
 ## Sources
-- [[2026-11-07-染输入框颜色要连边框一起染-空输入框里没字]] — 染输入框颜色要连边框一起染：空输入框里没字，只染文字等于没改。pi 的边框色来自主题 borderColor，扩展要用 roundBorder…
-- [[2026-11-07-发版-1-28-5-时-npm-i-g-会把全局包装成指向仓库的符号链接]] — 发版 1.28.5 时 npm i -g . 会把全局包装成指向仓库的符号链接（依赖从仓库 node_modules 解析），要真实安装得先 npm pack…
-- [[2026-11-08-abs-sleep-离线整理方案在-docs-sleep-design-md]] — abs sleep 离线整理方案在 docs/sleep-design.md（仅方案未实现）：夜里补空/压缩会话页/提炼概念/墓碑遗忘，默认 dry-run…
 - [[2026-11-26-日志不及时的病根是把它绑在-done-上]] — 日志不及时的病根是把它绑在 done 上：过程动作（start/child-done/state）仍不写 log，note（子项，内容由模型当场写下）与…
 
 ## Syntheses

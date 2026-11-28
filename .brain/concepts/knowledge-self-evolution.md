@@ -6,7 +6,7 @@ updated: 2026-11-02
 status: superseded
 layer: 4
 superseded-by: no-graph-db
-anchors: [todo, search-relevance-pitfalls, memory-box-seven-layers, feature-delete-not-patch]
+anchors: [todo, search-relevance-pitfalls, memory-box-seven-layers, feature-delete-not-patch, abs-sleep-offline-consolidation]
 ---
 
 # 知识自我进化
@@ -85,3 +85,4 @@ node --test test/evolve.test.js   # 7 个判据测试
 - [[search-relevance-pitfalls]] — 检索侧的坑，本页第三条是同一类：「过滤要看所有出口」
 - [[memory-box-seven-layers]] — 分层机制，进化是它之上的时间维度
 - [[feature-delete-not-patch]] — 该删不该补：堆积到一定程度要合并而非继续加页
+- [[abs-sleep-offline-consolidation]] — 时间维度上的整理方案（只有方案，未实现）
