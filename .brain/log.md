@@ -1,4 +1,5 @@
 # 🗒 Activity Log
+## [2026-11-28 10:37] [release-212 升 2.1.2] [[fanchao]] 推代码、发布、本地装真副本
 ## [2026-11-28 10:32] [发 2.1.2：git push main+tag v2.1.2] [[fanchao]] 完成，npm publish 后 npm view 确认 dist-tags latest=2.1.2、time.modified 已更新（清缓存前一度只看到 2.1.1）；本地按概念页做法 npm pack → npm i -g ./tgz 换成真副本，inode 与仓库不同（104228516 vs 103237101），abs install 从全局跑通，hook/skill/MCP 已刷新，lint 0 问题。遗留：capsule-tools 在 package.json files 里被排除（独立包 pi-capsule-tools），从全局 install 不再刷新它，扩展目录里那份仍是昨天从仓库装的、含 ctx 前缀修复
 ## [2026-11-27 15:37] [会话胶囊的 ctx 覆盖补硬] [[fanchao]] isCtxTool 从「开头匹配 ctx_」改成 /(^|[_:/])ctx_/，覆盖 mcp__context-mode__ctx_search、context-mode:ctx_search 这类网关前缀；ctx_search 同时认 query（单数）与嵌套 args 里的查询词，避免折叠行只剩工具名。resolve-check 加了两条前缀形态用例，插件自检 npm run check 全过；主仓 712 测试通过
 ## [2026-11-26 17:30] [断点改英文名 anchors] [[fanchao]] 段标题 ## 断点 → ## Anchors（旧名仍认，重建时原地换名）、query 输出 [断点:] → [anchors:]，L6 层名与 help 同步。新增 abs init --repair --anchors --all：扫 $HOME 6 层内所有 .brain 逐个修并报 lint 前后。实测本机 10 个项目：/Users/fanchao 11→0、Code/abs 18→0、agent_brain_sync 1→0、faxuehui 14→2、zj_shop 16→0、Docker 14→6、herdr_app 1→0 等；测试 711 通过；已装到全局
