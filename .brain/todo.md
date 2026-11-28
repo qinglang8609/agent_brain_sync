@@ -1,5 +1,6 @@
 # 📋 Todo Board
 
+- [ ] [2026-11-28 10:22] [release-212] [[fanchao]] 升 2.1.2、推代码、发布、本地装真副本 [01a2154b-9c3e-77]
 - [x] [2026-11-26 11:12] [board-align-every-turn] [[fanchao]] 恢复每轮摆看板（hook 变强） [01a2154b-9c3e-77]
 - [x] [2026-11-26 09:20] [bare-log-gate] [[fanchao]] abs log 打回只有 id 的标题 [01a2154b-9c3e-77]
 - [x] [2026-11-26 08:51] [log-entry-content] [[fanchao]] done 自动日志带上任务描述（不只是 id） [01a2154b-9c3e-77]
